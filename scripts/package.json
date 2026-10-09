@@ -6,6 +6,6 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . && prettier --check ."
+    "lint": "eslint ."
   }
 }

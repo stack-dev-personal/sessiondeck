@@ -11,7 +11,10 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
-    "format": "prettier --write ."
+    "lint:root": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "ci": "pnpm typecheck && pnpm lint && pnpm lint:root && pnpm format:check && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
@@ -23,6 +26,7 @@
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0",
     "vitest": "^3.0.0",
-    "zod": "^3.0.0"
+    "zod": "^3.0.0",
+    "globals": "^16.0.0"
   }
 }
