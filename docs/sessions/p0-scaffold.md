@@ -81,3 +81,23 @@ Out of this session by plan: R0.8 (S0c), the captured fixture set and golden tim
 
 1. Pid transport (decision 9): keep `liveness { pid, alive }` or add an optional `pid` to the envelope? Affects S1 (probe hook) and S3 (hub).
 2. origin points at github.com/emstacho-su/sessiondeck, which GitHub redirects to stack-dev-personal/sessiondeck (private). PR links use the second name.
+
+## Progress update (after review round 2)
+
+- U3 capture tooling: security fix iteration 1 at cfa0297, c70ecc2 (deployed hook copy outside any work tree, marker-based recognition that fails closed, dry-run default with `--apply`, refusal under CLAUDECODE, nested `.gitignore` in the raw dir, byte budget). sd-security-reviewer iteration 2: Gate pass; 12 of 13 earlier findings closed, 1 partially closed, 10 new LOW. LOW fixes in progress (iteration 2). sd-reviewer on U3: pending.
+- U2b reducer: sd-reviewer iteration 1: fix-then-merge, 2 MAJOR (another agent context could clear a pending permission prompt; a superseded session could not be revived) and 10 MINOR. All fixed at 81aaeed..47b0cab (211 tests, 12 skipped TODO(fixture), 100% coverage on reducer files). Re-review pending.
+
+## Decisions made (continued 2)
+
+13. Replaces decision 3. `SessionSnapshot` gains one additive field beyond architecture 3.3: `tracking: { last_tool, permission: { tool, agent_id } | null }` (reducer bookkeeping). `state_detail` is display text only. Reason: the reviewer showed that keeping the last tool and the permission requester inside `state_detail` misclassifies sessions when subagents run. Documented in docs/CONTRACT.md as "confirm before S3 and S5". Open question 3.
+14. Only the context that asked for a permission may leave `waiting_permission` through tool events; UserPromptSubmit, main-thread Stop, StopFailure, SessionEnd, and a non-compact SessionStart leave it regardless.
+15. `ended` with reason `superseded` is revivable by any hook for that session; a normal `ended` accepts only SessionStart.
+16. PostCompact moves only `starting`, `working`, `exited`, and superseded sessions to `working`; from idle, waiting, and error it only counts the compaction (narrows architecture line 99 to the mid-turn case).
+17. `reduce` and `reduceLiveness` return the previous snapshot untouched when the envelope's session_id or host differs. `last_prompt` and `last_assistant_message` are capped at 2000 characters, `state_detail` at 120.
+18. Capture hook deploy location: `%LOCALAPPDATA%/sessiondeck/capture/` (XDG data dir elsewhere), the app-data directory the architecture already assigns to the probe. Raw output default stays packages/contract/fixtures/raw of the checkout the installer runs from, as the handoff says.
+19. The orchestrator kept working past the sprint-loop "five units" context heuristic because the session is headless and the log is committed after every round; this file plus git history is the resume state if the process dies.
+
+## Open questions (continued)
+
+3. Confirm the `tracking` field on SessionSnapshot (decision 13) before S3 and S5 build on the contract.
+4. Recommended project-control changes the session did not make (outside every executor's boundary): a guard.mjs rule that blocks `capture-install` from agent sessions, and `Read(./packages/contract/fixtures/raw/**)` in the deny list of .claude/settings.json before capture day. Until the Read deny exists, capture with `--out` pointing outside the repository is the safer choice.
