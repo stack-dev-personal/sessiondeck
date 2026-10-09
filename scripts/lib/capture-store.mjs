@@ -38,15 +38,19 @@ export function errorCode(error) {
 /**
  * Creates the out dir if needed and makes sure it carries a .gitignore of "*", so raw captures
  * cannot be staged by a routine add even on a branch that lacks the repository ignore rule.
+ * A file with other content (emptied, or edited to ignore nothing) is rewritten.
  * @param {string} root
  * @returns {Promise<void>}
  */
 export async function ensureOutDir(root) {
   await mkdir(root, { recursive: true });
+  const path = join(root, GITIGNORE_NAME);
   try {
-    await writeFile(join(root, GITIGNORE_NAME), GITIGNORE_BODY, { flag: "wx" });
+    await writeFile(path, GITIGNORE_BODY, { flag: "wx" });
   } catch (error) {
     if (errorCode(error) !== "EEXIST") throw error;
+    const body = await readFile(path, "utf8");
+    if (body.trim() !== GITIGNORE_BODY.trim()) await writeFile(path, GITIGNORE_BODY);
   }
 }
 
@@ -124,6 +128,21 @@ export async function readJsonOrUndefined(path) {
  * @returns {Promise<void>}
  */
 export async function logCaptureError(root, step, error) {
+  await appendLogLine(root, step, errorCode(error), false);
+}
+
+/**
+ * Like logCaptureError with a fixed code, but writes nothing when the log already holds a line for
+ * this step. Used to say once that recording stopped, without a line per refused payload.
+ * @param {string} root @param {string} step @param {string} code
+ * @returns {Promise<void>}
+ */
+export async function logOnce(root, step, code) {
+  await appendLogLine(root, step, code, true);
+}
+
+/** @param {string} root @param {string} step @param {string} code @param {boolean} once */
+async function appendLogLine(root, step, code, once) {
   const logPath = join(root, ERROR_LOG_NAME);
   try {
     const size = await stat(logPath).then(
@@ -131,8 +150,12 @@ export async function logCaptureError(root, step, error) {
       () => 0,
     );
     if (size >= ERROR_LOG_MAX_BYTES) return;
+    if (once && size > 0) {
+      const lines = (await readFile(logPath, "utf8")).split("\n");
+      if (lines.some((l) => l.split(" ")[1] === step)) return;
+    }
     await ensureOutDir(root);
-    await appendFile(logPath, `${new Date().toISOString()} ${step} ${errorCode(error)}\n`);
+    await appendFile(logPath, `${new Date().toISOString()} ${step} ${code}\n`);
   } catch {
     // Nothing safe left to do; stay silent.
   }

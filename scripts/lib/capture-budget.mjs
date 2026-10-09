@@ -1,11 +1,12 @@
 import { appendFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { USAGE_LOG_NAME } from "./capture-config.mjs";
+import { OUT_MAX_TOTAL_BYTES, USAGE_LOG_NAME } from "./capture-config.mjs";
 
 /**
  * Running total of captured bytes. Each stored payload appends one line holding its size, so the
  * hook never walks the tree. Concurrent hooks append whole short lines, which do not interleave.
- * Deleting the out dir resets the total.
+ * Deleting the out dir resets the total. A line larger than the whole budget cannot come from a
+ * stored payload and is ignored, so one edited line cannot stop recording for good.
  */
 
 /**
@@ -23,7 +24,7 @@ export async function usedBytes(root) {
   let total = 0;
   for (const line of text.split("\n")) {
     const n = Number(line);
-    if (Number.isFinite(n) && n > 0) total += n;
+    if (Number.isFinite(n) && n > 0 && n <= OUT_MAX_TOTAL_BYTES) total += n;
   }
   return total;
 }
@@ -31,4 +32,12 @@ export async function usedBytes(root) {
 /** @param {string} root @param {number} bytes */
 export async function recordBytes(root, bytes) {
   await appendFile(join(root, USAGE_LOG_NAME), `${bytes}\n`);
+}
+
+/**
+ * @param {string} root
+ * @returns {Promise<boolean>} true when the recorded total has used up the whole budget
+ */
+export async function budgetReached(root) {
+  return (await usedBytes(root)) >= OUT_MAX_TOTAL_BYTES;
 }

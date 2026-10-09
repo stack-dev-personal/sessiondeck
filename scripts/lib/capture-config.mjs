@@ -34,4 +34,7 @@ export const GITIGNORE_BODY = "*\n";
 export const STATUSLINE_DIR = "statusLine";
 export const SUBAGENT_STATUSLINE_DIR = "subagentStatusLine";
 export const STATUSLINE_TEXT = "sessiondeck capture on";
+/** Shown instead once a cap or the byte budget stops recording, so the stop is visible. */
+export const STATUSLINE_FULL_TEXT = "sessiondeck capture full";
+export const BUDGET_LOG_CODE = "FULL";
 export const CAPTURE_DIR_ENV = "SESSIONDECK_CAPTURE_DIR";

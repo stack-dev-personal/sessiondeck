@@ -13,11 +13,15 @@
  * UserPromptSubmit stdout is added to the model context) and always exit 0 (exit 2 blocks some
  * events). Every failure is reduced to a log line with an error code, never payload content.
  * Payload content is only ever written to disk as data; it is never executed or interpolated.
+ *
+ * The lib files are loaded with dynamic imports inside the try block, so a missing or broken
+ * lib file ends in exit 0 with empty stdout and stderr instead of a module error on every event.
+ * In --statusline mode the text is "sessiondeck capture on", or "sessiondeck capture full" once a
+ * cap or the byte budget has stopped recording (hook mode stays silent; the first refusal is one
+ * line in the error log).
  */
-import { STATUSLINE_TEXT } from "./lib/capture-config.mjs";
-import { captureOnce, readAll } from "./lib/capture-core.mjs";
-import { resolveOutDir } from "./lib/capture-paths.mjs";
-import { logCaptureError } from "./lib/capture-store.mjs";
+
+/** @typedef {typeof import("./lib/capture-config.mjs")} Config */
 
 /**
  * Flags: --statusline, --subagents, --out <dir>, and --marker <id> (carried only so the
@@ -43,19 +47,36 @@ function modeOf(argv) {
   return argv.includes("--subagents") ? "subagents" : "hook";
 }
 
+async function loadLib() {
+  const [config, core, paths, store] = await Promise.all([
+    import("./lib/capture-config.mjs"),
+    import("./lib/capture-core.mjs"),
+    import("./lib/capture-paths.mjs"),
+    import("./lib/capture-store.mjs"),
+  ]);
+  return { config, core, paths, store };
+}
+
 async function main() {
   let out = "";
   let mode = /** @type {import("./lib/capture-core.mjs").CaptureMode} */ ("hook");
+  /** @type {Awaited<ReturnType<typeof loadLib>> | undefined} */
+  let lib;
+  let full = false;
   try {
     mode = modeOf(process.argv.slice(2));
+    lib = await loadLib();
     const args = parseArgs(process.argv.slice(2));
-    out = resolveOutDir(args.outFlag, process.env);
-    const { text, truncated } = await readAll(process.stdin);
-    await captureOnce({ mode, out, text, truncated, now: Date.now() });
+    out = lib.paths.resolveOutDir(args.outFlag, process.env);
+    const { text, truncated } = await lib.core.readAll(process.stdin);
+    full = (await lib.core.captureOnce({ mode, out, text, truncated, now: Date.now() })).full;
   } catch (error) {
-    if (out) await logCaptureError(out, "capture", error);
+    if (lib && out) await lib.store.logCaptureError(out, "capture", error);
   }
-  if (mode === "statusline") process.stdout.write(`${STATUSLINE_TEXT}\n`);
+  if (mode === "statusline" && lib) {
+    const { STATUSLINE_TEXT, STATUSLINE_FULL_TEXT } = lib.config;
+    process.stdout.write(`${full ? STATUSLINE_FULL_TEXT : STATUSLINE_TEXT}\n`);
+  }
 }
 
 try {

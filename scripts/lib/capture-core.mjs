@@ -15,13 +15,15 @@ import {
   UNPARSED_DIR,
   UNPARSED_MAX_BYTES,
   UNPARSED_MAX_FILES,
+  BUDGET_LOG_CODE,
 } from "./capture-config.mjs";
-import { recordBytes, usedBytes } from "./capture-budget.mjs";
+import { budgetReached, recordBytes, usedBytes } from "./capture-budget.mjs";
 import { safeEventName, safeSegment, safeSessionId } from "./capture-paths.mjs";
 import { shouldRecordStatus, statusSignature } from "./capture-throttle.mjs";
 import {
   countEntries,
   errorCode,
+  logOnce,
   randomSuffix,
   readJsonOrUndefined,
   writeInside,
@@ -141,28 +143,42 @@ export function truncateUtf8(text, maxBytes) {
 
 /**
  * Stores one captured payload according to the mode. Throws on I/O errors; the caller logs them.
- * Silently skips when a cap, the byte budget, or the throttle says so.
+ * Skips when a cap, the byte budget, or the throttle says so; a cap or budget refusal is logged
+ * once and reported as full, so the status line can show it. Never writes to stdout itself.
  * @param {{ mode: CaptureMode, out: string, text: string, truncated: boolean, now: number }} args
- * @returns {Promise<void>}
+ * @returns {Promise<{ full: boolean }>}
  */
 export async function captureOnce({ mode, out, text, truncated, now }) {
   const payload = truncated ? undefined : parseObject(text);
   if (payload === undefined) {
     const kept = truncateUtf8(text, UNPARSED_MAX_BYTES);
-    await store(out, UNPARSED_DIR, UNPARSED_MAX_FILES, fileName(now, "raw", ".txt"), kept);
-    return;
+    const name = fileName(now, "raw", ".txt");
+    return { full: (await store(out, UNPARSED_DIR, UNPARSED_MAX_FILES, name, kept)) === FULL };
   }
   const sid = safeSessionId(payload.session_id);
   const name = fileName(now, sid, ".json");
   if (mode === "hook") {
     const dir = safeEventName(payload.hook_event_name);
-    await store(out, dir, HOOK_MAX_FILES_PER_DIR, name, text);
-    return;
+    return { full: (await store(out, dir, HOOK_MAX_FILES_PER_DIR, name, text)) === FULL };
   }
   const { dir, cap } = STATUS_MODES[mode];
   const throttle = await statusThrottle(out, mode, payload, now);
-  if (!throttle.allowed) return;
-  if (await store(out, dir, cap, name, text)) await throttle.commit();
+  if (!throttle.allowed) return { full: await budgetReached(out) };
+  const result = await store(out, dir, cap, name, text);
+  if (result === STORED) await throttle.commit();
+  return { full: result === FULL };
+}
+
+const STORED = "stored";
+const FULL = "full";
+
+/**
+ * @param {string} out @param {string} step
+ * @returns {Promise<"full">}
+ */
+async function refuse(out, step) {
+  await logOnce(out, step, BUDGET_LOG_CODE);
+  return FULL;
 }
 
 /**
@@ -171,14 +187,14 @@ export async function captureOnce({ mode, out, text, truncated, now }) {
  * @param {number} cap
  * @param {string} name
  * @param {string} text
- * @returns {Promise<boolean>} true when written
+ * @returns {Promise<"stored" | "full">} full when a limit refused the write
  */
 async function store(out, dir, cap, name, text) {
-  if (!(await mayUseDir(out, dir))) return false;
-  if ((await countEntries(join(out, dir))) >= cap) return false;
+  if (!(await mayUseDir(out, dir))) return refuse(out, "full-dirs");
+  if ((await countEntries(join(out, dir))) >= cap) return refuse(out, `full-cap-${dir}`);
   const bytes = Buffer.byteLength(text);
-  if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES) return false;
+  if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES) return refuse(out, "full-budget");
   await writeInside(out, dir, name, text);
   await recordBytes(out, bytes);
-  return true;
+  return STORED;
 }
