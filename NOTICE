@@ -26,4 +26,5 @@ Specification only, no code copied (AGPL-3.0):
 - siteboon/claudecodeui                  https://github.com/siteboon/claudecodeui
 
 Actual borrowings (update as code lands):
-- (none yet)
+- sirmalloc/ccstatusline src/types/StatusJSON.ts → packages/contract/src/statusline.ts (MIT, Copyright (c) 2025 Matthew Breedlove, commit 3b60234)
+- Maciek-roboblog/Claude-Code-Usage-Monitor src/claude_monitor/output/official.py → packages/contract/src/statusline.ts (MIT, Copyright (c) 2025 Maciej, commit c59a83b)
