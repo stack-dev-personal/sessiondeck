@@ -51,7 +51,7 @@ const EnvelopeObjectSchema = z.object({
   kind: z.enum(EVENT_KINDS),
   host: z.string().min(1),
   os: z.enum(HOST_OS_VALUES),
-  session_id: z.string().nullable(),
+  session_id: z.string().min(1).nullable(),
   agent_id: z.string().optional(),
   hook_event_name: z.string().optional(),
   ts: NonNegativeInt,
@@ -61,7 +61,8 @@ const EnvelopeObjectSchema = z.object({
 });
 
 export const EnvelopeSchema = EnvelopeObjectSchema.superRefine((env, ctx) => {
-  if (!("payload" in env)) {
+  // An explicit undefined is dropped by JSON.stringify, so it counts as missing.
+  if (env.payload === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["payload"],

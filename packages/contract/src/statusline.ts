@@ -42,6 +42,24 @@ const RateLimitsSchema = z
   })
   .passthrough();
 
+const PullRequestSchema = z
+  .object({
+    number: CoercedNumberSchema.optional(),
+    url: z.string().optional(),
+    review_state: z.string().optional(),
+    kind: z.string().optional(),
+  })
+  .passthrough();
+
+const PromptCacheSchema = z
+  .object({
+    warm: z.boolean().optional(),
+    caching_observed: z.boolean().optional(),
+    ttl: z.string().optional(),
+    expires_at: CoercedNumberSchema.nullable().optional(), // Unix epoch SECONDS
+  })
+  .passthrough();
+
 const CurrentUsageSchema = z
   .object({
     input_tokens: CoercedNumberSchema.optional(),
@@ -74,8 +92,13 @@ export const StatusLinePayloadSchema = z
         z.object({ id: z.string().optional(), display_name: z.string().optional() }).passthrough(),
       ])
       .optional(),
+    session_name: z.string().optional(),
     workspace: z
-      .object({ current_dir: z.string().optional(), project_dir: z.string().optional() })
+      .object({
+        current_dir: z.string().optional(),
+        project_dir: z.string().optional(),
+        git_worktree: z.string().optional(),
+      })
       .passthrough()
       .optional(),
     version: z.string().optional(),
@@ -109,6 +132,8 @@ export const StatusLinePayloadSchema = z
       .nullable()
       .optional(),
     rate_limits: RateLimitsSchema.nullable().optional(),
+    pr: PullRequestSchema.optional(),
+    prompt_cache: PromptCacheSchema.optional(),
   })
   .passthrough();
 
@@ -120,6 +145,11 @@ export function parseStatusLinePayload(input: unknown): StatusLinePayload {
 
 /** The payload's resets_at is epoch seconds; snapshot timestamps are epoch ms. */
 export const MS_PER_SECOND = 1000;
+
+/** Converts a payload timestamp (epoch seconds: resets_at, prompt_cache.expires_at) to epoch ms. */
+export function epochSecondsToMs(seconds: number): number {
+  return seconds * MS_PER_SECOND;
+}
 export const MIN_USED_PCT = 0;
 export const MAX_USED_PCT = 100;
 
@@ -127,6 +157,8 @@ export const MAX_USED_PCT = 100;
  * Normalize one rate-limit window to the snapshot shape.
  * - used_percentage outside 0..100 or non-finite (bug #52326 leaks the resets_at epoch) becomes null.
  * - at or past resets_at the captured percentage is stale and becomes null.
+ * Intended for five_hour and seven_day only: spend_limit.used_percentage legitimately exceeds 100
+ * and would be nulled here.
  * Pure; never mutates raw.
  */
 export function normalizeRateLimitWindow(
@@ -143,7 +175,9 @@ export function normalizeRateLimitWindow(
       : null;
   const resetsSec = raw.resets_at;
   const resetsAt =
-    typeof resetsSec === "number" && Number.isFinite(resetsSec) ? resetsSec * MS_PER_SECOND : null;
+    typeof resetsSec === "number" && Number.isFinite(resetsSec)
+      ? epochSecondsToMs(resetsSec)
+      : null;
   const expired = resetsAt !== null && nowMs >= resetsAt;
   return { used_pct: expired ? null : validPct, resets_at: resetsAt };
 }

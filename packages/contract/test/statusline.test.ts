@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  epochSecondsToMs,
   normalizeRateLimitWindow,
   parseStatusLinePayload,
   StatusLinePayloadSchema,
 } from "../src/statusline";
 import { loadFixtures } from "./helpers";
+import type { RateLimitPeriod } from "../src/statusline";
 
 // SYNTHETIC samples built from the field list in docs/statusline.md. Not captured fixtures.
 const RESETS_AT_SEC = 1_760_000_000;
@@ -67,7 +69,7 @@ describe("StatusLinePayloadSchema", () => {
     ).toBe(false);
   });
 
-  it("accepts numeric and whitespace-only strings per the ported coercion rules", () => {
+  it("rejects whitespace-only strings, accepts numeric current_usage", () => {
     expect(
       StatusLinePayloadSchema.safeParse({
         context_window: { current_usage: 5, used_percentage: "  " },
@@ -76,6 +78,41 @@ describe("StatusLinePayloadSchema", () => {
     expect(
       StatusLinePayloadSchema.safeParse({ context_window: { current_usage: 5 } }).success,
     ).toBe(true);
+  });
+});
+
+describe("typed optional keys", () => {
+  it("types session_name, pr, prompt_cache and workspace.git_worktree and keeps extras", () => {
+    const parsed = parseStatusLinePayload({
+      session_name: "my-session",
+      workspace: { git_worktree: "feature-xyz", added_dirs: [] },
+      pr: { number: "12", url: "https://example.test/pull/12", review_state: "pending", x: 1 },
+      prompt_cache: { warm: true, ttl: "1h", expires_at: 1738429200, hit_ratio: 0.9 },
+    });
+    expect(parsed.session_name).toBe("my-session");
+    expect(parsed.workspace?.git_worktree).toBe("feature-xyz");
+    expect(parsed.pr?.number).toBe(12);
+    expect(parsed.pr?.["x"]).toBe(1);
+    expect(parsed.prompt_cache?.expires_at).toBe(1738429200);
+    expect(parsed.prompt_cache?.["hit_ratio"]).toBe(0.9);
+  });
+
+  it("rejects wrongly typed values for the typed keys", () => {
+    expect(StatusLinePayloadSchema.safeParse({ pr: { number: "twelve" } }).success).toBe(false);
+    expect(StatusLinePayloadSchema.safeParse({ session_name: 5 }).success).toBe(false);
+    expect(StatusLinePayloadSchema.safeParse({ prompt_cache: { warm: "yes" } }).success).toBe(
+      false,
+    );
+    expect(StatusLinePayloadSchema.safeParse({ workspace: { git_worktree: 1 } }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("epochSecondsToMs", () => {
+  it("converts seconds to milliseconds", () => {
+    expect(epochSecondsToMs(1738429200)).toBe(1738429200000);
+    expect(epochSecondsToMs(0)).toBe(0);
   });
 });
 
@@ -136,11 +173,34 @@ describe("normalizeRateLimitWindow", () => {
 
 const statusFixtures = loadFixtures().filter((f) => f.dir === "statusLine");
 
+function parsedFixtures() {
+  return statusFixtures.map((f) => StatusLinePayloadSchema.parse(f.payload));
+}
+
 // TODO(fixture): S0b un-skips this by committing fixtures/statusLine/*.json.
 if (statusFixtures.length === 0)
   it.skip("TODO(fixture): no captured statusLine fixtures yet", () => {});
 describe.skipIf(statusFixtures.length === 0)("captured statusLine fixtures", () => {
   it.each(statusFixtures.map((f) => [f.file, f] as const))("%s parses", (_name, fx) => {
     expect(StatusLinePayloadSchema.safeParse(fx.payload).success).toBe(true);
+  });
+
+  it("covers the R0.4 cases: with rate_limits, without, and current_usage null", () => {
+    const all = parsedFixtures();
+    expect(all.some((p) => p.rate_limits != null)).toBe(true);
+    expect(all.some((p) => p.rate_limits == null)).toBe(true);
+    expect(all.some((p) => p.context_window?.current_usage === null)).toBe(true);
+  });
+
+  it("normalizes every captured five_hour and seven_day window", () => {
+    const windows: RateLimitPeriod[] = parsedFixtures().flatMap((p) =>
+      [p.rate_limits?.five_hour, p.rate_limits?.seven_day].filter(
+        (w): w is RateLimitPeriod => w != null,
+      ),
+    );
+    for (const w of windows) {
+      const out = normalizeRateLimitWindow(w, 0);
+      expect(out.used_pct === null || (out.used_pct >= 0 && out.used_pct <= 100)).toBe(true);
+    }
   });
 });

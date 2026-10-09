@@ -53,6 +53,7 @@ export interface SessionSnapshot {
   };
   last_assistant_message: string | null;
   last_prompt: string | null;
+  /** expires_at is epoch ms. The payload sends epoch seconds; convert with epochSecondsToMs (statusline.ts). */
   prompt_cache: { warm: boolean; expires_at: number | null } | null;
   compactions: number;
 }

@@ -6,7 +6,7 @@ import {
   safeParseEnvelope,
   type Envelope,
 } from "../src/envelope";
-import { loadFixtures, makeEnvelope, wrapFixture } from "./helpers";
+import { kindForFixtureDir, loadFixtures, makeEnvelope, TEST_ULID, wrapFixture } from "./helpers";
 
 describe("EnvelopeSchema", () => {
   it.each(EVENT_KINDS)("accepts a valid envelope of kind %s", (kind) => {
@@ -39,10 +39,18 @@ describe("EnvelopeSchema", () => {
     expect(safeParseEnvelope(makeEnvelope({ id: "01HZX3K9QJ5V8M2N4P6R7S8T9U" })).success).toBe(
       false,
     );
+    expect(safeParseEnvelope(makeEnvelope({ id: "8" + "0".repeat(25) })).success).toBe(false);
+    expect(safeParseEnvelope(makeEnvelope({ id: TEST_ULID.toLowerCase() })).success).toBe(false);
+    expect(safeParseEnvelope(makeEnvelope({ id: "7" + "Z".repeat(25) })).success).toBe(true);
     expect(safeParseEnvelope(makeEnvelope({ host: "" })).success).toBe(false);
     expect(safeParseEnvelope(makeEnvelope({ os: "freebsd" })).success).toBe(false);
     expect(safeParseEnvelope(makeEnvelope({ ts: -1 })).success).toBe(false);
     expect(safeParseEnvelope(makeEnvelope({ seq: 1.5 })).success).toBe(false);
+  });
+
+  it("rejects payload: undefined and an empty session_id", () => {
+    expect(safeParseEnvelope(makeEnvelope({ payload: undefined })).success).toBe(false);
+    expect(safeParseEnvelope(makeEnvelope({ session_id: "" })).success).toBe(false);
   });
 
   it("allows null session_id only for kind probe", () => {
@@ -102,6 +110,9 @@ describe.skipIf(fixtures.length === 0)("captured fixtures wrapped in an envelope
   it.each(fixtures.map((f) => [`${f.dir}/${f.file}`, f] as const))("%s parses", (_name, fx) => {
     const parsed = safeParseEnvelope(wrapFixture(fx));
     expect(parsed.success).toBe(true);
+    if (kindForFixtureDir(fx.dir) === "hook") {
+      expect((fx.payload as Record<string, unknown>)["hook_event_name"]).toBe(fx.dir);
+    }
     if (parsed.success) {
       expect(parsed.data.payload).toEqual(fx.payload);
     }
