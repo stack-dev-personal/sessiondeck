@@ -2,13 +2,26 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { HOOK_EVENTS } from "../lib/hook-events.mjs";
-import { HOOK_MAX_FILES_PER_DIR } from "../lib/capture-config.mjs";
+import {
+  HOOK_MAX_FILES_PER_DIR,
+  STATUSLINE_FULL_TEXT,
+  STATUSLINE_TEXT,
+} from "../lib/capture-config.mjs";
+import { captureOnce } from "../lib/capture-core.mjs";
 import { CAPTURE_SCRIPT, cleanupTempDirs, makeTempDir, runScript } from "./helpers";
 
 afterAll(cleanupTempDirs);
 
+type Mode = "hook" | "statusline" | "subagents";
+const NOW = 1_700_000_000_000;
+
 function capture(sandbox: string, out: string, input: string, flags: string[] = []) {
   return runScript(CAPTURE_SCRIPT, [...flags, "--out", out], { input, sandbox });
+}
+
+/** In-process capture for per-case checks; the spawned tests below prove the entry point. */
+function captureIn(out: string, text: string, mode: Mode = "hook", now = Date.now()) {
+  return captureOnce({ mode, out, text, truncated: false, now });
 }
 
 function listAll(dir: string): string[] {
@@ -19,20 +32,27 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-describe.concurrent("hook mode", () => {
-  it.each(HOOK_EVENTS.map((e) => [e]))("%s: one file, same content, no stdout", async (event) => {
-    const sandbox = makeTempDir();
-    const out = join(sandbox, "out");
+function fillDir(dir: string, count: number): void {
+  mkdirSync(dir, { recursive: true });
+  for (let i = 0; i < count; i++) writeFileSync(join(dir, `${i}-x.json`), "{}");
+}
+
+const status = (extra: object = {}) =>
+  JSON.stringify({ session_id: "sl-session-1", model: { id: "m" }, ...extra });
+
+describe("every registered event is stored in-process", () => {
+  it.each(HOOK_EVENTS.map((e) => [e]))("%s: one file, same content", async (event) => {
+    const out = join(makeTempDir(), "out");
     const payload = { hook_event_name: event, session_id: "sess-1234567890", extra: { n: [1, 2] } };
-    const r = await capture(sandbox, out, JSON.stringify(payload));
-    expect(r.code).toBe(0);
-    expect(r.stdout).toBe("");
+    await captureIn(out, JSON.stringify(payload));
     const files = readdirSync(join(out, event));
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/^\d+-sess-123-[0-9a-f]+\.json$/);
     expect(readJson(join(out, event, files[0]!))).toEqual(payload);
   });
+});
 
+describe("hostile input in-process", () => {
   const hostile: [string, string][] = [
     ["malformed JSON", "{not json"],
     ["empty stdin", ""],
@@ -43,13 +63,11 @@ describe.concurrent("hook mode", () => {
     ["non-string event", JSON.stringify({ hook_event_name: { a: 1 }, session_id: 5 })],
   ];
 
-  it.each(hostile)("%s: exit 0, silent, nothing outside out", async (_name, input) => {
+  it.each(hostile)("%s: nothing outside out", async (_name, input) => {
     const sandbox = makeTempDir();
     mkdirSync(join(sandbox, "work"));
     const out = join(sandbox, "work", "out");
-    const r = await capture(sandbox, out, input);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toBe("");
+    await captureIn(out, input);
     const outside = listAll(sandbox).filter(
       (p) => p !== "work" && !p.startsWith(join("work", "out")),
     );
@@ -57,23 +75,84 @@ describe.concurrent("hook mode", () => {
     expect(listAll(out).some((p) => p.includes("evil"))).toBe(false);
     expect(listAll(out).length).toBeGreaterThan(0);
   });
+});
+
+describe("caps and the visible full state", () => {
+  it("allows at least 3000 files per event; the byte budget is the real bound", () => {
+    expect(HOOK_MAX_FILES_PER_DIR).toBeGreaterThanOrEqual(3000);
+  });
+
+  it("stops writing a directory at the file cap and says so in the error log", async () => {
+    const out = join(makeTempDir(), "out");
+    fillDir(join(out, "Stop"), HOOK_MAX_FILES_PER_DIR);
+    const r = await captureIn(out, '{"hook_event_name":"Stop","session_id":"a"}');
+    expect(r.full).toBe(true);
+    expect(readdirSync(join(out, "Stop"))).toHaveLength(HOOK_MAX_FILES_PER_DIR);
+    expect(readFileSync(join(out, "_capture-errors.log"), "utf8")).toContain("full-cap-Stop");
+  });
+
+  it("status-line mode reports full once ANY hook directory cap has refused a write", async () => {
+    const out = join(makeTempDir(), "out");
+    expect((await captureIn(out, status(), "statusline", NOW)).full).toBe(false);
+    fillDir(join(out, "PreToolUse"), HOOK_MAX_FILES_PER_DIR);
+    await captureIn(out, '{"hook_event_name":"PreToolUse","session_id":"a"}');
+    const later = status({ session_id: "other" });
+    expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
+    expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
+  });
+
+  it("an unrelated error-log line does not make the status line say full", async () => {
+    const out = join(makeTempDir(), "out");
+    mkdirSync(out);
+    writeFileSync(join(out, "_capture-errors.log"), "2026-01-01T00:00:00.000Z capture EACCES\n");
+    expect((await captureIn(out, status(), "statusline", NOW)).full).toBe(false);
+  });
+});
+
+describe("hook mode (spawned)", () => {
+  it("exits 0 with no stdout and stores one file", async () => {
+    const sandbox = makeTempDir();
+    const out = join(sandbox, "out");
+    const payload = { hook_event_name: "PostToolUse", session_id: "sess-1234567890" };
+    const r = await capture(sandbox, out, JSON.stringify(payload));
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).toBe("");
+    const files = readdirSync(join(out, "PostToolUse"));
+    expect(files).toHaveLength(1);
+    expect(readJson(join(out, "PostToolUse", files[0]!))).toEqual(payload);
+  });
+
+  it("hostile input: exit 0, silent, nothing outside out", async () => {
+    const sandbox = makeTempDir();
+    mkdirSync(join(sandbox, "work"));
+    const out = join(sandbox, "work", "out");
+    const r = await capture(sandbox, out, JSON.stringify({ hook_event_name: "../../evil" }));
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).toBe("");
+    const outside = listAll(sandbox).filter(
+      (p) => p !== "work" && !p.startsWith(join("work", "out")),
+    );
+    expect(outside).toEqual([]);
+  });
 
   it("saves unparsable input as text under _unparsed", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
-    await capture(sandbox, out, "{broken");
+    const r = await capture(sandbox, out, "{broken");
+    expect(r.code).toBe(0);
     const files = readdirSync(join(out, "_unparsed"));
     expect(files).toHaveLength(1);
     expect(readFileSync(join(out, "_unparsed", files[0]!), "utf8")).toBe("{broken");
   });
 
-  it("exits 0 and stays silent when out is unwritable", async () => {
+  it("exits 0 and stays silent on stdout and stderr when out is unwritable", async () => {
     const sandbox = makeTempDir();
     const blocker = join(sandbox, "blocker");
     writeFileSync(blocker, "a file, not a directory");
     const r = await capture(sandbox, join(blocker, "out"), '{"hook_event_name":"Stop"}');
     expect(r.code).toBe(0);
     expect(r.stdout).toBe("");
+    expect(r.stderr).toBe("");
   });
 
   it("logs errors without payload content", async () => {
@@ -102,19 +181,6 @@ describe.concurrent("hook mode", () => {
     expect(readdirSync(join(out, "Stop"))).toHaveLength(1);
   });
 
-  it("stops writing a directory at the file cap", async () => {
-    const sandbox = makeTempDir();
-    const out = join(sandbox, "out");
-    mkdirSync(join(out, "Stop"), { recursive: true });
-    for (let i = 0; i < HOOK_MAX_FILES_PER_DIR; i++) {
-      writeFileSync(join(out, "Stop", `${i}-x.json`), "{}");
-    }
-    const r = await capture(sandbox, out, '{"hook_event_name":"Stop","session_id":"a"}');
-    expect(r.code).toBe(0);
-    expect(r.stdout).toBe("");
-    expect(readdirSync(join(out, "Stop"))).toHaveLength(HOOK_MAX_FILES_PER_DIR);
-  });
-
   it("50 concurrent hooks produce 50 intact distinct files", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
@@ -138,16 +204,14 @@ describe.concurrent("hook mode", () => {
   });
 });
 
-describe("statusline and subagent modes", () => {
-  const status = (extra: object = {}) =>
-    JSON.stringify({ session_id: "sl-session-1", model: { id: "m" }, ...extra });
-
+describe("statusline and subagent modes (spawned)", () => {
   it("statusline prints exactly one line and writes a file", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
     const r = await capture(sandbox, out, status({ prompt: "SECRET-PROMPT" }), ["--statusline"]);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/^[^\r\n]+\r?\n$/);
+    expect(r.stdout.trim()).toBe(STATUSLINE_TEXT);
     expect(r.stdout).not.toContain("SECRET-PROMPT");
     expect(readdirSync(join(out, "statusLine"))).toHaveLength(1);
   });
@@ -159,11 +223,31 @@ describe("statusline and subagent modes", () => {
     expect(r.stdout.trim().split(/\r?\n/)).toHaveLength(1);
   });
 
-  it("throttles per session but records when keys or rate_limits change", async () => {
+  it("prints the full text once a hook directory cap has refused a write", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
+    fillDir(join(out, "Stop"), HOOK_MAX_FILES_PER_DIR);
+    await capture(sandbox, out, '{"hook_event_name":"Stop","session_id":"a"}');
+    const r = await capture(sandbox, out, status(), ["--statusline"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe(STATUSLINE_FULL_TEXT);
+  });
+
+  it("subagents mode prints nothing and writes under subagentStatusLine", async () => {
+    const sandbox = makeTempDir();
+    const out = join(sandbox, "out");
+    const r = await capture(sandbox, out, status(), ["--subagents"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(readdirSync(join(out, "subagentStatusLine"))).toHaveLength(1);
+  });
+});
+
+describe("status throttle in-process", () => {
+  it("throttles per session but records when keys or rate_limits change", async () => {
+    const out = join(makeTempDir(), "out");
     const count = () => readdirSync(join(out, "statusLine")).length;
-    const run = (extra: object) => capture(sandbox, out, status(extra), ["--statusline"]);
+    const run = (extra: object) => captureIn(out, status(extra), "statusline", NOW);
     await run({});
     await run({});
     expect(count()).toBe(1);
@@ -175,14 +259,5 @@ describe("statusline and subagent modes", () => {
     expect(count()).toBe(3);
     await run({ session_id: "another-session" });
     expect(count()).toBe(4);
-  });
-
-  it("subagents mode prints nothing and writes under subagentStatusLine", async () => {
-    const sandbox = makeTempDir();
-    const out = join(sandbox, "out");
-    const r = await capture(sandbox, out, status(), ["--subagents"]);
-    expect(r.code).toBe(0);
-    expect(r.stdout).toBe("");
-    expect(readdirSync(join(out, "subagentStatusLine"))).toHaveLength(1);
   });
 });

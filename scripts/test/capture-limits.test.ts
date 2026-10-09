@@ -58,10 +58,21 @@ describe("stored text and directories are bounded", () => {
     expect(statSync(join(out, "_unparsed", file!)).size).toBe(UNPARSED_MAX_BYTES);
   });
 
-  it("truncateUtf8 never exceeds the byte limit and leaves short text alone", () => {
+  it("truncateUtf8 leaves short text alone", () => {
     expect(truncateUtf8("abc", 10)).toBe("abc");
-    expect(Buffer.byteLength(truncateUtf8("é".repeat(100), 51))).toBeLessThanOrEqual(53);
   });
+
+  it.each([1, 2, 3, 4, 5, 50, 51, 52])(
+    "truncateUtf8 never exceeds %i bytes and never splits a character",
+    (limit) => {
+      for (const text of ["é".repeat(100), "漢字".repeat(40), "a😀b".repeat(30)]) {
+        const cut = truncateUtf8(text, limit);
+        expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(limit);
+        expect(cut).not.toContain("�");
+        expect(text.startsWith(cut)).toBe(true);
+      }
+    },
+  );
 
   it("stops adding throttle state files past the cap but keeps updating existing ones", async () => {
     const out = join(makeTempDir(), "out");

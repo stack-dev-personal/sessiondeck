@@ -16,6 +16,7 @@ import {
   UNPARSED_MAX_BYTES,
   UNPARSED_MAX_FILES,
   BUDGET_LOG_CODE,
+  FULL_STEP_PREFIX,
 } from "./capture-config.mjs";
 import { budgetReached, recordBytes, usedBytes } from "./capture-budget.mjs";
 import { safeEventName, safeSegment, safeSessionId } from "./capture-paths.mjs";
@@ -131,14 +132,21 @@ async function writeState(root, name, state) {
   await writeInside(root, STATE_DIR, name, JSON.stringify(state));
 }
 
+const UTF8_CONTINUATION_MASK = 0xc0;
+const UTF8_CONTINUATION_BITS = 0x80;
+
 /**
- * Cuts text to at most maxBytes of UTF-8 (a partly cut last character becomes a replacement mark).
+ * Cuts text to at most maxBytes of UTF-8, backing up to the start of a character that the cut would
+ * split, so the result is valid text and never longer than the limit.
  * @param {string} text @param {number} maxBytes
  * @returns {string}
  */
 export function truncateUtf8(text, maxBytes) {
   const bytes = Buffer.from(text, "utf8");
-  return bytes.length <= maxBytes ? text : bytes.subarray(0, maxBytes).toString("utf8");
+  if (bytes.length <= maxBytes) return text;
+  let cut = maxBytes;
+  while (cut > 0 && (bytes[cut] & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_BITS) cut--;
+  return bytes.subarray(0, cut).toString("utf8");
 }
 
 /**
@@ -163,10 +171,9 @@ export async function captureOnce({ mode, out, text, truncated, now }) {
   }
   const { dir, cap } = STATUS_MODES[mode];
   const throttle = await statusThrottle(out, mode, payload, now);
-  if (!throttle.allowed) return { full: await budgetReached(out) };
-  const result = await store(out, dir, cap, name, text);
+  const result = throttle.allowed ? await store(out, dir, cap, name, text) : undefined;
   if (result === STORED) await throttle.commit();
-  return { full: result === FULL };
+  return { full: result === FULL || (await budgetReached(out)) };
 }
 
 const STORED = "stored";
@@ -190,10 +197,12 @@ async function refuse(out, step) {
  * @returns {Promise<"stored" | "full">} full when a limit refused the write
  */
 async function store(out, dir, cap, name, text) {
-  if (!(await mayUseDir(out, dir))) return refuse(out, "full-dirs");
-  if ((await countEntries(join(out, dir))) >= cap) return refuse(out, `full-cap-${dir}`);
+  if (!(await mayUseDir(out, dir))) return refuse(out, `${FULL_STEP_PREFIX}dirs`);
+  if ((await countEntries(join(out, dir))) >= cap)
+    return refuse(out, `${FULL_STEP_PREFIX}cap-${dir}`);
   const bytes = Buffer.byteLength(text);
-  if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES) return refuse(out, "full-budget");
+  if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES)
+    return refuse(out, `${FULL_STEP_PREFIX}budget`);
   await writeInside(out, dir, name, text);
   await recordBytes(out, bytes);
   return STORED;

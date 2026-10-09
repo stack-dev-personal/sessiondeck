@@ -1,6 +1,11 @@
 /** Named limits and names shared by the capture hook. Disk use is bounded by these. */
 
-export const HOOK_MAX_FILES_PER_DIR = 500;
+/**
+ * Per hook event. High on purpose: the 256 MiB byte budget is the real bound on disk, and a lower
+ * cap fills in about an hour of three busy sessions on PreToolUse and PostToolUse, after which
+ * rarer events of the same day (AskUserQuestion, subagent calls, a second project) would be lost.
+ */
+export const HOOK_MAX_FILES_PER_DIR = 3000;
 export const STATUSLINE_MAX_FILES = 1000;
 export const SUBAGENT_STATUSLINE_MAX_FILES = 300;
 export const UNPARSED_MAX_FILES = 100;
@@ -37,4 +42,6 @@ export const STATUSLINE_TEXT = "sessiondeck capture on";
 /** Shown instead once a cap or the byte budget stops recording, so the stop is visible. */
 export const STATUSLINE_FULL_TEXT = "sessiondeck capture full";
 export const BUDGET_LOG_CODE = "FULL";
+/** Error-log step names for a refused write all start with this (full-budget, full-cap-<dir>). */
+export const FULL_STEP_PREFIX = "full-";
 export const CAPTURE_DIR_ENV = "SESSIONDECK_CAPTURE_DIR";
