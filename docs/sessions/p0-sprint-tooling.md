@@ -20,12 +20,13 @@
 | Unit | What | Executor | Blocked by | Status |
 |------|------|----------|------------|--------|
 | R | Docs research: `claude setup-token`, headless flags, CLI install in a Linux image, GitHub fine-grained token permissions | sd-researcher | none | done (findings below) |
-| U1 | `scripts/sprint/render-prompt.mjs` and tests (one per package block, loud failure on a missing placeholder, smoke prompt) | sd-executor-contract | none | committed c8ce896; review iteration 1 returned fix-then-merge (1 blocking, 3 major, 5 minor); fix round interrupted, resumed |
-| U4 | `packages/contract/src/state-file.ts` atomic write helper and tests | sd-executor-contract | none | pending |
-| U2 | `infra/sprint/Dockerfile`, `docker-compose.yml`, `entrypoint.sh`, built and run locally with a dummy prompt | sd-executor-infra | R | pending |
-| U3 | `scripts/sprint/run-sprint.ps1`, `status.ps1`, `stop-sprint.ps1`, with a scripted dry run test | sd-executor-infra | U1, U2 | pending |
-| U5 | Smoke package and harness (`-Sprint smoke`), evidence under `.sprint/0/screens/S0c/` | sd-executor-infra | U2, U3 | pending |
-| U6 | `infra/sprint/README.md` from specification to documentation (token procedure, token scopes, socket risk) | sd-executor-infra | R, U2, U3, U5 | pending |
+| U1 | `scripts/sprint/render-prompt.mjs` and tests (one per package block, loud failure on a missing placeholder, smoke prompt) | sd-executor-contract | none | committed c8ce896; iteration 1 fixes committed 2376112; review 2 fix-then-merge (0 blocking, 1 major, 4 minor); fix iteration 2 interrupted, resumed |
+| U4 | `packages/contract/src/state-file.ts` atomic write helper and tests | sd-executor-contract | none | committed 87c0b2a; review 1 fix-then-merge (0 blocking, 3 major, 9 minor); fix iteration 1 interrupted, redone |
+| U2a | `infra/sprint/Dockerfile`, `docker-compose.yml`, `entrypoint.sh` authored as files, with tests that do not need Docker | sd-executor-infra | R | pending |
+| U2b | Image built and run locally with a dummy prompt | sd-executor-infra | U2a, go-file | on hold (decision 7) |
+| U3 | `scripts/sprint/run-sprint.ps1`, `status.ps1`, `stop-sprint.ps1`, with a scripted dry run test | sd-executor-infra | U1, U2a | pending |
+| U5 | Smoke package and harness (`-Sprint smoke`), evidence under `.sprint/0/screens/S0c/` | sd-executor-infra | U2b, U3, go-file | on hold (decision 7) |
+| U6 | `infra/sprint/README.md` from specification to documentation (token procedure, token scopes, socket risk) | sd-executor-infra | R, U2a, U3 (evidence lines added after U5) | pending |
 | SEC | sd-security-reviewer on the whole branch | sd-security-reviewer | U1 to U6 | pending |
 | VER | sd-verifier on R0.8, rows added to `docs/VERIFY-P0.md` | sd-verifier | SEC | pending |
 
@@ -37,6 +38,10 @@
 4. `state-file.ts` uses `node:fs`, so it is exposed as its own subpath and is not re-exported from the contract index, which the web bundle imports.
 5. Resume note from the conductor (`.sprint/0/answers/S0c.md`, read 2026-10-09T12:00Z): the first run was killed by the laptop memory-pressure reaper at about 06:18Z while the U1 review fixes and the U2 image build were both in flight. No user question was pending. Constraint from the conductor: at most one `docker build` at a time, and no image build while a second executor runs. Consequence: the U1 fix round and U4 run in parallel (neither uses Docker), then U2 runs alone, then U3, U5 and U6 in sequence.
 6. Work found uncommitted on resume (U1 fix edits under `scripts/`, U2 draft under `infra/sprint/`) is not assumed complete. Each goes to a fresh executor of the owning type with the original findings or specification verbatim, to audit and finish before anything is committed. The U1 reviewer findings were recovered verbatim from `.sprint/0/logs/S0c.jsonl`.
+7. Second resume note from the conductor (`.sprint/0/answers/S0c.md`, written 2026-10-09T12:25Z, read 12:26Z): the conductor stopped this session at 12:24Z on purpose because the laptop is short on memory. No user question was pending. HOLD RULE from the user, via the conductor: no `docker build`, `docker compose build`, `docker compose up`, `docker run` of the sprint image, and no `run-sprint.ps1` against a real container, until the file `.sprint/0/answers/S0c-u2-go.md` exists. The file is checked immediately before any step that needs the image. Once allowed: one build at a time and no second executor during a build. Work is re-ordered so everything that does not need the image comes first: U1 and U4 review and verification; U2 authored as files with tests that do not need Docker; U3 with scripted dry runs; U6 docs; then the U2 build and run and the U5 smoke run. If that work runs out and the go-file is still absent, the session writes the question file, sets status blocked, commits as `wip: blocked on image build hold`, and exits 0.
+8. State found on this resume: U1 fix iteration 2 left uncommitted edits under `scripts/` (five modified files, one new test file); U4 fix iteration 1 left nothing on disk. Neither is assumed complete. U1 goes to a fresh executor to audit the edits against the findings and finish; the U4 fix round is redone from the same delegation. Both reviewer findings blocks were recovered verbatim from `.sprint/0/logs/S0c-resume1.jsonl`.
+9. Decisions that went with the U4 review findings (made in the previous run, recorded here): `green` is accepted as a sprint state for the smoke package, because R0.8 and `infra/sprint/README.md` require `.sprint/smoke/status.json` with state green while PROMPT-BOOK.md section 6 does not list it (listed under Open questions); the CLI merges `sessions` per session id under an exclusive lock file with a stale-lock takeover; the U4 boundary is extended to one option in `tsconfig.base.json` and the root `engines.node` value for the eleventh finding.
+10. `pnpm-lock.yaml` changed in c8ce896 (adds `yaml` for `scripts`). The reviewer flagged it as outside the U1 boundary and not blocking. Accepted as the mechanical result of the in-boundary `scripts/package.json` change.
 
 ## Units
 
@@ -48,7 +53,7 @@
 
 ## Open questions
 
-(none yet)
+1. PROMPT-BOOK.md section 6 lists the sprint states without `green`; R0.8 and `infra/sprint/README.md` require the smoke status file to say green. The helper accepts both (decision 9). Which document should change is for the user.
 
 ## Research findings (sd-researcher, Claude Code and GitHub docs fetched 2026-10-09)
 
