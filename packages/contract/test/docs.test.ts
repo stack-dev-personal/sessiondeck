@@ -69,7 +69,7 @@ describe("docs/CONTRACT.md", () => {
 
   it("mentions the claude version and no em dashes", () => {
     expect(doc()).toContain("2.1.295");
-    expect(doc()).not.toContain("—");
+    expect(doc()).not.toContain(String.fromCharCode(0x2014));
   });
 });
 
