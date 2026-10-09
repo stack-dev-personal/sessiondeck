@@ -101,3 +101,55 @@ Out of this session by plan: R0.8 (S0c), the captured fixture set and golden tim
 
 3. Confirm the `tracking` field on SessionSnapshot (decision 13) before S3 and S5 build on the contract.
 4. Recommended project-control changes the session did not make (outside every executor's boundary): a guard.mjs rule that blocks `capture-install` from agent sessions, and `Read(./packages/contract/fixtures/raw/**)` in the deny list of .claude/settings.json before capture day. Until the Read deny exists, capture with `--out` pointing outside the repository is the safer choice.
+
+## Final state (2026-10-09, HEAD 16ff347 plus this log and docs/VERIFY-P0.md)
+
+| Unit | Requirements | sd-reviewer | sd-security-reviewer | sd-verifier | Status |
+|------|--------------|-------------|----------------------|-------------|--------|
+| U0 research | borrow map | n/a | n/a | n/a | done; 7 licenses checked, all MIT as claimed |
+| U1 scaffold and CI | R0.5, R0.6 | merge (iteration 2) | n/a | pass | done |
+| U2a contract schemas | R0.1, R0.4 | merge (iteration 2) | n/a | pass for S0 clauses | done |
+| U2b reducer and CONTRACT.md | R0.2, R0.3 | merge (iteration 3) | n/a | pass for S0 clauses | done |
+| U3 capture tooling | R0.7 tooling share | merge (iteration 2 at ce22da8; confirmed at 16ff347) | Gate pass (iteration 2 at c70ecc2; confirmed at ce22da8, bb5d8b9, 16ff347) | pass for S0 clauses | done |
+
+- Verification: docs/VERIFY-P0.md, 22 pass, 0 fail, 4 pending S0b, 1 out of scope (R0.8, session S0c).
+- CI: run 37890035505 at 16ff347, success on ubuntu-latest and windows-latest, Node 22 and 24. Test step 10 to 35 s against the 60 s limit.
+- Local: `pnpm -r test` 8.9 s; contract 238 passed, 13 skipped (TODO(fixture) placeholders); scripts 227 passed, 3 skipped (POSIX-only mode tests on Windows).
+- Review loop note for U3: sd-reviewer reached merge at ce22da8. A polish pass for the remaining LOW and MINOR findings (af98c80 to bb5d8b9) introduced a Linux-only failure in a new test; sd-reviewer returned fix-then-merge on that delta, 16ff347 fixed it, and both reviewers confirmed. The orchestrator counted the post-merge delta as a new, short loop instead of a fourth iteration of the first one. No test containers are left running (one throwaway node:22-slim run, removed).
+
+## Decisions made (continued 3)
+
+20. Replaces the second sentence of decision 18. Default raw capture directory is `%LOCALAPPDATA%/sessiondeck/capture/raw` (XDG data dir elsewhere), outside every work tree, because a transient worktree would take the gitignored raw directory with it and the fixture session reads its own checkout. The uninstaller prints the exact commands that copy the captures into packages/contract/fixtures/raw/ of the fixture session's checkout, which is where the S0b handoff expects them. The handoff text and .claude/skills/fixture-capture/SKILL.md still name the in-repo path as the capture location; neither file was edited by this session.
+21. Capture installer: dry-run by default, `--apply` writes; refuses the real config directory when CLAUDECODE is set; per-event cap 3000 files, 256 MiB total; status line shows `sessiondeck capture on`, `full`, or `error` during the capture day.
+22. S0 status is reported green with four requirement clauses marked "pending S0b" in docs/VERIFY-P0.md (captured-fixture clauses of R0.1, R0.2, R0.4, R0.7). They need the user's capture day and are the stated scope of the S0b handoff. Nothing was marked pass that was not proven.
+
+## Deferred findings (continued)
+
+For S0b (reducer finalization, needs captured payloads):
+- packages/contract/src/transitions.ts:130-134 (MINOR, needs fixture): a subagent that holds the permission prompt and ends without a tool event pins `waiting_permission` until the main Stop. Proposed: a SubagentStop from the holder leaves the state.
+- packages/contract/src/transitions.ts:216 with 211-214 (MINOR, needs fixture): main thread in `waiting_input`, then a subagent PermissionRequest and PostToolUse, ends in `working`; the needs-input signal is lost. Proposed: remember the state to return to.
+- docs/CONTRACT.md:52 and :45 (MINOR): a wrong-typed `reason` or `agent_type` is written as `unknown` (doc says left as it was); PostToolUseFailure from the main thread does not leave `waiting_input` (doc says tool events do).
+- All TODO(fixture) placeholders: packages/contract/test/state.test.ts (PostToolUseFailure, TaskCreated, TaskCompleted, PreCompact, subagent StopFailure, PostToolUse tool_response, golden timeline), state-permission.test.ts (parallel tool calls in the requesting context), state-review2.test.ts (permission Notification with or without agent_id), envelope.test.ts and statusline.test.ts (captured fixture walks).
+
+For the capture tooling (scripts/), none blocks capture day per sd-security-reviewer:
+- scripts/lib/uninstall-flow.mjs:29 (LOW): the PowerShell copy command doubles only ASCII single quotes; a raw path containing a typographic quote prints a broken or injectable command. Needs a planted state file or an unusual `--out`.
+- scripts/lib/uninstall-flow.mjs:75-81 (LOW): `confirmedOutDir` compares two fields of the state file with each other instead of with the settings entries removed.
+- scripts/lib/install-flow.mjs:88-91 (LOW): `settingsRunHookFrom` is a substring test over the settings JSON; with a planted state file plus a planted string, install deletes manifest-named files in another directory (non-recursive, hash-matched).
+- scripts/lib/printable.mjs:3 (LOW): the control-character filter does not cover bidi and zero-width characters.
+- scripts/README.md:47 (MINOR): `error` with no log file means the raw directory itself cannot be created or read; say so.
+- scripts/README.md:48 (MINOR): after moving a full raw directory, the moved copy must also be copied to the fixture session and then deleted; say so.
+- scripts/test/capture-hardening.test.ts:193 (MINOR): the directory-limit test uses 10,000 names against a limit of 64 and would not catch an off-by-one.
+
+For the user (project controls outside every executor's boundary):
+- .claude/hooks/guard.mjs has no rule for `capture-install`; an agent that unsets CLAUDECODE could run the installer against the real settings. Add a rule before capture day.
+- .claude/settings.json: add Read deny rules for the raw capture directory and the deploy directory under %LOCALAPPDATA%/sessiondeck/capture/.
+
+## Needs laptop confirmation (user, plain terminal, not inside a Claude Code session)
+
+1. `node scripts/capture-install.mjs` (preview), check the "Target settings file" and "Raw capture directory" lines, then `node scripts/capture-install.mjs --apply`. This is the first run against the real settings file; the session only ran it in temp sandboxes.
+2. Confirm the exec-form hooks fire on this Windows build (a file appears under the raw directory after the first prompt) and that the guard hook still fires (docs/PERMISSIONS.md, sprint needs_laptop item).
+3. Work a normal day following scripts/README.md step 3, then `node scripts/capture-install.mjs --uninstall --apply`, read its output, and run the copy command it prints into the checkout used for S0b.
+
+## Fixture events still missing (for S0b)
+
+All of them: no payload has been captured yet. Targets: the 17 hook events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDenied, Notification, SubagentStart, SubagentStop, TaskCreated, TaskCompleted, Stop, StopFailure, PreCompact, PostCompact, SessionEnd), statusLine (20 samples, at least one with rate_limits), subagentStatusLine (5 samples). The README checklist reaches 15 of the 17 on a normal day; PermissionDenied needs auto mode and StopFailure needs an API error, so those two may stay missing.
