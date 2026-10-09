@@ -185,6 +185,12 @@ describe("sprint renderer strictness: every package block is seen", () => {
   it("errors on a yaml block whose heading is not '### Sprint <id>:'", () => {
     const order = real.order.replace("### Sprint 5: cockpit", "### Sprint 5 - cockpit");
     expect(order).not.toBe(real.order);
+    expect(() => listPackages(order)).toThrow(/does not match "### Sprint <id>: <name>"/);
+  });
+
+  it("errors on a yaml fence in section 3 that sits under no sprint heading", () => {
+    const order = real.order.replace("### Sprint 0:", '```yaml\nsprint: "x"\n```\n\n### Sprint 0:');
+    expect(order).not.toBe(real.order);
     expect(() => listPackages(order)).toThrow(/not under a "### Sprint <id>:" heading/);
   });
 });

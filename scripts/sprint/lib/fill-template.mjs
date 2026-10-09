@@ -77,6 +77,22 @@ export function placeholderValues(pkg, contractSha) {
 }
 
 /**
+ * After every balanced one-line {token} is set aside, any brace left is a dropped, split or
+ * doubled placeholder that would otherwise ship as literal text.
+ * @param {string} text the template with the preamble embedded and no values substituted
+ */
+function assertNoStrayBraces(text) {
+  const rest = text.replace(BRACED, "");
+  const lineNo = rest.split("\n").findIndex((l) => /[{}]/.test(l));
+  if (lineNo === -1) return;
+  const line = (rest.split("\n")[lineNo] ?? "").trim();
+  throw inputError(
+    `PROMPT-BOOK.md sections 1 and 3: stray brace in "${line}"; ` +
+      `a placeholder must be one {NAME} token on a single line`,
+  );
+}
+
+/**
  * Embeds the preamble, then replaces every braced token in one pass. Values are never rescanned
  * (package values are checked for placeholder names when the block is parsed). Pass-through names stay literal.
  * Any other token without a value is an error naming every such token.
@@ -94,6 +110,7 @@ export function fillTemplate(template, preamble, values) {
     );
   }
   const combined = template.replace(marker, () => preamble);
+  assertNoStrayBraces(combined);
   /** @type {string[]} */
   const unfilled = [];
   const filled = combined.replace(BRACED, (token, name) => {

@@ -143,14 +143,19 @@ export function extractPackageBlocks(order) {
 }
 
 /**
- * A yaml fence in section 3 that no "### Sprint <id>:" heading claimed would be skipped silently.
+ * Section 3 must exist, every "### " heading in it must be a "### Sprint <id>:" heading, and every
+ * yaml fence must sit under one; otherwise a package is skipped silently.
  * @param {string[]} lines the whole of MINI-SPRINT-ORDER.md
  * @param {number} claimed how many blocks the headings produced
  */
 function assertEveryYamlFenceHasHeading(lines, claimed) {
-  const section = sectionLines(lines.join("\n"), 3);
-  if (section === null) return;
   const where = "MINI-SPRINT-ORDER.md section 3";
+  const section = sectionLines(lines.join("\n"), 3);
+  if (section === null) throw inputError(`${where}: heading "## 3. ..." not found`);
+  const odd = section.find((l) => l.startsWith("### ") && !SPRINT_HEADING.test(l));
+  if (odd !== undefined) {
+    throw inputError(`${where}: heading "${odd.trim()}" does not match "### Sprint <id>: <name>"`);
+  }
   const yamlFences = fencesIn(section, where).filter((f) => f.info === "yaml").length;
   if (yamlFences !== claimed) {
     throw inputError(

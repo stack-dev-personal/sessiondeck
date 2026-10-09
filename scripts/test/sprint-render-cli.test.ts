@@ -223,6 +223,13 @@ describe("sprint renderer cli: real process", () => {
     const go = (args: string[]) =>
       spawnSync(process.execPath, [viaLink, ...args], { encoding: "utf8", windowsHide: true });
 
+    const keep = spawnSync(process.execPath, ["--preserve-symlinks-main", viaLink, "--bogus"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    expect(keep.status).toBe(EXIT.USAGE);
+    expect(keep.stderr).toContain("unknown argument");
+
     const bogus = go(["--bogus"]);
     expect(bogus.status).toBe(EXIT.USAGE);
     expect(bogus.stderr).toContain("unknown argument");

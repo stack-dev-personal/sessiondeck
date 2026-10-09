@@ -86,6 +86,15 @@ export function listPackages(order) {
       EXIT.INPUT,
     );
   }
+  for (const p of packages) {
+    const unknown = p.depends_on.find((d) => !ids.includes(d) || d === p.sprint);
+    if (unknown !== undefined) {
+      throw new RenderError(
+        `${ORDER_FILE}, sprint ${p.sprint}: key "depends_on" names "${unknown}", which is not another sprint package id (${ids.join(", ")})`,
+        EXIT.INPUT,
+      );
+    }
+  }
   return packages;
 }
 
@@ -291,7 +300,11 @@ function isMainModule() {
   const entry = process.argv[1];
   if (entry === undefined) return false;
   try {
-    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+    // As typed (what --preserve-symlinks-main reports) or resolved (the default).
+    return (
+      import.meta.url === pathToFileURL(resolve(entry)).href ||
+      import.meta.url === pathToFileURL(realpathSync(entry)).href
+    );
   } catch {
     return false;
   }

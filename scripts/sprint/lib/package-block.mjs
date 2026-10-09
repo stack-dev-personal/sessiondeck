@@ -123,7 +123,33 @@ function readSessions(r, sprintLabel) {
       );
     }
   }
+  checkNoCycle(sessions, sprintLabel);
   return sessions;
+}
+
+/**
+ * A depends_on cycle means no session in it can ever start.
+ * @param {SessionSpec[]} sessions
+ * @param {string} sprintLabel
+ */
+function checkNoCycle(sessions, sprintLabel) {
+  const deps = new Map(sessions.map((s) => [s.id, s.depends_on]));
+  /** @type {Set<string>} */
+  const done = new Set();
+  /** @param {string} id @param {string[]} path */
+  const visit = (id, path) => {
+    const at = path.indexOf(id);
+    if (at !== -1) {
+      const loop = [...path.slice(at), id].join(" -> ");
+      throw inputError(
+        `MINI-SPRINT-ORDER.md, ${sprintLabel}: key "depends_on" forms a cycle (${loop}), so no session in it could start`,
+      );
+    }
+    if (done.has(id)) return;
+    for (const d of deps.get(id) ?? []) visit(d, [...path, id]);
+    done.add(id);
+  };
+  for (const s of sessions) visit(s.id, []);
 }
 
 /**
