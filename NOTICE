@@ -29,3 +29,6 @@ Actual borrowings (update as code lands):
 - sirmalloc/ccstatusline src/types/StatusJSON.ts → packages/contract/src/statusline.ts (MIT, Copyright (c) 2025 Matthew Breedlove, commit 3b60234)
 - Maciek-roboblog/Claude-Code-Usage-Monitor src/claude_monitor/output/official.py → packages/contract/src/statusline.ts (MIT, Copyright (c) 2025 Maciej, commit c59a83b)
 - stravu/crystal frontend/src/components/panels/ai/transformers/MessageTransformer.ts → packages/contract/src/transcript.ts (MIT, Copyright (c) 2024 Stravu, commit 1e18e0b)
+- appaquet/ccmon src/status-writer.ts → packages/contract/src/transitions.ts (MIT, Copyright (c) 2026 Andre-Philippe Paquet, commit 0758fa2)
+- DeanLa/cctop plugin/scripts/cctop-hook.sh → packages/contract/src/transitions.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256)
+- martinwickman/ccmonitor internal/hook/hook.go, internal/session/session.go → packages/contract/src/state.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a)
