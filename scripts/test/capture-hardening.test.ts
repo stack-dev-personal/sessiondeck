@@ -106,6 +106,7 @@ describe("the budget stop is visible and one line is logged (finding 7)", () => 
     const log = readFileSync(join(out, ERROR_LOG_NAME), "utf8");
     expect(log.trim().split("\n")).toHaveLength(1);
     expect(log).toContain(" full-cap-Stop ");
+    expect(readdirSync(join(out, "Stop"))).toHaveLength(HOOK_MAX_FILES_PER_DIR);
   });
 
   it("the status line text changes once recording has stopped; hook mode stays silent", async () => {

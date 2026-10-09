@@ -24,11 +24,11 @@
 /** @typedef {typeof import("./lib/capture-config.mjs")} Config */
 
 /**
- * Flags: --statusline, --subagents, --out <dir>, and --marker <id> (carried only so the
- * installer can recognise its own entries; ignored here). A missing --out value is an error, not
- * a reason to guess a directory.
+ * Flag: --out <dir>. The mode flags are read by modeOf alone, and --marker <id> is carried only so
+ * the installer can recognise its own entries (ignored here). A missing --out value is an error,
+ * not a reason to guess a directory.
  * @param {string[]} argv
- * @returns {{ mode: import("./lib/capture-core.mjs").CaptureMode, outFlag: string | undefined }}
+ * @returns {{ outFlag: string | undefined }}
  */
 function parseArgs(argv) {
   const outIndex = argv.indexOf("--out");
@@ -36,12 +36,13 @@ function parseArgs(argv) {
   if (outIndex >= 0 && (outFlag === undefined || outFlag === "" || outFlag.startsWith("--"))) {
     throw new Error("--out needs a value");
   }
-  if (argv.includes("--statusline")) return { mode: "statusline", outFlag };
-  if (argv.includes("--subagents")) return { mode: "subagents", outFlag };
-  return { mode: "hook", outFlag };
+  return { outFlag };
 }
 
-/** @param {string[]} argv */
+/**
+ * @param {string[]} argv
+ * @returns {import("./lib/capture-core.mjs").CaptureMode}
+ */
 function modeOf(argv) {
   if (argv.includes("--statusline")) return "statusline";
   return argv.includes("--subagents") ? "subagents" : "hook";

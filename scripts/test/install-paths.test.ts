@@ -115,7 +115,8 @@ describe("the deployed copy: moves, planted links, and the uninstall note", () =
     await install(env);
     const elsewhere = join(makeTempDir(), "lib");
     mkdirSync(elsewhere);
-    for (const name of readdirSync(join(env.deployDir, "lib"))) {
+    const names = readdirSync(join(env.deployDir, "lib")).sort();
+    for (const name of names) {
       writeFileSync(join(elsewhere, name), readFileSync(join(env.deployDir, "lib", name)));
     }
     const planted = join(env.sandbox, "lib-moved-aside");
@@ -123,8 +124,9 @@ describe("the deployed copy: moves, planted links, and the uninstall note", () =
     const { renameSync } = await import("node:fs");
     renameSync(join(env.deployDir, "lib"), join(planted, "lib"));
     if (!link(ctx, elsewhere, join(env.deployDir, "lib"))) return;
-    await uninstall(env);
-    expect(readdirSync(elsewhere).length).toBeGreaterThan(0);
+    const r = await uninstall(env);
+    expect(r.code).toBe(0);
+    expect(readdirSync(elsewhere).sort()).toEqual(names);
   });
 
   it("deploys an UNINSTALL.txt that lists the manual steps (finding 10)", async () => {

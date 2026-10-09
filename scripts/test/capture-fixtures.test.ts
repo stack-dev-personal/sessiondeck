@@ -32,11 +32,6 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-function fillDir(dir: string, count: number): void {
-  mkdirSync(dir, { recursive: true });
-  for (let i = 0; i < count; i++) writeFileSync(join(dir, `${i}-x.json`), "{}");
-}
-
 const status = (extra: object = {}) =>
   JSON.stringify({ session_id: "sl-session-1", model: { id: "m" }, ...extra });
 
@@ -82,20 +77,15 @@ describe("caps and the visible full state", () => {
     expect(HOOK_MAX_FILES_PER_DIR).toBeGreaterThanOrEqual(3000);
   });
 
-  it("stops writing a directory at the file cap and says so in the error log", async () => {
-    const out = join(makeTempDir(), "out");
-    fillDir(join(out, "Stop"), HOOK_MAX_FILES_PER_DIR);
-    const r = await captureIn(out, '{"hook_event_name":"Stop","session_id":"a"}');
-    expect(r.full).toBe(true);
-    expect(readdirSync(join(out, "Stop"))).toHaveLength(HOOK_MAX_FILES_PER_DIR);
-    expect(readFileSync(join(out, "_capture-errors.log"), "utf8")).toContain("full-cap-Stop");
-  });
-
   it("status-line mode reports full once ANY hook directory cap has refused a write", async () => {
     const out = join(makeTempDir(), "out");
     expect((await captureIn(out, status(), "statusline", NOW)).full).toBe(false);
-    fillDir(join(out, "PreToolUse"), HOOK_MAX_FILES_PER_DIR);
-    await captureIn(out, '{"hook_event_name":"PreToolUse","session_id":"a"}');
+    // The line a refused PreToolUse write leaves (capture-hardening.test.ts proves a real cap writes it).
+    writeFileSync(
+      join(out, "_capture-errors.log"),
+      `${new Date().toISOString()} full-cap-PreToolUse FULL
+`,
+    );
     const later = status({ session_id: "other" });
     expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
     expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
@@ -226,8 +216,12 @@ describe("statusline and subagent modes (spawned)", () => {
   it("prints the full text once a hook directory cap has refused a write", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
-    fillDir(join(out, "Stop"), HOOK_MAX_FILES_PER_DIR);
-    await capture(sandbox, out, '{"hook_event_name":"Stop","session_id":"a"}');
+    mkdirSync(out);
+    writeFileSync(
+      join(out, "_capture-errors.log"),
+      `${new Date().toISOString()} full-cap-Stop FULL
+`,
+    );
     const r = await capture(sandbox, out, status(), ["--statusline"]);
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe(STATUSLINE_FULL_TEXT);

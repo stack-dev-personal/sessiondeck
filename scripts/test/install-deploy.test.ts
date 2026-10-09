@@ -4,6 +4,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -121,9 +122,13 @@ describe("deployed copy", () => {
     const env = setupInstallEnv();
     await install(env);
     const victim = join(env.deployDir, "lib", "capture-store.mjs");
-    writeFileSync(victim, "");
-    await install(env);
-    expect(readFileSync(victim).length).toBeGreaterThan(100);
+    const good = readFileSync(victim);
+    rmSync(victim);
+    expect(existsSync(victim)).toBe(false);
+    const preview = await runInstallInProcess(env.configDir, env.sandbox, []);
+    expect(preview.stdout).toContain("1 file(s) to write");
+    expect((await install(env)).code).toBe(0);
+    expect(readFileSync(victim).equals(good)).toBe(true);
   });
 
   it("uninstall removes only the manifest files; an extra file keeps the directory", async () => {
