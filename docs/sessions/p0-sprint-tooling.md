@@ -47,3 +47,16 @@
 ## Open questions
 
 (none yet)
+
+## Research findings (sd-researcher, Claude Code and GitHub docs fetched 2026-10-09)
+
+Used by U2 and U6. Quotes and URLs are in the researcher's report; the points below are what the tooling depends on.
+
+- `claude setup-token` is interactive, opens the same browser flow as `/login`, prints the token and saves nothing. Needs Pro, Max, Team or Enterprise. Lifetime is one year. Replacing an expired token is documented; revoking one is not documented.
+- The variable is `CLAUDE_CODE_OAUTH_TOKEN`. `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` and `apiKeyHelper` rank above it, and in `-p` mode an API key is always used when present. `--bare` does not read the token and skips subagent discovery.
+- `--dangerously-skip-permissions` is refused as root or under sudo on Linux. The documented answer is a non-root user. No escape variable is documented.
+- All five flags of the planned command line exist as spelled. `--agent` together with `-p` and a project-scoped agent is not documented either way. It is a live-run confirmation, not a contradiction.
+- `-p` shows no workspace trust dialog. Onboarding behavior of a fresh config directory in `-p` is not documented.
+- Install in a Dockerfile: `npm install -g @anthropic-ai/claude-code@X.Y.Z` with `DISABLE_AUTOUPDATER=1` (devcontainer page).
+- GitHub fine-grained token: Contents read and write, Pull requests read and write, Actions read, Metadata read (implicit). "Checks" cannot be granted to a fine-grained token, so `gh pr checks` may not work with it; `gh run list` needs only Actions read. Commit statuses read covers the status endpoints. "Workflows" is a separate write permission; that a push touching `.github/workflows/` needs it is community-sourced only. Maximum lifetime 366 days or none; the resource owner must be the account that owns the repository (`stack-dev-personal`, by the redirect).
+- The GitHub quotes came through a summarizer and should be checked against the page when the user creates the token.
