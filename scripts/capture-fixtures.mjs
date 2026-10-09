@@ -17,7 +17,8 @@
  * The lib files are loaded with dynamic imports inside the try block, so a missing or broken
  * lib file ends in exit 0 with empty stdout and stderr instead of a module error on every event.
  * In --statusline mode the text is "sessiondeck capture on", or "sessiondeck capture full" once a
- * cap or the byte budget has stopped recording (hook mode stays silent; the first refusal is one
+ * hook-event cap or the byte budget has stopped recording (the status-sample caps do not count;
+ * hook mode stays silent; the first refusal is one
  * line in the error log).
  */
 

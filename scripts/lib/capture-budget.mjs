@@ -4,6 +4,7 @@ import {
   ERROR_LOG_NAME,
   FULL_STEP_PREFIX,
   OUT_MAX_TOTAL_BYTES,
+  SAMPLE_CAP_STEPS,
   USAGE_LOG_NAME,
 } from "./capture-config.mjs";
 
@@ -41,14 +42,17 @@ export async function recordBytes(root, bytes) {
 
 /**
  * Whether the error log already holds a line saying a write was refused (byte budget, a per
- * directory cap, or too many directories). The log is capped at a few KiB, so reading it is cheap.
+ * directory cap, or too many directories; the two status-sample caps do not count). The log is capped at a few KiB, so reading it is cheap.
  * @param {string} root
  * @returns {Promise<boolean>}
  */
 async function refusalLogged(root) {
   try {
     const text = await readFile(join(root, ERROR_LOG_NAME), "utf8");
-    return text.split("\n").some((line) => (line.split(" ")[1] ?? "").startsWith(FULL_STEP_PREFIX));
+    return text.split("\n").some((line) => {
+      const step = line.split(" ")[1] ?? "";
+      return step.startsWith(FULL_STEP_PREFIX) && !SAMPLE_CAP_STEPS.includes(step);
+    });
   } catch {
     return false;
   }

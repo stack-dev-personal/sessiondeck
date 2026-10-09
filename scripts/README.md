@@ -44,7 +44,11 @@ refuses (even for a preview, because a preview prints status line data).
 3. Work normally for a day. Do the items below early in the day, not at the end: each event keeps
    at most 3000 files, and when a limit stops recording the status line reads
    `sessiondeck capture full` instead of `sessiondeck capture on` (see "Disk use" below). If you
-   see `full`, anything you still need has to be done after clearing or moving the raw directory.
+   see `full`, open `<raw>/_capture-errors.log` first: it names what stopped. Only a hook event
+   (`full-cap-<Event>`), `full-budget` or `full-dirs` mean something is no longer recorded; clear or
+   move the raw directory only after the items you still need are done. The two status line sample
+   caps (`full-cap-statusLine`, `full-cap-subagentStatusLine`) fill on a normal day, need no action
+   and do not change the status line text.
    Make sure the day includes:
    - at least two different projects
    - one long session, so `rate_limits` shows up in the status line payload (about 20 samples, one
@@ -104,7 +108,8 @@ refuses (even for a preview, because a preview prints status line data).
   `p0/fixtures`) runs; it is gitignored there.
 - Problems inside the hook go to `<raw>/_capture-errors.log` (error codes only, never payload content).
   The first time a cap or the byte budget refuses a payload, one line says so (`full-budget`,
-  `full-cap-<Event>`, `full-dirs`), and from then on the status line reads `sessiondeck capture full`
+  `full-cap-<Event>`, `full-dirs`; the two status line sample caps are logged the same way but
+  are left out of this signal), and from then on the status line reads `sessiondeck capture full`
   instead of `sessiondeck capture on`, whichever event hit the limit. `full` means at least one
   kind of payload is no longer being recorded; the other kinds may still be. A line in `_usage.log` larger than the whole budget is ignored.
 - The raw directory is NOT scrubbed: it holds your prompts, file contents, and possibly secrets.

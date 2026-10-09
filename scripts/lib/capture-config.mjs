@@ -41,6 +41,14 @@ export const SUBAGENT_STATUSLINE_DIR = "subagentStatusLine";
 export const STATUSLINE_TEXT = "sessiondeck capture on";
 /** Shown instead once a cap or the byte budget stops recording, so the stop is visible. */
 export const STATUSLINE_FULL_TEXT = "sessiondeck capture full";
+/**
+ * Steps of the two status-sample caps. They fill on a normal day (one sample per session every 30
+ * seconds) and need no action, so they stay out of the `full` signal.
+ */
+export const SAMPLE_CAP_STEPS = [
+  `full-cap-${STATUSLINE_DIR}`,
+  `full-cap-${SUBAGENT_STATUSLINE_DIR}`,
+];
 export const BUDGET_LOG_CODE = "FULL";
 /** Error-log step names for a refused write all start with this (full-budget, full-cap-<dir>). */
 export const FULL_STEP_PREFIX = "full-";

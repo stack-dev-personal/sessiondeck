@@ -5,7 +5,9 @@ import { HOOK_EVENTS } from "../lib/hook-events.mjs";
 import {
   HOOK_MAX_FILES_PER_DIR,
   STATUSLINE_FULL_TEXT,
+  STATUSLINE_MAX_FILES,
   STATUSLINE_TEXT,
+  SUBAGENT_STATUSLINE_MAX_FILES,
 } from "../lib/capture-config.mjs";
 import { captureOnce } from "../lib/capture-core.mjs";
 import { CAPTURE_SCRIPT, cleanupTempDirs, makeTempDir, runScript } from "./helpers";
@@ -90,6 +92,22 @@ describe("caps and the visible full state", () => {
     expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
     expect((await captureIn(out, later, "statusline", NOW)).full).toBe(true);
   });
+
+  it.each([
+    ["statusLine", "statusline", STATUSLINE_MAX_FILES],
+    ["subagentStatusLine", "subagents", SUBAGENT_STATUSLINE_MAX_FILES],
+  ] as const)(
+    "a full %s sample directory is logged but is not the full signal (finding R1)",
+    async (dir, mode, cap) => {
+      const out = join(makeTempDir(), "out");
+      mkdirSync(join(out, dir), { recursive: true });
+      for (let i = 0; i < cap; i++) writeFileSync(join(out, dir, `${i}-s-aa.json`), "{}");
+      expect((await captureIn(out, status(), mode, NOW)).full).toBe(false);
+      expect(readFileSync(join(out, "_capture-errors.log"), "utf8")).toContain(`full-cap-${dir} `);
+      const later = status({ session_id: "other" });
+      expect((await captureIn(out, later, mode, NOW)).full).toBe(false);
+    },
+  );
 
   it("an unrelated error-log line does not make the status line say full", async () => {
     const out = join(makeTempDir(), "out");

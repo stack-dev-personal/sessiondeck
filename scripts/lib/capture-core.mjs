@@ -17,6 +17,7 @@ import {
   UNPARSED_MAX_FILES,
   BUDGET_LOG_CODE,
   FULL_STEP_PREFIX,
+  SAMPLE_CAP_STEPS,
 } from "./capture-config.mjs";
 import { budgetReached, recordBytes, usedBytes } from "./capture-budget.mjs";
 import { safeEventName, safeSegment, safeSessionId } from "./capture-paths.mjs";
@@ -178,6 +179,8 @@ export async function captureOnce({ mode, out, text, truncated, now }) {
 
 const STORED = "stored";
 const FULL = "full";
+/** A status-sample cap refused the write: logged once, but not the "full" signal. */
+const SAMPLE_CAPPED = "sample-capped";
 
 /**
  * @param {string} out @param {string} step
@@ -194,12 +197,16 @@ async function refuse(out, step) {
  * @param {number} cap
  * @param {string} name
  * @param {string} text
- * @returns {Promise<"stored" | "full">} full when a limit refused the write
+ * @returns {Promise<"stored" | "full" | "sample-capped">} full when a limit refused the write;
+ *   sample-capped when only a status-sample cap did
  */
 async function store(out, dir, cap, name, text) {
   if (!(await mayUseDir(out, dir))) return refuse(out, `${FULL_STEP_PREFIX}dirs`);
-  if ((await countEntries(join(out, dir))) >= cap)
-    return refuse(out, `${FULL_STEP_PREFIX}cap-${dir}`);
+  if ((await countEntries(join(out, dir))) >= cap) {
+    const step = `${FULL_STEP_PREFIX}cap-${dir}`;
+    const refused = await refuse(out, step);
+    return SAMPLE_CAP_STEPS.includes(step) ? SAMPLE_CAPPED : refused;
+  }
   const bytes = Buffer.byteLength(text);
   if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES)
     return refuse(out, `${FULL_STEP_PREFIX}budget`);
