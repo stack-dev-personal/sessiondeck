@@ -4,15 +4,19 @@ import {
   HOOK_MAX_FILES_PER_DIR,
   MAX_OUT_SUBDIRS,
   MAX_STDIN_BYTES,
+  OUT_MAX_TOTAL_BYTES,
   STATE_DIR,
+  STATE_MAX_FILES,
   STATUSLINE_DIR,
   STATUSLINE_MAX_FILES,
   STATUSLINE_MIN_INTERVAL_MS,
   SUBAGENT_STATUSLINE_DIR,
   SUBAGENT_STATUSLINE_MAX_FILES,
   UNPARSED_DIR,
+  UNPARSED_MAX_BYTES,
   UNPARSED_MAX_FILES,
 } from "./capture-config.mjs";
+import { recordBytes, usedBytes } from "./capture-budget.mjs";
 import { safeEventName, safeSegment, safeSessionId } from "./capture-paths.mjs";
 import { shouldRecordStatus, statusSignature } from "./capture-throttle.mjs";
 import {
@@ -115,21 +119,37 @@ function isStatusState(v) {
   return typeof rec.t === "number" && typeof rec.sig === "string";
 }
 
-/** @param {string} root @param {string} name @param {{ t: number, sig: string }} state */
+/**
+ * Writes the throttle state unless that would add a new file past STATE_MAX_FILES.
+ * @param {string} root @param {string} name @param {{ t: number, sig: string }} state
+ */
 async function writeState(root, name, state) {
+  const names = await readdir(join(root, STATE_DIR)).catch(() => /** @type {string[]} */ ([]));
+  if (!names.includes(name) && names.length >= STATE_MAX_FILES) return;
   await writeInside(root, STATE_DIR, name, JSON.stringify(state));
 }
 
 /**
+ * Cuts text to at most maxBytes of UTF-8 (a partly cut last character becomes a replacement mark).
+ * @param {string} text @param {number} maxBytes
+ * @returns {string}
+ */
+export function truncateUtf8(text, maxBytes) {
+  const bytes = Buffer.from(text, "utf8");
+  return bytes.length <= maxBytes ? text : bytes.subarray(0, maxBytes).toString("utf8");
+}
+
+/**
  * Stores one captured payload according to the mode. Throws on I/O errors; the caller logs them.
- * Silently skips when a cap or the throttle says so.
+ * Silently skips when a cap, the byte budget, or the throttle says so.
  * @param {{ mode: CaptureMode, out: string, text: string, truncated: boolean, now: number }} args
  * @returns {Promise<void>}
  */
 export async function captureOnce({ mode, out, text, truncated, now }) {
   const payload = truncated ? undefined : parseObject(text);
   if (payload === undefined) {
-    await store(out, UNPARSED_DIR, UNPARSED_MAX_FILES, fileName(now, "raw", ".txt"), text);
+    const kept = truncateUtf8(text, UNPARSED_MAX_BYTES);
+    await store(out, UNPARSED_DIR, UNPARSED_MAX_FILES, fileName(now, "raw", ".txt"), kept);
     return;
   }
   const sid = safeSessionId(payload.session_id);
@@ -156,6 +176,9 @@ export async function captureOnce({ mode, out, text, truncated, now }) {
 async function store(out, dir, cap, name, text) {
   if (!(await mayUseDir(out, dir))) return false;
   if ((await countEntries(join(out, dir))) >= cap) return false;
+  const bytes = Buffer.byteLength(text);
+  if ((await usedBytes(out)) + bytes > OUT_MAX_TOTAL_BYTES) return false;
   await writeInside(out, dir, name, text);
+  await recordBytes(out, bytes);
   return true;
 }

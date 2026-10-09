@@ -1,5 +1,4 @@
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   CAPTURE_DIR_ENV,
   MAX_SEGMENT_LENGTH,
@@ -63,14 +62,9 @@ export function toPosix(p) {
   return p.replace(/\\/g, "/");
 }
 
-/** Default raw capture directory, resolved from this file: <repo>/packages/contract/fixtures/raw. */
-export function defaultOutDir() {
-  const scriptsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  return join(scriptsDir, "..", "packages", "contract", "fixtures", "raw");
-}
-
 /**
- * Out dir precedence: --out, then SESSIONDECK_CAPTURE_DIR, then the default.
+ * Out dir precedence: --out, then SESSIONDECK_CAPTURE_DIR. There is no default: the deployed copy
+ * has no checkout to resolve one from, and a guessed location is how raw files land in git.
  * @param {string | undefined} flagValue
  * @param {NodeJS.ProcessEnv} env
  * @returns {string}
@@ -79,5 +73,5 @@ export function resolveOutDir(flagValue, env) {
   const fromEnv = env[CAPTURE_DIR_ENV];
   if (flagValue) return resolve(flagValue);
   if (fromEnv) return resolve(fromEnv);
-  return resolve(defaultOutDir());
+  throw new Error("no capture directory given");
 }

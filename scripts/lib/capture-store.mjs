@@ -4,13 +4,21 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { ERROR_LOG_MAX_BYTES, ERROR_LOG_NAME, RANDOM_SUFFIX_BYTES } from "./capture-config.mjs";
+import {
+  ERROR_LOG_MAX_BYTES,
+  ERROR_LOG_NAME,
+  GITIGNORE_BODY,
+  GITIGNORE_NAME,
+  RANDOM_SUFFIX_BYTES,
+  STALE_TEMP_MS,
+} from "./capture-config.mjs";
 import { isInside } from "./capture-paths.mjs";
 
 /** @returns {string} short random hex used for collision-safe names */
@@ -28,7 +36,23 @@ export function errorCode(error) {
 }
 
 /**
- * Atomically writes text to <root>/<dirName>/<fileName>. Refuses paths that resolve outside root.
+ * Creates the out dir if needed and makes sure it carries a .gitignore of "*", so raw captures
+ * cannot be staged by a routine add even on a branch that lacks the repository ignore rule.
+ * @param {string} root
+ * @returns {Promise<void>}
+ */
+export async function ensureOutDir(root) {
+  await mkdir(root, { recursive: true });
+  try {
+    await writeFile(join(root, GITIGNORE_NAME), GITIGNORE_BODY, { flag: "wx" });
+  } catch (error) {
+    if (errorCode(error) !== "EEXIST") throw error;
+  }
+}
+
+/**
+ * Atomically writes text to <root>/<dirName>/<fileName>. Refuses paths that resolve outside root,
+ * including through a junction or symlink at <root>/<dirName>.
  * The temp file lives in the same directory, so the rename is atomic on one volume.
  * @param {string} root
  * @param {string} dirName
@@ -40,7 +64,9 @@ export async function writeInside(root, dirName, fileName, text) {
   const dir = join(root, dirName);
   const finalPath = join(dir, fileName);
   if (!isInside(root, finalPath)) throw new Error("path escaped out dir");
+  await ensureOutDir(root);
   await mkdir(dir, { recursive: true });
+  if (!isInside(await realpath(root), await realpath(dir))) throw new Error("path escaped out dir");
   const tempPath = join(dir, `.tmp-${randomSuffix()}`);
   try {
     await writeFile(tempPath, text, { flag: "wx" });
@@ -53,17 +79,28 @@ export async function writeInside(root, dirName, fileName, text) {
 
 /**
  * Number of captured entries (dotfiles such as temp files excluded). Missing dir counts as 0.
+ * Temp files left by a killed or cancelled write are removed once they are old.
  * @param {string} dir
+ * @param {number} [now]
  * @returns {Promise<number>}
  */
-export async function countEntries(dir) {
+export async function countEntries(dir, now = Date.now()) {
   try {
     const names = await readdir(dir);
+    for (const name of names.filter((n) => n.startsWith(".tmp-")))
+      await sweepIfStale(join(dir, name), now);
     return names.filter((n) => !n.startsWith(".")).length;
   } catch (error) {
     if (errorCode(error) === "ENOENT") return 0;
     throw error;
   }
+}
+
+/** @param {string} path @param {number} now */
+async function sweepIfStale(path, now) {
+  const info = await stat(path).catch(() => undefined);
+  if (info && now - info.mtimeMs > STALE_TEMP_MS)
+    await rm(path, { force: true }).catch(() => undefined);
 }
 
 /**
@@ -94,7 +131,7 @@ export async function logCaptureError(root, step, error) {
       () => 0,
     );
     if (size >= ERROR_LOG_MAX_BYTES) return;
-    await mkdir(root, { recursive: true });
+    await ensureOutDir(root);
     await appendFile(logPath, `${new Date().toISOString()} ${step} ${errorCode(error)}\n`);
   } catch {
     // Nothing safe left to do; stay silent.
