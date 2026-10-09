@@ -1,6 +1,7 @@
 # scripts
 
-Workspace package `@sessiondeck/scripts`. Dependency-free Node scripts (Node built-ins only).
+Workspace package `@sessiondeck/scripts`. Node scripts. The fixture capture scripts use Node
+built-ins only; the sprint prompt renderer uses the `yaml` package.
 
 ## Fixture capture (R0.7 tooling)
 
@@ -233,3 +234,25 @@ Close or ignore running Claude Code sessions first; they reload settings live.
 ```
 pnpm -F @sessiondeck/scripts test
 ```
+
+## Sprint prompt renderer
+
+`scripts/sprint/render-prompt.mjs` fills the level-1 prompt (PROMPT-BOOK.md section 3, with the
+section 1 preamble) from one package block of MINI-SPRINT-ORDER.md.
+
+```
+node scripts/sprint/render-prompt.mjs --sprint <id> [--contract-sha <sha>] [--out <file>] [--package-json] [--repo-root <dir>]
+```
+
+- `--sprint` is `0` to `5`, or `smoke` (built in; renders the one-line smoke prompt, no preamble).
+- `--contract-sha` is required for every sprint except `0`, which renders `n/a` without it.
+- `--package-json` prints the parsed package (sprint, name, slug, branch, runs_in, max_parallel,
+  depends_on, user_gates, sessions, merge_order) instead of the prompt. The launcher refuses to start
+  a container when `runs_in` is `local` (Sprint 0).
+- `--out` writes atomically (temp file, then rename) with LF endings and creates the parent directory.
+  Without it the text goes to stdout.
+- `{SESSION_ID}` and `{SESSION_BRANCH}` stay literal for the sprint orchestrator. Any other
+  unfilled placeholder, or a package block with a missing or mistyped key, is an error that names it.
+- `needs_laptop` and `notes` from the block are appended as two bullets after the template's package list.
+- Exit codes: 0 ok, 2 usage (flags, unknown sprint, missing contract sha), 3 malformed input or
+  unfilled placeholder, 4 file read or write failure. Messages go to stderr.
