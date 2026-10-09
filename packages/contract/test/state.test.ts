@@ -438,6 +438,12 @@ describe("provisional behavior (fixtures pending)", () => {
     expect.fail("TODO(fixture): write once a PreCompact fixture exists");
   });
 
+  // TODO(fixture): a subagent's StopFailure is unconfirmed. Today it moves the session to error;
+  // intended: confirm against a captured subagent failure whether the session should move at all.
+  it.skip("a subagent StopFailure moves (or does not move) the session to error", () => {
+    expect.fail("TODO(fixture): write once a subagent StopFailure fixture exists");
+  });
+
   // TODO(fixture): PostToolUse tool_response unverified. Intended: detect an interrupted or failed
   // result from tool_response instead of treating every PostToolUse as success.
   it.skip("PostToolUse reads tool_response to detect an interrupted result", () => {
