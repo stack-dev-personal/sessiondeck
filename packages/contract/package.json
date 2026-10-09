@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./state-file": "./src/state-file.ts"
   },
   "dependencies": {
     "zod": "^3.0.0"
