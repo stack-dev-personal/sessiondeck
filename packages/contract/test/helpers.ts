@@ -107,10 +107,11 @@ function stringField(payload: unknown, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** Wraps a fixture as a probe would: session_id and hook_event_name come from the payload itself. */
+/** Wraps a fixture as a probe would: session_id, hook_event_name and agent_id come from the payload itself. */
 export function wrapFixture(fx: LoadedFixture): Envelope {
   const kind = kindForFixtureDir(fx.dir);
   const hookName = stringField(fx.payload, "hook_event_name");
+  const agentId = stringField(fx.payload, "agent_id");
   return {
     v: 1,
     id: TEST_ULID,
@@ -119,6 +120,7 @@ export function wrapFixture(fx: LoadedFixture): Envelope {
     os: "win32",
     session_id: stringField(fx.payload, "session_id"),
     ...(kind === "hook" && hookName !== null ? { hook_event_name: hookName } : {}),
+    ...(agentId !== null ? { agent_id: agentId } : {}),
     ts: 0,
     seq: 0,
     payload: fx.payload,
