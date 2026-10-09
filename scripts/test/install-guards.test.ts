@@ -76,11 +76,15 @@ describe("interlock", () => {
     expect(r.code).toBe(0);
   });
 
-  it("isDefaultTarget sees through an explicit CLAUDE_CONFIG_DIR that equals the default", () => {
+  it("isDefaultTarget sees through an explicit CLAUDE_CONFIG_DIR that equals the default", async () => {
     const home = makeTempDir();
-    expect(isDefaultTarget({}, home)).toBe(true);
-    expect(isDefaultTarget({ CLAUDE_CONFIG_DIR: join(home, ".claude") }, home)).toBe(true);
-    expect(isDefaultTarget({ CLAUDE_CONFIG_DIR: join(home, "other") }, home)).toBe(false);
+    expect(await isDefaultTarget({}, home, home)).toBe(true);
+    expect(await isDefaultTarget({ CLAUDE_CONFIG_DIR: join(home, ".claude") }, home, home)).toBe(
+      true,
+    );
+    expect(await isDefaultTarget({ CLAUDE_CONFIG_DIR: join(home, "other") }, home, home)).toBe(
+      false,
+    );
   });
 
   it("--apply together with --dry-run is a usage error", async () => {

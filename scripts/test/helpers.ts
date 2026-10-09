@@ -144,6 +144,7 @@ export async function runInstallInProcess(
     argv,
     env: sandboxEnv(sandbox, env),
     home: sandbox,
+    realHome: sandbox,
     print: (t) => out.push(t),
     printErr: (t) => err.push(t),
   });

@@ -26,7 +26,7 @@ const KNOWN_ERRORS = [
 ];
 const AGENT_REFUSAL = [
   "Refusing to touch the real Claude settings from inside a Claude Code session",
-  `(${CLAUDECODE_ENV} is set and CLAUDE_CONFIG_DIR does not point elsewhere).`,
+  `(${CLAUDECODE_ENV} is set and the target resolves to the default config directory).`,
   "Run this command yourself from a plain terminal.",
 ];
 
@@ -58,14 +58,14 @@ export function parseArgs(argv) {
 
 /**
  * Runs the installer. Output goes through the callbacks so tests can run it in-process.
- * @param {{ argv: string[], env: NodeJS.ProcessEnv, home: string,
+ * @param {{ argv: string[], env: NodeJS.ProcessEnv, home: string, realHome?: string,
  *   print: (text: string) => void, printErr: (text: string) => void }} io
  * @returns {Promise<number>} exit code: 0 ok, 1 refused or failed (nothing half-written), 2 usage
  */
-export async function run({ argv, env, home, print, printErr }) {
+export async function run({ argv, env, home, realHome, print, printErr }) {
   try {
     const opts = parseArgs(argv);
-    if (env[CLAUDECODE_ENV] && isDefaultTarget(env, home)) {
+    if (env[CLAUDECODE_ENV] && (await isDefaultTarget(env, home, realHome))) {
       printErr(AGENT_REFUSAL.join("\n"));
       return EXIT_FAILED;
     }

@@ -1,8 +1,19 @@
-import { mkdir, lstat, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import {
+  chmod,
+  mkdir,
+  lstat,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { errorCode, randomSuffix } from "./capture-store.mjs";
 import { CONFIG_DIR_ENV, STALE_INSTALL_TEMP_MS } from "./install-config.mjs";
+import { realpathLoose } from "./fs-roots.mjs";
 import { foldPath } from "./settings-match.mjs";
 import { parseSidecar, SidecarError } from "./sidecar.mjs";
 
@@ -11,6 +22,10 @@ const SIDECAR_NAME = "settings.json.sessiondeck-capture-state.json";
 const BACKUP_PREFIX = "settings.json.sessiondeck-backup-";
 const OUR_TEMP = /^settings\.json(\.sessiondeck-capture-state\.json)?\.tmp-[0-9a-f]{12}$/;
 const MAX_BACKUP_ATTEMPTS = 50;
+/** Owner-only: backups and the state file can hold tokens from env. No effect on Windows (ACLs). */
+const PRIVATE_MODE = 0o600;
+const MODE_BITS = 0o777;
+const EXTENDED_PREFIX = /^\\\\\?\\(?!UNC\\)/;
 const BOM = "﻿";
 
 export class SettingsReadError extends Error {}
@@ -29,12 +44,41 @@ export function resolveTarget(env, home = homedir()) {
 }
 
 /**
- * True when the target is the default (real) config directory, set explicitly or not.
- * @param {NodeJS.ProcessEnv} env @param {string} [home]
+ * Comparison key for a directory: its real path (links and junctions followed, extended-length
+ * prefix removed). Only the directory is resolved, never the settings file inside it.
+ * @param {string} dir
+ * @returns {Promise<string>}
  */
-export function isDefaultTarget(env, home = homedir()) {
-  const defaultTarget = join(resolve(home, ".claude"), SETTINGS_NAME);
-  return foldPath(resolveTarget(env, home)) === foldPath(defaultTarget);
+async function realKey(dir) {
+  const real = await realpathLoose(resolve(dir)).catch(() => resolve(dir));
+  return foldPath(process.platform === "win32" ? real.replace(EXTENDED_PREFIX, "") : real);
+}
+
+/** @returns {string | undefined} the account's home directory, which the environment cannot move */
+function accountHome() {
+  try {
+    return userInfo().homedir;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * True when the target is the default (real) config directory. Real paths are compared, so a
+ * junction, a symlink, an extended-length prefix or a different spelling does not get past, and
+ * both the given home and the account's own home count (USERPROFILE and HOME can be changed).
+ * This stops accidents; the guard hook is the actual control.
+ * @param {NodeJS.ProcessEnv} env @param {string} [home] @param {string | undefined} [realHome]
+ * @returns {Promise<boolean>}
+ */
+export async function isDefaultTarget(env, home = homedir(), realHome = accountHome()) {
+  const targetDir = await realKey(dirname(resolveTarget(env, home)));
+  for (const base of [home, realHome]) {
+    if (base !== undefined && targetDir === (await realKey(join(resolve(base), ".claude")))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** @param {string} target */
@@ -83,15 +127,18 @@ export function serialize(settings) {
 }
 
 /**
- * Temp file plus rename in the same directory.
+ * Temp file plus rename in the same directory. The temp file is created owner-only and given
+ * the final mode before the rename, so the result never has a wider mode than intended.
  * @param {string} path
  * @param {string} text
+ * @param {number} [mode] mode of the final file (POSIX only)
  */
-export async function writeAtomic(path, text) {
+export async function writeAtomic(path, text, mode = PRIVATE_MODE) {
   await mkdir(dirname(path), { recursive: true });
   const temp = `${path}.tmp-${randomSuffix()}`;
   try {
-    await writeFile(temp, text, { flag: "wx" });
+    await writeFile(temp, text, { flag: "wx", mode: PRIVATE_MODE });
+    if (process.platform !== "win32") await chmod(temp, mode);
     await rename(temp, path);
   } catch (error) {
     await rm(temp, { force: true }).catch(() => undefined);
@@ -110,7 +157,7 @@ export async function createBackup(target, bytes) {
     const suffix = attempt === 0 ? "" : `-${attempt}`;
     const path = join(dirname(target), `${BACKUP_PREFIX}${stamp}${suffix}`);
     try {
-      await writeFile(path, bytes, { flag: "wx" });
+      await writeFile(path, bytes, { flag: "wx", mode: PRIVATE_MODE });
       return path;
     } catch (error) {
       if (errorCode(error) !== "EEXIST") throw error;
@@ -186,11 +233,15 @@ async function assertUnchanged(target, original) {
 export async function commitSettings({ target, original, next, state }) {
   const backup = original ? await createBackup(target, original) : undefined;
   const priorSidecar = await readTextOrUndefined(sidecarPath(target));
+  const mode = await stat(target).then(
+    (info) => info.mode & MODE_BITS,
+    () => PRIVATE_MODE,
+  );
   try {
     if (state !== undefined) await writeSidecar(target, state);
     await assertUnchanged(target, original);
     if (next === null) await rm(target, { force: true });
-    else await writeAtomic(target, next);
+    else await writeAtomic(target, next, mode);
   } catch (error) {
     if (state !== undefined) await restoreSidecar(target, priorSidecar);
     if (backup) await rm(backup, { force: true }).catch(() => undefined);
@@ -203,7 +254,7 @@ export async function commitSettings({ target, original, next, state }) {
 async function restoreSidecar(target, text) {
   const path = sidecarPath(target);
   if (text === undefined) await rm(path, { force: true }).catch(() => undefined);
-  else await writeFile(path, text).catch(() => undefined);
+  else await writeFile(path, text, { mode: PRIVATE_MODE }).catch(() => undefined);
 }
 
 /**
