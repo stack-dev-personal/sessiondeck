@@ -1,0 +1,38 @@
+# dependencies and builds
+node_modules/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# env and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+probe.json
+
+# local data
+*.sqlite
+*.sqlite-*
+*.db
+spool/
+data/
+
+# tooling
+.vite/
+playwright-report/
+test-results/
+.pnpm-store/
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code local state (project settings are committed, local overrides are not)
+.claude/settings.local.json

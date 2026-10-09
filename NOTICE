@@ -1,0 +1,29 @@
+sessiondeck
+Copyright (c) 2026 Evan Stachowiak
+
+This repository may include code ported or adapted from the following projects.
+Each borrowed file carries a header comment naming its source, path, license,
+and what changed. Add a line here whenever code (not just design) is borrowed.
+The full borrow map, including sources used as specification only (no code
+copied), is in docs/planning/01-architecture.md section 9.
+
+Planned MIT sources (copyright holders as stated in their LICENSE files):
+- stravu/crystal                         https://github.com/stravu/crystal
+- DeanLa/cctop                           https://github.com/DeanLa/cctop
+- martinwickman/ccmonitor                https://github.com/martinwickman/ccmonitor (confirm LICENSE file before copying)
+- ccusage/ccusage (tag v19.0.3)          https://github.com/ccusage/ccusage
+- Maciek-roboblog/Claude-Code-Usage-Monitor  https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor
+- sirmalloc/ccstatusline                 https://github.com/sirmalloc/ccstatusline
+- simple10/agents-observe                https://github.com/simple10/agents-observe
+- NirDiamant/claude-watch                https://github.com/NirDiamant/claude-watch
+- appaquet/ccmon                         https://github.com/appaquet/ccmon
+- sugyan/claude-code-webui               https://github.com/sugyan/claude-code-webui
+
+Planned Apache-2.0 sources (NOTICE obligations apply when copied):
+- BloopAI/vibe-kanban                    https://github.com/BloopAI/vibe-kanban
+
+Specification only, no code copied (AGPL-3.0):
+- siteboon/claudecodeui                  https://github.com/siteboon/claudecodeui
+
+Actual borrowings (update as code lands):
+- (none yet)
