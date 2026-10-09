@@ -19,8 +19,8 @@
 
 | Unit | What | Executor | Blocked by | Status |
 |------|------|----------|------------|--------|
-| R | Docs research: `claude setup-token`, headless flags, CLI install in a Linux image, GitHub fine-grained token permissions | sd-researcher | none | in progress |
-| U1 | `scripts/sprint/render-prompt.mjs` and tests (one per package block, loud failure on a missing placeholder, smoke prompt) | sd-executor-contract | none | in progress |
+| R | Docs research: `claude setup-token`, headless flags, CLI install in a Linux image, GitHub fine-grained token permissions | sd-researcher | none | done (findings below) |
+| U1 | `scripts/sprint/render-prompt.mjs` and tests (one per package block, loud failure on a missing placeholder, smoke prompt) | sd-executor-contract | none | committed c8ce896; review iteration 1 returned fix-then-merge (1 blocking, 3 major, 5 minor); fix round interrupted, resumed |
 | U4 | `packages/contract/src/state-file.ts` atomic write helper and tests | sd-executor-contract | none | pending |
 | U2 | `infra/sprint/Dockerfile`, `docker-compose.yml`, `entrypoint.sh`, built and run locally with a dummy prompt | sd-executor-infra | R | pending |
 | U3 | `scripts/sprint/run-sprint.ps1`, `status.ps1`, `stop-sprint.ps1`, with a scripted dry run test | sd-executor-infra | U1, U2 | pending |
@@ -35,6 +35,8 @@
 2. U3 (PowerShell scripts under `scripts/sprint/`) goes to sd-executor-infra as the handoff says, although `.claude/agents/README.md` lists `scripts` under sd-executor-contract. The handoff is the more specific instruction. The delegation names the exact files.
 3. The level-1 template contains `{SESSION_ID}` and `{SESSION_BRANCH}` as generic references the sprint orchestrator fills per session. The renderer passes exactly those two through and fails on any other unfilled placeholder.
 4. `state-file.ts` uses `node:fs`, so it is exposed as its own subpath and is not re-exported from the contract index, which the web bundle imports.
+5. Resume note from the conductor (`.sprint/0/answers/S0c.md`, read 2026-10-09T12:00Z): the first run was killed by the laptop memory-pressure reaper at about 06:18Z while the U1 review fixes and the U2 image build were both in flight. No user question was pending. Constraint from the conductor: at most one `docker build` at a time, and no image build while a second executor runs. Consequence: the U1 fix round and U4 run in parallel (neither uses Docker), then U2 runs alone, then U3, U5 and U6 in sequence.
+6. Work found uncommitted on resume (U1 fix edits under `scripts/`, U2 draft under `infra/sprint/`) is not assumed complete. Each goes to a fresh executor of the owning type with the original findings or specification verbatim, to audit and finish before anything is committed. The U1 reviewer findings were recovered verbatim from `.sprint/0/logs/S0c.jsonl`.
 
 ## Units
 
