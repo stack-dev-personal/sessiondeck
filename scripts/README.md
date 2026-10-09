@@ -44,9 +44,10 @@ refuses (even for a preview, because a preview prints status line data).
 3. Work normally for a day. Do the items below early in the day, not at the end: each event keeps
    at most 3000 files, and when a limit stops recording the status line reads
    `sessiondeck capture full` instead of `sessiondeck capture on` (see "Disk use" below). If you
-   see `full`, open `<raw>/_capture-errors.log` first: it names what stopped. Only a hook event
-   (`full-cap-<Event>`), `full-budget` or `full-dirs` mean something is no longer recorded; clear or
-   move the raw directory only after the items you still need are done. The two status line sample
+   see `full`, open `<raw>/_capture-errors.log` first: it names what stopped. `error` means a
+   write failed; read `<raw>/_capture-errors.log` for the code. For `full-budget` or `full-dirs`,
+   move (never delete) the raw directory before you do the remaining items, so new events are
+   recorded again. For `full-cap-<Event>` do nothing. The two status line sample
    caps (`full-cap-statusLine`, `full-cap-subagentStatusLine`) fill on a normal day, need no action
    and do not change the status line text.
    Make sure the day includes:

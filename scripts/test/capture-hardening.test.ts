@@ -19,7 +19,7 @@ import {
   STATUSLINE_TEXT,
   USAGE_LOG_NAME,
 } from "../lib/capture-config.mjs";
-import { captureOnce } from "../lib/capture-core.mjs";
+import { captureOnce, mayUseDir } from "../lib/capture-core.mjs";
 import { DEPLOY_FILES } from "../lib/install-config.mjs";
 import { CAPTURE_SCRIPT, cleanupTempDirs, makeTempDir, runScript } from "./helpers";
 
@@ -175,5 +175,23 @@ describe("the nested .gitignore is restored (finding 8)", () => {
     writeFileSync(join(out, ".gitignore"), body);
     await hook(out);
     expect(readFileSync(join(out, ".gitignore"), "utf8")).toBe("*\n");
+  });
+});
+
+describe("mayUseDir only treats a missing root as usable (R0.5)", () => {
+  const failWith = (code: string) => () => Promise.reject(Object.assign(new Error(code), { code }));
+
+  it("allows a missing root", async () => {
+    expect(await mayUseDir("/x", "d", failWith("ENOENT"))).toBe(true);
+  });
+
+  it.each(["ENOTDIR", "EACCES"])("rethrows %s so the caller logs it", async (code) => {
+    await expect(mayUseDir("/x", "d", failWith(code))).rejects.toMatchObject({ code });
+  });
+
+  it("allows a known name and refuses a new one when full", async () => {
+    const names = Array.from({ length: 10_000 }, (_, i) => `n${i}`);
+    expect(await mayUseDir("/x", "n1", () => Promise.resolve(names))).toBe(true);
+    expect(await mayUseDir("/x", "new", () => Promise.resolve(names))).toBe(false);
   });
 });

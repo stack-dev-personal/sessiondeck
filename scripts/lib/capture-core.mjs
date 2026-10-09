@@ -79,13 +79,16 @@ function fileName(now, sid, ext) {
  * Whether a new top-level directory may be created under root (names are untrusted input).
  * @param {string} root
  * @param {string} dirName
+ * @param {(root: string) => Promise<string[]>} [list] injectable directory lister (tests)
  */
-async function mayUseDir(root, dirName) {
+export async function mayUseDir(root, dirName, list = readdir) {
   try {
-    const names = await readdir(root);
+    const names = await list(root);
     return names.includes(dirName) || names.length < MAX_OUT_SUBDIRS;
   } catch (error) {
-    return errorCode(error) === "ENOENT";
+    // A missing root is empty. Anything else (ENOTDIR, EACCES) is a failure for the caller to log.
+    if (errorCode(error) === "ENOENT") return true;
+    throw error;
   }
 }
 
