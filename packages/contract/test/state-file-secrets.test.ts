@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  REDACTED,
+  SECRET_BODY_MIN_CHARS,
   SECRET_KEY_NAMES,
   SECRET_SCAN_MAX_DEPTH,
   SECRET_VALUE_PREFIXES,
   StateFileError,
   assertNoSecrets,
   findSecretPath,
+  hasSecretShape,
+  scrubSecrets,
 } from "../src/state-file";
 
 // Credential-looking strings are assembled at run time so no literal in the repo resembles one.
@@ -78,5 +82,33 @@ describe("secrets guard", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
     expect(findSecretPath(cyclic)).toMatch(/nested too deeply/);
+  });
+});
+
+describe("secrets guard: bare prefixes and added key names", () => {
+  it("accepts a sentence that only names the prefixes", () => {
+    const note = "U4 secrets guard (sk-" + "ant-, gh" + "p_ prefixes)";
+    expect(findSecretPath({ current_unit: note })).toBeUndefined();
+  });
+
+  it("still refuses a prefix followed by a token body", () => {
+    expect(findSecretPath({ current_unit: `see ${tokenFor("sk-" + "ant-")}` })).toBe(
+      "$.current_unit",
+    );
+    const shortest = "gh" + "p_" + "x".repeat(SECRET_BODY_MIN_CHARS);
+    expect(findSecretPath({ n: shortest })).toBe("$.n");
+    expect(findSecretPath({ n: shortest.slice(0, -1) })).toBeUndefined();
+  });
+
+  it.each(["GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"])("refuses the key %s", (key) => {
+    expect(SECRET_KEY_NAMES).toContain(key);
+    expect(findSecretPath({ [key]: "abc" })).toBe(`$.${key}`);
+  });
+
+  it("scrubSecrets replaces every credential-shaped run and keeps the rest", () => {
+    const text = `a ${tokenFor("gh" + "p_")} b ${tokenFor("sk-" + "ant-")} c`;
+    expect(scrubSecrets(text)).toBe(`a ${REDACTED} b ${REDACTED} c`);
+    expect(scrubSecrets("nothing here")).toBe("nothing here");
+    expect(hasSecretShape(tokenFor("gh" + "s_"))).toBe(true);
   });
 });

@@ -1,4 +1,3 @@
-// @ts-expect-error TS5097: explicit .ts specifiers let Node run this file without a build step
 import { StateFileError } from "./state-file-error.ts";
 
 // A tripwire, not a scanner: it catches the credential shapes this project's containers and
@@ -20,6 +19,8 @@ export const SECRET_VALUE_PREFIXES = [
 export const SECRET_KEY_NAMES = [
   "CLAUDE_CODE_OAUTH_TOKEN", // container token for Claude Code
   "GH_TOKEN", // container token for gh
+  "GITHUB_TOKEN", // the same GitHub credential under the name Actions and many tools use
+  "GH_ENTERPRISE_TOKEN", // gh token for GitHub Enterprise hosts
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
 ] as const;
@@ -27,14 +28,30 @@ export const SECRET_KEY_NAMES = [
 /** Deep enough for any status file; also stops a cyclic value from overflowing the stack. */
 export const SECRET_SCAN_MAX_DEPTH = 32;
 
+/**
+ * A prefix alone is prose ("sk-ant- and ghp_ prefixes"); a credential has a body after it. Real
+ * bodies are 20 characters or more, so 8 stays strict while letting such sentences through.
+ */
+export const SECRET_BODY_MIN_CHARS = 8;
+export const REDACTED = "<redacted>";
+
 // The prefixes contain only letters, digits, "-" and "_", so they need no regex escaping.
-const PREFIX_PATTERN = new RegExp(`(?<![A-Za-z0-9])(?:${SECRET_VALUE_PREFIXES.join("|")})`);
+const PATTERN_SOURCE =
+  `(?<![A-Za-z0-9])(?:${SECRET_VALUE_PREFIXES.join("|")})` +
+  `[A-Za-z0-9_-]{${SECRET_BODY_MIN_CHARS},}`;
+const PREFIX_PATTERN = new RegExp(PATTERN_SOURCE);
+const PREFIX_PATTERN_ALL = new RegExp(PATTERN_SOURCE, "g");
 const KEY_NAMES_UPPER: readonly string[] = SECRET_KEY_NAMES.map((n) => n.toUpperCase());
 
 const KEY_PLACEHOLDER = "<key>";
 
-function hasSecretShape(text: string): boolean {
+export function hasSecretShape(text: string): boolean {
   return PREFIX_PATTERN.test(text);
+}
+
+/** Replaces every credential-shaped run; applied to anything echoed to a log or a terminal. */
+export function scrubSecrets(text: string): string {
+  return text.replace(PREFIX_PATTERN_ALL, REDACTED);
 }
 
 function isSecretKey(key: string): boolean {

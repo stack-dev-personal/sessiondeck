@@ -3,6 +3,8 @@ import { z } from "zod";
 // Shapes of the two status files in PROMPT-BOOK.md section 6. Unknown keys are preserved
 // (passthrough) because other tools already add their own, for example worktree or heartbeat.
 
+// "green" is not in the PROMPT-BOOK section 6 list: it is the terminal state of the smoke package
+// (R0.8, infra/sprint/README.md "Smoke test"), whose status.json the helper must be able to write.
 export const SPRINT_STATES = [
   "running",
   "blocked",
@@ -11,6 +13,7 @@ export const SPRINT_STATES = [
   "awaiting-merge-approval",
   "merged",
   "failed",
+  "green",
 ] as const;
 
 // "not-started" is not in the PROMPT-BOOK list but the conductor writes it for sessions that

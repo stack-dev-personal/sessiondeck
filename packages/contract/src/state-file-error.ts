@@ -7,7 +7,8 @@ export type StateFileErrorKind =
   | "not-found"
   | "invalid-json"
   | "read-failed"
-  | "usage";
+  | "usage"
+  | "lock-timeout";
 
 export class StateFileError extends Error {
   readonly kind: StateFileErrorKind;

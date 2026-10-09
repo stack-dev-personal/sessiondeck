@@ -1,9 +1,13 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RENAME_MAX_ATTEMPTS,
+  RENAME_RETRY_CODES,
+  STALE_TEMP_MS,
+  ensureStateLayout,
+  renameBackoffMs,
   StateFileError,
   writeStateFileAtomic,
   type RenameFn,
@@ -28,6 +32,8 @@ function flaky(code: string, times: number): { fn: RenameFn; calls: () => number
   return { fn, calls: () => calls };
 }
 
+// A poller, as the dashboard is; a back-to-back loop would hold the file open without a gap.
+const READ_PAUSE_MS = 2;
 const ALWAYS = Number.POSITIVE_INFINITY;
 
 describe("writeStateFileAtomic", () => {
@@ -83,14 +89,43 @@ describe("writeStateFileAtomic", () => {
     ).rejects.toThrow(/not removed: UNKNOWN/);
   });
 
-  it("never lets a reader see a partial file across 50 overwrites", async () => {
+  it("never lets a concurrent reader see a partial file across 50 overwrites", async () => {
     const target = join(root, "status.json");
     await writeStateFileAtomic(target, { n: 0, pad: "p".repeat(4000) });
+    let writing = true;
+    const torn: string[] = [];
+    let reads = 0;
+    // Runs while the writes happen; a plain truncate-and-write would be caught mid-way.
+    const reader = (async (): Promise<void> => {
+      while (writing) {
+        try {
+          JSON.parse(await readFile(target, "utf8"));
+          reads += 1;
+          await new Promise((resolve) => setTimeout(resolve, READ_PAUSE_MS));
+        } catch (error: unknown) {
+          const code = (error as { code?: string }).code;
+          // A Windows sharing violation on open is not a torn read; a parse error is.
+          if (code === undefined || !RENAME_RETRY_CODES.includes(code)) torn.push(String(error));
+        }
+      }
+    })();
+    // On Windows a polling reader can make a rename fail for longer than any sane retry budget
+    // (see RENAME_MAX_ATTEMPTS); that is a dropped write, not a torn read, and the retry budget
+    // has its own tests. A small budget here keeps the test fast while the reader keeps polling.
+    const quickRetry = { maxAttempts: 3, retryDelayMs: 2 };
+    let dropped = 0;
     for (let n = 1; n <= 50; n += 1) {
-      await writeStateFileAtomic(target, { n, pad: "p".repeat(n % 2 === 0 ? 10 : 4000) });
-      const parsed = JSON.parse(await readFile(target, "utf8")) as { n: number };
-      expect(parsed.n).toBe(n);
+      const pad = "p".repeat(n % 2 === 0 ? 10 : 4000);
+      await writeStateFileAtomic(target, { n, pad }, quickRetry).catch((error: unknown) => {
+        if (!(error instanceof StateFileError) || error.kind !== "write-failed") throw error;
+        dropped += 1;
+      });
     }
+    writing = false;
+    await reader;
+    expect(torn).toEqual([]);
+    expect(reads).toBeGreaterThan(0);
+    expect(dropped).toBeLessThan(50);
     expect(await readdir(root)).toEqual(["status.json"]);
   });
 
@@ -144,5 +179,93 @@ describe("rename retry (Windows sharing violations)", () => {
     await expect(writeStateFileAtomic(join(root, "s.json"), {}, { rename: fn })).rejects.toThrow(
       /UNKNOWN/,
     );
+  });
+});
+
+describe("backoff", () => {
+  it("doubles from the base and scales by jitter between the floor and 1", () => {
+    expect([1, 2, 3, 4, 5, 6].map((n) => renameBackoffMs(n, 20, () => 1))).toEqual([
+      20, 40, 80, 160, 320, 640,
+    ]);
+    expect([1, 2, 3].map((n) => renameBackoffMs(n, 20, () => 0))).toEqual([10, 20, 40]);
+    expect(renameBackoffMs(3, 0, () => 0.7)).toBe(0);
+  });
+
+  it("sleeps the scheduled delays between attempts, about a second in total", async () => {
+    const { fn, calls } = flaky("EPERM", ALWAYS);
+    const slept: number[] = [];
+    const sleep = (ms: number): Promise<void> => {
+      slept.push(ms);
+      return Promise.resolve();
+    };
+    const run = writeStateFileAtomic(
+      join(root, "s.json"),
+      {},
+      { rename: fn, sleep, random: () => 1 },
+    );
+    await expect(run).rejects.toThrow(/EPERM after 7 attempt\(s\)/);
+    expect(calls()).toBe(RENAME_MAX_ATTEMPTS);
+    expect(slept).toEqual([20, 40, 80, 160, 320, 640]);
+    expect(slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1300);
+  });
+
+  it("uses real Math.random and setTimeout by default and still succeeds", async () => {
+    const { fn } = flaky("EBUSY", 1);
+    await writeStateFileAtomic(join(root, "s.json"), { ok: 1 }, { rename: fn, retryDelayMs: 1 });
+    expect(await readdir(root)).toEqual(["s.json"]);
+  });
+});
+
+describe("values that have no JSON form", () => {
+  it("rejects undefined as write-failed and writes nothing", async () => {
+    const target = join(root, "s.json");
+    await expect(writeStateFileAtomic(target, undefined)).rejects.toMatchObject({
+      kind: "write-failed",
+    });
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it("rejects a BigInt (and a cycle) as a StateFileError, not a bare TypeError", async () => {
+    const target = join(root, "s.json");
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    for (const value of [{ n: 1n }, cyclic]) {
+      const run = writeStateFileAtomic(target, value);
+      await expect(run).rejects.toThrow(StateFileError);
+      await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+    }
+    expect(await readdir(root)).toEqual([]);
+  });
+});
+
+describe("stale temp files", () => {
+  const TEN_MINUTES_S = (STALE_TEMP_MS / 1000) * 2;
+  async function makeTemp(dir: string, name: string, ageSeconds: number): Promise<void> {
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, name), "partial");
+    const then = new Date(Date.now() - ageSeconds * 1000);
+    await utimes(join(dir, name), then, then);
+  }
+
+  it("a write removes old temp files of its own target and leaves the rest", async () => {
+    const dir = join(root, "sessions");
+    await makeTemp(dir, ".S1.json.40856.60e6318c.tmp", TEN_MINUTES_S);
+    await makeTemp(dir, ".S1.json.40857.aaaaaaaa.tmp", 1);
+    await makeTemp(dir, ".S2.json.40858.bbbbbbbb.tmp", TEN_MINUTES_S);
+    await writeStateFileAtomic(join(dir, "S1.json"), { ok: true });
+    expect((await readdir(dir)).sort()).toEqual([
+      ".S1.json.40857.aaaaaaaa.tmp",
+      ".S2.json.40858.bbbbbbbb.tmp",
+      "S1.json",
+    ]);
+  });
+
+  it("ensureStateLayout removes old temp files in the root and sessions/", async () => {
+    await makeTemp(root, ".status.json.1.abcdef01.tmp", TEN_MINUTES_S);
+    await makeTemp(join(root, "sessions"), ".S3.json.2.abcdef02.tmp", TEN_MINUTES_S);
+    await makeTemp(join(root, "sessions"), ".S4.json.3.abcdef03.tmp", 2);
+    await ensureStateLayout(root);
+    expect(await readdir(join(root, "sessions"))).toEqual([".S4.json.3.abcdef03.tmp"]);
+    expect((await readdir(root)).filter((n) => n.endsWith(".tmp"))).toEqual([]);
   });
 });

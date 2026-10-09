@@ -95,7 +95,10 @@ describe("runCli", () => {
     const ok = await runCli(["write-session", stateDir, "S2", "state=blocked", "current_unit=a=b"]);
     expect(JSON.parse(ok.output)).toMatchObject({ current_unit: "a=b" });
     const bad = await runCli(["write-session", stateDir, "S2", "oops"]);
-    expect(bad).toEqual({ code: EXIT_FAILURE, output: "state-file: not key=value: oops\n" });
+    expect(bad).toEqual({
+      code: EXIT_FAILURE,
+      output: "state-file: argument 1 after the target is not key=value\n",
+    });
   });
 
   it("surfaces an existing file that is broken instead of overwriting it", async () => {

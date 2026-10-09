@@ -206,3 +206,35 @@ describe("readers tell failures apart", () => {
     await expect(readSprintStatus(stateDir)).rejects.toThrow(/(root)/);
   });
 });
+
+describe("reader robustness and the smoke state", () => {
+  it("reads a file that starts with a UTF-8 byte order mark", async () => {
+    await mkdir(join(stateDir, "sessions"));
+    const body = JSON.stringify({ state: "running", updated_at: STAMP });
+    await writeFile(sessionStatusPath(stateDir, "S1"), "\uFEFF" + body);
+    await expect(readSessionStatus(stateDir, "S1")).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("accepts green as a sprint state (smoke package) and still requires the other fields", () => {
+    expect(SPRINT_STATES).toContain("green");
+    const smoke = { sprint: "smoke", name: "smoke", branch: "sprint/smoke", state: "green" };
+    expect(SprintStatusSchema.safeParse({ ...smoke, updated_at: STAMP }).success).toBe(true);
+    expect(SprintStatusSchema.safeParse({ state: "green" }).success).toBe(false);
+  });
+
+  it("does not echo a rejected value, credential or not, in a schema error", async () => {
+    const secret = "gh" + "p_" + "x".repeat(24);
+    const run = writeSessionStatus(stateDir, "S1", { state: "paused" });
+    await expect(run).rejects.toThrow(/expected one of/);
+    await expect(run).rejects.not.toThrow("paused");
+    const bad = writeSessionStatus(stateDir, "S1", { state: "running", pid: secret });
+    await expect(bad).rejects.toMatchObject({ kind: "secret" });
+  });
+
+  it("does not echo a credential used as an id", async () => {
+    const secret = "gh" + "p_" + "x".repeat(24) + "/..";
+    const run = writeSessionStatus(stateDir, secret, { state: "running" });
+    await expect(run).rejects.toMatchObject({ kind: "invalid-id" });
+    await expect(run).rejects.not.toThrow("x".repeat(24));
+  });
+});
