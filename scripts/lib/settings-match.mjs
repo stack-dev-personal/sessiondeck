@@ -1,9 +1,9 @@
-import { HOOK_SCRIPT_NAME, MARKER_FLAG, MARKER_VALUE } from "./install-config.mjs";
+import { MARKER_FLAG, MARKER_VALUE } from "./install-config.mjs";
 
 /**
  * Recognition of our entries. It does not depend on where the script lives: the marker argument
- * is the primary signal, the sidecar record the second, and the old script-name form the third
- * (entries written before the marker existed).
+ * is the primary signal and the sidecar record the second. An entry without the marker pair that
+ * does not equal the record is never ours, whatever its script is called.
  */
 
 /** @typedef {Record<string, unknown>} Json */
@@ -13,8 +13,6 @@ import { HOOK_SCRIPT_NAME, MARKER_FLAG, MARKER_VALUE } from "./install-config.mj
  */
 
 const MARKER_TOKENS = new RegExp(String.raw`(^|\s)${MARKER_FLAG}\s+${MARKER_VALUE}(\s|$)`);
-const LEGACY_STATUS = new RegExp(`node "[^"]*${HOOK_SCRIPT_NAME.replace(".", "\\.")}" --`, "i");
-const LEGACY_SCRIPT = new RegExp(`(^|/)${HOOK_SCRIPT_NAME.replace(".", "\\.")}$`, "i");
 
 /** @param {unknown} v @returns {v is Json} */
 export function isRecord(v) {
@@ -87,7 +85,6 @@ export function isOurHook(hook, record) {
   if (!isRecord(hook)) return false;
   const args = Array.isArray(hook.args) ? hook.args : [];
   if (hasMarkerPair(args)) return true;
-  if (typeof args[0] === "string" && LEGACY_SCRIPT.test(foldPath(args[0], "linux"))) return true;
   return matchesHookRecord(hook, record);
 }
 
@@ -97,7 +94,7 @@ export function isOurHook(hook, record) {
  */
 export function isOurStatus(value, key, record) {
   if (!isRecord(value) || typeof value.command !== "string") return false;
-  if (hasMarkerTokens(value.command) || LEGACY_STATUS.test(value.command)) return true;
+  if (hasMarkerTokens(value.command)) return true;
   return record !== undefined && foldPath(value.command) === foldPath(record[key]);
 }
 

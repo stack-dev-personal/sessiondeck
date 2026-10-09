@@ -92,19 +92,11 @@ describe("recognition does not depend on where the script lives", () => {
     expect(isOurStatus({ command: "x" }, "statusLine", undefined)).toBe(false);
   });
 
-  it("recognises the pre-marker form by script name, wherever it sits", () => {
-    const legacy = {
-      type: "command",
-      command: "node",
-      args: ["D:/old/Scripts/Capture-Fixtures.mjs", "--out", "x"],
-    };
-    expect(isOurHook(legacy, undefined)).toBe(true);
-    expect(isOurHook({ command: "node", args: ["D:/old/other.mjs"] }, undefined)).toBe(false);
-    const status = {
-      type: "command",
-      command: 'node "D:/old/capture-fixtures.mjs" --statusline --out "o"',
-    };
-    expect(isOurStatus(status, "statusLine", undefined)).toBe(true);
+  it("never treats an entry without the marker pair as ours, whatever the script is called", () => {
+    const hook = { type: "command", command: "node", args: ["D:/tools/capture-fixtures.mjs"] };
+    expect(isOurHook(hook, undefined)).toBe(false);
+    const status = { type: "command", command: 'node "D:/x/capture-fixtures.mjs" --statusline' };
+    expect(isOurStatus(status, "statusLine", undefined)).toBe(false);
   });
 
   it("findRemaining reports marker text in places stripping does not reach", () => {
@@ -155,23 +147,22 @@ describe("fail closed", () => {
     expect(loadJson(env.target).statusLine).toBeUndefined();
   });
 
-  it("never records a capture status line as previous, in either format", async () => {
+  it("keeps an unmarked user hook and status line named like ours through install and uninstall", async () => {
     const env = setupInstallEnv();
-    const stale = loadJson(env.target);
-    stale.statusLine = {
+    const mine = loadJson(env.target);
+    const hook = { type: "command", command: "node", args: ["D:/tools/capture-fixtures.mjs"] };
+    mine.hooks.Stop = [...mine.hooks.Stop, { hooks: [hook] }];
+    mine.statusLine = {
       type: "command",
-      command: 'node "D:/gone/wt/S0/scripts/capture-fixtures.mjs" --statusline --out "D:/o"',
+      command: 'node "D:/x/capture-fixtures.mjs" --statusline --out "D:/o"',
     };
-    writeFileSync(env.target, JSON.stringify(stale, null, 2));
+    writeFileSync(env.target, JSON.stringify(mine, null, 2));
+    const original = JSON.stringify(loadJson(env.target));
     expect((await install(env)).code).toBe(0);
-    const edited = loadJson(env.target);
-    expect(edited.statusLine.command).toContain("sessiondeck-capture");
-    rmSync(join(env.configDir, "settings.json.sessiondeck-capture-state.json"));
-    expect((await install(env, ["--out", join(env.sandbox, "raw2")])).code).toBe(0);
-    expect((await uninstall(env)).code).toBe(0);
-    expect(JSON.stringify(loadJson(env.target))).not.toMatch(
-      /capture-fixtures|sessiondeck-capture/,
+    expect(JSON.stringify(loadJson(env.target).hooks.Stop)).toContain(
+      "D:/tools/capture-fixtures.mjs",
     );
-    expect(loadJson(env.target).statusLine).toBeUndefined();
+    expect((await uninstall(env)).code).toBe(0);
+    expect(JSON.stringify(loadJson(env.target))).toBe(original);
   });
 });

@@ -1,11 +1,6 @@
 import { isAbsolute } from "node:path";
 import { HOOK_EVENTS } from "./hook-events.mjs";
-import {
-  DEPLOY_MANIFEST,
-  LEGACY_SIDECAR_VERSION,
-  SHA256_PATTERN,
-  SIDECAR_VERSION,
-} from "./install-config.mjs";
+import { DEPLOY_MANIFEST, SHA256_PATTERN, SIDECAR_VERSION } from "./install-config.mjs";
 import { containsMarker, hasMarkerPair, hasMarkerTokens, isRecord } from "./settings-match.mjs";
 
 /** Shape validation for the sidecar. The file is trusted only after it passes. */
@@ -74,7 +69,7 @@ function parseDeploy(d) {
  */
 export function parseSidecar(raw) {
   if (!isRecord(raw)) return bad("not an object");
-  if (raw.version !== SIDECAR_VERSION && raw.version !== LEGACY_SIDECAR_VERSION) bad("version");
+  if (raw.version !== SIDECAR_VERSION) bad(`unsupported version ${String(raw.version)}`);
   if (!isRecord(raw.previous)) return bad("previous");
   expectStrings(raw.createdEvents, "createdEvents");
   const events = /** @type {string[]} */ (raw.createdEvents);

@@ -46,6 +46,10 @@ describe("sidecar is validated before it is trusted", () => {
     createdFile: false,
   };
 
+  it("rejects the old version 1 with an unsupported-version message", () => {
+    expect(() => parseSidecar({ ...valid, version: 1 })).toThrow(/unsupported version 1/);
+  });
+
   it("accepts a well-formed state", () => {
     expect(parseSidecar(valid).createdFile).toBe(false);
   });
