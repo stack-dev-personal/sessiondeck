@@ -56,7 +56,8 @@ describe("uninstall and the raw directory", () => {
     expect(readdirSync(env.deployDir)).toEqual(["raw"]);
     expect(existsSync(join(raw, "keep.json"))).toBe(true);
     expect(r.stdout).toContain(`Raw captures were NOT deleted and stay in: ${posix(raw)}`);
-    expect(r.stdout).toContain("copy that directory to packages/contract/fixtures/raw/");
+    expect(r.stdout).toContain("copy the contents of that directory into the checkout");
+    expect(r.stdout).toContain("packages/contract/fixtures/raw/");
     expect(r.stdout).toContain("p0/fixtures");
     expect(r.stdout).toMatch(/Directory kept because it holds the raw captures/);
   });

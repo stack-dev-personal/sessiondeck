@@ -130,7 +130,10 @@ describe("the deployed copy: moves, planted links, and the uninstall note", () =
     cpSync(first, planted, { recursive: true });
     const statePath = join(env.configDir, "settings.json.sessiondeck-capture-state.json");
     const state = loadJson(statePath);
-    writeFileSync(statePath, JSON.stringify({ ...state, deploy: { ...state.deploy, dir: planted } }));
+    writeFileSync(
+      statePath,
+      JSON.stringify({ ...state, deploy: { ...state.deploy, dir: planted } }),
+    );
     const r = await install(env, join(env.sandbox, "second-copy"));
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("NOT removed");

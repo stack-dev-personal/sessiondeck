@@ -76,9 +76,10 @@ refuses (even for a preview, because a preview prints status line data).
    exact entries recorded in the state file, not by the path of the script. A hook of yours whose
    path merely contains the text `sessiondeck-capture` is not touched. If no checkout has the
    installer any more, use "Manual removal" below. Uninstall never deletes the raw captures: it
-   prints their recorded path and the next step (copy that directory to
-   `packages/contract/fixtures/raw/` of the checkout where the fixture session S0b, branch
-   `p0/fixtures`, runs).
+   prints their recorded path and the next step: one `git check-ignore` check and one exact copy
+   command per shell (PowerShell, bash) that creates `packages/contract/fixtures/raw/` in the
+   checkout where the fixture session S0b (branch `p0/fixtures`) runs and copies the contents of
+   the raw directory into it. The same commands are in step 5 of "Manual removal" below.
 
 ### Where things land
 
@@ -103,9 +104,9 @@ refuses (even for a preview, because a preview prints status line data).
   at install time (`--out <dir>` chooses another one, with the same refusals for a git work tree
   that does not ignore it and for the committed fixtures layout). Uninstall never deletes the raw
   directory, prints the path recorded at install, and leaves the deploy directory in place while
-  raw is inside it. Next step after uninstalling: copy that directory to
-  `packages/contract/fixtures/raw/` of the checkout where the fixture session (S0b, branch
-  `p0/fixtures`) runs; it is gitignored there.
+  raw is inside it. The path is printed only if it equals the `--out` value of the entries that
+  were removed. Next step after uninstalling: the copy commands described in step 4 above and in
+  step 5 of "Manual removal"; the target is gitignored in the S0b checkout.
 - Problems inside the hook go to `<raw>/_capture-errors.log` (error codes only, never payload content).
   The first time a cap or the byte budget refuses a payload, one line says so (`full-budget`,
   `full-cap-<Event>`, `full-dirs`; the two status line sample caps are logged the same way but
@@ -139,7 +140,9 @@ refuses (even for a preview, because a preview prints status line data).
   check, the recorded entries must carry the marker pair, a `deploy.dir` that differs from the
   directory this run resolves to is never followed (both paths are printed, the settings entries
   are still removed, and the exit code is 1), and the one value it can put back into your settings
-  is a previous status line that is a JSON object without the marker.
+  is a previous status line that is a JSON object without the marker. That status line runs a
+  command, so uninstall prints a line naming each restored key; check what it runs. Paths read
+  from the state file are printed with control characters replaced.
 - Backups are full copies of your settings, so they can contain tokens from `env`. At the end of
   `--uninstall --apply` the installer lists every backup path; delete them yourself when you no
   longer need them (for example `rm <path>`). On Linux and macOS the backups, the state file and
@@ -181,15 +184,23 @@ Close or ignore running Claude Code sessions first; they reload settings live.
    SessionEnd. If "hooks" ends up empty and you did not have it before, delete the key.
 3. "statusLine" and "subagentStatusLine": if the "command" contains "--marker sessiondeck-capture",
    replace it with your earlier value or delete the key. The earlier value is in the "previous"
-   part of settings.json.sessiondeck-capture-state.json, or in a backup (step 4).
+   part of settings.json.sessiondeck-capture-state.json, or in a backup (step 4). A status line
+   put back from that file runs a command: read it before you keep it.
 4. Next to settings.json, delete settings.json.sessiondeck-capture-state.json and the files named
    settings.json.sessiondeck-backup-<timestamp>. Backups are full copies of your settings and can
    contain tokens; read one first if you need to restore something.
 5. Keep the raw captures. Their path is the value after "--out" in the entries you removed in step 2
    (by default the "raw" folder next to this file). If the fixture session (S0b, branch
-   p0/fixtures) has not copied them yet, copy that folder to packages/contract/fixtures/raw/ of
-   the checkout where it runs; it is gitignored there. They hold your unscrubbed prompts and file
-   contents: never commit or share them, and delete the folder once S0b has its copy.
+   p0/fixtures) has not copied them yet, copy the CONTENTS of that folder into
+   packages/contract/fixtures/raw/ of the checkout where it runs (replace <raw> and <checkout>).
+   First run this in that checkout; it must print a matching rule, otherwise stop:
+     git check-ignore -v packages/contract/fixtures/raw/x
+   PowerShell:
+     New-Item -ItemType Directory -Force '<checkout>/packages/contract/fixtures/raw'; Copy-Item -Recurse -Force '<raw>/*' '<checkout>/packages/contract/fixtures/raw'
+   bash:
+     mkdir -p '<checkout>/packages/contract/fixtures/raw' && cp -R '<raw>/.' '<checkout>/packages/contract/fixtures/raw/'
+   They hold your unscrubbed prompts and file contents: never commit or share them, and delete the
+   folder once S0b has its copy.
 6. Delete the deployed hook copy: the files in this directory (the hook, its lib folder and this
    note), but not the "raw" folder until step 5 is done.
 ```
@@ -203,7 +214,12 @@ Close or ignore running Claude Code sessions first; they reload settings live.
 - The refusal inside a Claude Code session compares real paths (links, junctions, extended-length
   prefixes) against `<home>/.claude` and the account's own home. It stops accidents, nothing more:
   a config directory relocated with `CLAUDE_CONFIG_DIR` is indistinguishable from a sandbox, and
-  an unset `CLAUDECODE` disables it. The project's `guard.mjs` hook is the actual control.
+  an unset `CLAUDECODE` disables it (an agent that runs
+  `env -u CLAUDECODE node scripts/capture-install.mjs --apply` without `CLAUDE_CONFIG_DIR` gets
+  past it). The project's `.claude/hooks/guard.mjs` is NOT a control for this yet: it matches only
+  the literal text `.claude/settings.json`, and no guard rule for `capture-install` exists. Before
+  capture day, add that rule and Read deny rules for the raw and deploy directories to the
+  project's permissions, or run the installer only yourself from a plain terminal.
 - The hook loads its lib files with dynamic imports inside its try block. If one is missing or
   broken the hook still exits 0 with empty stdout and stderr, and records nothing until you
   reinstall. The deployed copy is writable by anything running as you and is only re-hashed at

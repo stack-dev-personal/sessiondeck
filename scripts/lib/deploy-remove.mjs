@@ -4,6 +4,7 @@ import { isInside } from "./capture-paths.mjs";
 import { errorCode } from "./capture-store.mjs";
 import { sha256 } from "./deploy.mjs";
 import { findGitRoot, realpathLoose } from "./fs-roots.mjs";
+import { printable } from "./printable.mjs";
 
 /**
  * Removal of a deployed copy. The record it works from is read from the state file, which is only
@@ -112,11 +113,13 @@ export async function missingFiles(dir, files, only) {
 export function describeLeftovers(result) {
   const lines = [];
   if (result.refused !== undefined) {
-    lines.push(`Nothing was deleted: the directory is inside a git work tree (${result.refused}).`);
+    lines.push(
+      `Nothing was deleted: the directory is inside a git work tree (${printable(result.refused)}).`,
+    );
   }
   if (result.modified.length > 0) {
     lines.push("Kept because they differ from what was deployed (delete them yourself if wanted):");
-    lines.push(...result.modified.map((m) => `  ${m}`));
+    lines.push(...result.modified.map((m) => `  ${printable(m)}`));
   }
   return lines;
 }

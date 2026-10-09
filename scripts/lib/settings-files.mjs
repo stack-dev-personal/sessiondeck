@@ -67,7 +67,8 @@ function accountHome() {
  * True when the target is the default (real) config directory. Real paths are compared, so a
  * junction, a symlink, an extended-length prefix or a different spelling does not get past, and
  * both the given home and the account's own home count (USERPROFILE and HOME can be changed).
- * This stops accidents; the guard hook is the actual control.
+ * This stops accidents only: an unset CLAUDECODE or a relocated CLAUDE_CONFIG_DIR skips it, and
+ * the project guard hook has no rule for the installer yet (it matches the literal settings path).
  * @param {NodeJS.ProcessEnv} env @param {string} [home] @param {string | undefined} [realHome]
  * @returns {Promise<boolean>}
  */

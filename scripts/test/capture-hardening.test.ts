@@ -137,7 +137,10 @@ describe("the budget stop is visible and one line is logged (finding 7)", () => 
     const notADir = join(sandbox, "a-file");
     writeFileSync(notADir, "x");
     const input = JSON.stringify({ session_id: "s1", model: { id: "m" } });
-    const runs = [["--statusline", "--out"], ["--statusline", "--out", join(notADir, "out")]];
+    const runs = [
+      ["--statusline", "--out"],
+      ["--statusline", "--out", join(notADir, "out")],
+    ];
     for (const args of runs) {
       const r = await runScript(CAPTURE_SCRIPT, args, { sandbox, input });
       expect(r.code).toBe(0);

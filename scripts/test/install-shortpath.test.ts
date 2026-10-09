@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   cleanupTempDirs,
+  KEEP_DEFAULT_OUT,
   loadJson,
   makeTempDir,
   runInstallInProcess,
@@ -56,6 +57,22 @@ describe("install flow when the temp root is given in 8.3 short form", () => {
       expect(removed.code).toBe(0);
       expect(JSON.stringify(loadJson(target))).toBe(original);
       expect(existsSync(join(sandbox, "deploy"))).toBe(false);
+    },
+  );
+
+  it.skipIf(shortDir === undefined)(
+    shortDir === undefined
+      ? `skipped: ${SKIP_REASON}`
+      : "uninstall still knows the default raw dir sits inside the deploy dir",
+    async () => {
+      const sandbox = shortDir as string;
+      const configDir = join(sandbox, "config-default-out");
+      mkdirSync(configDir);
+      const run = (args: string[]) =>
+        runInstallInProcess(configDir, sandbox, [KEEP_DEFAULT_OUT, ...args]);
+      expect((await run(["--apply"])).code).toBe(0);
+      const removed = await run(["--uninstall", "--apply"]);
+      expect(removed.stdout).toMatch(/Directory kept because it holds the raw captures/);
     },
   );
 });
