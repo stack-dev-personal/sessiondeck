@@ -214,6 +214,7 @@ describe("install", () => {
     const env = setup();
     const r = await runInstallInProcess(env.configDir, env.sandbox, ["--bogus"]);
     expect(r.code).toBe(2);
+    expect(r.stderr).toContain("--dry-run");
   });
 });
 

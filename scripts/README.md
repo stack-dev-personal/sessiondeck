@@ -14,8 +14,9 @@ Run every command below yourself, from a plain terminal. Do not run them from in
 session: when `CLAUDECODE` is set and the target is your real config directory, the installer
 refuses (even for a preview, because a preview prints status line data).
 
-1. Preview. This is the default, it writes nothing, and it prints only the lines the install would
-   add or remove. A status line or subagent status line of yours is shown as type and length only.
+1. Preview. This is the default (`--dry-run` is the explicit spelling of the same thing), it writes
+   nothing, and it prints only the lines the install would add or remove. A status line or subagent
+   status line of yours is shown as type and length only.
 
    ```
    node scripts/capture-install.mjs
@@ -33,16 +34,27 @@ refuses (even for a preview, because a preview prints status line data).
    It copies the capture hook to a fixed directory outside the repository (see below), then
    registers that copy on all 17 events, next to any hooks you already have (yours stay exactly as
    they are and keep running). It also replaces `statusLine` and `subagentStatusLine`. Your status
-   line shows `sessiondeck capture on` and the subagent rows are hidden until you uninstall.
-   Claude Code reloads settings live, so capture starts in every running session as soon as the
-   installer writes the file.
+   line shows `sessiondeck capture on` until you uninstall; the subagent status command records
+   the payload and prints nothing, so Claude Code keeps its default subagent rows (only an empty
+   `content` would hide one). The raw capture directory is printed (see "Where things land": it is
+   outside every work tree, so choose `--out <dir>` only if you want it elsewhere, and never inside
+   a worktree you may remove). Claude Code reloads settings live, so capture starts in every
+   running session as soon as the installer writes the file.
 
-3. Work normally for a day. Make sure the day includes:
+3. Work normally for a day. Do the items below early in the day, not at the end: each event keeps
+   at most 3000 files, and when a limit stops recording the status line reads
+   `sessiondeck capture full` instead of `sessiondeck capture on` (see "Disk use" below). If you
+   see `full`, anything you still need has to be done after clearing or moving the raw directory.
+   Make sure the day includes:
    - at least two different projects
-   - one long session, so `rate_limits` shows up in the status line payload
+   - one long session, so `rate_limits` shows up in the status line payload (about 20 samples, one
+     per 30 seconds, so ten minutes of one session)
    - one session that uses subagents
    - one `/compact`
-   - one permission prompt that you answer
+   - one permission prompt that you answer (needs the default permission mode: in bypass or auto
+     mode no `PermissionRequest` is sent)
+   - one command that fails (gives `PostToolUseFailure`)
+   - one task list (gives `TaskCreated` and `TaskCompleted`)
    - one AskUserQuestion
    - one `/clear`
    - one session you end by killing the terminal (for the liveness fixtures later)
@@ -59,7 +71,10 @@ refuses (even for a preview, because a preview prints status line data).
    (adjacent, as separate items of `args`, or as whole words in a status line command) and by the
    exact entries recorded in the state file, not by the path of the script. A hook of yours whose
    path merely contains the text `sessiondeck-capture` is not touched. If no checkout has the
-   installer any more, use "Manual removal" below.
+   installer any more, use "Manual removal" below. Uninstall never deletes the raw captures: it
+   prints their recorded path and the next step (copy that directory to
+   `packages/contract/fixtures/raw/` of the checkout where the fixture session S0b, branch
+   `p0/fixtures`, runs).
 
 ### Where things land
 
@@ -89,8 +104,9 @@ refuses (even for a preview, because a preview prints status line data).
   `p0/fixtures`) runs; it is gitignored there.
 - Problems inside the hook go to `<raw>/_capture-errors.log` (error codes only, never payload content).
   The first time a cap or the byte budget refuses a payload, one line says so (`full-budget`,
-  `full-cap-<Event>`, `full-dirs`), and the status line then reads `sessiondeck capture full`
-  instead of `sessiondeck capture on`. A line in `_usage.log` larger than the whole budget is ignored.
+  `full-cap-<Event>`, `full-dirs`), and from then on the status line reads `sessiondeck capture full`
+  instead of `sessiondeck capture on`, whichever event hit the limit. `full` means at least one
+  kind of payload is no longer being recorded; the other kinds may still be. A line in `_usage.log` larger than the whole budget is ignored.
 - The raw directory is NOT scrubbed: it holds your prompts, file contents, and possibly secrets.
   Never commit or share it. Three guards: the repository ignore rule for `fixtures/raw/` (where the
   copy ends up), a
@@ -100,7 +116,7 @@ refuses (even for a preview, because a preview prints status line data).
   ignored. The installer also refuses `packages/contract/fixtures` itself and anything else that
   would mix raw files into the committed `fixtures/<Event>/` layout. S0b produces the scrubbed
   copies under `fixtures/<Event>/`.
-- Disk use is bounded: at most 500 files per event, 1000 status line samples (one per session every
+- Disk use is bounded: at most 3000 files per event (the 256 MiB total is the real bound), 1000 status line samples (one per session every
   30 seconds, plus one whenever the set of keys or the presence of `rate_limits` changes), 300
   subagent status samples, 100 unparsed inputs (each cut to 64 KiB), 200 throttle state files, and
   256 MiB in total (a running byte count in `<raw>/_usage.log`; deleting the raw directory resets

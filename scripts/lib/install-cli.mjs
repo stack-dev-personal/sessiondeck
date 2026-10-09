@@ -12,7 +12,7 @@ import { SidecarError } from "./sidecar.mjs";
 import { uninstall } from "./uninstall-flow.mjs";
 
 export const USAGE =
-  "usage: capture-install.mjs [--apply] [--uninstall] [--out <dir>]   (without --apply nothing is written)";
+  "usage: capture-install.mjs [--apply | --dry-run] [--uninstall] [--out <dir>]   (--dry-run is the default: without --apply nothing is written)";
 const EXIT_FAILED = 1;
 const EXIT_USAGE = 2;
 const KNOWN_ERRORS = [
