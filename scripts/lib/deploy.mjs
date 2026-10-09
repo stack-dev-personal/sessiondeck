@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorCode, randomSuffix } from "./capture-store.mjs";
@@ -11,7 +11,7 @@ import {
   COPY_RETRY_ATTEMPTS,
   COPY_RETRY_DELAY_MS,
   DEPLOY_DIR_NAME,
-  DEPLOY_FILES,
+  DEPLOY_MANIFEST,
   DEPLOY_HOME_ENV,
 } from "./install-config.mjs";
 
@@ -63,7 +63,7 @@ export async function assertOutsideWorkTree(deployDir) {
 /** @returns {Promise<PlanFile[]>} the files to deploy, read from this checkout */
 export async function readSources() {
   return Promise.all(
-    DEPLOY_FILES.map(async (path) => {
+    DEPLOY_MANIFEST.map(async (path) => {
       const content = await readFile(join(SOURCE_DIR, path));
       return { path, sha256: sha256(content), content };
     }),
@@ -71,15 +71,20 @@ export async function readSources() {
 }
 
 /**
- * Relative paths that are missing or whose hash differs from the plan.
+ * Relative paths that are missing, whose hash differs from the plan, or that sit behind a link
+ * leaving the deploy directory.
  * @param {string} deployDir @param {ManifestEntry[]} files
  * @returns {Promise<string[]>}
  */
 export async function findStale(deployDir, files) {
+  const realRoot = await realpathLoose(deployDir);
   const stale = [];
   for (const file of files) {
-    const bytes = await readFile(join(deployDir, file.path)).catch(() => undefined);
-    if (bytes === undefined || sha256(bytes) !== file.sha256) stale.push(file.path);
+    const path = join(deployDir, file.path);
+    const parent = await realpath(dirname(path)).catch(() => realRoot);
+    const bytes = await readFile(path).catch(() => undefined);
+    const leaves = parent !== realRoot && !isInside(realRoot, parent);
+    if (leaves || bytes === undefined || sha256(bytes) !== file.sha256) stale.push(file.path);
   }
   return stale;
 }
@@ -104,6 +109,24 @@ async function renameWithRetry(from, to) {
 }
 
 /**
+ * Re-checks, after mkdir, that a directory inside the deploy dir still resolves inside it (a
+ * junction or symlink planted at <deploy>/lib would otherwise redirect the writes) and is still
+ * outside every git work tree.
+ * @param {string} deployDir @param {string} dir
+ */
+export async function assertContained(deployDir, dir) {
+  const realRoot = await realpath(deployDir);
+  const realDir = await realpath(dir);
+  if (realDir !== realRoot && !isInside(realRoot, realDir)) {
+    throw new DeployError("deploy path escaped its directory");
+  }
+  const root = await findGitRoot(realDir);
+  if (root !== undefined) {
+    throw new InstallRefused(`deploy directory is inside a git work tree (${root}): ${realDir}`);
+  }
+}
+
+/**
  * Copies the named files into the deploy directory (temp file plus rename) and re-hashes each.
  * @param {string} deployDir @param {PlanFile[]} files @param {string[]} only
  */
@@ -112,6 +135,7 @@ export async function writeDeployed(deployDir, files, only) {
     const dest = join(deployDir, file.path);
     if (!isInside(deployDir, dest)) throw new DeployError("deploy path escaped its directory");
     await mkdir(dirname(dest), { recursive: true });
+    await assertContained(deployDir, dirname(dest));
     const temp = `${dest}.tmp-${randomSuffix()}`;
     try {
       await writeFile(temp, file.content, { flag: "wx" });
@@ -126,39 +150,4 @@ export async function writeDeployed(deployDir, files, only) {
     files.filter((f) => only.includes(f.path)),
   );
   if (bad.length > 0) throw new DeployError(`deployed copy failed verification: ${bad.join(", ")}`);
-}
-
-/** @param {string} dir */
-async function removeIfEmpty(dir) {
-  try {
-    await rmdir(dir);
-  } catch (error) {
-    if (!["ENOTEMPTY", "EEXIST", "ENOENT"].includes(errorCode(error))) throw error;
-  }
-}
-
-/**
- * Removes only the files named in the manifest, then the (now empty) directories. Never recursive.
- * @param {import("./settings-model.mjs").DeployRecord} deploy
- * @returns {Promise<{ removed: string[], kept: boolean }>} kept is true when the directory stays
- */
-export async function removeDeployed(deploy) {
-  const removed = [];
-  for (const file of deploy.files) {
-    const path = join(deploy.dir, file.path);
-    if (!isInside(deploy.dir, path)) continue;
-    const existed = await stat(path).then(
-      () => true,
-      () => false,
-    );
-    await rm(path, { force: true });
-    if (existed) removed.push(path);
-  }
-  await removeIfEmpty(join(deploy.dir, "lib"));
-  await removeIfEmpty(deploy.dir);
-  const kept = await stat(deploy.dir).then(
-    () => true,
-    () => false,
-  );
-  return { removed, kept };
 }

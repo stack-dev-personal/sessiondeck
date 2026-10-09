@@ -1,4 +1,6 @@
-import { removeDeployed } from "./deploy.mjs";
+import { describeLeftovers, removeDeployed } from "./deploy-remove.mjs";
+import { resolveDeployDir } from "./deploy.mjs";
+import { realpathLoose } from "./fs-roots.mjs";
 import { DRY_RUN_LINE, printDiff, sameContent } from "./install-flow.mjs";
 import { describeCapture, diffLines } from "./settings-diff.mjs";
 import {
@@ -10,7 +12,7 @@ import {
   serialize,
   sidecarPath,
 } from "./settings-files.mjs";
-import { findRemaining } from "./settings-match.mjs";
+import { findRemaining, foldPath } from "./settings-match.mjs";
 import { applyUninstall, validateSettings } from "./settings-model.mjs";
 
 /** @typedef {import("./install-flow.mjs").Flow} Flow */
@@ -43,14 +45,46 @@ function reportUnmatched(c, remaining, state) {
   return EXIT_FAILED;
 }
 
-/** @param {Flow} c @param {SidecarState | undefined} state */
+/**
+ * Removes the deployed copy, but only from the directory this run resolves to. A state file that
+ * names another directory is not followed: both paths are printed and the exit code is 1.
+ * @param {Flow} c @param {import("./settings-model.mjs").DeployRecord} deploy
+ * @returns {Promise<{ lines: string[], code: number }>}
+ */
+async function dropDeployed(c, deploy) {
+  const resolved = await realpathLoose(resolveDeployDir(c.env, c.home));
+  const recorded = await realpathLoose(deploy.dir);
+  if (foldPath(resolved) !== foldPath(recorded)) {
+    return {
+      code: EXIT_FAILED,
+      lines: [
+        "The deployed copy was NOT removed: the state file names a different directory than this run uses.",
+        `  state file: ${deploy.dir}`,
+        `  this run:   ${resolved}`,
+        "Run again with SESSIONDECK_CAPTURE_HOME set to the first path if that is where you installed,",
+        "or delete that directory yourself (UNINSTALL.txt inside it lists what belongs to the capture).",
+      ],
+    };
+  }
+  const result = await removeDeployed(deploy);
+  const lines = [`Deployed copy removed (${result.removed.length} file(s)).`];
+  if (result.kept) lines.push(`Directory kept because it holds other files: ${deploy.dir}`);
+  lines.push(...describeLeftovers(result));
+  return { code: result.refused === undefined ? EXIT_OK : EXIT_FAILED, lines };
+}
+
+/**
+ * @param {Flow} c @param {SidecarState | undefined} state
+ * @returns {Promise<number>} exit code
+ */
 async function finish(c, state) {
   /** @type {string[]} */
   const lines = ["Capture hooks removed."];
+  let code = EXIT_OK;
   if (state?.deploy) {
-    const { removed, kept } = await removeDeployed(state.deploy);
-    lines.push(`Deployed copy removed (${removed.length} file(s)).`);
-    if (kept) lines.push(`Directory kept because it holds other files: ${state.deploy.dir}`);
+    const dropped = await dropDeployed(c, state.deploy);
+    lines.push(...dropped.lines);
+    code = dropped.code;
   } else {
     lines.push(
       "No state file was found: a previous status line could not be restored (see backups).",
@@ -67,6 +101,7 @@ async function finish(c, state) {
     );
   }
   c.print(lines);
+  return code;
 }
 
 /**
@@ -109,6 +144,5 @@ export async function uninstall(c) {
     c.print(["The state file and the deployed copy were kept."]);
     return EXIT_FAILED;
   }
-  await finish(c, state);
-  return EXIT_OK;
+  return finish(c, state);
 }

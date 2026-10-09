@@ -1,13 +1,12 @@
 import { isAbsolute } from "node:path";
 import { HOOK_EVENTS } from "./hook-events.mjs";
 import {
-  DEPLOY_FILES,
+  DEPLOY_MANIFEST,
   LEGACY_SIDECAR_VERSION,
-  MARKER_VALUE,
   SHA256_PATTERN,
   SIDECAR_VERSION,
 } from "./install-config.mjs";
-import { isRecord } from "./settings-match.mjs";
+import { containsMarker, hasMarkerPair, hasMarkerTokens, isRecord } from "./settings-match.mjs";
 
 /** Shape validation for the sidecar. The file is trusted only after it passes. */
 
@@ -29,7 +28,7 @@ function parsePrevious(p, name) {
   if (!isRecord(p) || typeof p.present !== "boolean") bad(`previous.${name}`);
   if (!p.present) return { present: false };
   if (!isRecord(p.value)) bad(`previous.${name}.value is not an object`);
-  if (JSON.stringify(p.value).includes(MARKER_VALUE)) bad(`previous.${name} is a capture entry`);
+  if (containsMarker(p.value)) bad(`previous.${name} is a capture entry`);
   return { present: true, value: p.value };
 }
 
@@ -42,6 +41,11 @@ function parseEntries(e) {
   if (typeof e.statusLine !== "string" || typeof e.subagentStatusLine !== "string") {
     bad("entries status lines");
   }
+  const marked =
+    hasMarkerPair(e.hook.args) &&
+    hasMarkerTokens(e.statusLine) &&
+    hasMarkerTokens(e.subagentStatusLine);
+  if (!marked) bad("entries do not carry the capture marker");
   return {
     hook: { command: e.hook.command, args: /** @type {string[]} */ (e.hook.args) },
     statusLine: e.statusLine,
@@ -55,7 +59,7 @@ function parseDeploy(d) {
   if (!isRecord(d) || typeof d.dir !== "string" || !isAbsolute(d.dir)) return bad("deploy.dir");
   if (!Array.isArray(d.files)) return bad("deploy.files");
   const files = d.files.map((f) => {
-    const ok = isRecord(f) && DEPLOY_FILES.includes(/** @type {string} */ (f.path));
+    const ok = isRecord(f) && DEPLOY_MANIFEST.includes(/** @type {string} */ (f.path));
     if (!ok || typeof f.sha256 !== "string" || !SHA256_PATTERN.test(f.sha256)) {
       return bad("deploy.files entry");
     }

@@ -9,7 +9,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sha256, resolveDeployDir } from "../lib/deploy.mjs";
-import { DEPLOY_FILES } from "../lib/install-config.mjs";
+import { DEPLOY_FILES, DEPLOY_MANIFEST } from "../lib/install-config.mjs";
 import { HOOK_EVENTS } from "../lib/hook-events.mjs";
 import {
   cleanupTempDirs,
@@ -36,7 +36,7 @@ const posix = (p: string) => p.replace(/\\/g, "/");
 /** Relative imports of a source file, e.g. "./lib/capture-core.mjs" -> "lib/capture-core.mjs". */
 function importsOf(file: string): string[] {
   const text = readFileSync(join(SCRIPTS_DIR, file), "utf8");
-  const specs = [...text.matchAll(/from "(\.[^"]+)"/g)].map((m) => m[1]!);
+  const specs = [...text.matchAll(/(?:from |import\()"(\.[^"]+)"/g)].map((m) => m[1]!);
   return specs.map((s) =>
     posix(resolve(dirname(join(SCRIPTS_DIR, file)), s)).replace(`${posix(SCRIPTS_DIR)}/`, ""),
   );
@@ -70,7 +70,7 @@ describe("deployed copy", () => {
     const env = setupInstallEnv();
     await install(env);
     const { deploy } = readSidecar(env);
-    expect(deploy.files.map((f: { path: string }) => f.path)).toEqual([...DEPLOY_FILES]);
+    expect(deploy.files.map((f: { path: string }) => f.path)).toEqual([...DEPLOY_MANIFEST]);
     for (const file of deploy.files) {
       expect(sha256(readFileSync(join(env.deployDir, file.path)))).toBe(file.sha256);
       expect(sha256(readFileSync(join(SCRIPTS_DIR, file.path)))).toBe(file.sha256);

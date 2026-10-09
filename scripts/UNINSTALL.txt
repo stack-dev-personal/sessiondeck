@@ -1,0 +1,23 @@
+sessiondeck fixture capture: manual removal
+
+Use this when the installer (scripts/capture-install.mjs) is no longer on disk.
+Close or ignore running Claude Code sessions first; they reload settings live.
+
+1. Open the settings file: settings.json inside the directory named by the CLAUDE_CONFIG_DIR
+   environment variable if it is set, otherwise inside ~/.claude.
+2. Under "hooks", for each of these events, delete the hook entries whose "args" list holds the two
+   items "--marker" and "sessiondeck-capture" next to each other (a "group" with no hooks left
+   goes too; keep every other hook): SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
+   PostToolUseFailure, PermissionRequest, PermissionDenied, Notification, SubagentStart,
+   SubagentStop, TaskCreated, TaskCompleted, Stop, StopFailure, PreCompact, PostCompact,
+   SessionEnd. If "hooks" ends up empty and you did not have it before, delete the key.
+3. "statusLine" and "subagentStatusLine": if the "command" contains "--marker sessiondeck-capture",
+   replace it with your earlier value or delete the key. The earlier value is in the "previous"
+   part of settings.json.sessiondeck-capture-state.json, or in a backup (step 4).
+4. Next to settings.json, delete settings.json.sessiondeck-capture-state.json and the files named
+   settings.json.sessiondeck-backup-<timestamp>. Backups are full copies of your settings and can
+   contain tokens; read one first if you need to restore something.
+5. Delete the directory that holds this file (the deployed hook copy). It contains only the hook,
+   its lib folder and this note.
+6. Delete the raw capture directory. Its path is the value after "--out" in the entries you removed
+   in step 2. It holds your unscrubbed prompts and file contents: never commit or share it.

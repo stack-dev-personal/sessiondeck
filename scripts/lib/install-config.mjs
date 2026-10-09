@@ -31,6 +31,11 @@ export const DEPLOY_FILES = Object.freeze([
   "lib/capture-throttle.mjs",
 ]);
 
+/** Instructions deployed next to the hook, so they exist even when no checkout does. */
+export const UNINSTALL_NOTE_NAME = "UNINSTALL.txt";
+/** Everything the installer deploys and records: the hook closure plus the note. */
+export const DEPLOY_MANIFEST = Object.freeze([...DEPLOY_FILES, UNINSTALL_NOTE_NAME]);
+
 export const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 /** Installer temp files older than this are swept; younger ones may belong to a running writer. */
 export const STALE_INSTALL_TEMP_MS = 60 * 60 * 1000;

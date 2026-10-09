@@ -1,5 +1,5 @@
 import { HOOK_EVENTS } from "./hook-events.mjs";
-import { isOurGroup, isOurStatus, isRecord } from "./settings-match.mjs";
+import { isOurHook, isOurStatus, isRecord } from "./settings-match.mjs";
 import { STATUS_KEYS } from "./settings-model.mjs";
 
 const MAX_LINE_CHARS = 400;
@@ -24,7 +24,7 @@ function describeForeign(value) {
 }
 
 /**
- * The only lines the installer is allowed to show: our hook groups per event plus the two status
+ * The only lines the installer is allowed to show: our hook entries per event (one line each, also inside a group shared with other hooks) plus the two status
  * keys (foreign status values as type and length only). Unrelated keys (env, permissions, other
  * hooks) are never rendered, since they can hold tokens.
  * @param {unknown} settings
@@ -39,7 +39,10 @@ export function describeCapture(settings, record) {
   for (const event of HOOK_EVENTS) {
     const groups = Array.isArray(hooks[event]) ? hooks[event] : [];
     for (const group of groups) {
-      if (isOurGroup(group, record)) lines.push(`hooks.${event}: ${compact(group)}`);
+      const members = isRecord(group) && Array.isArray(group.hooks) ? group.hooks : [];
+      for (const hook of members) {
+        if (isOurHook(hook, record)) lines.push(`hooks.${event}: ${compact(hook)}`);
+      }
     }
   }
   for (const key of STATUS_KEYS) {
