@@ -39,3 +39,7 @@ Thumbs.db
 
 # Claude Code local state (project settings are committed, local overrides are not)
 .claude/settings.local.json
+
+# Raw fixture captures hold unscrubbed prompts, file contents, and possibly secrets.
+# Never commit them. S0b commits only scrubbed files under packages/contract/fixtures/<Event>/.
+packages/contract/fixtures/raw/

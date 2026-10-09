@@ -1,0 +1,60 @@
+{
+  "env": {
+    "HARNESS_EXAMPLE_KEY": "FAKE_ENV_VALUE_ALPHA_NOT_A_SECRET",
+    "HARNESS_EXAMPLE_HOME": "<HOME>/.example-harness",
+    "HARNESS_EXAMPLE_FLAG": "FAKE_ENV_VALUE_BETA_NOT_A_SECRET"
+  },
+  "permissions": {
+    "allow": ["Bash(git status)", "Read(<HOME>/projects/**)"],
+    "deny": ["Read(./.env)"]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash <HOME>/.example-harness/statusline.sh",
+    "padding": 0
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash <HOME>/.example-harness/hooks/pre-bash-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash <HOME>/.example-harness/hooks/post-tool-log.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash <HOME>/.example-harness/hooks/stop-notify.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash <HOME>/.example-harness/hooks/session-end.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
