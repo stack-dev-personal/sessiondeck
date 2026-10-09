@@ -12,6 +12,7 @@
   "scripts": {
     "test": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "gen:doc": "node scripts/gen-doc.mjs"
   }
 }
