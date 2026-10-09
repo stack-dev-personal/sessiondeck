@@ -8,8 +8,11 @@ export const PASS_THROUGH = Object.freeze(["SESSION_ID", "SESSION_BRANCH"]);
 /** The placeholder that carries the universal preamble, which itself holds placeholders. */
 export const PREAMBLE_TOKEN = "UNIVERSAL PREAMBLE";
 
-/** {UPPER_SNAKE} or {UPPER WORDS}: two or more characters, upper case letters, underscore, space. */
-const PLACEHOLDER = /\{([A-Z][A-Z_ ]*[A-Z])\}/g;
+/**
+ * Anything between braces on one line. Every such token must be a known name or a pass-through
+ * name, so a typo ({CONTRACT_SHA1}), a wrong case ({Sprint_Id}) or a stub ({n}) is an error.
+ */
+const BRACED = /\{([^{}\n]*)\}/g;
 
 /** The template line that opens the package list. Extras are appended after its bullets. */
 const PACKAGE_ANCHOR = "Package (from MINI-SPRINT-ORDER.md";
@@ -74,8 +77,8 @@ export function placeholderValues(pkg, contractSha) {
 }
 
 /**
- * Embeds the preamble, then replaces every placeholder in one pass. Values are never rescanned, so
- * a value that contains braces cannot be mistaken for a hole. Pass-through names stay literal.
+ * Embeds the preamble, then replaces every braced token in one pass. Values are never rescanned
+ * (package values are checked for placeholder names when the block is parsed). Pass-through names stay literal.
  * Any other token without a value is an error naming every such token.
  * @param {string} template
  * @param {string} preamble
@@ -93,7 +96,7 @@ export function fillTemplate(template, preamble, values) {
   const combined = template.replace(marker, () => preamble);
   /** @type {string[]} */
   const unfilled = [];
-  const filled = combined.replace(PLACEHOLDER, (token, name) => {
+  const filled = combined.replace(BRACED, (token, name) => {
     if (PASS_THROUGH.includes(name)) return token;
     if (Object.hasOwn(values, name)) return values[name] ?? "";
     if (!unfilled.includes(token)) unfilled.push(token);

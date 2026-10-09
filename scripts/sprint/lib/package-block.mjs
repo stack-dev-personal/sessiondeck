@@ -2,8 +2,38 @@
 // Every failure names the sprint and the offending key.
 import { parse } from "yaml";
 import { inputError } from "./render-errors.mjs";
+import { Reader, describe, isMapping } from "./reader.mjs";
 
 export const RUNS_IN_VALUES = Object.freeze(["local", "container"]);
+
+const SESSION_KEYS = Object.freeze([
+  "id",
+  "handoff",
+  "branch",
+  "phase",
+  "depends_on",
+  "security_gated",
+  "lane",
+  "goal",
+  "optional",
+  "user_gate",
+]);
+
+const PACKAGE_KEYS = Object.freeze([
+  "sprint",
+  "name",
+  "slug",
+  "branch",
+  "depends_on",
+  "user_gates",
+  "max_parallel",
+  "runs_in",
+  "sessions",
+  "merge_order",
+  "integration_checks",
+  "needs_laptop",
+  "notes",
+]);
 
 /**
  * @typedef {object} SessionSpec
@@ -37,153 +67,6 @@ export const RUNS_IN_VALUES = Object.freeze(["local", "container"]);
  */
 
 /**
- * @param {unknown} v
- * @returns {string}
- */
-function describe(v) {
-  if (v === null) return "null";
-  if (Array.isArray(v)) return "a list";
-  return typeof v === "object" ? "a mapping" : `${typeof v} ${JSON.stringify(v)}`;
-}
-
-/**
- * @param {unknown} v
- * @returns {v is Record<string, unknown>}
- */
-function isMapping(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Reads typed values from a mapping, throwing an error that names the sprint and key. */
-class Reader {
-  /**
-   * @param {Record<string, unknown>} map
-   * @param {string} scope "sprint 2" or "sprint 2, sessions[1] (S8)"
-   */
-  constructor(map, scope) {
-    this.map = map;
-    this.scope = scope;
-  }
-
-  /**
-   * @param {string} key
-   * @param {string} expected
-   * @param {unknown} got
-   */
-  bad(key, expected, got) {
-    return inputError(
-      `MINI-SPRINT-ORDER.md, ${this.scope}: key "${key}" must be ${expected} (got ${describe(got)})`,
-    );
-  }
-
-  /**
-   * @param {string} key
-   * @param {boolean} required
-   * @returns {unknown}
-   */
-  raw(key, required) {
-    const v = this.map[key];
-    if (v === undefined && required) {
-      throw inputError(`MINI-SPRINT-ORDER.md, ${this.scope}: missing required key "${key}"`);
-    }
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {string}
-   */
-  str(key) {
-    const v = this.raw(key, true);
-    if (typeof v !== "string" || v.trim() === "") throw this.bad(key, "a non-empty string", v);
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {string | undefined}
-   */
-  optStr(key) {
-    const v = this.raw(key, false);
-    if (v === undefined) return undefined;
-    if (typeof v !== "string" || v.trim() === "") throw this.bad(key, "a non-empty string", v);
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {number}
-   */
-  int(key) {
-    const v = this.raw(key, true);
-    if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
-      throw this.bad(key, "a non-negative integer", v);
-    }
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {number}
-   */
-  positiveInt(key) {
-    const v = this.int(key);
-    if (v < 1) throw this.bad(key, "an integer of at least 1", v);
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {boolean}
-   */
-  bool(key) {
-    const v = this.raw(key, true);
-    if (typeof v !== "boolean") throw this.bad(key, "true or false", v);
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {boolean | undefined}
-   */
-  optBool(key) {
-    const v = this.raw(key, false);
-    if (v === undefined) return undefined;
-    if (typeof v !== "boolean") throw this.bad(key, "true or false", v);
-    return v;
-  }
-
-  /**
-   * @param {string} key
-   * @returns {string[]}
-   */
-  strList(key) {
-    return this.toStrList(key, this.raw(key, true));
-  }
-
-  /**
-   * @param {string} key
-   * @returns {string[] | undefined}
-   */
-  optStrList(key) {
-    const v = this.raw(key, false);
-    return v === undefined ? undefined : this.toStrList(key, v);
-  }
-
-  /**
-   * @param {string} key
-   * @param {unknown} v
-   * @returns {string[]}
-   */
-  toStrList(key, v) {
-    if (!Array.isArray(v) || v.some((x) => typeof x !== "string" || x.trim() === "")) {
-      throw this.bad(key, "a list of non-empty strings", v);
-    }
-    return /** @type {string[]} */ (v);
-  }
-}
-
-/**
  * @param {unknown} raw
  * @param {string} sprintLabel
  * @param {number} index
@@ -198,6 +81,7 @@ function readSession(raw, sprintLabel, index) {
   }
   const idHint = typeof raw.id === "string" ? ` (${raw.id})` : "";
   const r = new Reader(raw, `${sprintLabel}, ${at}${idHint}`);
+  r.rejectUnknownKeys(SESSION_KEYS);
   const lane = r.optStr("lane");
   const goal = r.optStr("goal");
   const optional = r.optBool("optional");
@@ -230,7 +114,34 @@ function readSessions(r, sprintLabel) {
   if (dup !== undefined) {
     throw inputError(`MINI-SPRINT-ORDER.md, ${sprintLabel}: key "sessions" repeats id "${dup}"`);
   }
+  for (const [i, s] of sessions.entries()) {
+    const stray = s.depends_on.find((d) => !ids.includes(d) || d === s.id);
+    if (stray !== undefined) {
+      const why = stray === s.id ? "the session itself" : "not a session id in this sprint";
+      throw inputError(
+        `MINI-SPRINT-ORDER.md, ${sprintLabel}, sessions[${i}] (${s.id}): key "depends_on" names "${stray}", which is ${why}`,
+      );
+    }
+  }
   return sessions;
+}
+
+/**
+ * merge_order must list every session exactly once, or a session is never merged.
+ * @param {string[]} mergeOrder
+ * @param {SessionSpec[]} sessions
+ * @param {string} label
+ */
+function checkMergeOrder(mergeOrder, sessions, label) {
+  const ids = sessions.map((s) => s.id);
+  const fail = (/** @type {string} */ detail) =>
+    inputError(`MINI-SPRINT-ORDER.md, ${label}: key "merge_order" ${detail}`);
+  const stray = mergeOrder.find((id) => !ids.includes(id));
+  if (stray !== undefined) throw fail(`names "${stray}", which is not a session id`);
+  const dup = mergeOrder.find((id, i) => mergeOrder.indexOf(id) !== i);
+  if (dup !== undefined) throw fail(`repeats "${dup}"`);
+  const missing = ids.find((id) => !mergeOrder.includes(id));
+  if (missing !== undefined) throw fail(`omits session "${missing}", which would never be merged`);
 }
 
 /**
@@ -262,6 +173,7 @@ function parseMapping(yamlText, label) {
 export function parsePackageBlock(yamlText, headingId) {
   const label = `sprint ${headingId}`;
   const r = new Reader(parseMapping(yamlText, label), label);
+  r.rejectUnknownKeys(PACKAGE_KEYS);
   const sprint = r.str("sprint");
   if (sprint !== headingId) {
     throw inputError(
@@ -274,11 +186,19 @@ export function parsePackageBlock(yamlText, headingId) {
   }
   const sessions = readSessions(r, label);
   const mergeOrder = r.strList("merge_order");
-  const known = new Set(sessions.map((s) => s.id));
-  const stray = mergeOrder.find((id) => !known.has(id));
-  if (stray !== undefined) {
+  checkMergeOrder(mergeOrder, sessions, label);
+  const slug = r.str("slug");
+  const branch = r.str("branch");
+  const expectedBranch = `sprint/${sprint}-${slug}`;
+  if (branch !== expectedBranch) {
     throw inputError(
-      `MINI-SPRINT-ORDER.md, ${label}: key "merge_order" names "${stray}", which is not a session id`,
+      `MINI-SPRINT-ORDER.md, ${label}: key "branch" is "${branch}" but the prompt checks out "${expectedBranch}" (sprint-slug)`,
+    );
+  }
+  const checks = r.strList("integration_checks");
+  if (checks.length === 0) {
+    throw inputError(
+      `MINI-SPRINT-ORDER.md, ${label}: key "integration_checks" must list at least one check`,
     );
   }
   const needsLaptop = r.optStrList("needs_laptop");
@@ -286,15 +206,15 @@ export function parsePackageBlock(yamlText, headingId) {
   return {
     sprint,
     name: r.str("name"),
-    slug: r.str("slug"),
-    branch: r.str("branch"),
+    slug,
+    branch,
     depends_on: r.strList("depends_on"),
     user_gates: r.strList("user_gates"),
     max_parallel: r.positiveInt("max_parallel"),
     runs_in: runsIn,
     sessions,
     merge_order: mergeOrder,
-    integration_checks: r.strList("integration_checks"),
+    integration_checks: checks,
     ...(needsLaptop === undefined ? {} : { needs_laptop: needsLaptop }),
     ...(notes === undefined ? {} : { notes }),
   };

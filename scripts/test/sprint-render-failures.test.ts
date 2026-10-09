@@ -78,10 +78,10 @@ describe("sprint prompt renderer: unfilled placeholders", () => {
     const sources = editBlock(
       "2",
       "user_gates: []",
-      'user_gates: ["wait for {SOME_THING} to land"]',
+      'user_gates: ["wait for {some thing} to land"]',
     );
     expect(renderPrompt({ sources, sprintId: "2", contractSha: SHA })).toContain(
-      "wait for {SOME_THING} to land",
+      "wait for {some thing} to land",
     );
   });
 

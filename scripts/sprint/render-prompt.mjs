@@ -6,7 +6,7 @@
 //        [--package-json] [--repo-root <dir>]
 //
 // Exit codes: 0 ok, 2 usage, 3 malformed input or unfilled placeholder, 4 file read or write.
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { appendPackageExtras, fillTemplate, placeholderValues } from "./lib/fill-template.mjs";
@@ -282,9 +282,22 @@ export function runCli({ argv, stdout, stderr, defaultRoot = defaultRepoRoot }) 
   }
 }
 
-const isMain =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isMain) {
+/**
+ * True when this file is the script node was started with. import.meta.url is a real path, while
+ * argv[1] is the path as typed, so a junction or symlink must be resolved before comparing.
+ * @returns {boolean}
+ */
+function isMainModule() {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   process.exitCode = runCli({
     argv: process.argv.slice(2),
     stdout: (t) => process.stdout.write(t),

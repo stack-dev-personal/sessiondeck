@@ -9,7 +9,7 @@ import {
   packageSummary,
   renderPrompt,
 } from "../sprint/render-prompt.mjs";
-import { extractPreamble } from "../sprint/lib/markdown-extract.mjs";
+import { extractPreamble, sectionLines } from "../sprint/lib/markdown-extract.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sources = loadSources(repoRoot);
@@ -26,6 +26,12 @@ function render(sprintId: string, ...sha: [] | [string | undefined]): string {
 describe("sprint prompt renderer: one test per package block in MINI-SPRINT-ORDER.md", () => {
   it("finds exactly the sprints 0 to 5", () => {
     expect(packages.map((p) => p.sprint)).toEqual(["0", "1", "2", "3", "4", "5"]);
+  });
+
+  it("has one yaml fence in section 3 per tested package block", () => {
+    const fences = (sectionLines(sources.order, 3) ?? []).filter((l) => /^```yaml\s*$/.test(l));
+    expect(fences.length).toBeGreaterThan(0);
+    expect(fences.length).toBe(packages.length);
   });
 
   it.each(packages.map((p) => [p.sprint, p] as const))(

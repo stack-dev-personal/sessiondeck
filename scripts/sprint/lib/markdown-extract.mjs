@@ -138,5 +138,23 @@ export function extractPackageBlocks(order) {
     }
     blocks.push({ headingId, yaml: fence.body });
   }
+  assertEveryYamlFenceHasHeading(lines, blocks.length);
   return blocks;
+}
+
+/**
+ * A yaml fence in section 3 that no "### Sprint <id>:" heading claimed would be skipped silently.
+ * @param {string[]} lines the whole of MINI-SPRINT-ORDER.md
+ * @param {number} claimed how many blocks the headings produced
+ */
+function assertEveryYamlFenceHasHeading(lines, claimed) {
+  const section = sectionLines(lines.join("\n"), 3);
+  if (section === null) return;
+  const where = "MINI-SPRINT-ORDER.md section 3";
+  const yamlFences = fencesIn(section, where).filter((f) => f.info === "yaml").length;
+  if (yamlFences !== claimed) {
+    throw inputError(
+      `${where}: ${yamlFences} yaml fences but ${claimed} package blocks; a yaml fence is not under a "### Sprint <id>:" heading`,
+    );
+  }
 }

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -168,6 +168,16 @@ describe("sprint renderer cli: --out", () => {
     expect(readdirSync(dir)).toEqual(["blocker"]);
   });
 
+  it("removes its temp file when the rename fails (the output path is a directory)", () => {
+    const dir = makeTempDir();
+    const target = join(dir, "p.md");
+    mkdirSync(target);
+    const r = cli(["--sprint", "smoke", "--out", target]);
+    expect(r.code).toBe(EXIT.IO);
+    expect(r.err).toContain("cannot write");
+    expect(readdirSync(dir)).toEqual(["p.md"]);
+  });
+
   it("does not create the output when rendering fails", () => {
     const dir = makeTempDir();
     const target = join(dir, "out", "p.md");
@@ -194,5 +204,38 @@ describe("sprint renderer cli: real process", () => {
     expect(usage.stderr).toContain("render-prompt: ");
     expect(usage.stdout).toBe("");
     expect(run(["--sprint", "0", "--repo-root", join(makeTempDir(), "none")]).status).toBe(EXIT.IO);
+  });
+
+  it("still runs when started through a directory junction or symlink", (ctx) => {
+    const linkParent = makeTempDir();
+    const link = join(linkParent, "linked-sprint");
+    try {
+      symlinkSync(dirname(script), link, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+      console.warn(
+        `SKIPPED: cannot create a link here (${code}); the link-invocation test did not run`,
+      );
+      ctx.skip(`cannot create a link (${code})`);
+      return;
+    }
+    const viaLink = join(link, "render-prompt.mjs");
+    const go = (args: string[]) =>
+      spawnSync(process.execPath, [viaLink, ...args], { encoding: "utf8", windowsHide: true });
+
+    const bogus = go(["--bogus"]);
+    expect(bogus.status).toBe(EXIT.USAGE);
+    expect(bogus.stderr).toContain("unknown argument");
+
+    const noSha = go(["--sprint", "1"]);
+    expect(noSha.status).toBe(EXIT.USAGE);
+
+    const smoke = go(["--sprint", "smoke"]);
+    expect(smoke.status).toBe(EXIT.OK);
+    expect(smoke.stdout).toBe("write /state/smoke/status.json with state green and exit\n");
+
+    const out = join(linkParent, "out", "p.md");
+    expect(go(["--sprint", "3", "--contract-sha", SHA, "--out", out]).status).toBe(EXIT.OK);
+    expect(readFileSync(out, "utf8")).toContain("sprint/3-organize");
   });
 });

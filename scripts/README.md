@@ -251,8 +251,14 @@ node scripts/sprint/render-prompt.mjs --sprint <id> [--contract-sha <sha>] [--ou
   a container when `runs_in` is `local` (Sprint 0).
 - `--out` writes atomically (temp file, then rename) with LF endings and creates the parent directory.
   Without it the text goes to stdout.
-- `{SESSION_ID}` and `{SESSION_BRANCH}` stay literal for the sprint orchestrator. Any other
-  unfilled placeholder, or a package block with a missing or mistyped key, is an error that names it.
+- `{SESSION_ID}` and `{SESSION_BRANCH}` stay literal for the sprint orchestrator. Any other braced
+  token in the template (typo, wrong case, `{n}`) is an error that names it.
+- A package block is rejected, naming the sprint and key, for: a missing or mistyped key; an unknown
+  key (misspellings such as `user_gates` on a session); a string value that spans lines or contains a
+  `{PLACEHOLDER}` token (write `${VAR}` for shell syntax); `branch` other than `sprint/<id>-<slug>`;
+  `merge_order` that is not every session id once; empty `integration_checks`; a session `depends_on`
+  that names no session in the sprint; a yaml fence in section 3 without a `### Sprint <id>:` heading.
+- Started through a junction or symlink, the CLI resolves the real path before it decides to run.
 - `needs_laptop` and `notes` from the block are appended as two bullets after the template's package list.
 - Exit codes: 0 ok, 2 usage (flags, unknown sprint, missing contract sha), 3 malformed input or
   unfilled placeholder, 4 file read or write failure. Messages go to stderr.
