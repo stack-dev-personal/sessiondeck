@@ -8,24 +8,33 @@
  * Ported from DeanLa/cctop plugin/scripts/cctop-hook.sh @ 6ec6256781f78ebd50e6a662e2a6e9a338b7ac35
  *   (MIT, Copyright (c) 2025 Dean Langsam)
  * Changes: the Stop sub-states chosen from the last tool (AskUserQuestion, ExitPlanMode) become
- *   guarded rows; the last tool is carried in state_detail ("tool:<name>") instead of a file field.
+ *   guarded rows; the last tool is carried in snapshot.tracking.last_tool (main-thread PreToolUse
+ *   only) instead of a file field.
  */
+import { STATE_DETAIL_MAX_CHARS, truncate } from "./limits";
 import type { PayloadRecord } from "./payload";
 import { readString } from "./payload";
 import type { SessionSnapshot } from "./snapshot";
-import type { HookEventName, SessionState } from "./state-names";
-import { SESSION_STATES } from "./state-names";
+import type { HookEventName, RowState, SessionState } from "./state-names";
+import { ROW_STATES, SESSION_STATES, SUPERSEDED_REASON } from "./state-names";
 
 /** What can fire a transition: a hook event, or one of the two non-hook triggers. */
 export type TransitionTrigger = HookEventName | "liveness_dead" | "superseded";
 
 /** Named predicates a row may require. All guards of a row must hold. */
 export type GuardId =
-  "main_thread" | "last_tool_ask_user" | "last_tool_exit_plan" | "permission_notification";
+  | "main_thread"
+  | "subagent"
+  | "last_tool_ask_user"
+  | "last_tool_exit_plan"
+  | "permission_notification"
+  | "permission_free"
+  | "source_not_compact";
 
-/** How a row sets state_detail. */
+/** How a row sets state_detail (display text only; no logic reads it). */
 export type DetailRule =
   | "keep"
+  | "keep_if_working"
   | "clear"
   | "tool"
   | "source"
@@ -37,7 +46,7 @@ export type DetailRule =
 
 export interface Transition {
   readonly trigger: TransitionTrigger;
-  readonly from: readonly SessionState[];
+  readonly from: readonly RowState[];
   readonly guards: readonly GuardId[];
   readonly to: SessionState;
   readonly detail: DetailRule;
@@ -45,59 +54,88 @@ export interface Transition {
 
 export interface TransitionContext {
   readonly prev: SessionSnapshot;
-  /** True when the hook ran inside a subagent (envelope.agent_id present). */
-  readonly subagent: boolean;
+  /** The envelope's agent_id; null for the main thread (and for non-hook triggers). */
+  readonly agentId: string | null;
   readonly payload: PayloadRecord;
 }
 
 const TOOL_DETAIL_PREFIX = "tool:";
 const ASK_USER_TOOL = "AskUserQuestion";
 const EXIT_PLAN_TOOL = "ExitPlanMode";
+const COMPACT_SOURCE = "compact";
 const PERMISSION_NOTIFICATION_TYPES: readonly string[] = [
   "permission_prompt",
   "elicitation_dialog",
 ];
 
+/** The row state of a snapshot: `ended` with reason superseded is its own, revivable, row state. */
+export function rowState(s: SessionSnapshot): RowState {
+  return s.state === "ended" && s.ended_reason === SUPERSEDED_REASON ? "ended_superseded" : s.state;
+}
+
 /** States that are not final. */
-export const NON_TERMINAL_STATES: readonly SessionState[] = Object.freeze(
+export const NON_TERMINAL_STATES: readonly RowState[] = Object.freeze(
   SESSION_STATES.filter((s) => s !== "ended" && s !== "exited"),
 );
 
 /**
- * Every state except `ended`. `exited` is included on purpose: a hook arriving after the pid was
- * declared gone proves the process is alive, so the event is applied as if from a live state.
+ * Every row state except a normal `ended`. `exited` and `ended_superseded` are included on purpose:
+ * a hook arriving after the pid was declared gone, or after a supersede, proves the process is
+ * alive, so the event is applied as if from a live state.
  */
-export const LIVE_STATES: readonly SessionState[] = Object.freeze(
-  SESSION_STATES.filter((s) => s !== "ended"),
+export const LIVE_STATES: readonly RowState[] = Object.freeze(
+  ROW_STATES.filter((s) => s !== "ended"),
 );
 
 /** States a permission Notification may move to waiting_permission (waiting_input is left alone). */
-const PERMISSION_FALLBACK_FROM: readonly SessionState[] = Object.freeze([
+const PERMISSION_FALLBACK_FROM: readonly RowState[] = Object.freeze([
   "starting",
   "working",
   "idle",
   "error",
   "exited",
+  "ended_superseded",
+]);
+
+/** PostCompact moves these to working; every other live state only counts the compaction. */
+const POST_COMPACT_TO_WORKING: readonly RowState[] = Object.freeze([
+  "starting",
+  "working",
+  "exited",
+  "ended_superseded",
 ]);
 
 /** Human text for each guard; also used in the generated diagram and table. */
 export const GUARD_DESCRIPTIONS: Readonly<Record<GuardId, string>> = Object.freeze({
   main_thread: "not inside a subagent",
+  subagent: "inside a subagent",
   last_tool_ask_user: "last tool AskUserQuestion",
   last_tool_exit_plan: "last tool ExitPlanMode",
   permission_notification: "permission_prompt or elicitation_dialog",
+  permission_free: "no other context holds the permission prompt",
+  source_not_compact: "source is not compact",
 });
 
+/** True unless a permission prompt is open and was asked by a different agent context. */
+function permissionFree(ctx: TransitionContext): boolean {
+  const held = ctx.prev.tracking.permission;
+  return ctx.prev.state !== "waiting_permission" || held === null || held.agent_id === ctx.agentId;
+}
+
 const GUARDS: Readonly<Record<GuardId, (ctx: TransitionContext) => boolean>> = {
-  main_thread: (ctx) => !ctx.subagent,
-  last_tool_ask_user: (ctx) => ctx.prev.state_detail === `${TOOL_DETAIL_PREFIX}${ASK_USER_TOOL}`,
-  last_tool_exit_plan: (ctx) => ctx.prev.state_detail === `${TOOL_DETAIL_PREFIX}${EXIT_PLAN_TOOL}`,
+  main_thread: (ctx) => ctx.agentId === null,
+  subagent: (ctx) => ctx.agentId !== null,
+  last_tool_ask_user: (ctx) => ctx.prev.tracking.last_tool === ASK_USER_TOOL,
+  last_tool_exit_plan: (ctx) => ctx.prev.tracking.last_tool === EXIT_PLAN_TOOL,
   permission_notification: (ctx) =>
     PERMISSION_NOTIFICATION_TYPES.includes(readString(ctx.payload, "notification_type") ?? ""),
+  permission_free: permissionFree,
+  source_not_compact: (ctx) => readString(ctx.payload, "source") !== COMPACT_SOURCE,
 };
 
 const DETAIL_RULES: Readonly<Record<DetailRule, (ctx: TransitionContext) => string | null>> = {
   keep: (ctx) => ctx.prev.state_detail,
+  keep_if_working: (ctx) => (ctx.prev.state === "working" ? ctx.prev.state_detail : null),
   clear: () => null,
   tool: (ctx) => `${TOOL_DETAIL_PREFIX}${readString(ctx.payload, "tool_name") ?? "unknown"}`,
   source: (ctx) => {
@@ -113,7 +151,7 @@ const DETAIL_RULES: Readonly<Record<DetailRule, (ctx: TransitionContext) => stri
 
 function row(
   trigger: TransitionTrigger,
-  from: readonly SessionState[],
+  from: readonly RowState[],
   to: SessionState,
   detail: DetailRule,
   guards: readonly GuardId[] = [],
@@ -130,25 +168,30 @@ function row(
 /**
  * THE state machine. reduce(), reduceLiveness(), supersedeSamePid() and the diagram generator all
  * read this one table; there is no second copy. Rows are tried in order, first match wins. A
- * (state, trigger) pair with no matching row leaves state, state_since and state_detail unchanged.
+ * (row state, trigger) pair with no matching row leaves state, state_since and state_detail
+ * unchanged; for a normal `ended` that also means nothing else changes except last_event_at.
  *
  * Terminal states:
- *  - `ended` accepts only SessionStart (resume); every other event only updates last_event_at.
- *  - `exited` is revived by any hook that has a row from it (the process is evidently alive);
- *    SessionStart moves it to `starting`, SessionEnd to `ended`.
+ *  - `ended` accepts only SessionStart (resume) with a source other than compact.
+ *  - `ended_superseded` (ended with reason superseded) and `exited` are revived by any hook that
+ *    has a row from them (the process is evidently alive); SessionEnd moves them to `ended`.
  * Subagents: a hook inside a subagent (envelope.agent_id) never reaches idle, waiting_input or
  * ended (rows with the main_thread guard). It may still reach waiting_permission.
+ * Permission: tool events (PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied) leave
+ * waiting_permission only from the context that asked (tracking.permission.agent_id).
  *
- * Not in the table on purpose (fixtures pending, see PROVISIONAL_BEHAVIOR): PostToolUseFailure,
- * TaskCreated, TaskCompleted, PreCompact. SubagentStart and SubagentStop change rows, not state.
+ * Not in the table on purpose (fixtures pending, see PROVISIONAL_BEHAVIOR): TaskCreated,
+ * TaskCompleted, PreCompact. SubagentStart and SubagentStop change rows, not state.
  */
 export const TRANSITIONS: readonly Transition[] = Object.freeze([
-  row("SessionStart", ["starting", "ended", "exited"], "starting", "source"),
+  row("SessionStart", ROW_STATES, "starting", "source", ["source_not_compact"]),
   row("UserPromptSubmit", LIVE_STATES, "working", "clear"),
-  row("PreToolUse", LIVE_STATES, "working", "tool"),
-  row("PostToolUse", LIVE_STATES, "working", "keep"),
-  row("PermissionRequest", LIVE_STATES, "waiting_permission", "keep"),
-  row("PermissionDenied", LIVE_STATES, "working", "clear"),
+  row("PreToolUse", LIVE_STATES, "working", "tool", ["permission_free", "main_thread"]),
+  row("PreToolUse", LIVE_STATES, "working", "keep_if_working", ["permission_free", "subagent"]),
+  row("PostToolUse", LIVE_STATES, "working", "keep", ["permission_free"]),
+  row("PostToolUseFailure", ["waiting_permission"], "working", "keep", ["permission_free"]),
+  row("PermissionRequest", LIVE_STATES, "waiting_permission", "tool"),
+  row("PermissionDenied", LIVE_STATES, "working", "clear", ["permission_free"]),
   row("Notification", PERMISSION_FALLBACK_FROM, "waiting_permission", "keep", [
     "permission_notification",
   ]),
@@ -159,7 +202,7 @@ export const TRANSITIONS: readonly Transition[] = Object.freeze([
   ]),
   row("Stop", LIVE_STATES, "idle", "clear", ["main_thread"]),
   row("StopFailure", LIVE_STATES, "error", "error_type"),
-  row("PostCompact", LIVE_STATES, "working", "clear"),
+  row("PostCompact", POST_COMPACT_TO_WORKING, "working", "clear"),
   row("SessionEnd", LIVE_STATES, "ended", "clear", ["main_thread"]),
   row("liveness_dead", NON_TERMINAL_STATES, "exited", "pid_gone"),
   row("superseded", NON_TERMINAL_STATES, "ended", "superseded"),
@@ -170,17 +213,16 @@ export function selectTransition(
   trigger: TransitionTrigger,
   ctx: TransitionContext,
 ): Transition | undefined {
+  const from = rowState(ctx.prev);
   return TRANSITIONS.find(
-    (t) =>
-      t.trigger === trigger &&
-      t.from.includes(ctx.prev.state) &&
-      t.guards.every((g) => GUARDS[g](ctx)),
+    (t) => t.trigger === trigger && t.from.includes(from) && t.guards.every((g) => GUARDS[g](ctx)),
   );
 }
 
-/** The state_detail this row produces in this context. */
+/** The state_detail this row produces in this context, capped at STATE_DETAIL_MAX_CHARS. */
 export function resolveDetail(t: Transition, ctx: TransitionContext): string | null {
-  return DETAIL_RULES[t.detail](ctx);
+  const detail = DETAIL_RULES[t.detail](ctx);
+  return detail === null ? null : truncate(detail, STATE_DETAIL_MAX_CHARS);
 }
 
 /** Events whose payload fields are unverified. Behavior is provisional until S0b adds fixtures. */
@@ -200,8 +242,13 @@ export const PROVISIONAL_BEHAVIOR: readonly ProvisionalBehavior[] = Object.freez
       },
       {
         event: "PostToolUseFailure",
-        current: "state unchanged",
+        current: "only leaves waiting_permission (to working); otherwise unchanged",
         intended: "payload marks an API error: error; a plain tool failure: working",
+      },
+      {
+        event: "StopFailure",
+        current: "any context, including a subagent, gives error",
+        intended: "confirm whether a subagent's StopFailure should move the session",
       },
       {
         event: "TaskCreated",

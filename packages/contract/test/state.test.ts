@@ -209,7 +209,11 @@ describe("R0.2 purity and totality", () => {
     for (const state of SESSION_STATES) {
       for (const name of names) {
         for (const payload of payloads) {
-          const prev = deepFreeze(snap(state, { state_detail: "tool:AskUserQuestion" }));
+          const tracking = {
+            last_tool: "AskUserQuestion",
+            permission: { tool: "Bash", agent_id: "a1" },
+          };
+          const prev = deepFreeze(snap(state, { state_detail: "tool:AskUserQuestion", tracking }));
           const e = deepFreeze(hook(name, payload, 7_777));
           const next = reduce(prev, e);
           expect(SESSION_STATES).toContain(next.state);
@@ -296,7 +300,10 @@ describe("subagent envelopes (agent_id)", () => {
   const sub = { agent_id: "agent-1" };
 
   it("never reach idle, waiting_input or ended", () => {
-    const working = snap("working", { state_detail: "tool:AskUserQuestion" });
+    const working = snap("working", {
+      state_detail: "tool:AskUserQuestion",
+      tracking: { last_tool: "ExitPlanMode", permission: null },
+    });
     for (const name of ["Stop", "SubagentStop", "SessionEnd"]) {
       const next = reduce(working, hook(name, { reason: "other" }, T0 + 1, sub));
       expect(next.state).toBe("working");
@@ -341,9 +348,11 @@ describe("field updates", () => {
     );
   });
 
-  it("PostCompact goes to working and increments compactions", () => {
-    const next = reduce(snap("idle", { compactions: 2 }), hook("PostCompact"));
-    expect(next).toMatchObject({ state: "working", compactions: 3 });
+  it("PostCompact mid-turn (starting, working) goes to working; compactions + 1", () => {
+    for (const state of ["starting", "working"] as const) {
+      const next = reduce(snap(state, { compactions: 2 }), hook("PostCompact"));
+      expect(next).toMatchObject({ state: "working", compactions: 3, state_detail: null });
+    }
   });
 
   it("PermissionDenied goes back to working", () => {
@@ -407,23 +416,33 @@ describe("provisional behavior (fixtures pending)", () => {
   // TODO(fixture): PostToolUseFailure payload fields are unverified. Intended: a payload that marks
   // an API error moves the session to error (state_detail = error type); a plain tool failure moves
   // it to working.
-  it.skip("PostToolUseFailure with api error gives error, plain tool failure gives working", () => {});
+  it.skip("PostToolUseFailure with api error gives error, plain tool failure gives working", () => {
+    expect.fail("TODO(fixture): write once a PostToolUseFailure fixture exists");
+  });
 
   // TODO(fixture): TaskCreated payload unverified. Intended: tasks.total + 1, tasks.last_subject
   // from the payload subject; state unchanged.
-  it.skip("TaskCreated increments tasks.total and records last_subject", () => {});
+  it.skip("TaskCreated increments tasks.total and records last_subject", () => {
+    expect.fail("TODO(fixture): write once a TaskCreated fixture exists");
+  });
 
   // TODO(fixture): TaskCompleted payload unverified. Intended: tasks.completed + 1,
   // tasks.last_subject from the payload subject; state unchanged.
-  it.skip("TaskCompleted increments tasks.completed and records last_subject", () => {});
+  it.skip("TaskCompleted increments tasks.completed and records last_subject", () => {
+    expect.fail("TODO(fixture): write once a TaskCompleted fixture exists");
+  });
 
   // TODO(fixture): PreCompact payload unverified. Intended: read the compaction trigger (manual or
   // auto) into state_detail; state unchanged.
-  it.skip("PreCompact records the compaction trigger in state_detail", () => {});
+  it.skip("PreCompact records the compaction trigger in state_detail", () => {
+    expect.fail("TODO(fixture): write once a PreCompact fixture exists");
+  });
 
   // TODO(fixture): PostToolUse tool_response unverified. Intended: detect an interrupted or failed
   // result from tool_response instead of treating every PostToolUse as success.
-  it.skip("PostToolUse reads tool_response to detect an interrupted result", () => {});
+  it.skip("PostToolUse reads tool_response to detect an interrupted result", () => {
+    expect.fail("TODO(fixture): write once a PostToolUse fixture with tool_response exists");
+  });
 });
 
 describe("timelines", () => {
@@ -496,7 +515,9 @@ describe("timelines", () => {
   // TODO(fixture): S0b supplies a real session's fixture sequence under packages/contract/fixtures/.
   // Intended: wrap each fixture as an envelope in capture order, reduce, and assert the hand-verified
   // state timeline (R0.2).
-  it.skip("golden timeline from a real session's fixtures", () => {});
+  it.skip("golden timeline from a real session's fixtures", () => {
+    expect.fail("TODO(fixture): write the golden timeline once S0b captures a real session");
+  });
 });
 
 describe("registries", () => {

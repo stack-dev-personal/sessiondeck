@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderProvisionalTable, renderStateDiagram, renderTransitionTable } from "../src/diagram";
 import { DOC_BLOCK_NAMES, extractBlock, renderDocBlocks, replaceBlock } from "../src/docblocks";
-import { SESSION_STATES, TRANSITIONS } from "../src/state";
+import { ROW_STATES, SESSION_STATES, TRANSITIONS } from "../src/state";
 import { parseEnvelope } from "../src/envelope";
 import { makeEnvelope } from "./helpers";
 
@@ -26,7 +26,7 @@ describe("renderStateDiagram", () => {
       { trigger: "Stop", from: ["working", "idle"], guards: [], to: "idle", detail: "clear" },
       {
         trigger: "SessionEnd",
-        from: SESSION_STATES.filter((s) => s !== "ended"),
+        from: ROW_STATES.filter((s) => s !== "ended"),
         guards: ["main_thread"],
         to: "ended",
         detail: "clear",

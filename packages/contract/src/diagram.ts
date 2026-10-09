@@ -1,5 +1,5 @@
-import { SESSION_STATES } from "./state-names";
-import type { SessionState } from "./state-names";
+import { ROW_STATES } from "./state-names";
+import type { RowState } from "./state-names";
 import type { DetailRule, Transition, TransitionTrigger } from "./transitions";
 import { GUARD_DESCRIPTIONS, PROVISIONAL_BEHAVIOR } from "./transitions";
 
@@ -16,6 +16,7 @@ const NON_HOOK_TRIGGER_LABELS: Readonly<Record<string, string>> = {
 const DETAIL_TEXT: Readonly<Record<DetailRule, string>> = {
   keep: "unchanged",
   clear: "null",
+  keep_if_working: "unchanged if working, else null",
   tool: "`tool:<tool_name>`",
   source: "`source:<source>`",
   needs_input: "needs input",
@@ -33,14 +34,15 @@ function guardText(t: Transition): string {
   return t.guards.map((g) => GUARD_DESCRIPTIONS[g]).join(" and ");
 }
 
-function excludedStates(from: readonly SessionState[]): SessionState[] {
-  return SESSION_STATES.filter((s) => !from.includes(s));
+function excludedStates(from: readonly RowState[]): RowState[] {
+  return ROW_STATES.filter((s) => !from.includes(s));
 }
 
 /** Pseudo-node id and text when the from-set is nearly all states, else null. */
-function anyNode(from: readonly SessionState[]): { id: string; text: string } | null {
+function anyNode(from: readonly RowState[]): { id: string; text: string } | null {
   const excluded = excludedStates(from);
-  if (excluded.length === 0 || excluded.length > MAX_EXCLUDED_FOR_ANY) return null;
+  if (excluded.length === 0) return { id: "any_state", text: "any state" };
+  if (excluded.length > MAX_EXCLUDED_FOR_ANY) return null;
   return {
     id: `any_except_${excluded.join("_")}`,
     text: `any state except ${excluded.join(" and ")}`,
@@ -73,7 +75,7 @@ export function renderStateDiagram(table: readonly Transition[]): string {
   );
 }
 
-function fromText(from: readonly SessionState[]): string {
+function fromText(from: readonly RowState[]): string {
   const any = anyNode(from);
   return any === null ? from.join(", ") : any.text;
 }

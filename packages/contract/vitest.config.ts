@@ -18,6 +18,8 @@ export default defineConfig({
         "src/event-fields.ts": FULL,
         "src/payload.ts": FULL,
         "src/liveness.ts": FULL,
+        "src/limits.ts": FULL,
+        "src/tracking.ts": FULL,
         "src/diagram.ts": FULL,
         "src/docblocks.ts": FULL,
       },
