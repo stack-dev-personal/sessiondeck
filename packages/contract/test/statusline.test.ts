@@ -179,7 +179,11 @@ function parsedFixtures() {
 
 // TODO(fixture): S0b un-skips this by committing fixtures/statusLine/*.json.
 if (statusFixtures.length === 0)
-  it.skip("TODO(fixture): no captured statusLine fixtures yet", () => {});
+  it.skip("TODO(fixture): no captured statusLine fixtures yet", () => {
+    expect.fail(
+      "TODO(fixture): captured statusLine fixtures are exercised by the describe block below",
+    );
+  });
 describe.skipIf(statusFixtures.length === 0)("captured statusLine fixtures", () => {
   it.each(statusFixtures.map((f) => [f.file, f] as const))("%s parses", (_name, fx) => {
     expect(StatusLinePayloadSchema.safeParse(fx.payload).success).toBe(true);

@@ -105,7 +105,9 @@ const fixtures = loadFixtures();
 
 // TODO(fixture): captured fixtures arrive in S0b; this block un-skips itself when they exist.
 if (fixtures.length === 0)
-  it.skip("TODO(fixture): no captured fixtures yet; envelope walk not exercised", () => {});
+  it.skip("TODO(fixture): no captured fixtures yet; envelope walk not exercised", () => {
+    expect.fail("TODO(fixture): captured fixtures are exercised by the describe block below");
+  });
 describe.skipIf(fixtures.length === 0)("captured fixtures wrapped in an envelope", () => {
   it.each(fixtures.map((f) => [`${f.dir}/${f.file}`, f] as const))("%s parses", (_name, fx) => {
     const parsed = safeParseEnvelope(wrapFixture(fx));
