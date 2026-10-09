@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +39,7 @@ export interface RunResult {
 const tempDirs: string[] = [];
 
 export function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "sd-capture-test-"));
+  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), "sd-capture-test-"));
   tempDirs.push(dir);
   return dir;
 }

@@ -54,7 +54,7 @@ describe("deployed copy", () => {
     const env = setupInstallEnv();
     expect((await install(env)).code).toBe(0);
     const settings = loadJson(env.target);
-    const deployReal = posix(realpathSync(env.deployDir));
+    const deployReal = posix(realpathSync.native(env.deployDir));
     const commands: string[] = [
       ...HOOK_EVENTS.map((e) => settings.hooks[e].at(-1).hooks[0].args[0] as string),
       settings.statusLine.command,
