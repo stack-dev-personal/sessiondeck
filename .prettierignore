@@ -7,6 +7,3 @@ infra/
 *.md
 pnpm-lock.yaml
 packages/contract/fixtures/
-packages/probe/
-packages/hub/
-packages/web/
