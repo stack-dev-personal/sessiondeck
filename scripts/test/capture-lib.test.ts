@@ -1,9 +1,38 @@
 import { describe, expect, it } from "vitest";
+import { HOOK_EVENTS as CONTRACT_HOOK_EVENTS } from "../../packages/contract/src/state-names";
 import { HOOK_EVENTS } from "../lib/hook-events.mjs";
 import { isInside, safeEventName, safeSessionId, toPosix } from "../lib/capture-paths.mjs";
 import { shouldRecordStatus, statusSignature } from "../lib/capture-throttle.mjs";
 
+const EXPECTED_EVENTS = [
+  "SessionStart",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PermissionRequest",
+  "PermissionDenied",
+  "Notification",
+  "SubagentStart",
+  "SubagentStop",
+  "TaskCreated",
+  "TaskCompleted",
+  "Stop",
+  "StopFailure",
+  "PreCompact",
+  "PostCompact",
+  "SessionEnd",
+];
+
 describe("HOOK_EVENTS", () => {
+  it("is exactly the 17 events of docs/planning/01-architecture.md, in order", () => {
+    expect([...HOOK_EVENTS]).toEqual(EXPECTED_EVENTS);
+  });
+
+  it("equals the copy in packages/contract/src/state-names.ts", () => {
+    expect([...HOOK_EVENTS]).toEqual([...CONTRACT_HOOK_EVENTS]);
+  });
+
   it("lists the 17 events, frozen, without WorktreeCreate", () => {
     expect(HOOK_EVENTS).toHaveLength(17);
     expect(new Set(HOOK_EVENTS).size).toBe(17);

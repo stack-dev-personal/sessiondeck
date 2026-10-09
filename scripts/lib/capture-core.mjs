@@ -145,7 +145,7 @@ export function truncateUtf8(text, maxBytes) {
   const bytes = Buffer.from(text, "utf8");
   if (bytes.length <= maxBytes) return text;
   let cut = maxBytes;
-  while (cut > 0 && (bytes[cut] & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_BITS) cut--;
+  while (cut > 0 && ((bytes[cut] ?? 0) & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_BITS) cut--;
   return bytes.subarray(0, cut).toString("utf8");
 }
 
