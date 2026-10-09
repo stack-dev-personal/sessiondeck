@@ -1,5 +1,9 @@
-// Types only. Target schema from Crystal's UnifiedMessage and vibe-kanban's
-// NormalizedEntryType (architecture 3.5). No normalizer lives in this package yet.
+// Ported from stravu/crystal frontend/src/components/panels/ai/transformers/MessageTransformer.ts @ 1e18e0bc981225f75b5226f82a300fa741970c6f (MIT, Copyright (c) 2024 Stravu)
+// Changes: kept only the UnifiedMessage and MessageSegment shapes (no transformer interface); metadata drops
+//   sessionInfo; ToolCall reduced to id/name/input (input is unknown) and ToolResult to content/is_error
+//   (snake_case); SystemInfoData narrowed to subtype/message; NormalizedEntry alias added.
+// Also shaped by vibe-kanban's NormalizedEntryType (architecture 3.5, specification only).
+// Types only. No normalizer lives in this package yet.
 
 // provisional: finalized in Phase 4 (S7)
 export interface ToolCall {
