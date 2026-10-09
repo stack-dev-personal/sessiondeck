@@ -16,6 +16,8 @@ import {
   ERROR_LOG_NAME,
   GITIGNORE_BODY,
   GITIGNORE_NAME,
+  PRIVATE_DIR_MODE,
+  PRIVATE_FILE_MODE,
   RANDOM_SUFFIX_BYTES,
   STALE_TEMP_MS,
 } from "./capture-config.mjs";
@@ -43,7 +45,7 @@ export function errorCode(error) {
  * @returns {Promise<void>}
  */
 export async function ensureOutDir(root) {
-  await mkdir(root, { recursive: true });
+  await mkdir(root, { recursive: true, mode: PRIVATE_DIR_MODE });
   const path = join(root, GITIGNORE_NAME);
   try {
     await writeFile(path, GITIGNORE_BODY, { flag: "wx" });
@@ -69,11 +71,11 @@ export async function writeInside(root, dirName, fileName, text) {
   const finalPath = join(dir, fileName);
   if (!isInside(root, finalPath)) throw new Error("path escaped out dir");
   await ensureOutDir(root);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   if (!isInside(await realpath(root), await realpath(dir))) throw new Error("path escaped out dir");
   const tempPath = join(dir, `.tmp-${randomSuffix()}`);
   try {
-    await writeFile(tempPath, text, { flag: "wx" });
+    await writeFile(tempPath, text, { flag: "wx", mode: PRIVATE_FILE_MODE });
     await rename(tempPath, finalPath);
   } catch (error) {
     await rm(tempPath, { force: true }).catch(() => undefined);

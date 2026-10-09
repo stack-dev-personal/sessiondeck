@@ -17,8 +17,9 @@
  * The lib files are loaded with dynamic imports inside the try block, so a missing or broken
  * lib file ends in exit 0 with empty stdout and stderr instead of a module error on every event.
  * In --statusline mode the text is "sessiondeck capture on", or "sessiondeck capture full" once a
- * hook-event cap or the byte budget has stopped recording (the status-sample caps do not count;
- * hook mode stays silent; the first refusal is one
+ * hook-event cap or the byte budget has stopped recording (the status-sample caps do not count),
+ * or "sessiondeck capture error" when recording failed for another reason (the error log has the
+ * code, the status line never echoes it; hook mode stays silent; the first refusal is one
  * line in the error log).
  */
 
@@ -65,6 +66,7 @@ async function main() {
   /** @type {Awaited<ReturnType<typeof loadLib>> | undefined} */
   let lib;
   let full = false;
+  let failed = false;
   try {
     mode = modeOf(process.argv.slice(2));
     lib = await loadLib();
@@ -73,11 +75,13 @@ async function main() {
     const { text, truncated } = await lib.core.readAll(process.stdin);
     full = (await lib.core.captureOnce({ mode, out, text, truncated, now: Date.now() })).full;
   } catch (error) {
+    failed = true;
     if (lib && out) await lib.store.logCaptureError(out, "capture", error);
   }
   if (mode === "statusline" && lib) {
-    const { STATUSLINE_TEXT, STATUSLINE_FULL_TEXT } = lib.config;
-    process.stdout.write(`${full ? STATUSLINE_FULL_TEXT : STATUSLINE_TEXT}\n`);
+    const { STATUSLINE_TEXT, STATUSLINE_FULL_TEXT, STATUSLINE_ERROR_TEXT } = lib.config;
+    const text = failed ? STATUSLINE_ERROR_TEXT : full ? STATUSLINE_FULL_TEXT : STATUSLINE_TEXT;
+    process.stdout.write(`${text}\n`);
   }
 }
 

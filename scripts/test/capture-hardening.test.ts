@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   ERROR_LOG_NAME,
   HOOK_MAX_FILES_PER_DIR,
   OUT_MAX_TOTAL_BYTES,
+  STATUSLINE_ERROR_TEXT,
   STATUSLINE_FULL_TEXT,
   STATUSLINE_TEXT,
   USAGE_LOG_NAME,
@@ -129,7 +131,36 @@ describe("the budget stop is visible and one line is logged (finding 7)", () => 
     expect(quiet.code).toBe(0);
     expect(quiet.stdout + quiet.stderr).toBe("");
   });
+
+  it("the status line says error, and nothing else, when recording failed (finding S5)", async () => {
+    const sandbox = makeTempDir();
+    const notADir = join(sandbox, "a-file");
+    writeFileSync(notADir, "x");
+    const input = JSON.stringify({ session_id: "s1", model: { id: "m" } });
+    const runs = [["--statusline", "--out"], ["--statusline", "--out", join(notADir, "out")]];
+    for (const args of runs) {
+      const r = await runScript(CAPTURE_SCRIPT, args, { sandbox, input });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe(`${STATUSLINE_ERROR_TEXT}\n`);
+      expect(r.stderr).toBe("");
+    }
+  });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "raw payload modes (finding S4; Windows uses inherited ACLs, not modes)",
+  () => {
+    it("creates the out dir, event dirs and payload files owner-only", async () => {
+      const out = join(makeTempDir(), "nested", "out");
+      await hook(out);
+      const modeOf = (p: string) => statSync(p).mode & 0o777;
+      expect(modeOf(out)).toBe(0o700);
+      expect(modeOf(join(out, "Stop"))).toBe(0o700);
+      const file = readdirSync(join(out, "Stop"))[0]!;
+      expect(modeOf(join(out, "Stop", file))).toBe(0o600);
+    });
+  },
+);
 
 describe("the nested .gitignore is restored (finding 8)", () => {
   it.each([

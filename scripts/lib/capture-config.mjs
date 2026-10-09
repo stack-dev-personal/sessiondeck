@@ -26,6 +26,9 @@ export const MAX_SEGMENT_LENGTH = 64;
 export const SHORT_SESSION_ID_LENGTH = 8;
 export const ERROR_LOG_MAX_BYTES = 64 * 1024;
 export const RANDOM_SUFFIX_BYTES = 6;
+/** Raw payloads hold prompts and secrets: owner-only on POSIX (Windows ignores modes). */
+export const PRIVATE_DIR_MODE = 0o700;
+export const PRIVATE_FILE_MODE = 0o600;
 
 export const UNKNOWN_SEGMENT = "_unknown";
 export const NO_SESSION_SEGMENT = "nosession";
@@ -49,6 +52,8 @@ export const SAMPLE_CAP_STEPS = [
   `full-cap-${STATUSLINE_DIR}`,
   `full-cap-${SUBAGENT_STATUSLINE_DIR}`,
 ];
+/** Shown when recording failed for a reason other than a limit (disk, permissions, bad --out). */
+export const STATUSLINE_ERROR_TEXT = "sessiondeck capture error";
 export const BUDGET_LOG_CODE = "FULL";
 /** Error-log step names for a refused write all start with this (full-budget, full-cap-<dir>). */
 export const FULL_STEP_PREFIX = "full-";
