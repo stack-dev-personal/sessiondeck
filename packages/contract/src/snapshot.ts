@@ -16,6 +16,22 @@ export interface SubagentSnapshot {
   model: string | null;
 }
 
+/**
+ * Reducer bookkeeping, added in S0 beyond architecture 3.3 (confirm before S3 and S5). Logic reads
+ * this, never state_detail. last_tool: last tool of a main-thread PreToolUse. permission: who is
+ * holding the open permission prompt (tool null when only a Notification announced it, agent_id
+ * null for the main thread); null whenever the state is not waiting_permission.
+ */
+export interface Tracking {
+  last_tool: string | null;
+  permission: { tool: string | null; agent_id: string | null } | null;
+}
+
+/** Fresh empty tracking. New object on every call. */
+export function createTracking(): Tracking {
+  return { last_tool: null, permission: null };
+}
+
 export interface SessionSnapshot {
   session_id: string;
   host: string;
@@ -56,6 +72,7 @@ export interface SessionSnapshot {
   /** expires_at is epoch ms. The payload sends epoch seconds; convert with epochSecondsToMs (statusline.ts). */
   prompt_cache: { warm: boolean; expires_at: number | null } | null;
   compactions: number;
+  tracking: Tracking;
 }
 
 export interface CreateSnapshotInput {
@@ -93,5 +110,6 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     last_prompt: null,
     prompt_cache: null,
     compactions: 0,
+    tracking: createTracking(),
   };
 }

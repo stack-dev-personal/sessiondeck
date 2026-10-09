@@ -1,4 +1,5 @@
 import type { Envelope } from "./envelope";
+import { LAST_MESSAGE_MAX_CHARS, LAST_PROMPT_MAX_CHARS, truncate } from "./limits";
 import type { PayloadRecord } from "./payload";
 import { isSubagentEnvelope, readString } from "./payload";
 import type { SessionSnapshot } from "./snapshot";
@@ -18,18 +19,18 @@ function onSessionStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot 
   const modelId = readString(ctx.payload, "model");
   const model =
     modelId === null || s.model?.id === modelId ? s.model : { id: modelId, display_name: modelId };
-  return { ...s, model, ended_reason: null };
+  return { ...s, model };
 }
 
 function onUserPromptSubmit(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const prompt = readString(ctx.payload, "prompt");
-  return prompt === null ? s : { ...s, last_prompt: prompt };
+  return prompt === null ? s : { ...s, last_prompt: truncate(prompt, LAST_PROMPT_MAX_CHARS) };
 }
 
 function onStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const message = readString(ctx.payload, "last_assistant_message");
   if (message === null || isSubagentEnvelope(ctx.e)) return s;
-  return { ...s, last_assistant_message: message };
+  return { ...s, last_assistant_message: truncate(message, LAST_MESSAGE_MAX_CHARS) };
 }
 
 function onSessionEnd(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {

@@ -34,3 +34,15 @@ export const HOOK_EVENTS = Object.freeze([
 ] as const);
 
 export type HookEventName = (typeof HOOK_EVENTS)[number];
+
+/** Reason recorded on a session ended because a newer session_id took over its pid. */
+export const SUPERSEDED_REASON = "superseded";
+
+/**
+ * What a transition row matches on. Every session state, plus `ended_superseded`: an `ended`
+ * session whose ended_reason is `superseded`. That one is revivable by any later hook for the
+ * session (a wrong or early supersede can be undone); a normal `ended` is not.
+ */
+export const ROW_STATES = [...SESSION_STATES, "ended_superseded"] as const;
+
+export type RowState = (typeof ROW_STATES)[number];

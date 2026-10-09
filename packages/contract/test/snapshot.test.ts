@@ -20,8 +20,9 @@ describe("createSnapshot", () => {
       prompt_cache: null,
       tasks: { total: 0, completed: 0, last_subject: null },
       rate_limits: { five_hour: null, seven_day: null, captured_at: null },
+      tracking: { last_tool: null, permission: null },
     });
-    expect(Object.keys(snap)).toHaveLength(24);
+    expect(Object.keys(snap)).toHaveLength(25);
   });
 
   it("returns a new object (and new nested objects) every call", () => {
@@ -30,6 +31,7 @@ describe("createSnapshot", () => {
     expect(a).not.toBe(b);
     expect(a.subagents).not.toBe(b.subagents);
     expect(a.context).not.toBe(b.context);
+    expect(a.tracking).not.toBe(b.tracking);
     expect(a).toEqual(b);
   });
 });

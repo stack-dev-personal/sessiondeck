@@ -19,7 +19,12 @@ export function readString(record: PayloadRecord, key: string): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** True when the hook ran inside a subagent (the probe copies agent_id onto the envelope). */
+/** The envelope's agent_id (the probe copies it from the hook), or null for the main thread. */
+export function agentIdOf(e: Envelope): string | null {
+  return typeof e.agent_id === "string" && e.agent_id !== "" ? e.agent_id : null;
+}
+
+/** True when the hook ran inside a subagent. */
 export function isSubagentEnvelope(e: Envelope): boolean {
-  return typeof e.agent_id === "string" && e.agent_id !== "";
+  return agentIdOf(e) !== null;
 }
