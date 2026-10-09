@@ -136,12 +136,16 @@ export async function runInstall(
 ): Promise<RunResult> {
   const { argv, env } = installArgs(configDir, sandbox, args, extraEnv);
   const result = await runScript(INSTALL_SCRIPT, argv, { sandbox, env });
-  const line = result.stdout.split(LINE_BREAK).find((l) => l.startsWith(TARGET_PREFIX));
-  if (line !== undefined) {
-    const printed = line.slice(TARGET_PREFIX.length);
-    if (!isInside(sandbox, printed)) throw new Error(`target escaped sandbox: ${printed}`);
-  }
+  assertTargetInside(result.stdout, sandbox);
   return result;
+}
+
+/** Throws when the settings file the installer printed is not inside the sandbox. */
+export function assertTargetInside(stdout: string, sandbox: string): void {
+  const line = stdout.split(LINE_BREAK).find((l) => l.startsWith(TARGET_PREFIX));
+  if (line === undefined) return;
+  const printed = line.slice(TARGET_PREFIX.length);
+  if (!isInside(sandbox, printed)) throw new Error(`target escaped sandbox: ${printed}`);
 }
 
 /** Runs the installer in this process (fast). Same sandbox rules as runInstall. */
@@ -163,7 +167,9 @@ export async function runInstallInProcess(
     print: (t) => out.push(t),
     printErr: (t) => err.push(t),
   });
-  return { code, stdout: `${out.join("\n")}\n`, stderr: `${err.join("\n")}\n` };
+  const stdout = `${out.join("\n")}\n`;
+  assertTargetInside(stdout, sandbox);
+  return { code, stdout, stderr: `${err.join("\n")}\n` };
 }
 
 export interface InstallEnv {

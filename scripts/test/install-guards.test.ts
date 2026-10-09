@@ -150,7 +150,7 @@ describe("capture directory", () => {
   });
 
   it.skipIf(!inRepo)(
-    "accepts the default fixtures/raw (ignored) and tracks nothing under it",
+    "accepts fixtures/raw (the S0b copy target, ignored) and tracks nothing under it",
     async () => {
       await expect(
         checkOutDir(join(fixturesRoot(), "raw"), sandboxEnv(makeTempDir())),
