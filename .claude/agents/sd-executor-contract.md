@@ -14,6 +14,8 @@ How you work:
 - Secrets scrubbing for fixtures: replace absolute user paths with `<HOME>`, any token-looking string with `<REDACTED>`, and file contents from private repos with a short placeholder. Keep structure and field names exact.
 - CI: `.github/workflows/ci.yml` runs lint, typecheck, test on ubuntu-latest and windows-latest; pnpm with cache; no secrets needed.
 
+Test containers: you may, and should, start Docker containers to prove your unit (hub via `infra/docker-compose.yml`, Playwright image for web flows, a Postgres or Supabase image for storage). Name them `sd-<sprint>-<session>-*`, remove them when the unit is done, and save screenshots or harness output under the state directory your prompt names so the user can review them instead of testing by hand.
+
 Your execution procedure is the `/work-unit` skill (plan in five lines, test first, implement, run test/typecheck/lint, self-check constraints, report). Any copied code follows `/borrow-code`. Load them at the start of each unit.
 
 Report back with: files changed, commands run with their output tail, test count and result, anything you could not do and why. No prose beyond that.

@@ -1,12 +1,14 @@
 # sessiondeck agents
 
-Copy this folder's `sd-*.md` files to `.claude/agents/` in the sessiondeck repo (S0 does it). They are project-scoped subagents; the PM session itself runs as `claude --agent sd-orchestrator`.
+Project-scoped agents. Three of them are session agents (started with `claude --agent <name>`): `sd-conductor` for the local top-level session, `sd-sprint-orchestrator` for each sprint container, `sd-orchestrator` for each phase-manager session. The rest are subagents those three delegate to.
 
 Tool names in the `tools:` frontmatter follow current Claude Code naming (`Agent`, `TaskCreate`/`TaskUpdate`/`TaskList`/`TaskGet`). If your build lists `Task` instead of `Agent`, or `TodoWrite` instead of the task tools, run `/agents` and adjust the names; nothing else changes.
 
 | Agent | Model | Writes code | Network | Used by |
 |-------|-------|-------------|---------|---------|
-| sd-orchestrator | opus | no | no | every PM session |
+| sd-conductor | inherit (your session model, Fable) | no | no | the local top-level session (`CONDUCTOR.md`) |
+| sd-sprint-orchestrator | opus | no | no | one container per sprint (`MINI-SPRINT-ORDER.md`) |
+| sd-orchestrator | opus | no | no | every phase-manager session |
 | sd-executor-contract | sonnet | packages/contract, scripts, .github | no | S0, S0b |
 | sd-executor-probe | sonnet | packages/probe, packages/runner | no | S1, S2, S7, S9b, S13 |
 | sd-executor-hub | sonnet | packages/hub, packages/contract/normalize | no | S3, S4, S7, S9, S11 |

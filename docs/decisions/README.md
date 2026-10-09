@@ -11,3 +11,4 @@ One file per decision, numbered, never edited after acceptance (superseding deci
 | 0005 | No planning framework; own section list and agents | accepted 2026-10-08 |
 | 0006 | Supabase is the database backend; SQLite stays local for Phase 2 | accepted 2026-10-08 |
 | 0007 | Bash allowed project-wide with a guard hook and deny rules | accepted 2026-10-08 |
+| 0008 | Three-level agentic workflow with containerized mini-sprints | accepted 2026-10-08 |

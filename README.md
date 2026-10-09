@@ -2,7 +2,7 @@
 
 A self-hosted dashboard for running many Claude Code sessions in parallel: live state, context window, 5h/7d usage, cost, subagents and task progress per session; the content each session is working on; organization by project and phase; preset layouts.
 
-Status: planning complete, development not started. First session is `docs/handoffs/S00-contract-and-scaffold.md`.
+Status: planning complete, development not started. Start the workflow with `CONDUCTOR.md` (local, interactive); it runs Sprint 0 from `MINI-SPRINT-ORDER.md`, whose first session is `docs/handoffs/S00-contract-and-scaffold.md`.
 
 ## How it works, in one paragraph
 
@@ -12,6 +12,9 @@ A small probe on the laptop turns Claude Code's hook and statusLine callbacks in
 
 | Doc | Purpose |
 |-----|---------|
+| `CONDUCTOR.md` | Level 0 prompt: the local session that runs the whole workflow with you in the loop |
+| `MINI-SPRINT-ORDER.md` | Sprint packages, dependency graph, launch rules |
+| `PROMPT-BOOK.md` | Every prompt by level, question/resume protocol, status schema, integration gate |
 | `docs/planning/00-open-decisions.md` | Decisions made and defaults assumed |
 | `docs/planning/01-architecture.md` | Components, contract, state machine, storage, security, borrow map with code citations |
 | `docs/planning/02-roadmap.md` | Nine phases, dependencies, parallel lanes |
@@ -23,14 +26,14 @@ A small probe on the laptop turns Claude Code's hook and statusLine callbacks in
 | `docs/research/` | Dated research notes with sources |
 | `.claude/agents/` | Scoped subagents: orchestrator, executors, reviewers, verifier, researcher |
 
-## Starting a development session
+## Starting development
 
 ```
 cd sessiondeck
-claude --agent sd-orchestrator
+claude --agent sd-conductor
 ```
 
-Then paste the body of the matching file in `docs/handoffs/`. `CLAUDE.md` tells the session the rest.
+Then paste `CONDUCTOR.md`. To run a single phase-manager session by hand instead: `claude --agent sd-orchestrator` and paste the matching file in `docs/handoffs/`.
 
 ## License
 

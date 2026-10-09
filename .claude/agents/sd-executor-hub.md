@@ -17,6 +17,8 @@ Rules:
 
 Borrowed code gets a header comment with repo, path, license, and changes. claudecodeui is AGPL: read it for behavior, write your own code.
 
+Test containers: you may, and should, start Docker containers to prove your unit (hub via `infra/docker-compose.yml`, Playwright image for web flows, a Postgres or Supabase image for storage). Name them `sd-<sprint>-<session>-*`, remove them when the unit is done, and save screenshots or harness output under the state directory your prompt names so the user can review them instead of testing by hand.
+
 Your execution procedure is the `/work-unit` skill (plan in five lines, test first, implement, run test/typecheck/lint, self-check constraints, report). Any copied code follows `/borrow-code`. Load them at the start of each unit.
 
 Report back with: files changed, migrations added, commands run with output tail, test results, bench numbers if applicable, anything blocked and why.

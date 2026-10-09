@@ -14,6 +14,9 @@ coverage/
 *.key
 probe.json
 
+# sprint state (status, logs, screenshots, tokens) lives outside git
+.sprint/
+
 # local data
 *.sqlite
 *.sqlite-*

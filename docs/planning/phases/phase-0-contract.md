@@ -19,6 +19,7 @@ In:
 - Fixture capture script: a throwaway hook + statusLine command that dumps every raw payload to `fixtures/raw/<event>/<n>.json` from your real sessions for a day. These are the ground truth for every later parser.
 - CI: lint, typecheck, test on `ubuntu-latest` and `windows-latest`.
 - Copy of this planning set into `docs/planning/`.
+- Sprint container tooling per `infra/sprint/README.md` (S0c): image, compose, entrypoint, run/status/stop scripts, prompt renderer, state-file helper, smoke test.
 Out:
 - Any runtime behavior. No daemon, no server, no UI.
 
@@ -48,6 +49,7 @@ Out:
 - R0.4 statusLine schema parses fixtures with and without `rate_limits`, with `current_usage` null, and with the #52326 leak (percentage > 100 becomes null).
 - R0.5 CI green on both OSes; `pnpm -r test` under 60 s.
 - R0.6 `docs/planning/` matches the vault copy; `.claude/agents/` contains the nine `sd-*` agents.
+- R0.8 `scripts/sprint/run-sprint.ps1 -Sprint smoke` produces `.sprint/smoke/status.json` with state green within two minutes on Docker Desktop for Windows; the renderer has a test per package block in `MINI-SPRINT-ORDER.md`; tokens enter only through `.sprint/env`.
 - R0.7 At least 50 raw fixtures across at least 12 distinct hook events, plus 20 statusLine samples, committed under `packages/contract/fixtures/`, secrets scrubbed (fixtures are reviewed by `sd-security-reviewer` before commit).
 
 ## Definition of done
@@ -55,4 +57,4 @@ Out:
 - [ ] `packages/contract` has 100% line coverage on `state.ts` and `envelope.ts`.
 - [ ] A one-page `docs/CONTRACT.md` renders the envelope and state machine for humans (the mermaid state diagram is generated from the reducer's transition table, not hand-drawn).
 - [ ] Phase 1, 2, 3 handoff prompts (in `04-session-map.md`) each reference commit SHAs of the contract they build against.
-- [ ] `sd-reviewer` has signed off the PR; `sd-security-reviewer` has signed off the fixtures.
+- [ ] `sd-reviewer` has signed off the PR; `sd-security-reviewer` has signed off the fixtures and the sprint tooling (tokens, docker socket).

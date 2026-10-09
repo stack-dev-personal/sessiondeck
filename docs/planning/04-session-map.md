@@ -12,6 +12,8 @@ How the work is cut into Claude Code sessions, the order, what can run at the sa
 
 ## 1. Operating model
 
+- Three levels run this map: the conductor (`CONDUCTOR.md`, local, you present) launches mini-sprint orchestrators (`MINI-SPRINT-ORDER.md`, one container per sprint), which launch the phase-manager sessions below (`PROMPT-BOOK.md` section 2). The handoff prompts in section 3 are what a phase manager receives, wrapped in the prompt book's preamble. Running one by hand in a terminal still works.
+
 - Start every session with the project agent so the PM session cannot write code itself: `claude --agent sd-orchestrator` (the agent definition scopes tools to read, search, shell, task list, and delegation). Paste the handoff prompt as the first message.
 - Work unit loop inside a session: `sd-executor-<area>` implements on a branch → `sd-reviewer` reviews the diff (and `sd-security-reviewer` where the phase says so) → executor fixes → `sd-verifier` runs the phase's requirement checks → PM marks the unit done.
 - Branch per session: `p<phase>/<slug>` (e.g. `p1/probe-hook`). Local ports for visual checks. No push to `main` without your word; the PM ends by reporting the PR URL and the DoD checklist with evidence.
@@ -23,7 +25,8 @@ How the work is cut into Claude Code sessions, the order, what can run at the sa
 | Session | Phase | Slice | Branch | Executors | Reviewers | Runs after | Parallel with |
 |---------|-------|-------|--------|-----------|-----------|------------|---------------|
 | S0 | 0 | monorepo, CI, contract package, fixture capture script, agents, docs copy | `p0/scaffold` | sd-executor-contract | sd-reviewer, sd-security-reviewer (fixtures) | nothing | nothing |
-| S0b | 0 | you: run the capture hook for a working day, then the session commits scrubbed fixtures and finalizes `reduce()` | `p0/fixtures` | sd-executor-contract | sd-security-reviewer | S0 + one day of your sessions | nothing |
+| S0b | 0 | you: run the capture hook for a working day, then the session commits scrubbed fixtures and finalizes `reduce()` | `p0/fixtures` | sd-executor-contract | sd-security-reviewer | S0 + one day of your sessions | S0c |
+| S0c | 0 | sprint container tooling: Dockerfile, compose, entrypoint, run/status/stop scripts, prompt renderer, state-file helper, smoke test (`infra/sprint/README.md`) | `p0/sprint-tooling` | sd-executor-infra, sd-executor-contract | sd-reviewer, sd-security-reviewer | S0 | S0b |
 | S1 | 1 | probe-hook, probe-statusline, spool, install/uninstall, latency bench | `p1/probe-hook` | sd-executor-probe | sd-reviewer, sd-security-reviewer | S0b | S2, S3, S5 |
 | S2 | 1 | probe-daemon: forwarder, cursor, transcript tailer, liveness, Task Scheduler registration | `p1/probe-daemon` | sd-executor-probe | sd-reviewer | S0b | S1, S3, S5 |
 | S3 | 2 | hub core: ingest, store, reducer wiring, REST, WS, Dockerfile | `p2/hub-core` | sd-executor-hub | sd-reviewer, sd-security-reviewer | S0b | S1, S2, S5 |
@@ -41,7 +44,7 @@ How the work is cut into Claude Code sessions, the order, what can run at the sa
 | S14 | 8 | launcher UI, terminal pane, handoff prompt library, open-in-WT | `p8/cockpit-ui` | sd-executor-web | sd-reviewer | S10, S13 | S13 (mocks first) |
 | S15 | 8 | Electron shell (optional) | `p8/electron` | sd-executor-web | sd-reviewer | S14 | nothing |
 
-Critical path: S0 → S0b → S3 → S6 → S8. Everything else hangs off that line. The widest parallel moment is right after S0b: four sessions (S1, S2, S3, S5) in four terminals, which is exactly the situation the tool exists for.
+Critical path: S0 → S0b → S3 → S6 → S8 (S0c runs beside S0b and must land before Sprint 1 starts in containers). Everything else hangs off that line. The widest parallel moment is right after S0b: four sessions (S1, S2, S3, S5) in four terminals, which is exactly the situation the tool exists for.
 
 ## 3. Handoff prompts
 
@@ -72,6 +75,10 @@ Branch p0/fixtures. Delegate scrubbing and tests to sd-executor-contract; run sd
 
 Stop and ask me if a payload shape contradicts docs/planning/01-architecture.md section 3. End with the contract commit SHA that S1, S2, S3, S5 will build against.
 ```
+
+### S0c - Sprint container tooling
+
+See `docs/handoffs/S00c-sprint-tooling.md` (added after the three workflow files; implements `infra/sprint/README.md`).
 
 ### S1 - Probe hook and statusline
 

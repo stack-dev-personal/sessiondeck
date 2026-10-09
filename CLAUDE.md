@@ -8,6 +8,18 @@ Self-hosted dashboard for parallel Claude Code sessions. Sessions run on the lap
 2. The phase doc for the work at hand: `docs/planning/phases/phase-<n>-*.md`
 3. `docs/planning/04-session-map.md` section 1 (operating model) and the session's handoff in `docs/handoffs/`
 
+## Workflow files at the root
+
+| File | Level | Who reads it |
+|------|-------|--------------|
+| `CONDUCTOR.md` | 0, local and interactive, the user present | the `sd-conductor` session the user starts in PowerShell |
+| `MINI-SPRINT-ORDER.md` | 1, one Docker container per sprint | the conductor (to choose what to start) and each `sd-sprint-orchestrator` (its package) |
+| `PROMPT-BOOK.md` | 1 and 2 | every headless prompt: preamble, phase-manager prompt, sprint prompt, question/resume protocol, status schema, fix sessions, integration gate |
+
+Hierarchy: conductor → mini-sprint orchestrators (containers) → phase managers (`sd-orchestrator`, worktrees) → workers (executors, reviewers, verifier). Sessions merge into their sprint branch; sprint branches merge into `main` only on the user's explicit yes to the conductor. Headless sessions never ask; they write `questions.md`, set `blocked`, and exit (PROMPT-BOOK.md section 5).
+
+Test containers: workers are expected to start Docker containers to prove their units and to automate the user's testing (Playwright flows with screenshots, harness scripts with printed evidence) so the user reviews evidence instead of clicking through. Container contract: `infra/sprint/README.md`.
+
 ## Operating model
 
 - A session is the project manager for one slice. Start it as `claude --agent sd-orchestrator`; it delegates to `sd-executor-*` agents, reviews with `sd-reviewer` (and `sd-security-reviewer` where the phase says so), verifies with `sd-verifier`. Agent roster and directory ownership: `.claude/agents/README.md`.

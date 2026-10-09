@@ -1,11 +1,12 @@
 # Handoff prompts
 
-One file per session from `docs/planning/04-session-map.md`. Start the session with `claude --agent sd-orchestrator` in the repo root, then paste the prompt body. Replace `<sha>` with the contract commit after S0b.
+One file per session from `docs/planning/04-session-map.md`. Start the session with `claude --agent sd-orchestrator` in the repo root, then paste the prompt body. In the containerized workflow the mini-sprint orchestrator wraps each of these in the preamble from `PROMPT-BOOK.md` section 2 and runs it headless. Replace `<sha>` with the contract commit after S0b.
 
 | File | Session | Phase |
 |------|---------|-------|
 | `S00-contract-and-scaffold.md` | S0 - Contract and scaffold | 0 |
 | `S00b-fixtures-and-reducer-finalization.md` | S0b - Fixtures and reducer finalization | 0 |
+| `S00c-sprint-tooling.md` | S0c - Sprint container tooling | 0 |
 | `S01-probe-hook-and-statusline.md` | S1 - Probe hook and statusline | 1 |
 | `S02-probe-daemon.md` | S2 - Probe daemon | 1 |
 | `S03-hub-core.md` | S3 - Hub core | 2 |

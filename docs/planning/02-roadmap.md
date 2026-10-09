@@ -12,7 +12,7 @@ Nine phases. Each has a doc in `phases/` with MVP, Scope, Blockers/Constraints, 
 
 | Phase | Name | Delivers | Depends on | Parallel with |
 |-------|------|----------|------------|---------------|
-| 0 | Contract and scaffold | Monorepo, CI, `contract` package with envelope + state machine + fixtures captured from your real sessions | nothing | nothing (gate for everything) |
+| 0 | Contract and scaffold | Monorepo, CI, `contract` package with envelope + state machine + fixtures captured from your real sessions, sprint container tooling | nothing | nothing (gate for everything) |
 | 1 | Probe | Laptop hook + statusLine + daemon (spool, forward, tail, liveness), installer for `settings.json` | 0 | 2, 3 |
 | 2 | Hub | Ingest, store, reducer, REST, WS, Docker on laptop | 0 | 1, 3 |
 | 3 | Board | Web MVP: live session cards with the indicator set, detail drawer, alerts, compact mode | 0 (mocks), 2 (live) | 1, 2 |

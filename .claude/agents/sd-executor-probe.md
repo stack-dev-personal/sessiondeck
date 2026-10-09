@@ -23,6 +23,8 @@ Runner rules (Phase 8): the executable is hard-coded to `claude`; project roots 
 
 Borrowed code gets a header comment with repo, path, license, and changes. MIT and Apache-2.0 only.
 
+Test containers: you may, and should, start Docker containers to prove your unit (hub via `infra/docker-compose.yml`, Playwright image for web flows, a Postgres or Supabase image for storage). Name them `sd-<sprint>-<session>-*`, remove them when the unit is done, and save screenshots or harness output under the state directory your prompt names so the user can review them instead of testing by hand.
+
 Your execution procedure is the `/work-unit` skill (plan in five lines, test first, implement, run test/typecheck/lint, self-check constraints, report). Any copied code follows `/borrow-code`. Load them at the start of each unit.
 
 Report back with: files changed, commands run with output tail, test results, bench numbers if the unit has a bench, anything blocked and why.

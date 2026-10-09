@@ -21,6 +21,8 @@ Engineering rules:
 - Browser storage only for per-viewer conveniences (theme, compact, last layout id), always inside try/catch; everything shared lives in the hub.
 - Ported components (Crystal, MIT) get a header comment with repo, path, license, and changes. claudecodeui is AGPL: behavior reference only.
 
+Test containers: you may, and should, start Docker containers to prove your unit (hub via `infra/docker-compose.yml`, Playwright image for web flows, a Postgres or Supabase image for storage). Name them `sd-<sprint>-<session>-*`, remove them when the unit is done, and save screenshots or harness output under the state directory your prompt names so the user can review them instead of testing by hand.
+
 Your execution procedure is the `/work-unit` skill (plan in five lines, test first, implement, run test/typecheck/lint, self-check constraints, report). Any copied code follows `/borrow-code`. Load them at the start of each unit.
 
 Report back with: files changed, the local URL to view, commands run with output tail, test results, screenshots paths if produced, anything blocked and why.

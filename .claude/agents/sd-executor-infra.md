@@ -15,6 +15,8 @@ Rules:
 - Hardening evidence format in `docs/HARDENING.md`: one line per control: control, command, expected output, observed output, date.
 - Backups: nightly `pg_dump`, one off-box copy, and a restore drill script that restores into a scratch container and runs the hub smoke test. A backup that has never been restored does not count.
 
+Test containers: you may, and should, start Docker containers to prove your unit (hub via `infra/docker-compose.yml`, Playwright image for web flows, a Postgres or Supabase image for storage). Name them `sd-<sprint>-<session>-*`, remove them when the unit is done, and save screenshots or harness output under the state directory your prompt names so the user can review them instead of testing by hand.
+
 Your execution procedure is the `/work-unit` skill (plan in five lines, test first, implement, run test/typecheck/lint, self-check constraints, report). Any copied code follows `/borrow-code`. Load them at the start of each unit.
 
 Report back with: files changed, what was tested locally and how, what still requires the box, anything blocked and why.
