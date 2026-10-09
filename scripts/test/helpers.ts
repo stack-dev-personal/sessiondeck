@@ -97,6 +97,9 @@ export function runScript(
   });
 }
 
+/** Test-only argument: do not add --out, so the installer's own default applies. */
+export const KEEP_DEFAULT_OUT = "--keep-default-out";
+
 /** Directory the installer deploys its hook copy into during tests. */
 export function deployDirFor(sandbox: string): string {
   return join(sandbox, "deploy");
@@ -111,7 +114,10 @@ function installArgs(
   if (!isInside(sandbox, configDir)) throw new Error("test bug: config dir outside sandbox");
   const deploy = extraEnv.SESSIONDECK_CAPTURE_HOME ?? deployDirFor(sandbox);
   if (!isInside(sandbox, deploy)) throw new Error("test bug: deploy dir outside sandbox");
-  const argv = args.includes("--out") ? args : [...args, "--out", join(sandbox, "raw")];
+  const useDefault = args.includes(KEEP_DEFAULT_OUT);
+  const given = args.filter((a) => a !== KEEP_DEFAULT_OUT);
+  const argv =
+    useDefault || args.includes("--out") ? given : [...given, "--out", join(sandbox, "raw")];
   const env = { ...extraEnv, CLAUDE_CONFIG_DIR: configDir, SESSIONDECK_CAPTURE_HOME: deploy };
   return { argv, env };
 }
@@ -119,7 +125,8 @@ function installArgs(
 /**
  * Runs the installer as a child process. Refuses to run unless the config dir and the deploy dir
  * are inside the sandbox, and asserts the printed target. Without an explicit --out the raw
- * directory is <sandbox>/raw, never the repository's.
+ * directory is <sandbox>/raw, never the repository's, unless KEEP_DEFAULT_OUT is passed (then the
+ * installer's default, <deploy home>/raw, applies; the deploy home is inside the sandbox).
  */
 export async function runInstall(
   configDir: string,

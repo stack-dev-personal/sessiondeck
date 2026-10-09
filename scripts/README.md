@@ -75,15 +75,25 @@ refuses (even for a preview, because a preview prints status line data).
   it sits in the real deploy directory and its sha256 still equals the record, then the directory
   if it is empty; a changed file is kept and named. If the deploy directory changes between two
   installs (`SESSIONDECK_CAPTURE_HOME`), the earlier copy is removed by the same rules.
-- Raw payloads: `packages/contract/fixtures/raw/<Event>/<epoch ms>-<session>-<random>.json`, plus
-  `statusLine/`, `subagentStatusLine/`, and `_unparsed/` for input that was not a JSON object. The
-  absolute path is fixed at install time (use `--out <dir>` to choose another).
+- Raw payloads: `<deploy home>/raw/<Event>/<epoch ms>-<session>-<random>.json`, that is
+  `%LOCALAPPDATA%\sessiondeck\capture\raw\` on Windows and `$XDG_DATA_HOME/sessiondeck/capture/raw/`
+  (else `~/.local/share/sessiondeck/capture/raw/`) elsewhere, plus `statusLine/`,
+  `subagentStatusLine/`, and `_unparsed/` for input that was not a JSON object. This is a durable
+  directory outside every work tree, so removing a worktree or switching branches cannot delete the
+  captures. Install prints the resolved path (also in the preview), and the absolute path is fixed
+  at install time (`--out <dir>` chooses another one, with the same refusals for a git work tree
+  that does not ignore it and for the committed fixtures layout). Uninstall never deletes the raw
+  directory, prints the path recorded at install, and leaves the deploy directory in place while
+  raw is inside it. Next step after uninstalling: copy that directory to
+  `packages/contract/fixtures/raw/` of the checkout where the fixture session (S0b, branch
+  `p0/fixtures`) runs; it is gitignored there.
 - Problems inside the hook go to `<raw>/_capture-errors.log` (error codes only, never payload content).
   The first time a cap or the byte budget refuses a payload, one line says so (`full-budget`,
   `full-cap-<Event>`, `full-dirs`), and the status line then reads `sessiondeck capture full`
   instead of `sessiondeck capture on`. A line in `_usage.log` larger than the whole budget is ignored.
 - The raw directory is NOT scrubbed: it holds your prompts, file contents, and possibly secrets.
-  Never commit or share it. Three guards: the repository ignore rule for `fixtures/raw/`, a
+  Never commit or share it. Three guards: the repository ignore rule for `fixtures/raw/` (where the
+  copy ends up), a
   `.gitignore` containing `*` that the hook and installer write into the directory (and rewrite if
   its content is anything else), and an install
   time check that refuses an out dir inside a git work tree unless `git check-ignore` confirms it is
@@ -154,10 +164,13 @@ Close or ignore running Claude Code sessions first; they reload settings live.
 4. Next to settings.json, delete settings.json.sessiondeck-capture-state.json and the files named
    settings.json.sessiondeck-backup-<timestamp>. Backups are full copies of your settings and can
    contain tokens; read one first if you need to restore something.
-5. Delete the directory that holds this file (the deployed hook copy). It contains only the hook,
-   its lib folder and this note.
-6. Delete the raw capture directory. Its path is the value after "--out" in the entries you removed
-   in step 2. It holds your unscrubbed prompts and file contents: never commit or share it.
+5. Keep the raw captures. Their path is the value after "--out" in the entries you removed in step 2
+   (by default the "raw" folder next to this file). If the fixture session (S0b, branch
+   p0/fixtures) has not copied them yet, copy that folder to packages/contract/fixtures/raw/ of
+   the checkout where it runs; it is gitignored there. They hold your unscrubbed prompts and file
+   contents: never commit or share them, and delete the folder once S0b has its copy.
+6. Delete the deployed hook copy: the files in this directory (the hook, its lib folder and this
+   note), but not the "raw" folder until step 5 is done.
 ```
 
 ### Safety notes

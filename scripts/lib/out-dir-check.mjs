@@ -3,7 +3,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isInside } from "./capture-paths.mjs";
 import { findGitRoot, nearestExisting, realpathLoose } from "./fs-roots.mjs";
+import { resolveDeployDir } from "./deploy.mjs";
 import { InstallRefused } from "./install-errors.mjs";
+import { RAW_DIR_NAME } from "./install-config.mjs";
 import { foldPath } from "./settings-match.mjs";
 
 /**
@@ -22,9 +24,14 @@ export function fixturesRoot() {
   return resolve(SCRIPTS_DIR, "..", "packages", "contract", "fixtures");
 }
 
-/** @returns {string} <repo>/packages/contract/fixtures/raw */
-export function defaultOutDir() {
-  return join(fixturesRoot(), "raw");
+/**
+ * Default raw capture directory: <deploy home>/raw, a durable place outside every work tree, so
+ * removing a worktree or switching branches cannot delete a day of captures.
+ * @param {NodeJS.ProcessEnv} env @param {string} home
+ * @returns {string}
+ */
+export function defaultOutDir(env, home) {
+  return join(resolveDeployDir(env, home), RAW_DIR_NAME);
 }
 
 /** @param {string} a @param {string} b */

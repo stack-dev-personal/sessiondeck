@@ -12,6 +12,7 @@ import {
   serialize,
   sidecarPath,
 } from "./settings-files.mjs";
+import { isInside } from "./capture-paths.mjs";
 import { findRemaining, foldPath } from "./settings-match.mjs";
 import { applyUninstall, validateSettings } from "./settings-model.mjs";
 
@@ -20,6 +21,28 @@ import { applyUninstall, validateSettings } from "./settings-model.mjs";
 
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
+const FIXTURES_RAW_TARGET = "packages/contract/fixtures/raw/";
+
+/**
+ * What happens to the raw captures: nothing, and what the user does with them next.
+ * @param {string | undefined} outDir recorded capture directory
+ * @returns {string[]}
+ */
+export function describeRaw(outDir) {
+  if (outDir === undefined)
+    return ["The state file records no capture directory; raw captures were not touched."];
+  return [
+    `Raw captures were NOT deleted and stay in: ${outDir}`,
+    `Next step: copy that directory to ${FIXTURES_RAW_TARGET} of the checkout where the fixture`,
+    "session (S0b, branch p0/fixtures) runs; it is gitignored there. The captures are unscrubbed:",
+    "never commit or share them. Delete the directory yourself once S0b has the copy.",
+  ];
+}
+
+/** @param {string | undefined} outDir @param {string} deployDir */
+function holdsRaw(outDir, deployDir) {
+  return outDir !== undefined && isInside(foldPath(deployDir), foldPath(outDir));
+}
 
 /** @param {Flow} c @param {string[]} remaining */
 function printRemaining(c, remaining) {
@@ -49,9 +72,10 @@ function reportUnmatched(c, remaining, state) {
  * Removes the deployed copy, but only from the directory this run resolves to. A state file that
  * names another directory is not followed: both paths are printed and the exit code is 1.
  * @param {Flow} c @param {import("./settings-model.mjs").DeployRecord} deploy
+ * @param {string | undefined} outDir
  * @returns {Promise<{ lines: string[], code: number }>}
  */
-async function dropDeployed(c, deploy) {
+async function dropDeployed(c, deploy, outDir) {
   const resolved = await realpathLoose(resolveDeployDir(c.env, c.home));
   const recorded = await realpathLoose(deploy.dir);
   if (foldPath(resolved) !== foldPath(recorded)) {
@@ -68,7 +92,10 @@ async function dropDeployed(c, deploy) {
   }
   const result = await removeDeployed(deploy);
   const lines = [`Deployed copy removed (${result.removed.length} file(s)).`];
-  if (result.kept) lines.push(`Directory kept because it holds other files: ${deploy.dir}`);
+  if (result.kept) {
+    const why = holdsRaw(outDir, deploy.dir) ? "the raw captures" : "other files";
+    lines.push(`Directory kept because it holds ${why}: ${deploy.dir}`);
+  }
   lines.push(...describeLeftovers(result));
   return { code: result.refused === undefined ? EXIT_OK : EXIT_FAILED, lines };
 }
@@ -82,7 +109,7 @@ async function finish(c, state) {
   const lines = ["Capture hooks removed."];
   let code = EXIT_OK;
   if (state?.deploy) {
-    const dropped = await dropDeployed(c, state.deploy);
+    const dropped = await dropDeployed(c, state.deploy, state.outDir);
     lines.push(...dropped.lines);
     code = dropped.code;
   } else {
@@ -90,6 +117,7 @@ async function finish(c, state) {
       "No state file was found: a previous status line could not be restored (see backups).",
     );
   }
+  lines.push(...describeRaw(state?.outDir));
   await removeSidecar(c.target);
   lines.push(`State file removed: ${sidecarPath(c.target)}`);
   const backups = await listBackups(c.target);

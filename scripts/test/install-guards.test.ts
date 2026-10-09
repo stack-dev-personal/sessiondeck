@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { checkOutDir, defaultOutDir, fixturesRoot } from "../lib/out-dir-check.mjs";
+import { checkOutDir, fixturesRoot } from "../lib/out-dir-check.mjs";
 import { isDefaultTarget } from "../lib/settings-files.mjs";
 import {
   cleanupTempDirs,
@@ -153,7 +153,7 @@ describe("capture directory", () => {
     "accepts the default fixtures/raw (ignored) and tracks nothing under it",
     async () => {
       await expect(
-        checkOutDir(defaultOutDir(), sandboxEnv(makeTempDir())),
+        checkOutDir(join(fixturesRoot(), "raw"), sandboxEnv(makeTempDir())),
       ).resolves.toBeUndefined();
       expect(git(REPO_ROOT, ["ls-files", "packages/contract/fixtures/raw"]).stdout.trim()).toBe("");
     },

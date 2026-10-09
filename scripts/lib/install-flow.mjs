@@ -57,7 +57,7 @@ export function printDiff(c, diff) {
  * @param {Flow} c
  */
 async function plan(c) {
-  const outDir = toPosix(resolve(c.out ?? defaultOutDir()));
+  const outDir = toPosix(resolve(c.out ?? defaultOutDir(c.env, c.home)));
   await checkOutDir(outDir, c.env);
   const deployDir = await assertOutsideWorkTree(resolveDeployDir(c.env, c.home));
   const current = await readSettings(c.target);
@@ -117,6 +117,7 @@ export async function install(c) {
     p.stale.length > 0
       ? `Deployed copy: ${p.stale.length} file(s) to write in ${p.deployDir}`
       : `Deployed copy: up to date in ${p.deployDir}`,
+    `Raw capture directory: ${p.outDir}`,
   ]);
   if (settingsSame && p.stale.length === 0) {
     c.print(["Already installed; nothing to write."]);
@@ -156,7 +157,6 @@ async function commitAndReport(c, p) {
   });
   c.print([
     backup ? `Backup: ${backup}` : "Backup: none (the settings file did not exist)",
-    `Capture directory: ${p.outDir}`,
     "Running sessions pick up the change as soon as the file is written.",
     ...STATUS_NOTE,
   ]);
