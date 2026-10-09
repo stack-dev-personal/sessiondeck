@@ -3,6 +3,12 @@ export const LAST_PROMPT_MAX_CHARS = 2000;
 export const LAST_MESSAGE_MAX_CHARS = 2000;
 export const STATE_DETAIL_MAX_CHARS = 120;
 export const TOOL_NAME_MAX_CHARS = 120;
+export const END_REASON_MAX_CHARS = 120;
+export const MODEL_ID_MAX_CHARS = 120;
+export const AGENT_TYPE_MAX_CHARS = 120;
+export const AGENT_ID_MAX_CHARS = 120;
+/** Rows kept in snapshot.subagents; the oldest ended rows go first. */
+export const SUBAGENT_ROWS_MAX = 50;
 
 /** Visible end of every truncated text. */
 export const TRUNCATION_MARKER = "...[truncated]";

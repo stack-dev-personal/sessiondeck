@@ -15,6 +15,7 @@ import { STATE_DETAIL_MAX_CHARS, truncate } from "./limits";
 import type { PayloadRecord } from "./payload";
 import { readString } from "./payload";
 import type { SessionSnapshot } from "./snapshot";
+import { isUnknownRequester } from "./snapshot";
 import type { HookEventName, RowState, SessionState } from "./state-names";
 import { ROW_STATES, SESSION_STATES, SUPERSEDED_REASON } from "./state-names";
 
@@ -29,12 +30,14 @@ export type GuardId =
   | "last_tool_exit_plan"
   | "permission_notification"
   | "permission_free"
+  | "not_subagent_over_input"
   | "source_not_compact";
 
 /** How a row sets state_detail (display text only; no logic reads it). */
 export type DetailRule =
   | "keep"
   | "keep_if_working"
+  | "keep_if_active"
   | "clear"
   | "tool"
   | "source"
@@ -105,6 +108,12 @@ const POST_COMPACT_TO_WORKING: readonly RowState[] = Object.freeze([
   "ended_superseded",
 ]);
 
+/** States whose state_detail still describes current activity (a tool or the open prompt). */
+const ACTIVE_DETAIL_STATES: readonly SessionState[] = Object.freeze([
+  "working",
+  "waiting_permission",
+]);
+
 /** Human text for each guard; also used in the generated diagram and table. */
 export const GUARD_DESCRIPTIONS: Readonly<Record<GuardId, string>> = Object.freeze({
   main_thread: "not inside a subagent",
@@ -113,13 +122,15 @@ export const GUARD_DESCRIPTIONS: Readonly<Record<GuardId, string>> = Object.free
   last_tool_exit_plan: "last tool ExitPlanMode",
   permission_notification: "permission_prompt or elicitation_dialog",
   permission_free: "no other context holds the permission prompt",
+  not_subagent_over_input: "not a subagent while the session waits for input",
   source_not_compact: "source is not compact",
 });
 
-/** True unless a permission prompt is open and was asked by a different agent context. */
+/** True unless a permission prompt is open and was asked by a known, different agent context. */
 function permissionFree(ctx: TransitionContext): boolean {
   const held = ctx.prev.tracking.permission;
-  return ctx.prev.state !== "waiting_permission" || held === null || held.agent_id === ctx.agentId;
+  if (ctx.prev.state !== "waiting_permission" || held === null) return true;
+  return isUnknownRequester(held) || held.agent_id === ctx.agentId;
 }
 
 const GUARDS: Readonly<Record<GuardId, (ctx: TransitionContext) => boolean>> = {
@@ -130,12 +141,15 @@ const GUARDS: Readonly<Record<GuardId, (ctx: TransitionContext) => boolean>> = {
   permission_notification: (ctx) =>
     PERMISSION_NOTIFICATION_TYPES.includes(readString(ctx.payload, "notification_type") ?? ""),
   permission_free: permissionFree,
+  not_subagent_over_input: (ctx) => ctx.agentId === null || ctx.prev.state !== "waiting_input",
   source_not_compact: (ctx) => readString(ctx.payload, "source") !== COMPACT_SOURCE,
 };
 
 const DETAIL_RULES: Readonly<Record<DetailRule, (ctx: TransitionContext) => string | null>> = {
   keep: (ctx) => ctx.prev.state_detail,
   keep_if_working: (ctx) => (ctx.prev.state === "working" ? ctx.prev.state_detail : null),
+  keep_if_active: (ctx) =>
+    ACTIVE_DETAIL_STATES.includes(ctx.prev.state) ? ctx.prev.state_detail : null,
   clear: () => null,
   tool: (ctx) => `${TOOL_DETAIL_PREFIX}${readString(ctx.payload, "tool_name") ?? "unknown"}`,
   source: (ctx) => {
@@ -178,7 +192,9 @@ function row(
  * Subagents: a hook inside a subagent (envelope.agent_id) never reaches idle, waiting_input or
  * ended (rows with the main_thread guard). It may still reach waiting_permission.
  * Permission: tool events (PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied) leave
- * waiting_permission only from the context that asked (tracking.permission.agent_id).
+ * waiting_permission only from the context that asked (tracking.permission.agent_id); when a
+ * Notification without agent_id announced the prompt the requester is unknown and any context may
+ * leave. A subagent tool event never leaves waiting_input.
  *
  * Not in the table on purpose (fixtures pending, see PROVISIONAL_BEHAVIOR): TaskCreated,
  * TaskCompleted, PreCompact. SubagentStart and SubagentStop change rows, not state.
@@ -187,12 +203,22 @@ export const TRANSITIONS: readonly Transition[] = Object.freeze([
   row("SessionStart", ROW_STATES, "starting", "source", ["source_not_compact"]),
   row("UserPromptSubmit", LIVE_STATES, "working", "clear"),
   row("PreToolUse", LIVE_STATES, "working", "tool", ["permission_free", "main_thread"]),
-  row("PreToolUse", LIVE_STATES, "working", "keep_if_working", ["permission_free", "subagent"]),
-  row("PostToolUse", LIVE_STATES, "working", "keep", ["permission_free"]),
+  row("PreToolUse", LIVE_STATES, "working", "keep_if_working", [
+    "permission_free",
+    "subagent",
+    "not_subagent_over_input",
+  ]),
+  row("PostToolUse", LIVE_STATES, "working", "keep_if_active", [
+    "permission_free",
+    "not_subagent_over_input",
+  ]),
   row("PostToolUseFailure", ["waiting_permission"], "working", "keep", ["permission_free"]),
   row("PermissionRequest", LIVE_STATES, "waiting_permission", "tool"),
-  row("PermissionDenied", LIVE_STATES, "working", "clear", ["permission_free"]),
-  row("Notification", PERMISSION_FALLBACK_FROM, "waiting_permission", "keep", [
+  row("PermissionDenied", LIVE_STATES, "working", "clear", [
+    "permission_free",
+    "not_subagent_over_input",
+  ]),
+  row("Notification", PERMISSION_FALLBACK_FROM, "waiting_permission", "keep_if_active", [
     "permission_notification",
   ]),
   row("Stop", LIVE_STATES, "waiting_input", "needs_input", ["main_thread", "last_tool_ask_user"]),
@@ -249,6 +275,13 @@ export const PROVISIONAL_BEHAVIOR: readonly ProvisionalBehavior[] = Object.freez
         event: "StopFailure",
         current: "any context, including a subagent, gives error",
         intended: "confirm whether a subagent's StopFailure should move the session",
+      },
+      {
+        event: "Notification",
+        current:
+          "a permission Notification without agent_id records an unknown requester; any context's tool event leaves waiting_permission",
+        intended:
+          "a captured sandbox or subagent permission Notification must confirm whether agent_id is present, then scope to the requester",
       },
       {
         event: "TaskCreated",

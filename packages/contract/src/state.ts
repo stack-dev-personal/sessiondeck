@@ -18,7 +18,7 @@ import { agentIdOf, asRecord } from "./payload";
 import type { SessionSnapshot } from "./snapshot";
 import type { HookEventName } from "./state-names";
 import { HOOK_EVENTS, SUPERSEDED_REASON } from "./state-names";
-import { nextTracking } from "./tracking";
+import { nextTracking, withReadTracking } from "./tracking";
 import type { Transition, TransitionContext } from "./transitions";
 import { resolveDetail, selectTransition } from "./transitions";
 
@@ -65,13 +65,16 @@ function isForSession(prev: SessionSnapshot, e: Envelope): boolean {
 
 /**
  * Pure and total: any (snapshot, hook envelope) pair gives a new snapshot, never throws, never
- * mutates its inputs. Time comes only from e.ts. Unknown events and malformed payloads only
- * update last_event_at. An envelope whose session_id or host differs from the snapshot's returns
- * `prev` itself, unchanged. A normal `ended` session with no matching row only updates
+ * mutates its inputs. A snapshot stored without (or with a malformed) tracking counts as having
+ * empty tracking, and the result always carries a well-formed one (same for reduceLiveness and
+ * supersedeSamePid). Time comes only from e.ts. Unknown events only update last_event_at; a
+ * malformed payload is read as empty, so its row still fires with default text. An envelope whose
+ * session_id or host differs from the snapshot's returns `prev` itself, unchanged. A normal `ended` session with no matching row only updates
  * last_event_at. Nested objects of the result may be shared with `prev` (structural sharing).
  */
-export function reduce(prev: SessionSnapshot, e: Envelope<"hook">): SessionSnapshot {
-  if (!isForSession(prev, e)) return prev;
+export function reduce(prevRaw: SessionSnapshot, e: Envelope<"hook">): SessionSnapshot {
+  if (!isForSession(prevRaw, e)) return prevRaw;
+  const prev = withReadTracking(prevRaw);
   const name = e.hook_event_name ?? "";
   const touched: SessionSnapshot = { ...prev, last_event_at: e.ts };
   const payload = asRecord(e.payload);
@@ -87,8 +90,9 @@ export function reduce(prev: SessionSnapshot, e: Envelope<"hook">): SessionSnaps
  * ended or exited, or when the report is for a pid other than the one on record). A payload that
  * does not match LivenessPayloadSchema only updates last_event_at. Another session or host: `prev`.
  */
-export function reduceLiveness(prev: SessionSnapshot, e: Envelope<"liveness">): SessionSnapshot {
-  if (!isForSession(prev, e)) return prev;
+export function reduceLiveness(prevRaw: SessionSnapshot, e: Envelope<"liveness">): SessionSnapshot {
+  if (!isForSession(prevRaw, e)) return prevRaw;
+  const prev = withReadTracking(prevRaw);
   const touched: SessionSnapshot = { ...prev, last_event_at: e.ts };
   const parsed = LivenessPayloadSchema.safeParse(e.payload);
   if (!parsed.success) return touched;
@@ -120,9 +124,10 @@ export function supersedeSamePid(
   return sessions.map((s) => {
     if (s.host !== incoming.host || s.pid !== incoming.pid) return s;
     if (s.session_id === incoming.session_id) return s;
-    const ctx: TransitionContext = { prev: s, agentId: null, payload: asRecord(null) };
+    const prev = withReadTracking(s);
+    const ctx: TransitionContext = { prev, agentId: null, payload: asRecord(null) };
     const t = selectTransition("superseded", ctx);
     if (t === undefined) return s;
-    return { ...applyTransition(s, t, ctx, incoming.ts), ended_reason: SUPERSEDED_REASON };
+    return { ...applyTransition(prev, t, ctx, incoming.ts), ended_reason: SUPERSEDED_REASON };
   });
 }

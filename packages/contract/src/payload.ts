@@ -1,4 +1,5 @@
 import type { Envelope } from "./envelope";
+import { AGENT_ID_MAX_CHARS, truncate } from "./limits";
 
 /** Raw hook payloads are untrusted: every read goes through these helpers and never throws. */
 export type PayloadRecord = Readonly<Record<string, unknown>>;
@@ -19,9 +20,11 @@ export function readString(record: PayloadRecord, key: string): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-/** The envelope's agent_id (the probe copies it from the hook), or null for the main thread. */
+/** The envelope's agent_id (the probe copies it from the hook), capped, or null for the main thread. */
 export function agentIdOf(e: Envelope): string | null {
-  return typeof e.agent_id === "string" && e.agent_id !== "" ? e.agent_id : null;
+  return typeof e.agent_id === "string" && e.agent_id !== ""
+    ? truncate(e.agent_id, AGENT_ID_MAX_CHARS)
+    : null;
 }
 
 /** True when the hook ran inside a subagent. */

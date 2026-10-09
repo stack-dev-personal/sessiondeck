@@ -163,11 +163,12 @@ describe("MINOR: PostToolUseFailure and PermissionDenied rows", () => {
   });
 
   it.each(["starting", "working", "idle", "error", "exited"] as const)(
-    "a permission Notification falls back from %s; detail is kept",
+    "a permission Notification falls back from %s; only a working detail is kept",
     (state) => {
       const n = hook("Notification", { notification_type: "permission_prompt" });
       const next = reduce(snap(state, { state_detail: "tool:Bash" }), n);
-      expect(next).toMatchObject({ state: "waiting_permission", state_detail: "tool:Bash" });
+      const kept = state === "working" ? "tool:Bash" : null;
+      expect(next).toMatchObject({ state: "waiting_permission", state_detail: kept });
     },
   );
 
@@ -241,7 +242,7 @@ describe("tracking.last_tool", () => {
 
   it("subagent PreToolUse from a non-working state shows no stale detail", () => {
     const next = reduce(
-      snap("waiting_input", { state_detail: "needs input" }),
+      snap("exited", { state_detail: "process gone" }),
       hook("PreToolUse", { tool_name: "Read" }, 9_000, SUB),
     );
     expect(next).toMatchObject({ state: "working", state_detail: null });

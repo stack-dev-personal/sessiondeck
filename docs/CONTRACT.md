@@ -14,7 +14,7 @@ Every probe-to-hub message is one `Envelope` (`src/envelope.ts`, architecture 3.
 | `host` | string | machine name, non-empty |
 | `os` | `win32` `linux` `darwin` | host OS |
 | `session_id` | string or null | null only for kind `probe` |
-| `agent_id` | string, optional | present when the hook ran inside a subagent |
+| `agent_id` | string, optional | present when the hook ran inside a subagent. The probe copies the payload's `agent_id` here on every hook; requester scoping depends on it (confirm in S1) |
 | `hook_event_name` | string, optional | required for kind `hook` |
 | `ts` | integer >= 0 | epoch ms at the probe |
 | `seq` | integer >= 0 | per-host sequence; the hub orders by `(host, seq)` |
@@ -35,17 +35,20 @@ Three pure functions share one frozen table (`TRANSITIONS` in `src/transitions.t
 
 Decisions:
 
-- `reduce` is total and deterministic. Unknown events and malformed payloads only update `last_event_at`. Time comes only from `e.ts`. Inputs are never mutated.
+- `reduce`, `reduceLiveness` and `supersedeSamePid` are total and deterministic and never throw. Unknown events only update `last_event_at`. A malformed payload is read as an empty one, so its row still fires with default text (`PreToolUse` with payload `null` moves `idle` to `working` with `tool:unknown`). Time comes only from `e.ts`. Inputs are never mutated.
+- The hub stores `tracking` with the snapshot. A snapshot without a well-formed `tracking` is treated as having empty tracking, and the result carries a well-formed one.
+- The probe copies the payload `agent_id` to `envelope.agent_id` on every hook (confirm in S1); the reducer reads only the envelope.
 - Routing precondition: an envelope whose `session_id` or `host` differs from the snapshot's makes `reduce` and `reduceLiveness` return `prev` itself, unchanged. The hub routes by `(host, session_id)`.
-- `state_since` changes only when `state` changes. `state_detail` is display text only and no logic reads it. Text copied from payloads is capped, with a visible `...[truncated]` marker: `last_prompt` and `last_assistant_message` 2000 chars, `state_detail` and tool names 120.
-- `tracking` (added in S0 beyond architecture 3.3, reducer bookkeeping, confirm before S3 and S5): `last_tool` is the last tool of a main-thread `PreToolUse` (cleared by `UserPromptSubmit` and `Stop`; the `Stop` guards read it). `permission` is who holds the open prompt (`tool`, and `agent_id`, null for the main thread); null unless `waiting_permission`.
-- Tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`) leave `waiting_permission` only from the context that asked. From any other context they change only `last_event_at`. `UserPromptSubmit`, main-thread `Stop`, `StopFailure`, `SessionEnd` and a non-compact `SessionStart` leave it from any context. Open: parallel tool calls inside the requesting context (skipped `TODO(fixture)` test).
-- `ended` accepts only `SessionStart` (resume) with a source other than `compact`; everything else just updates `last_event_at`, so the first `ended_reason` is kept. `ended_superseded` is the row state of an `ended` session with `ended_reason: superseded`: like `exited`, any later hook for it revives it (ccmonitor sees events continue under the old id after `--continue`).
+- `state_since` changes only when `state` changes. `state_detail` is display text only and no logic reads it. Text copied from payloads is capped, with a visible `...[truncated]` marker: `last_prompt` and `last_assistant_message` 2000 chars; `state_detail`, tool names, `ended_reason`, model id, `agent_type` and `agent_id` 120. `subagents` keeps 50 rows: past that the oldest ended rows go first, and a running row only when all are running.
+- `tracking` (added in S0 beyond architecture 3.3, reducer bookkeeping, confirm before S3 and S5): `last_tool` is the last tool of a main-thread `PreToolUse` (cleared by `UserPromptSubmit` and `Stop`; the `Stop` guards read it). `permission` is the open prompt, `{ tool, agent_id }` (`agent_id` null for the main thread) or `{ tool: null, requester_unknown: true }`; null unless `waiting_permission`.
+- Tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`) leave `waiting_permission` only from the context that asked; from any other context they change only `last_event_at`. When the requester is unknown (see the `Notification` rule) any context's tool event leaves. `UserPromptSubmit`, main-thread `Stop`, any `StopFailure`, main-thread `SessionEnd` and a non-compact `SessionStart` leave it from any context. Open: parallel tool calls inside the requesting context (skipped `TODO(fixture)` test).
+- A subagent's tool event never leaves `waiting_input` (a background subagent must not hide the needs-input signal); a main-thread tool event or `UserPromptSubmit` does. `PostToolUse` and the `Notification` fallback keep `state_detail` only when the previous state is `working` or `waiting_permission`, else it becomes null.
+- `ended` accepts only `SessionStart` (resume) with a source other than `compact`; everything else just updates `last_event_at`, so the first `ended_reason` is kept. `ended_superseded` is the row state of an `ended` session with `ended_reason: superseded`: like `exited`, any later hook that has a row from it revives it (ccmonitor sees events continue under the old id after `--continue`). `TaskCreated`, `SubagentStart` and a subagent `Stop` have no row, so they do not revive it.
 - `exited` means the pid vanished without `SessionEnd`. A later hook proves the process is alive, so any event with a row from `exited` is applied normally. `alive: false` for a pid other than `snapshot.pid` is ignored.
 - `SessionStart` with a source other than `compact` moves any state to `starting` and resets `tracking`; source `compact` changes no state.
 - `PostCompact` moves `starting`, `working` (and revives `exited`, `ended_superseded`) to `working`; from every other state it only counts `compactions`. This narrows architecture line 99, which lists it under `working`: a manual `/compact` at an idle prompt must not show `working`.
-- A hook with `agent_id` (inside a subagent) never moves the session to `idle`, `waiting_input` or `ended`, and writes neither `last_tool` nor `state_detail`. It may reach `waiting_permission`. A subagent's `StopFailure` still gives `error` (unconfirmed). `SubagentStart` and `SubagentStop` maintain `subagents` rows and never change `state`.
-- A `Notification` of type `permission_prompt` or `elicitation_dialog` is the late fallback for `PermissionRequest`; it does nothing when already `waiting_permission`, and leaves `waiting_input` alone.
+- A hook with `agent_id` (inside a subagent) never moves the session to `idle`, `waiting_input` or `ended`, and never writes `last_tool`; its `PreToolUse` and `PostToolUse` write no tool into `state_detail`. It may reach `waiting_permission`, and its `PermissionRequest` and `StopFailure` do write `state_detail`. A subagent's `StopFailure` still gives `error` (unconfirmed). `SubagentStart` and `SubagentStop` maintain `subagents` rows and never change `state`.
+- A `Notification` of type `permission_prompt` or `elicitation_dialog` is the late fallback for `PermissionRequest`; it does nothing when already `waiting_permission`, and leaves `waiting_input` alone. With an `agent_id` it records that agent as the requester. Without one the requester is unknown (provisional: the hooks doc says sandboxed network prompts fire only this Notification and that `agent_id` appears only inside a subagent), so any context's tool event leaves `waiting_permission`.
 - Fields are read defensively. A wrong-typed `notification_type`, `reason` (`unknown` if absent), `last_assistant_message`, `prompt`, `model`, `agent_id`, `agent_type` leaves the snapshot field as it was. A missing or wrong-typed `tool_name` gives `tool:unknown` (and `last_tool` null), `error` gives `error`, `source` clears the detail.
 - In the table, `any state except ended` includes `ended_superseded` (an ended session with reason superseded); a normal `ended` is excluded.
 
@@ -58,11 +61,11 @@ stateDiagram-v2
     any_state --> starting : SessionStart if source is not compact
     any_except_ended --> working : UserPromptSubmit
     any_except_ended --> working : PreToolUse if no other context holds the permission prompt and not inside a subagent
-    any_except_ended --> working : PreToolUse if no other context holds the permission prompt and inside a subagent
-    any_except_ended --> working : PostToolUse if no other context holds the permission prompt
+    any_except_ended --> working : PreToolUse if no other context holds the permission prompt and inside a subagent and not a subagent while the session waits for input
+    any_except_ended --> working : PostToolUse if no other context holds the permission prompt and not a subagent while the session waits for input
     waiting_permission --> working : PostToolUseFailure if no other context holds the permission prompt
     any_except_ended --> waiting_permission : PermissionRequest
-    any_except_ended --> working : PermissionDenied if no other context holds the permission prompt
+    any_except_ended --> working : PermissionDenied if no other context holds the permission prompt and not a subagent while the session waits for input
     starting --> waiting_permission : Notification if permission_prompt or elicitation_dialog
     working --> waiting_permission : Notification if permission_prompt or elicitation_dialog
     idle --> waiting_permission : Notification if permission_prompt or elicitation_dialog
@@ -99,12 +102,12 @@ stateDiagram-v2
 | SessionStart | any state | source is not compact | starting | `source:<source>` |
 | UserPromptSubmit | any state except ended | - | working | null |
 | PreToolUse | any state except ended | no other context holds the permission prompt and not inside a subagent | working | `tool:<tool_name>` |
-| PreToolUse | any state except ended | no other context holds the permission prompt and inside a subagent | working | unchanged if working, else null |
-| PostToolUse | any state except ended | no other context holds the permission prompt | working | unchanged |
+| PreToolUse | any state except ended | no other context holds the permission prompt and inside a subagent and not a subagent while the session waits for input | working | unchanged if working, else null |
+| PostToolUse | any state except ended | no other context holds the permission prompt and not a subagent while the session waits for input | working | unchanged if working or waiting_permission, else null |
 | PostToolUseFailure | waiting_permission | no other context holds the permission prompt | working | unchanged |
 | PermissionRequest | any state except ended | - | waiting_permission | `tool:<tool_name>` |
-| PermissionDenied | any state except ended | no other context holds the permission prompt | working | null |
-| Notification | starting, working, idle, error, exited, ended_superseded | permission_prompt or elicitation_dialog | waiting_permission | unchanged |
+| PermissionDenied | any state except ended | no other context holds the permission prompt and not a subagent while the session waits for input | working | null |
+| Notification | starting, working, idle, error, exited, ended_superseded | permission_prompt or elicitation_dialog | waiting_permission | unchanged if working or waiting_permission, else null |
 | Stop | any state except ended | not inside a subagent and last tool AskUserQuestion | waiting_input | needs input |
 | Stop | any state except ended | not inside a subagent and last tool ExitPlanMode | waiting_input | awaiting plan |
 | Stop | any state except ended | not inside a subagent | idle | null |
@@ -119,7 +122,7 @@ A (state, trigger) pair with no row keeps `state`, `state_since` and `state_deta
 
 ## Provisional pending fixtures
 
-The payload fields of these events are unverified (phase 0 blockers). Their transitions are not finalized; the reducer does the conservative thing below. Each has a skipped `TODO(fixture)` test in `packages/contract/test/state.test.ts`, as does the golden timeline from a real session (S0b).
+The payload fields of these events are unverified (phase 0 blockers). Their transitions are not finalized; the reducer does the conservative thing below. Each has a skipped `TODO(fixture)` test in `packages/contract/test/state.test.ts` (the `Notification` one is in `state-review2.test.ts`), as does the golden timeline from a real session (S0b).
 
 <!-- BEGIN:provisional -->
 | Event | Behavior now | Intended after fixtures |
@@ -127,6 +130,7 @@ The payload fields of these events are unverified (phase 0 blockers). Their tran
 | PostToolUse | state working, tool_response not read | read tool_response to detect an interrupted or failed result |
 | PostToolUseFailure | only leaves waiting_permission (to working); otherwise unchanged | payload marks an API error: error; a plain tool failure: working |
 | StopFailure | any context, including a subagent, gives error | confirm whether a subagent's StopFailure should move the session |
+| Notification | a permission Notification without agent_id records an unknown requester; any context's tool event leaves waiting_permission | a captured sandbox or subagent permission Notification must confirm whether agent_id is present, then scope to the requester |
 | TaskCreated | state unchanged | tasks.total + 1 and tasks.last_subject from the payload subject |
 | TaskCompleted | state unchanged | tasks.completed + 1 and tasks.last_subject from the payload subject |
 | PreCompact | state unchanged | read the compaction trigger (manual or auto) into state_detail |

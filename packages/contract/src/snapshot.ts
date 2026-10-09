@@ -17,14 +17,29 @@ export interface SubagentSnapshot {
 }
 
 /**
+ * Who holds the open permission prompt. The first shape names the asker (agent_id null: main
+ * thread). The second is an explicit unknown: a Notification without agent_id announced the prompt
+ * and it cannot say which context asked, so any context may leave waiting_permission.
+ */
+export type PermissionHolder =
+  { tool: string | null; agent_id: string | null } | { tool: null; requester_unknown: true };
+
+/** True for the explicit unknown-requester holder. */
+export function isUnknownRequester(
+  holder: PermissionHolder,
+): holder is { tool: null; requester_unknown: true } {
+  return "requester_unknown" in holder;
+}
+
+/**
  * Reducer bookkeeping, added in S0 beyond architecture 3.3 (confirm before S3 and S5). Logic reads
- * this, never state_detail. last_tool: last tool of a main-thread PreToolUse. permission: who is
- * holding the open permission prompt (tool null when only a Notification announced it, agent_id
- * null for the main thread); null whenever the state is not waiting_permission.
+ * this, never state_detail. last_tool: last tool of a main-thread PreToolUse. permission: the open
+ * permission prompt (tool null when only a Notification announced it); null whenever the state is
+ * not waiting_permission. The hub stores this with the snapshot.
  */
 export interface Tracking {
   last_tool: string | null;
-  permission: { tool: string | null; agent_id: string | null } | null;
+  permission: PermissionHolder | null;
 }
 
 /** Fresh empty tracking. New object on every call. */

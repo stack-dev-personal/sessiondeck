@@ -1,6 +1,6 @@
 import { TOOL_NAME_MAX_CHARS, truncate } from "./limits";
-import { readString } from "./payload";
-import type { Tracking } from "./snapshot";
+import { asRecord, readString } from "./payload";
+import type { PermissionHolder, SessionSnapshot, Tracking } from "./snapshot";
 import { createTracking } from "./snapshot";
 import type { Transition, TransitionContext } from "./transitions";
 
@@ -24,17 +24,51 @@ function nextLastTool(t: Transition, ctx: TransitionContext): string | null {
 }
 
 /**
- * permission: recorded when a row enters waiting_permission (PermissionRequest names its own tool;
- * anything else is the Notification fallback, whose payload names no tool), null on any other target.
+ * permission: recorded when a row enters waiting_permission, null on any other target.
+ * PermissionRequest names its own tool and asker (agent_id null: main thread). Anything else is the
+ * Notification fallback: its payload names no tool, and a Notification without agent_id cannot
+ * say which context asked (hooks doc: agent_id appears only inside a subagent, and sandboxed
+ * network prompts fire only this Notification), so the requester is recorded as unknown.
  */
 function nextPermission(t: Transition, ctx: TransitionContext): Tracking["permission"] {
   if (t.to !== "waiting_permission") return null;
-  const tool = t.trigger === "PermissionRequest" ? toolOf(ctx) : null;
-  return { tool, agent_id: ctx.agentId };
+  if (t.trigger === "PermissionRequest") return { tool: toolOf(ctx), agent_id: ctx.agentId };
+  if (ctx.agentId === null) return { tool: null, requester_unknown: true };
+  return { tool: null, agent_id: ctx.agentId };
 }
 
 /** The tracking after this transition fired. SessionStart (non-compact) resets all of it. */
 export function nextTracking(t: Transition, ctx: TransitionContext): Tracking {
   if (t.trigger === "SessionStart") return createTracking();
   return { last_tool: nextLastTool(t, ctx), permission: nextPermission(t, ctx) };
+}
+
+function isStringOrNull(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function readHolder(value: unknown): PermissionHolder | null {
+  const record = asRecord(value);
+  if (record["requester_unknown"] === true) return { tool: null, requester_unknown: true };
+  const { tool, agent_id: agentId } = record;
+  return isStringOrNull(tool) && isStringOrNull(agentId) ? { tool, agent_id: agentId } : null;
+}
+
+/**
+ * A well-formed tracking from whatever a stored snapshot carries. A missing or malformed part
+ * counts as empty, so the reducer never throws on a snapshot persisted without (or with a damaged)
+ * tracking. Always a fresh object.
+ */
+export function readTracking(value: unknown): Tracking {
+  const record = asRecord(value);
+  const lastTool = record["last_tool"];
+  return {
+    last_tool: typeof lastTool === "string" ? lastTool : null,
+    permission: readHolder(record["permission"]),
+  };
+}
+
+/** The snapshot with its tracking replaced by readTracking(tracking). */
+export function withReadTracking(s: SessionSnapshot): SessionSnapshot {
+  return { ...s, tracking: readTracking(s.tracking) };
 }

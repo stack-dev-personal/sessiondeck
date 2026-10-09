@@ -125,10 +125,17 @@ describe("tracking.permission bookkeeping", () => {
     expect(next.state_detail).toBe("tool:Bash");
   });
 
-  it("the Notification fallback records the agent and no tool; detail is kept", () => {
+  it("the Notification fallback with an agent_id records that agent and no tool; detail is kept", () => {
     const n = hook("Notification", { notification_type: "elicitation_dialog" }, T0 + 1, SUB);
     const next = reduce(snap("working", { state_detail: "tool:Bash" }), n);
     expect(next.tracking.permission).toEqual({ tool: null, agent_id: "agent-1" });
+    expect(next.state_detail).toBe("tool:Bash");
+  });
+
+  it("the Notification fallback without an agent_id records an explicit unknown requester", () => {
+    const n = hook("Notification", { notification_type: "permission_prompt" });
+    const next = reduce(snap("working", { state_detail: "tool:Bash" }), n);
+    expect(next.tracking.permission).toEqual({ tool: null, requester_unknown: true });
     expect(next.state_detail).toBe("tool:Bash");
   });
 
