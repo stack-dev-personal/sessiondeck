@@ -3,6 +3,7 @@ import { ensureOutDir } from "./capture-store.mjs";
 import { toPosix } from "./capture-paths.mjs";
 import { describeLeftovers, missingFiles, removeDeployed } from "./deploy-remove.mjs";
 import { realpathLoose } from "./fs-roots.mjs";
+import { printable } from "./printable.mjs";
 import {
   assertOutsideWorkTree,
   findStale,
@@ -80,18 +81,35 @@ async function plan(c) {
 }
 
 /**
- * Removes the copy a previous install left in a different directory (SESSIONDECK_CAPTURE_HOME
- * changed between runs). Only files that still match the recorded hashes are deleted.
- * @param {Flow} c @param {string} deployDir
- * @param {import("./settings-model.mjs").SidecarState | undefined} prior
+ * True when the settings file, as it was before this run, runs the hook from that directory. The
+ * state file alone is not proof: it could name any directory.
+ * @param {unknown} settings @param {string} dir
  */
-async function dropPriorCopy(c, deployDir, prior) {
+function settingsRunHookFrom(settings, dir) {
+  const script = toPosix(join(dir, HOOK_SCRIPT_NAME));
+  return JSON.stringify(settings).includes(JSON.stringify(script).slice(1, -1));
+}
+
+/**
+ * Removes the copy a previous install left in a different directory (SESSIONDECK_CAPTURE_HOME
+ * changed between runs). Only files that still match the recorded hashes are deleted, and only
+ * when the settings file confirms the hook ran from that directory; otherwise the recorded
+ * directory is named and left alone.
+ * @param {Flow} c @param {Awaited<ReturnType<typeof plan>>} p
+ */
+async function dropPriorCopy(c, p) {
+  const { deployDir, prior } = p;
   if (!prior?.deploy) return;
   const old = await realpathLoose(prior.deploy.dir);
   if (foldPath(old) === foldPath(deployDir)) return;
+  const shown = printable(prior.deploy.dir);
+  if (!settingsRunHookFrom(p.current.settings, prior.deploy.dir)) {
+    c.print([`A previous deployed copy was NOT removed (the settings did not run it): ${shown}`]);
+    return;
+  }
   const result = await removeDeployed(prior.deploy);
   c.print([
-    `Previous deployed copy in ${prior.deploy.dir}: ${result.removed.length} file(s) removed`,
+    `Previous deployed copy in ${shown}: ${result.removed.length} file(s) removed`,
     ...describeLeftovers(result),
   ]);
 }
@@ -128,8 +146,8 @@ export async function install(c) {
     return 0;
   }
   const created = await missingFiles(p.deployDir, p.files, p.stale);
-  await writeDeployed(p.deployDir, p.files, p.stale);
   try {
+    await writeDeployed(p.deployDir, p.files, p.stale);
     await ensureOutDir(p.outDir);
     await sweepInstallTemps(c.target);
     if (settingsSame) {
@@ -141,7 +159,7 @@ export async function install(c) {
     await removeDeployed({ dir: p.deployDir, files: created }).catch(() => undefined);
     throw error;
   }
-  await dropPriorCopy(c, p.deployDir, p.prior);
+  await dropPriorCopy(c, p);
   return 0;
 }
 

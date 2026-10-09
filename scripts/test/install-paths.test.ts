@@ -1,4 +1,5 @@
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -108,6 +109,33 @@ describe("the deployed copy: moves, planted links, and the uninstall note", () =
     expect(readdirSync(elsewhere)).toEqual(["capture-core.mjs"]);
     expect(readFileSync(join(elsewhere, "capture-core.mjs"), "utf8")).toBe("// not ours\n");
     expect(existsSync(join(env.configDir, "settings.json"))).toBe(false);
+  });
+
+  it("a refused deploy rolls back the files this run wrote (finding S3)", async (ctx) => {
+    const env = setupInstallEnv(false);
+    const elsewhere = makeTempDir();
+    mkdirSync(env.deployDir, { recursive: true });
+    if (!link(ctx, elsewhere, join(env.deployDir, "lib"))) return;
+    const r = await install(env);
+    expect(r.code).toBe(1);
+    expect(existsSync(join(env.deployDir, "capture-fixtures.mjs"))).toBe(false);
+    expect(readdirSync(env.configDir)).toEqual([]);
+  });
+
+  it("a state file naming another directory does not make install delete from it (finding S2)", async () => {
+    const env = setupInstallEnv(false);
+    const first = join(env.sandbox, "first-copy");
+    const planted = join(env.sandbox, "planted");
+    expect((await install(env, first)).code).toBe(0);
+    cpSync(first, planted, { recursive: true });
+    const statePath = join(env.configDir, "settings.json.sessiondeck-capture-state.json");
+    const state = loadJson(statePath);
+    writeFileSync(statePath, JSON.stringify({ ...state, deploy: { ...state.deploy, dir: planted } }));
+    const r = await install(env, join(env.sandbox, "second-copy"));
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("NOT removed");
+    expect(existsSync(join(planted, "capture-fixtures.mjs"))).toBe(true);
+    expect(existsSync(join(planted, "lib"))).toBe(true);
   });
 
   it("a link swapped in at <deploy>/lib after install keeps uninstall away from it (finding 5)", async (ctx) => {
