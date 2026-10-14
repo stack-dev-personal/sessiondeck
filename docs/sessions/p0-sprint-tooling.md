@@ -84,3 +84,36 @@ Used by U2 and U6. Quotes and URLs are in the researcher's report; the points be
 20. Sixth resume note from the conductor (`.sprint/0/answers/S0c.md`, written 2026-10-14T21:43Z, read 21:45Z; the file calls it resume 7). Cause: the memory-pressure reaper killed resume 6 at about 21:42Z while sd-verifier was running after the final image rebuild at b4b8177. No user question was pending. Instructions taken: do not rebuild the image (sessiondeck-sprint:local is from b4b8177); run, in the foreground and in order, sd-verifier over every handoff requirement, the full `pnpm -r test`, `typecheck`, `lint`, rebase on `origin/sprint/0-bootstrap`, push, PR, report, status. Remove `sd-0-S0c-*` containers at the end. The live `-Sprint smoke` run stays a laptop confirmation.
 21. State found: commits up to b4b8177, worktree clean, branch not pushed, no `sd-0-S0c-*` containers. The killed run's log (`.sprint/0/logs/S0c-resume5.jsonl`) was indexed by a read-only subagent (`tmp-S0c/R6-agent-index.md`, verbatim results in `tmp-S0c/R6-final-reviews.md`). Final fix round: 1eb328e and a18255d; security re-check at a18255d gate pass (1 LOW, fixed in b4b8177); sd-reviewer fix-then-merge (1 MAJOR, 3 MINOR) fixed in f7bd6ed and b4b8177; re-review at b4b8177 verdict merge; security at b4b8177 gate pass with 1 new LOW. The image was rebuilt and the container harness printed 103 PASS, 0 FAIL. Decision: these verdicts stand; only the verifier is rerun.
 22. Deferred LOW (security, at b4b8177): a literal backslash plus letter (for example the two characters `\n`) directly before a token passes both the state-file write guard and the CLI read scrub (`packages/contract/src/state-file-secrets.ts:40`). Not blocking; carried to the PR and the report as a follow-up.
+23. CI on PR #2 (run 38645890917 at 09f3e3e) failed: Linux renderer cleanup ENOTDIR masked the write error; windows Node 24 atomic-write test hit the 5 s test timeout and the R0.5 step hit 60 s. Fixed in 61811a7 (sd-reviewer merge, security gate pass). The PR run at 61811a7 still timed out once on windows Node 22 (36 to 60 s across runs). a6e9510 batched S0c's shell and CLI spawns (reviewer merge with 3 MINOR, security gate pass with 2 LOW); CI at a6e9510 still took 40 to 60 s on windows (one push run killed at 60 s), against 30 to 35 s on the base branch at 3702f2c.
+24. Decision (orchestrator): extend the existing CI split (the `test:sprint-ps` step, "separate from R0.5", accepted in the CI-split unit) to every `scripts/test/sprint-*.test.ts` file, so the R0.5 step runs the product suites (contract, including the state-file helper, and S0's scripts tests) and a second step runs the sprint tooling tests on both OSes with its own 3 minute budget. Reason: the sprint tooling tests test the container tooling, not the product, the precedent is already reviewed, and the alternative (editing S0's capture tests) collides with S0b's branch. Listed under Open questions for the user, since it narrows what `pnpm -r test` covers.
+25. a2ac93d and 0966704 carried out decision 24 (sd-reviewer merge with 4 MINOR; security gate pass at 0966704 with 1 LOW). 0d2ef5b and 33bde60 closed the MINORs over two iterations (sd-reviewer merge at 33bde60 with 1 MINOR deferred). CI at 33bde60: push run 38651763604 and pull_request run 38651770843 green on all jobs; R0.5 step 12 to 36 s, sprint tooling step 63 to 112 s.
+
+## Final state (resume 7, 2026-10-14)
+
+Units, all committed on `p0/sprint-tooling` and pushed; PR https://github.com/stack-dev-personal/sessiondeck/pull/2 against `sprint/0-bootstrap`.
+
+| Unit | Status |
+|------|--------|
+| R research | done |
+| U1 renderer | done, reviewed, verified |
+| U4 state-file helper | done, reviewed, verified |
+| U2a/U2b image, compose, entrypoint | done; harness 103 PASS at b4b8177 |
+| U3 PowerShell scripts | done; 79 PowerShell tests in the sprint tooling run |
+| U5 smoke package | done with stub and placeholders; live run needs laptop confirmation |
+| U6 README | done |
+| CI fixes (61811a7, a6e9510, a2ac93d, 0966704, 0d2ef5b, 33bde60) | done, reviewed, CI green |
+| SEC | gate pass for the whole branch at 0966704 (code after it is test-only) |
+| VER | `docs/VERIFY-P0.md` S0c rows at 33bde60: all pass except the live smoke clause |
+
+## Deferred findings (not blocking)
+
+1. LOW (security, b4b8177): `packages/contract/src/state-file-secrets.ts:40` token-start rule misses a token right after a literal backslash-letter pair, on write and read.
+2. LOW (security, 0966704): `scripts/test/helpers-sprint-shell.ts:53,70` bare `git`/`sh` fallback on Windows resolves through the current directory first; hardening for later.
+3. MINOR (review, 33bde60): `scripts/test/fixtures/sprint-ps/harness.ts:52` can name pwsh's ENOENT when `powershell.exe` exited non-zero.
+4. MINOR (review, 61811a7 era, closed in a6e9510): none open.
+
+## Open questions (added on resume 7)
+
+2. R0.5 scope: `pnpm -r test` (the R0.5 step) no longer runs the sprint tooling tests; they run in their own CI step on both OSes (decision 24). Confirm this reading of R0.5, or ask for S0's capture tests to be sped up instead.
+3. Docker socket: the README states the mount is root-equivalent; the user still has to accept it or choose docker-in-docker (handoff stop condition).
+4. PROMPT-BOOK.md wording for foreground subagents in headless sessions (decision 12).
