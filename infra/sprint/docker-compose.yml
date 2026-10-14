@@ -21,10 +21,11 @@ services:
       - ${SPRINT_ENV_FILE:-../../.sprint/env}
     # Only non-secret values are interpolated. This block overrides env_file, so
     # the literals below win over any line in .sprint/env. They pin the names
-    # that run code or choose where config and binaries come from: BASH_ENV and
-    # LD_PRELOAD to empty (the loader applies LD_PRELOAD before the pre-stage can
-    # look), and the image values of the others (entrypoint-precheck.sh refuses a
-    # different value too). This guards against configuration mistakes and
+    # that run code or choose where config and binaries come from: BASH_ENV,
+    # LD_PRELOAD, LD_AUDIT and LD_LIBRARY_PATH to empty, and the image values of
+    # the others (entrypoint-precheck.sh refuses a different value too). The
+    # loader acts on any LD_* name before the pre-stage can look, so compose pins
+    # the known code-loading ones and the pre-stage refuses the rest. This guards against configuration mistakes and
     # accidental overrides, and is not a defense against someone who can write
     # .sprint/env, who already holds the tokens.
     environment:
@@ -33,6 +34,8 @@ services:
       SPRINT_REPO_URL: ${SPRINT_REPO_URL:?set SPRINT_REPO_URL}
       BASH_ENV: ""
       LD_PRELOAD: ""
+      LD_AUDIT: ""
+      LD_LIBRARY_PATH: ""
       DISABLE_AUTOUPDATER: "1"
       CLAUDE_CONFIG_DIR: /home/sprint/.claude
       HOME: /home/sprint

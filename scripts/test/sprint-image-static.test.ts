@@ -165,6 +165,7 @@ function envPairsFrom(text: string): Map<string, string> {
 }
 
 // The names whose value the pre-stage pins, with the shell variable that holds it.
+const PINNED_PATH_VALUE = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const PINNED_NAMES = [
   "DISABLE_AUTOUPDATER",
   "CLAUDE_CONFIG_DIR",
@@ -185,6 +186,26 @@ for line in ${quoted}; do check_entry "$line"; done
 `;
     const result = spawnSync("sh", ["-s"], { input: probe, encoding: "utf8" });
     return { status: result.status, stderr: result.stderr };
+  }
+
+  // The real conversion: environ_to_entries on a NUL-separated stream, then the
+  // checker. The payload is printf %b text (\0 separates entries).
+  function runThroughEnvironFilter(payload: string): {
+    status: number | null;
+    stdout: string;
+    stderr: string;
+  } {
+    const probe = `${block}
+entries=$(printf '%b' "$PAYLOAD" | environ_to_entries)
+check_environment_text "$entries"
+[ "$refused" -eq 0 ] || exit 64
+`;
+    const result = spawnSync("sh", ["-s"], {
+      input: probe,
+      encoding: "utf8",
+      env: { ...process.env, PAYLOAD: payload },
+    });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
 
   it("is POSIX sh with LF endings, the image entrypoint, and execs the bash entrypoint last", () => {
@@ -209,14 +230,16 @@ for line in ${quoted}; do check_entry "$line"; done
   it("reads this shell's own environment and stops if it cannot", () => {
     expect(precheck).toContain("ENVIRON_FILE=/proc/$$/environ");
     expect(precheck).not.toContain("/proc/self/environ\n");
-    expect(precheck).toMatch(/environment_lines=\$\(tr '\\0' '\\n' <"\$ENVIRON_FILE"\)/);
+    expect(precheck).toMatch(/environment_lines=\$\(environ_to_entries <"\$ENVIRON_FILE"\)/);
+    expect(precheck).toContain("tr '\\n\\0' '\\001\\n'");
+    expect(precheck).not.toContain("can only refuse more");
     expect(precheck).toContain("could not read the process environment");
   });
 
   it("resets PATH before the first external command", () => {
     const resetAt = precheck.indexOf("PATH=$PINNED_PATH\nexport PATH");
     expect(resetAt).toBeGreaterThan(-1);
-    expect(resetAt).toBeLessThan(precheck.indexOf("environment_lines=$(tr"));
+    expect(resetAt).toBeLessThan(precheck.indexOf("environment_lines=$(environ_to_entries"));
   });
 
   it("never prints a value and neutralises unusual names", () => {
@@ -246,7 +269,7 @@ for line in ${quoted}; do check_entry "$line"; done
       ]);
       expect(result.status, name).toBe(0);
     }
-  });
+  }, 30_000);
 
   it("accepts a clean environment", () => {
     const result = run([
@@ -273,6 +296,8 @@ for line in ${quoted}; do check_entry "$line"; done
       "GIT_CONFIG_COUNT=1",
       "LD_LIBRARY_PATH=/x",
       "LD_AUDIT=/x.so",
+      "LD_DEBUG_OUTPUT=",
+      "LD_DEBUG_OUTPUT=/x",
       "BASH_FUNC_exit%%=() { :; }",
     ]) {
       const result = run([entry]);
@@ -280,11 +305,39 @@ for line in ${quoted}; do check_entry "$line"; done
     }
   });
 
-  it("accepts BASH_ENV and LD_PRELOAD only when empty", () => {
-    expect(run(["BASH_ENV=", "LD_PRELOAD="]).status).toBe(0);
+  it("accepts BASH_ENV and the pinned LD_* names only when empty", () => {
+    expect(run(["BASH_ENV=", "LD_PRELOAD=", "LD_AUDIT=", "LD_LIBRARY_PATH="]).status).toBe(0);
+    expect(run(["LD_AUDIT=/state/x/a.so"]).status).toBe(64);
+    expect(run(["LD_LIBRARY_PATH=/state/x/lib"]).status).toBe(64);
     expect(run(["BASH_ENV=/state/x/evil.sh"]).status).toBe(64);
     expect(run(["BASH_ENV=$(echo MARKER)"]).status).toBe(64);
     expect(run(["LD_PRELOAD=/state/x/evil.so"]).status).toBe(64);
+  });
+
+  it("refuses an entry whose value has a newline, whatever follows it", () => {
+    const tail = "\\nSPRINT_$(echo MARKER)";
+    for (const [name, head] of [
+      ["BASH_ENV", ""],
+      ["LD_PRELOAD", ""],
+      ["PATH", PINNED_PATH_VALUE],
+      ["HOME", "/home/sprint"],
+      ["SPRINT_ID", "0"],
+    ] as const) {
+      const result = runThroughEnvironFilter(`${name}=${head}${tail}\\0`);
+      expect(result.status, name).toBe(64);
+      expect(result.stderr, name).toContain(name);
+      expect(result.stderr, name).toContain("newline");
+      expect(result.stderr, name).not.toContain("MARKER");
+      expect(result.stdout, name).not.toContain("MARKER");
+    }
+  });
+
+  it("accepts a NUL-separated clean environment through the same conversion", () => {
+    const result = runThroughEnvironFilter(
+      `PATH=${PINNED_PATH_VALUE}\\0BASH_ENV=\\0LD_AUDIT=\\0SPRINT_ID=0\\0`,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
   });
 
   it("refuses a pinned name whose value differs from the image value", () => {
@@ -414,6 +467,8 @@ describe("sprint compose file", () => {
     const block = /\n {4}environment:\n([\s\S]*?)\n {4}volumes:/.exec(compose)?.[1] ?? "";
     expect(block).toMatch(/^\s+BASH_ENV: ""$/m);
     expect(block).toMatch(/^\s+LD_PRELOAD: ""$/m);
+    expect(block).toMatch(/^\s+LD_AUDIT: ""$/m);
+    expect(block).toMatch(/^\s+LD_LIBRARY_PATH: ""$/m);
     const dockerEnv = envPairsFrom(dockerfile);
     for (const name of PINNED_NAMES) {
       expect(block, name).toMatch(new RegExp(`^\\s+${name}: "?${dockerEnv.get(name)}"?$`, "m"));
@@ -421,6 +476,13 @@ describe("sprint compose file", () => {
     expect(block).toMatch(
       /^\s+PATH: \/usr\/local\/sbin:\/usr\/local\/bin:\/usr\/sbin:\/usr\/bin:\/sbin:\/bin$/m,
     );
+  });
+
+  it("says the loader acts on any LD_* name before the check, and which ones compose pins", () => {
+    expect(compose).toContain("loader acts on any LD_* name before the pre-stage can look");
+    expect(precheck).toContain("acts on any");
+    expect(precheck).toContain("(LD_PRELOAD, LD_AUDIT, LD_LIBRARY_PATH)");
+    expect(compose).not.toContain("applies LD_PRELOAD before");
   });
 
   it("describes the pins as protection against mistakes, not against a writer of .sprint/env", () => {
@@ -501,6 +563,17 @@ describe("sprint container harness", () => {
     expect(harness).toMatch(/^readonly SLEEP_PROMPT="stub: sleep until stopped"$/m);
     expect(stub).toContain('readonly SLEEP_PROMPT="stub: sleep until stopped"');
     expect(override).not.toMatch(/SLEEP/i);
+  });
+
+  it("probes newline tails, and LD_AUDIT and LD_LIBRARY_PATH through the env file and docker run -e", () => {
+    for (const name of ["BASH_ENV", "LD_PRELOAD", "PATH"]) {
+      expect(harness).toContain(`"${name} with a newline and SPRINT_ tail"`);
+    }
+    expect(harness).toContain("newline_tail=$'\\n''SPRINT_$(echo '");
+    expect(harness).toContain("run_pin_wins LD_AUDIT");
+    expect(harness).toContain("run_pin_wins LD_LIBRARY_PATH");
+    expect(harness).toContain('"LD_AUDIT with a value (docker run -e)"');
+    expect(harness).toContain('"LD_LIBRARY_PATH with a value (docker run -e)"');
   });
 
   it("checks the pre-stage with shellcheck as POSIX sh", () => {

@@ -62,6 +62,7 @@ readonly SIGTERM_EXIT=143
 readonly STOP_GRACE_S=15
 readonly STUB_WAIT_S=90
 readonly HOSTILE_MARKER="HOSTILE-MARKER-RAN"
+readonly PINNED_PATH_VALUE=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # --- Arguments and gate ---
 
@@ -415,6 +416,53 @@ run_guard_forbidding() {
 
 run_guard() { run_guard_forbidding "" "$@"; }
 
+# run_guard_docker_e <forbidden-text> <name> <expect-var> <variable=value...>:
+# like run_guard_forbidding, but the entries go through plain `docker run -e`
+# (no compose file, no env file), which is the only way to give a value a newline.
+run_guard_docker_e() {
+  local forbidden=$1 name=$2 expect_var=$3
+  shift 3
+  local args=(-e "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" -e "GH_TOKEN=$GH_PLACEHOLDER")
+  local entry
+  for entry in "$@"; do args+=(-e "$entry"); done
+  local out rc
+  out="$(docker run --rm --name "$PREFIX-guard" "${args[@]}" \
+    -e SPRINT_ID=guard -e SPRINT_REPO_URL=/nowhere "$IMAGE" 2>&1)"
+  rc=$?
+  if [ "$rc" -eq "$EXIT_CONFIG" ] && echo "$out" | grep -q "$expect_var"; then
+    pass "7 guard: $name" "exit $rc, message names $expect_var"
+  else
+    fail "7 guard: $name" "exit $rc (expected $EXIT_CONFIG), output: $(echo "$out" | head -n 2)"
+  fi
+  if [ -n "$forbidden" ]; then
+    if echo "$out" | grep -qF -e "$forbidden"; then
+      fail "7 guard: $name hostile code never ran" "marker $forbidden appeared in the output"
+    else
+      pass "7 guard: $name hostile code never ran" "marker absent"
+    fi
+  fi
+}
+
+# A pinned-empty loader name set through the env file, with the compose pin
+# (-e NAME= after --env-file, which is what the compose environment block does):
+# the pin must win, so the pre-stage reports nothing about the name and the
+# container gets past it (the stage 2 log line "tokens present" is the proof;
+# stage 2 then stops on the missing prompt file, which is not the point here).
+run_pin_wins() {
+  local name=$1
+  printf '%s\n' "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" \
+    "$name=/state/guard/evil" >"$tmp_dir/guard.env"
+  local out rc
+  out="$(docker run --rm --name "$PREFIX-guard" --env-file "$tmp_dir/guard.env" -e "$name=" \
+    -e SPRINT_ID=guard -e SPRINT_REPO_URL=/nowhere "$IMAGE" 2>&1)"
+  rc=$?
+  if echo "$out" | grep -q "tokens present" && ! echo "$out" | grep -qF -e "$name" -e "ld.so"; then
+    pass "7 guard: $name pinned empty wins over the env file" "exit $rc, pre-stage accepted it"
+  else
+    fail "7 guard: $name pinned empty wins over the env file" "exit $rc, output: $(echo "$out" | head -n 2)"
+  fi
+}
+
 check_7_guards() {
   run_guard "CLAUDE_CODE_OAUTH_TOKEN missing" CLAUDE_CODE_OAUTH_TOKEN "GH_TOKEN=$GH_PLACEHOLDER"
   run_guard "GH_TOKEN missing" GH_TOKEN "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER"
@@ -437,6 +485,25 @@ check_7_guards() {
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "BASH_FUNC_exit%%=() { echo $HOSTILE_MARKER; }"
   run_guard "LD_PRELOAD with a value" LD_PRELOAD \
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "LD_PRELOAD=/state/guard/evil.so"
+  # The loader acts on LD_AUDIT and LD_LIBRARY_PATH before the pre-stage: compose
+  # pins them to empty (the pin wins over the env file), and a plain docker run
+  # with a value is refused.
+  run_pin_wins LD_AUDIT
+  run_pin_wins LD_LIBRARY_PATH
+  run_guard_docker_e "" "LD_AUDIT with a value (docker run -e)" LD_AUDIT "LD_AUDIT=/state/guard/a.so"
+  run_guard_docker_e "" "LD_LIBRARY_PATH with a value (docker run -e)" LD_LIBRARY_PATH "LD_LIBRARY_PATH=/state/guard/lib"
+  # A newline inside a value must not hide the tail from the pre-stage: the tail
+  # starts with SPRINT_ and carries a command substitution that would print the
+  # marker if anything expanded it.
+  local newline_tail
+  # shellcheck disable=SC2016 # the substitution must reach the container unexpanded
+  # The marker is sent split by an empty string (HOSTILE-MARKER-""RAN): the shell
+  # joins it when it executes the substitution, but the loader's error message
+  # for a bad LD_PRELOAD value echoes the text literally, which must not count.
+  newline_tail=$'\n''SPRINT_$(echo '"${HOSTILE_MARKER%RAN}"'""RAN >&2)'
+  run_guard_docker_e "$HOSTILE_MARKER" "BASH_ENV with a newline and SPRINT_ tail" BASH_ENV "BASH_ENV=$newline_tail"
+  run_guard_docker_e "$HOSTILE_MARKER" "LD_PRELOAD with a newline and SPRINT_ tail" LD_PRELOAD "LD_PRELOAD=$newline_tail"
+  run_guard_docker_e "$HOSTILE_MARKER" "PATH with a newline and SPRINT_ tail" PATH "PATH=$PINNED_PATH_VALUE$newline_tail"
   # Names the image sets keep the image value; without the compose file the
   # pre-stage refuses a different one (with it, the environment block pins them).
   run_guard "CLAUDE_CONFIG_DIR changed" CLAUDE_CONFIG_DIR \

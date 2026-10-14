@@ -7,9 +7,11 @@
 # allow-list written in bash cannot stop them (an exported "exit" function turns
 # a refusal into a no-op). Debian's /bin/sh is dash, which imports no functions
 # and sources no startup file in a non-interactive script, so the names are
-# checked here, before bash sees them. The dynamic loader still applies
-# LD_PRELOAD to this process, which is why the compose file pins it to empty;
-# an empty value is the only one accepted.
+# checked here, before bash sees them. The dynamic loader still acts on any
+# LD_* name in this process (and in tr) before the first line below runs, so
+# nothing here can stop it: the compose file pins the known code-loading ones
+# (LD_PRELOAD, LD_AUDIT, LD_LIBRARY_PATH) to empty, and this script accepts those
+# names only when empty and refuses every other LD_* name.
 #
 # What the list is for: it guards against configuration mistakes and accidental
 # overrides (a proxy variable, a Bedrock switch, a stray ANTHROPIC_* name in
@@ -28,6 +30,9 @@ BASH_ENTRYPOINT=/usr/local/bin/sprint-entrypoint
 ENVIRON_FILE=/proc/$$/environ
 
 # BEGIN env-checks
+# The byte that stands in for a newline inside an entry (see environ_to_entries).
+NEWLINE_MARK=$(printf '\001')
+
 # Values the Dockerfile sets (ENV) and the node base image's PATH. The compose
 # file pins the same values, and a different value is refused here as defense in
 # depth for anyone running the image without the compose file.
@@ -61,10 +66,22 @@ check_pinned() {
   fi
 }
 
+# Turns the NUL-separated environ file into one entry per line. A newline inside
+# a value becomes NEWLINE_MARK, so it can never pass for the start of a new entry.
+environ_to_entries() {
+  tr '\n\0' '\001\n'
+}
+
 # check_entry <NAME=value line>
 check_entry() {
   entry=$1
   name=${entry%%=*}
+  case $entry in
+    *"$NEWLINE_MARK"*)
+      refuse "$name" "contains a newline; remove it from .sprint/env"
+      return 0
+      ;;
+  esac
   value=
   case $entry in *=*) value=${entry#*=} ;; esac
 
@@ -74,7 +91,7 @@ check_entry() {
     DEBIAN_FRONTEND | HOSTNAME | TERM | PWD | OLDPWD | SHLVL | _ | NODE_VERSION | YARN_VERSION) ;;
     # Loader and shell startup hooks: accepted only when empty, because compose
     # pins them to empty and an empty value does nothing.
-    BASH_ENV | LD_PRELOAD)
+    BASH_ENV | LD_PRELOAD | LD_AUDIT | LD_LIBRARY_PATH)
       if [ -n "$value" ]; then
         refuse "$name" "must be empty; remove it from .sprint/env"
       fi
@@ -93,6 +110,15 @@ check_entry() {
       ;;
   esac
 }
+
+# check_environment_text <entries, one per line>
+check_environment_text() {
+  while IFS= read -r line; do
+    check_entry "$line"
+  done <<EOF
+$1
+EOF
+}
 # END env-checks
 
 # The first external command below (tr) must not be found through a PATH that
@@ -101,20 +127,15 @@ PATH=$PINNED_PATH
 export PATH
 
 # Reading into a variable first makes a failing tr or an unreadable file stop
-# the script (set -e) instead of looking like an empty, clean environment. A
-# value that contains a newline adds a line that is checked as a name too, which
-# can only refuse more, never less.
-environment_lines=$(tr '\0' '\n' <"$ENVIRON_FILE")
+# the script (set -e) instead of looking like an empty, clean environment. An
+# entry whose value contains a newline is refused outright (check_entry).
+environment_lines=$(environ_to_entries <"$ENVIRON_FILE")
 if [ -z "$environment_lines" ]; then
   printf 'entrypoint: ERROR: could not read the process environment\n' >&2
   exit "$EXIT_CONFIG"
 fi
 
-while IFS= read -r line; do
-  check_entry "$line"
-done <<EOF
-$environment_lines
-EOF
+check_environment_text "$environment_lines"
 
 if [ "$refused" -ne 0 ]; then
   exit "$EXIT_CONFIG"
