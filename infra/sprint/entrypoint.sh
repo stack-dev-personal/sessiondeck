@@ -143,8 +143,8 @@ require_var SPRINT_ID
 require_var SPRINT_REPO_URL
 
 # SPRINT_ID becomes part of paths, so keep it to a safe alphabet.
-if ! [[ $SPRINT_ID =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
-  die "SPRINT_ID may contain only letters, digits, hyphen and underscore"
+if ! [[ $SPRINT_ID =~ ^[A-Za-z0-9][A-Za-z0-9_]*$ ]]; then
+  die "SPRINT_ID may contain only letters, digits and underscore (no hyphen: sibling container prefixes sd-<id>- must not overlap)"
 fi
 # A URL with credentials would be written to /work/.git/config.
 if [[ $SPRINT_REPO_URL =~ ://[^/]*@ ]]; then
