@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -62,6 +63,8 @@ export interface Step {
   delayMs?: number;
   /** Written when the step runs: a stand-in for the container writing its status file. */
   writeFile?: { path: string; content: string };
+  /** Replaces path with a directory link to target when the step runs (a planted link). */
+  linkDir?: { path: string; target: string };
 }
 
 export interface DockerPlan {
@@ -294,4 +297,43 @@ export function runArgs(
 /** Same form the scripts hand to docker: absolute with forward slashes. */
 export function dockerForm(path: string): string {
   return resolve(path).replace(/\\/g, "/");
+}
+
+/** Canary text that must never reach any output: it lives only behind a planted link. */
+export const CANARY = "CANARY-behind-a-link-must-not-be-printed-7c1e";
+
+/**
+ * A directory outside the state root holding the canary in status.json, logs/entrypoint.log and
+ * sessions/*.json, so a link to it exposes every file the scripts open.
+ */
+export function makeLinkTarget(ws: Workspace): string {
+  const target = join(dirname(ws.state), "link-target");
+  mkdirSync(join(target, "logs"), { recursive: true });
+  mkdirSync(join(target, "sessions"), { recursive: true });
+  const body = JSON.stringify({ state: "green", pr: CANARY, current_unit: CANARY });
+  writeFileSync(join(target, "status.json"), body);
+  writeFileSync(
+    join(target, "logs", "entrypoint.log"),
+    `${CANARY}
+`,
+  );
+  writeFileSync(join(target, "sessions", "s1.json"), body);
+  return target;
+}
+
+/** A directory junction on Windows (no administrator needed), a directory symlink elsewhere. */
+export function linkDir(target: string, path: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  symlinkSync(target, path, "junction");
+}
+
+/** A file symlink, or the reason it cannot be made here (Windows needs developer mode or admin). */
+export function tryLinkFile(target: string, path: string): string | undefined {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    symlinkSync(target, path, "file");
+    return undefined;
+  } catch (error) {
+    return `file symlink not possible here (${(error as NodeJS.ErrnoException).code})`;
+  }
 }

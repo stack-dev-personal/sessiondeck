@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type BatchResult,
+  CANARY,
   type DockerPlan,
   dockerForm,
+  linkDir,
+  makeLinkTarget,
   makeNodeOnlyDir,
   makeWorkspace,
   runArgs,
@@ -16,6 +19,7 @@ import {
   SHELL,
   SKIP_REASON,
   SPRINT_SCRIPTS,
+  tryLinkFile,
   type Workspace,
 } from "./fixtures/sprint-ps/harness";
 import { cleanupTempDirs } from "./helpers";
@@ -545,3 +549,56 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 prerequisites", () => {
     },
   );
 });
+
+describe.skipIf(SHELL === undefined)(
+  "run-sprint.ps1 refuses links planted in the state directory",
+  () => {
+    const dry = (ws: Workspace, id: string) =>
+      runArgs(ws, id, id === "smoke" ? ["-DryRun"] : ["-DryRun", "-ContractSha", SHA]);
+    const noUp = (b: BatchResult) => b.calls.filter((c) => c.key === "up");
+
+    it("refuses a sprint directory and a subdirectory that are links, and writes nothing through them", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      linkDir(target, join(ws.state, "3"));
+      linkDir(join(target, "sessions"), join(ws.state, "smoke", "reports"));
+      const before = readdirSync(target).sort();
+      const batch = runBatch(ws, RUN_SPRINT, [dry(ws, "3"), dry(ws, "smoke")]);
+      expect(batch.runs[0]!.code, batch.runs[0]!.stderr).toBe(4);
+      expect(batch.runs[0]!.stderr).toContain("'3' under the state directory is a link");
+      expect(batch.runs[1]!.code, batch.runs[1]!.stderr).toBe(4);
+      expect(batch.runs[1]!.stderr).toContain(
+        "'smoke/reports' under the state directory is a link",
+      );
+      expect(batch.stdout + batch.stderr).not.toContain("link-target");
+      expect(batch.stdout + batch.stderr).not.toContain(CANARY);
+      expect(readdirSync(target).sort()).toEqual(before);
+      expect(readdirSync(join(target, "sessions")).sort()).toEqual(["s1.json"]);
+      expect(noUp(batch)).toHaveLength(0);
+    });
+
+    it("refuses a planted link beside the prompt file, and a prompt file that is a symlink", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      // The renderer's temporary name is guessable: a link with that name must stop the run.
+      linkDir(target, join(ws.state, "smoke", ".sprint-prompt.md.4.tmp"));
+      const reason = tryLinkFile(
+        join(target, "status.json"),
+        join(ws.state, "3", "sprint-prompt.md"),
+      );
+      const lists = reason === undefined ? [dry(ws, "smoke"), dry(ws, "3")] : [dry(ws, "smoke")];
+      const batch = runBatch(ws, RUN_SPRINT, lists);
+      expect(batch.runs[0]!.code, batch.runs[0]!.stderr).toBe(4);
+      expect(batch.runs[0]!.stderr).toContain("'smoke/.sprint-prompt.md.4.tmp'");
+      if (reason === undefined) {
+        expect(batch.runs[1]!.code, batch.runs[1]!.stderr).toBe(4);
+        expect(batch.runs[1]!.stderr).toContain("'3/sprint-prompt.md'");
+      } else {
+        console.warn(`SKIPPED: ${reason}; files are covered through a junction parent`);
+      }
+      expect(readFileSync(join(target, "status.json"), "utf8")).toContain(CANARY);
+      expect(batch.stdout + batch.stderr).not.toContain(CANARY);
+      expect(noUp(batch)).toHaveLength(0);
+    });
+  },
+);

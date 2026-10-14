@@ -10,7 +10,7 @@ it never reads, prints, hashes or copies its content.
 
 Exit codes: 0 started (or dry run ok), 2 bad input, 3 prerequisite missing (or DOCKER_HOST /
 DOCKER_CONTEXT / DOCKER_CONFIG, or the saved docker context, point away from the local daemon),
-4 already running or state conflict,
+4 already running or state conflict (also a link planted in the state directory, which is refused),
 5 docker failure.
 
 .PARAMETER Sprint
@@ -69,6 +69,8 @@ $libDir = [IO.Path]::Combine($PSScriptRoot, 'lib')
 . ([IO.Path]::Combine($libDir, 'sprint-docker.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-envfile.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-repourl.ps1'))
+. ([IO.Path]::Combine($libDir, 'sprint-sanitize.ps1'))
+. ([IO.Path]::Combine($libDir, 'sprint-links.ps1'))
 
 $Tool = 'run-sprint'
 # Same directories as STATE_SUBDIRS in packages/contract/src/state-file-paths.ts. Only the
@@ -221,6 +223,10 @@ if ($runsIn -cne $ContainerRunsIn) {
 
 # --- 4. State conflicts and running containers, before writing anything ---
 
+# The container owns .sprint/<id>/ and can plant links there. Nothing below the state root is
+# probed, created or handed to the renderer through a link.
+Assert-NoLinkBelow -Root $stateRootPath -Path $statusFile -Tool $Tool
+
 if ($Resume) {
     if (-not (Test-Path -LiteralPath $stateDir -PathType Container)) {
         Exit-Sprint $ExitStateConflict "${Tool}: -Resume needs the existing state directory ${stateDir}; start without -Resume first."
@@ -239,7 +245,16 @@ if (-not $Resume -and (Test-ContainerRunning -Name $containerName)) {
 # --- 5. State layout and prompt (local files only; a dry run writes them too) ---
 
 foreach ($sub in $StateSubdirs) {
-    New-Item -ItemType Directory -Force -Path ([IO.Path]::Combine($stateDir, $sub)) | Out-Null
+    $subPath = [IO.Path]::Combine($stateDir, $sub)
+    Assert-NoLinkBelow -Root $stateRootPath -Path $subPath -Tool $Tool
+    New-Item -ItemType Directory -Force -Path $subPath | Out-Null
+}
+# The renderer writes the prompt through a temporary file beside it; a planted link next to the
+# target (the temporary name is guessable) or at the target would redirect that write.
+Assert-NoLinkBelow -Root $stateRootPath -Path $promptFile -Tool $Tool
+$linkedEntry = Find-LinkedEntry -Dir $stateDir
+if ($linkedEntry -ne '') {
+    Exit-Sprint $ExitStateConflict (Get-LinkRefusedMessage -Tool $Tool -Relative "${Sprint}/${linkedEntry}")
 }
 & node @rendererArgs '--out' (ConvertTo-DockerPath $promptFile)
 Stop-OnRendererFailure -RendererExit $LASTEXITCODE

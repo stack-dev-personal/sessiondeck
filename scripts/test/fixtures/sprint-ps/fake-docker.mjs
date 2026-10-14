@@ -13,11 +13,23 @@
 // A step may also carry "writeFile": { "path": "...", "content": "..." }, written when the step runs
 // (a stand-in for the container writing its status file).
 //
+// A step may also carry "linkDir": { "path": "...", "target": "..." }: a directory junction (a
+// directory symlink off Windows) at path, replacing what is there (a stand-in for the container
+// planting a link in the state directory).
+//
 // A plan key is "<call>" or "<call>:<name>" (the name wins). The name is the first
 // sprint-<id> or sd-<id>... token in argv, or the image reference for image-inspect. Calls are
 // ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect, container (container inspect), context (context show, answers "default" when unlisted). Unlisted calls succeed with
 // no output.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 const SECRET_NAME = /token|secret|password|api_key/i;
@@ -79,6 +91,11 @@ if (step.delayMs) {
 if (step.writeFile) {
   mkdirSync(dirname(step.writeFile.path), { recursive: true });
   writeFileSync(step.writeFile.path, step.writeFile.content);
+}
+if (step.linkDir) {
+  mkdirSync(dirname(step.linkDir.path), { recursive: true });
+  rmSync(step.linkDir.path, { recursive: true, force: true });
+  symlinkSync(step.linkDir.target, step.linkDir.path, "junction");
 }
 if (step.out) process.stdout.write(`${step.out}\n`);
 // Real docker writes errors to stderr; the scripts must survive that under ErrorActionPreference Stop.

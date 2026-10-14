@@ -167,7 +167,7 @@ LOG_FILE="$STATE_DIR/logs/entrypoint.log"
 # docker logs, which are treated as secret.
 setup_step=""
 readonly HINT_CLONE_OR_FETCH="check that GH_TOKEN has access to this repository, SPRINT_REPO_URL, and the network"
-readonly HINT_CHECKOUT="check SPRINT_BRANCH"
+readonly HINT_CHECKOUT="check the /work checkout on the reused volume (local changes, origin/HEAD) or docker volume rm sprint-<id>-work"
 
 # shellcheck disable=SC2329 # invoked by the ERR trap below
 report_failure() {

@@ -3,12 +3,16 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type BatchResult,
+  CANARY,
+  linkDir,
+  makeLinkTarget,
   makeWorkspace,
   runBatch,
   SHELL,
   SKIP_REASON,
   STATUS,
   STOP_SPRINT,
+  tryLinkFile,
   type Workspace,
 } from "./fixtures/sprint-ps/harness";
 import { cleanupTempDirs, listTree } from "./helpers";
@@ -400,3 +404,62 @@ describe.skipIf(SHELL === undefined)("status.ps1", () => {
     expect(batch.calls).toEqual([]);
   });
 });
+
+describe.skipIf(SHELL === undefined)(
+  "status.ps1 refuses links planted in the state directory",
+  () => {
+    let out: string;
+    let all: string;
+    let fileLinkSkipped: string | undefined;
+
+    beforeAll(() => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      const put = (rel: string, text: string) => {
+        const file = join(ws.state, rel);
+        mkdirSync(join(file, ".."), { recursive: true });
+        writeFileSync(file, text);
+      };
+      // 1: the whole sprint directory is a link. 2: status.json is a file symlink.
+      // 3: sessions/ is a link, next to a good status.json. 4: a good control sprint.
+      linkDir(target, join(ws.state, "1"));
+      mkdirSync(join(ws.state, "2"), { recursive: true });
+      fileLinkSkipped = tryLinkFile(
+        join(target, "status.json"),
+        join(ws.state, "2", "status.json"),
+      );
+      put("3/status.json", '{"state":"running"}');
+      linkDir(join(target, "sessions"), join(ws.state, "3", "sessions"));
+      put("4/status.json", '{"state":"merged"}');
+      put("4/sessions/ok.json", '{"state":"green"}');
+      const batch = runBatch(ws, STATUS, [["-Root", ws.state]]);
+      out = batch.runs[0]!.stdout;
+      all = batch.stdout + batch.stderr;
+    }, 120_000);
+
+    it("shows a sprint directory that is a link as link refused and lists nothing from it", () => {
+      expect(out).toMatch(/^1\s+link refused\s/m);
+      expect(all).not.toContain(CANARY);
+      expect(all).not.toContain("link-target");
+    });
+
+    it("shows a status.json file symlink as link refused (skipped with a reason where none can be made)", () => {
+      if (fileLinkSkipped !== undefined) {
+        console.warn(`SKIPPED: ${fileLinkSkipped}; files are covered through a junction parent`);
+        return;
+      }
+      expect(out).toMatch(/^2\s+link refused\s/m);
+    });
+
+    it("refuses a sessions directory that is a link, without listing the target's file names", () => {
+      expect(out).toMatch(/^3\s+running\s/m);
+      expect(out).toMatch(/^3\s+-\s+link refused\s/m);
+      expect(out).not.toMatch(/\bs1\b/);
+    });
+
+    it("still shows a sprint without links", () => {
+      expect(out).toMatch(/^4\s+merged\s/m);
+      expect(out).toMatch(/^4\s+ok\s+green\s/m);
+    });
+  },
+);

@@ -26,6 +26,7 @@ $ErrorActionPreference = 'Stop'
 $libDir = [IO.Path]::Combine($PSScriptRoot, 'lib')
 . ([IO.Path]::Combine($libDir, 'sprint-common.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-sanitize.ps1'))
+. ([IO.Path]::Combine($libDir, 'sprint-links.ps1'))
 
 $UnreadableText = 'unreadable'
 $MissingText = 'no status.json'
@@ -41,10 +42,14 @@ $SprintStates = @('running', 'blocked', 'merging', 'gate', 'awaiting-merge-appro
 $SessionStates = @('not-started', 'running', 'blocked', 'green', 'failed')
 $GateStates = @('pending', 'pass', 'fail')
 
-# A PSCustomObject, $null (unreadable) or $TooLargeText. Reads at most the cap plus one byte,
-# so a huge file is never loaded.
+# A PSCustomObject, $null (unreadable), $TooLargeText or $LinkRefusedText (the path is, or sits
+# under, a link below Root; nothing is opened). Reads at most the cap plus one byte, so a huge file
+# is never loaded.
 function Read-JsonObject {
-    param([string]$Path)
+    param([string]$Root, [string]$Path)
+    if ((Find-LinkedComponent -Root $Root -Path $Path) -ne '') {
+        return $LinkRefusedText
+    }
     try {
         $buffer = New-Object byte[] ($MaxStatusFileBytes + 1)
         $total = 0
@@ -182,12 +187,16 @@ function Get-Waiting {
 }
 
 function New-SprintRow {
-    param([string]$Id, [string]$StatusPath)
+    param([string]$Root, [string]$Id, [string]$StatusPath)
     $row = [ordered]@{ sprint = (ConvertTo-SafeText $Id); state = $MissingText; sessions = $UnknownText; waiting = $UnknownText; pr = $UnknownText; updated_at = $UnknownText; age_min = $UnknownText }
+    if ((Find-LinkedComponent -Root $Root -Path $StatusPath) -ne '') {
+        $row.state = $LinkRefusedText
+        return [pscustomobject]$row
+    }
     if (-not (Test-Path -LiteralPath $StatusPath -PathType Leaf)) {
         return [pscustomobject]$row
     }
-    $status = Read-JsonObject -Path $StatusPath
+    $status = Read-JsonObject -Root $Root -Path $StatusPath
     if ($null -eq $status) {
         $row.state = $UnreadableText
         return [pscustomobject]$row
@@ -207,10 +216,10 @@ function New-SprintRow {
 }
 
 function New-SessionRow {
-    param([string]$SprintId, [IO.FileInfo]$File)
+    param([string]$Root, [string]$SprintId, [IO.FileInfo]$File)
     $name = [IO.Path]::GetFileNameWithoutExtension($File.Name)
     $row = [ordered]@{ sprint = (ConvertTo-SafeText $SprintId); session = (ConvertTo-SafeText $name); state = $UnreadableText; current_unit = $UnknownText; updated_at = $UnknownText; age_min = $UnknownText }
-    $session = Read-JsonObject -Path $File.FullName
+    $session = Read-JsonObject -Root $Root -Path $File.FullName
     if ($null -eq $session) {
         return [pscustomobject]$row
     }
@@ -249,14 +258,24 @@ $sessionRows = @()
 $statusCount = 0
 foreach ($dir in $sprintDirs) {
     $statusPath = [IO.Path]::Combine($dir.FullName, $StatusFileName)
-    if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
+    # A link planted by the container is never opened or listed; the row says so.
+    $linkedStatus = Find-LinkedComponent -Root $rootPath -Path $statusPath
+    if ($linkedStatus -eq '' -and (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
         $statusCount += 1
     }
-    $sprintRows += New-SprintRow -Id $dir.Name -StatusPath $statusPath
+    $sprintRows += New-SprintRow -Root $rootPath -Id $dir.Name -StatusPath $statusPath
     $sessionsDir = [IO.Path]::Combine($dir.FullName, $SessionsDirName)
+    $linkedSessions = Find-LinkedComponent -Root $rootPath -Path $sessionsDir
+    if ($linkedSessions -ne '') {
+        # When the sprint directory itself is the link, its own row above already says so.
+        if ($linkedSessions -ne $dir.Name) {
+            $sessionRows += [pscustomobject][ordered]@{ sprint = (ConvertTo-SafeText $dir.Name); session = $UnknownText; state = $LinkRefusedText; current_unit = $UnknownText; updated_at = $UnknownText; age_min = $UnknownText }
+        }
+        continue
+    }
     if (Test-Path -LiteralPath $sessionsDir -PathType Container) {
         foreach ($file in @(Get-ChildItem -LiteralPath $sessionsDir -File -Filter '*.json' | Sort-Object Name)) {
-            $sessionRows += New-SessionRow -SprintId $dir.Name -File $file
+            $sessionRows += New-SessionRow -Root $rootPath -SprintId $dir.Name -File $file
         }
     }
 }

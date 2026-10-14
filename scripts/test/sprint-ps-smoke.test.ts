@@ -3,12 +3,16 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type BatchResult,
+  CANARY,
   type DockerPlan,
+  linkDir,
+  makeLinkTarget,
   makeWorkspace,
   runBatch,
   SHELL,
   SKIP_REASON,
   SMOKE_CHECK,
+  tryLinkFile,
   type Workspace,
 } from "./fixtures/sprint-ps/harness";
 import { cleanupTempDirs } from "./helpers";
@@ -335,13 +339,128 @@ describe.skipIf(SHELL === undefined)("smoke-check.ps1 run-sprint failures", () =
     expect(run.stdout).toContain("RESULT: FAIL");
     expect(run.stdout).toContain("run-sprint exit: 5");
     expect(run.stdout).toContain("stop-sprint: ran");
+    expect(run.stdout).toContain("missing; run-sprint did not start, nothing was built");
   });
 
   it("passes a prerequisite failure through (3) without stopping anything", () => {
     const run = batch.runs[1]!;
     expect(run.code).toBe(3);
     expect(run.stdout).toContain("stop-sprint: skipped (run-sprint did not start a container)");
+    expect(run.stdout).toContain("missing; run-sprint did not start, nothing was built");
+    expect(run.stdout).not.toContain("compose built it");
     expect(run.stderr).toContain("missing prerequisites");
     expect(callsFor(batch, "stop")).toHaveLength(1);
   });
 });
+
+describe.skipIf(SHELL === undefined)("smoke-check.ps1 asks about the docker target first", () => {
+  it("exits 3 naming DOCKER_HOST, before any image query, when the target is remote", () => {
+    const ws = makeWorkspace();
+    const batch = runBatch(
+      ws,
+      SMOKE_CHECK,
+      [["-StateRoot", ws.state, "-EnvFile", ws.envFile, "-RepoRoot", ws.repo, ...POLL]],
+      {
+        // Without the early check the image query fails with exit 5 ("is Docker running?").
+        plan: {
+          [`image-inspect:${IMAGE}`]: { code: 1, err: "Cannot connect to the Docker daemon" },
+        },
+        env: { DOCKER_HOST: "tcp://hub-box:2375" },
+      },
+    );
+    const run = batch.runs[0]!;
+    expect(run.code).toBe(3);
+    expect(run.stderr).toContain("smoke-check: DOCKER_HOST is set");
+    expect(run.stderr).not.toContain("hub-box");
+    expect(batch.calls.filter((c) => c.key === "image-inspect")).toHaveLength(0);
+  });
+});
+
+describe.skipIf(SHELL === undefined)(
+  "smoke-check.ps1 refuses links planted in the state directory",
+  () => {
+    const everything = (b: BatchResult) => b.stdout + b.stderr;
+    const smokeDir = (ws: Workspace) => join(ws.state, "smoke");
+
+    it("refuses a smoke directory that is a link before deleting anything, and prints nothing from behind it", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      linkDir(target, smokeDir(ws));
+      const batch = runBatch(ws, SMOKE_CHECK, [
+        ["-StateRoot", ws.state, "-EnvFile", ws.envFile, "-RepoRoot", ws.repo, ...POLL],
+      ]);
+      const run = batch.runs[0]!;
+      expect(run.code).toBe(4);
+      expect(run.stderr).toContain("'smoke' under the state directory is a link");
+      expect(everything(batch)).not.toContain(CANARY);
+      expect(everything(batch)).not.toContain("link-target");
+      expect(existsSync(join(target, "status.json"))).toBe(true);
+      expect(batch.calls.filter((c) => c.key === "up")).toHaveLength(0);
+    });
+
+    it("refuses a logs directory that is a link", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      linkDir(join(target, "logs"), join(smokeDir(ws), "logs"));
+      const batch = runBatch(ws, SMOKE_CHECK, [
+        ["-StateRoot", ws.state, "-EnvFile", ws.envFile, "-RepoRoot", ws.repo, ...POLL],
+      ]);
+      expect(batch.runs[0]!.code).toBe(4);
+      expect(batch.runs[0]!.stderr).toContain("'smoke/logs' under the state directory is a link");
+      expect(everything(batch)).not.toContain(CANARY);
+    });
+
+    it("refuses an entrypoint.log that is a file symlink (skipped with a reason where none can be made)", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      const reason = tryLinkFile(join(target, "logs", "entrypoint.log"), logPath(ws));
+      if (reason !== undefined) {
+        console.warn(`SKIPPED: ${reason}; files are covered through a junction parent`);
+        return;
+      }
+      const batch = runBatch(ws, SMOKE_CHECK, [
+        ["-StateRoot", ws.state, "-EnvFile", ws.envFile, "-RepoRoot", ws.repo, ...POLL],
+      ]);
+      expect(batch.runs[0]!.code).toBe(4);
+      expect(batch.runs[0]!.stderr).toContain("'smoke/logs/entrypoint.log'");
+      expect(everything(batch)).not.toContain(CANARY);
+    });
+
+    it("does not read the log or the status file through links planted while it waits", () => {
+      const ws = makeWorkspace();
+      const target = makeLinkTarget(ws);
+      // The container starts, then swaps its state directory for a link to a directory holding a
+      // green status file and a log: the poll and the log tail must both refuse it.
+      const batch = runBatch(
+        ws,
+        SMOKE_CHECK,
+        [
+          [
+            "-StateRoot",
+            ws.state,
+            "-EnvFile",
+            ws.envFile,
+            "-RepoRoot",
+            ws.repo,
+            "-TimeoutSeconds",
+            "3",
+            ...POLL,
+          ],
+        ],
+        {
+          plan: {
+            ...stoppable,
+            up: { linkDir: { path: smokeDir(ws), target } },
+            "container:sprint-smoke": running(),
+          },
+        },
+      );
+      const run = batch.runs[0]!;
+      expect(run.stdout).toContain("RESULT: FAIL");
+      expect(run.stdout).toContain("final_state: link refused");
+      expect(run.stdout).toContain("entrypoint.log not read: 'smoke' is a link, refused");
+      expect(everything(batch)).not.toContain(CANARY);
+      expect(everything(batch)).not.toContain("link-target");
+    });
+  },
+);

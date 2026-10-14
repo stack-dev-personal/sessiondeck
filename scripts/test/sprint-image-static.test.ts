@@ -23,6 +23,44 @@ const compose = read("docker-compose.yml");
 const override = read("test", "docker-compose.test.yml");
 const harness = read("test", "check-sprint-image.sh");
 
+/**
+ * A POSIX shell that works: the bare name on Linux and macOS, and on Windows Git for Windows'
+ * usr/bin copy first (the bare "bash" there can be the WSL launcher, which fails when no distro
+ * is installed). Each candidate must run a trivial command, otherwise it is not used.
+ */
+function findPosixShell(name: "sh" | "bash"): string | undefined {
+  const candidates: string[] = [];
+  if (process.platform === "win32") {
+    const roots = [
+      process.env.ProgramFiles,
+      process.env["ProgramFiles(x86)"],
+      process.env.ProgramW6432,
+      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Programs") : undefined,
+    ];
+    for (const root of roots) {
+      if (root) candidates.push(join(root, "Git", "usr", "bin", `${name}.exe`));
+    }
+    const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8" });
+    if (exec.status === 0 && exec.stdout.trim()) {
+      candidates.push(join(exec.stdout.trim(), "..", "..", "..", "usr", "bin", `${name}.exe`));
+    }
+  }
+  candidates.push(name);
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ["-c", "echo posix-shell-ok"], { encoding: "utf8" });
+    if (probe.status === 0 && probe.stdout.trim() === "posix-shell-ok") return candidate;
+  }
+  return undefined;
+}
+
+const SH = findPosixShell("sh");
+const BASH = findPosixShell("bash");
+if (SH === undefined)
+  console.warn("SKIPPED: no working POSIX sh was found; pre-stage tests skipped");
+if (BASH === undefined) console.warn("SKIPPED: no working bash was found; id rule test skipped");
+const itSh = it.skipIf(SH === undefined);
+const itBash = it.skipIf(BASH === undefined);
+
 describe("sprint entrypoint", () => {
   it("starts with the bash shebang and contains no CR bytes", () => {
     expect(entrypoint.startsWith("#!/usr/bin/env bash\n")).toBe(true);
@@ -105,7 +143,9 @@ describe("sprint entrypoint", () => {
     expect(entrypoint).toContain(
       'readonly HINT_CLONE_OR_FETCH="check that GH_TOKEN has access to this repository, SPRINT_REPO_URL, and the network"',
     );
-    expect(entrypoint).toContain('readonly HINT_CHECKOUT="check SPRINT_BRANCH"');
+    expect(entrypoint).toContain(
+      'readonly HINT_CHECKOUT="check the /work checkout on the reused volume (local changes, origin/HEAD) or docker volume rm sprint-<id>-work"',
+    );
     expect(entrypoint).toContain("clone | fetch) hint=$HINT_CLONE_OR_FETCH ;;");
     expect(entrypoint).toContain("checkout) hint=$HINT_CHECKOUT ;;");
     expect(entrypoint).toContain(
@@ -219,7 +259,7 @@ describe("sprint pre-stage (entrypoint-precheck.sh)", () => {
 for line in ${quoted}; do check_entry "$line"; done
 [ "$refused" -eq 0 ] || exit 64
 `;
-    const result = spawnSync("sh", ["-s"], { input: probe, encoding: "utf8" });
+    const result = spawnSync(SH ?? "sh", ["-s"], { input: probe, encoding: "utf8" });
     return { status: result.status, stderr: result.stderr };
   }
 
@@ -235,7 +275,7 @@ entries=$(printf '%b' "$PAYLOAD" | environ_to_entries)
 check_environment_text "$entries"
 [ "$refused" -eq 0 ] || exit 64
 `;
-    const result = spawnSync("sh", ["-s"], {
+    const result = spawnSync(SH ?? "sh", ["-s"], {
       input: probe,
       encoding: "utf8",
       env: { ...process.env, PAYLOAD: payload },
@@ -295,18 +335,22 @@ check_environment_text "$entries"
     );
   });
 
-  it("allows the tokens, SPRINT_*, and every name the Dockerfile sets with ENV", () => {
-    const names = [...envPairsFrom(dockerfile).keys(), ...TOKEN_NAMES, "SPRINT_ID"];
-    expect(names.length).toBeGreaterThan(5);
-    for (const name of names) {
-      const result = run([
-        `${name}=${PINNED_NAMES.includes(name) ? (envPairsFrom(dockerfile).get(name) ?? "") : "x"}`,
-      ]);
-      expect(result.status, name).toBe(0);
-    }
-  }, 30_000);
+  itSh(
+    "allows the tokens, SPRINT_*, and every name the Dockerfile sets with ENV",
+    () => {
+      const names = [...envPairsFrom(dockerfile).keys(), ...TOKEN_NAMES, "SPRINT_ID"];
+      expect(names.length).toBeGreaterThan(5);
+      for (const name of names) {
+        const result = run([
+          `${name}=${PINNED_NAMES.includes(name) ? (envPairsFrom(dockerfile).get(name) ?? "") : "x"}`,
+        ]);
+        expect(result.status, name).toBe(0);
+      }
+    },
+    30_000,
+  );
 
-  it("accepts a clean environment", () => {
+  itSh("accepts a clean environment", () => {
     const result = run([
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "CLAUDE_CODE_OAUTH_TOKEN=x",
@@ -321,7 +365,7 @@ check_environment_text "$entries"
     expect(result.stderr).toBe("");
   });
 
-  it("refuses anything that could redirect the token or run code", () => {
+  itSh("refuses anything that could redirect the token or run code", () => {
     for (const entry of [
       "ANTHROPIC_API_KEY=x",
       "ANTHROPIC_AUTH_TOKEN=x",
@@ -340,7 +384,7 @@ check_environment_text "$entries"
     }
   });
 
-  it("accepts BASH_ENV and the pinned LD_* names only when empty", () => {
+  itSh("accepts BASH_ENV and the pinned LD_* names only when empty", () => {
     expect(run(["BASH_ENV=", "LD_PRELOAD=", "LD_AUDIT=", "LD_LIBRARY_PATH="]).status).toBe(0);
     expect(run(["LD_AUDIT=/state/x/a.so"]).status).toBe(64);
     expect(run(["LD_LIBRARY_PATH=/state/x/lib"]).status).toBe(64);
@@ -349,7 +393,7 @@ check_environment_text "$entries"
     expect(run(["LD_PRELOAD=/state/x/evil.so"]).status).toBe(64);
   });
 
-  it("refuses an entry whose value has a newline, whatever follows it", () => {
+  itSh("refuses an entry whose value has a newline, whatever follows it", () => {
     const tail = "\\nSPRINT_$(echo MARKER)";
     for (const [name, head] of [
       ["BASH_ENV", ""],
@@ -367,7 +411,7 @@ check_environment_text "$entries"
     }
   });
 
-  it("accepts a NUL-separated clean environment through the same conversion", () => {
+  itSh("accepts a NUL-separated clean environment through the same conversion", () => {
     const result = runThroughEnvironFilter(
       `PATH=${PINNED_PATH_VALUE}\\0BASH_ENV=\\0LD_AUDIT=\\0SPRINT_ID=0\\0`,
     );
@@ -375,7 +419,7 @@ check_environment_text "$entries"
     expect(result.stderr).toBe("");
   });
 
-  it("refuses a pinned name whose value differs from the image value", () => {
+  itSh("refuses a pinned name whose value differs from the image value", () => {
     for (const entry of [
       "CLAUDE_CONFIG_DIR=/state/x/cfg",
       "HOME=/root",
@@ -388,7 +432,7 @@ check_environment_text "$entries"
     }
   });
 
-  it("names the variable and never the value, and tells the user where to look", () => {
+  itSh("names the variable and never the value, and tells the user where to look", () => {
     const result = run([
       "ANTHROPIC_BASE_URL=https://secret-value-host.invalid",
       "BASH_FUNC_id%%=() { :; }",
@@ -404,7 +448,7 @@ check_environment_text "$entries"
     expect(result.stderr).not.toContain("secret-value");
   });
 
-  it("does not print terminal escape sequences from a hostile name", () => {
+  itSh("does not print terminal escape sequences from a hostile name", () => {
     const result = run(["BAD\u001b]52;c;x\u0007NAME=1"]);
     expect(result.status).toBe(64);
     expect(result.stderr).not.toContain("\u001b");
@@ -630,7 +674,7 @@ describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
   // Runs the entrypoint's own `if ! [[ ... ]]; then die` block with a stub die.
   function entrypointVerdict(id: string): "accepted" | "refused" {
     const probe = `die() { echo refused; exit 64; }\n${ruleBlock?.[0] ?? "exit 99"}\necho accepted\n`;
-    const result = spawnSync("bash", ["-s"], {
+    const result = spawnSync(BASH ?? "bash", ["-s"], {
       input: probe,
       encoding: "utf8",
       env: { ...process.env, SPRINT_ID: id },
@@ -651,12 +695,16 @@ describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
     expect(powershellPattern.slice(0, -2) + "$").toBe(bashPattern);
   });
 
-  it("refuses a hyphenated id in the entrypoint, and the other ids the scripts refuse", () => {
-    for (const id of ["a-b", "-x", "", "a b", "..", "a/b", "ok\nx", "_a"]) {
-      expect(entrypointVerdict(id), JSON.stringify(id)).toBe("refused");
-    }
-    for (const id of ["0", "7", "smoke", "a_b", "S0c"]) {
-      expect(entrypointVerdict(id), id).toBe("accepted");
-    }
-  }, 30_000);
+  itBash(
+    "refuses a hyphenated id in the entrypoint, and the other ids the scripts refuse",
+    () => {
+      for (const id of ["a-b", "-x", "", "a b", "..", "a/b", "ok\nx", "_a"]) {
+        expect(entrypointVerdict(id), JSON.stringify(id)).toBe("refused");
+      }
+      for (const id of ["0", "7", "smoke", "a_b", "S0c"]) {
+        expect(entrypointVerdict(id), id).toBe("accepted");
+      }
+    },
+    30_000,
+  );
 });

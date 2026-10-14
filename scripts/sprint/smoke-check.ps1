@@ -64,6 +64,7 @@ $libDir = [IO.Path]::Combine($PSScriptRoot, 'lib')
 . ([IO.Path]::Combine($libDir, 'sprint-common.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-docker.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-sanitize.ps1'))
+. ([IO.Path]::Combine($libDir, 'sprint-links.ps1'))
 
 $Tool = 'smoke-check'
 $SmokeId = 'smoke'
@@ -88,7 +89,10 @@ $EvidenceNote = 'NOTE: the entrypoint log and docker logs can hold secrets. Read
 
 # 'missing', 'unreadable', 'too large' or the sanitized state word ('invalid' if not in the schema).
 function Get-SmokeState {
-    param([string]$Path)
+    param([string]$Root, [string]$Path)
+    if ((Find-LinkedComponent -Root $Root -Path $Path) -ne '') {
+        return $LinkRefusedText
+    }
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return $NoStatusText
     }
@@ -162,7 +166,11 @@ function Format-ContainerFacts {
 # --- Entrypoint log tail, sanitized ---
 
 function Get-LogTail {
-    param([string]$Path)
+    param([string]$Root, [string]$Path)
+    $linked = Find-LinkedComponent -Root $Root -Path $Path
+    if ($linked -ne '') {
+        return @("(entrypoint.log not read: '$(ConvertTo-SafeText $linked 120)' is a link, refused)")
+    }
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return @('(no entrypoint.log on the host side)')
     }
@@ -219,6 +227,15 @@ if (-not (Test-CommandAvailable 'docker')) {
     Exit-Sprint $ExitPrerequisite "${Tool}: docker is not on PATH."
 }
 
+# A local daemon only, before anything else (also before the image query below).
+Assert-LocalDockerTarget -Tool $Tool
+Assert-LocalDockerContext -Tool $Tool
+
+# The container owns the state directory and can plant links in it. Remove-Item on a path below a
+# link would delete in the link's target, so refuse first.
+Assert-NoLinkBelow -Root $stateRootPath -Path $statusPath -Tool $Tool
+Assert-NoLinkBelow -Root $stateRootPath -Path $logPath -Tool $Tool
+
 # Only this one file is ever removed (see .DESCRIPTION).
 if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
     Remove-Item -LiteralPath $statusPath -Force
@@ -259,7 +276,7 @@ $facts = @{ Known = $false; Status = ''; ExitCode = '' }
 $green = $false
 if ($runExit -eq $ExitOk) {
     while ($true) {
-        $finalState = Get-SmokeState -Path $statusPath
+        $finalState = Get-SmokeState -Root $stateRootPath -Path $statusPath
         if ($finalState -ceq $GreenState) {
             $green = $true
             break
@@ -267,7 +284,7 @@ if ($runExit -eq $ExitOk) {
         $facts = Get-ContainerFacts -Name $containerName
         if (-not $facts.Known -or $facts.Status -cne 'running') {
             # The container is gone or finished; it may have written the file just before.
-            $finalState = Get-SmokeState -Path $statusPath
+            $finalState = Get-SmokeState -Root $stateRootPath -Path $statusPath
             $green = ($finalState -ceq $GreenState)
             break
         }
@@ -320,8 +337,11 @@ $invariant = [Globalization.CultureInfo]::InvariantCulture
 $startSeconds = $startClock.Elapsed.TotalSeconds.ToString('0.0', $invariant)
 $waitSeconds = $clock.Elapsed.TotalSeconds.ToString('0.0', $invariant)
 $imageText = 'present (reused, no build)'
-if ($imageMissing) {
+if ($imageMissing -and $runExit -eq $ExitOk) {
     $imageText = "missing before the start: compose built it (about 10 minutes, counted in start_seconds, not in the wait)"
+}
+elseif ($imageMissing) {
+    $imageText = 'missing; run-sprint did not start, nothing was built'
 }
 $block = @(
     '=== smoke check evidence ===',
@@ -335,7 +355,7 @@ $block = @(
     "stop-sprint: ${stopText}",
     "--- last ${LogTailLines} lines of $(ConvertTo-SafeText $logPath $PathWidth) (printable ASCII only) ---"
 )
-$block += Get-LogTail -Path $logPath
+$block += Get-LogTail -Root $stateRootPath -Path $logPath
 $block += '---'
 $block += $EvidenceNote
 $block += '=== end evidence ==='

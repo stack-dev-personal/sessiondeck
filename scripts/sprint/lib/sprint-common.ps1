@@ -13,8 +13,7 @@ $ExitDockerFailure = 5
 # The id becomes a directory under .sprint/ and a bind-mount source, so ".." or a path
 # separator would mount the wrong directory. \z, not $, because $ also matches before a
 # trailing newline. No hyphen: stop-sprint matches sibling containers by the prefix sd-<id>-,
-# so ids "a" and "a-b" would claim each other's containers. infra/sprint/entrypoint.sh still
-# accepts hyphens; that is looser than this rule and harmless, because these scripts start it.
+# so ids "a" and "a-b" would claim each other's containers.
 $SprintIdPattern = '^[A-Za-z0-9][A-Za-z0-9_]*\z'
 $SprintIdRule = 'letters, digits and underscore, starting with a letter or digit'
 $ContractShaPattern = '^[A-Za-z0-9._/-]+\z'

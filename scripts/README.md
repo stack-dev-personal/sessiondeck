@@ -273,13 +273,13 @@ full and the container contract are in `infra/sprint/README.md`; read that first
 |---------|------------|------------|
 | `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing, origin unreadable, renderer failure, or a docker target that is not local (`DOCKER_HOST`, `DOCKER_CONFIG`, `DOCKER_CONTEXT` or the saved context); 4 already running or state conflict; 5 docker failure |
 | `scripts/sprint/stop-sprint.ps1` | `-Sprint`, `-DryRun` | 0 stopped or nothing to stop; 2 bad input; 3 docker missing; 5 docker failure |
-| `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show" |
-| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green, unexpected error inside `run-sprint`); 2, 3, 4, 5 passed through from `run-sprint.ps1` |
+| `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show"; a link in the state directory shows as `link refused` |
+| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green, unexpected error inside `run-sprint`); 2, 3, 4, 5 passed through from `run-sprint.ps1`; 3 also for a remote docker target (checked before the image query), 4 also for a link in the state directory |
 
 `smoke-check.ps1` is the R0.8 smoke gate in one command (run, wait for green, evidence block, stop); it clears
 the previous `smoke/status.json` first and prints only sanitized status and log text. The wait limit
 counts from the moment `run-sprint` returns (an image build is reported separately as `start_seconds`),
 and `stop-sprint` is skipped with `-KeepContainer` and after `run-sprint` exit 1, 2, 3 or 4. The sprint id is letters,
-digits and underscore only. Tests: the static ones run in
+digits and underscore only. The container can plant symbolic links in `.sprint/<id>/`; `run-sprint.ps1`, `smoke-check.ps1` and `status.ps1` refuse any path that is, or sits under, a link below the state root (`lib/sprint-links.ps1`; see the Links bullet in `infra/sprint/README.md`). Tests: the static ones run in
 `pnpm -F @sessiondeck/scripts test`; the PowerShell script tests are `test:sprint-ps`, a separate CI
 step.
