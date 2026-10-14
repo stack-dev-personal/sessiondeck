@@ -23,8 +23,9 @@ run-sprint took, which includes an image build of about 10 minutes when the imag
 printed as start_seconds, and the evidence says when the image was missing.
 
 Exit codes: 0 PASS; 1 FAIL (timeout, container exited, or state not green; also an unexpected
-error inside run-sprint); otherwise the exit code of run-sprint.ps1 when that failed (2 bad
-input, 3 prerequisite missing, 4 already running or state conflict, 5 docker failure).
+error inside run-sprint); 2, 3, 4, 5 passed through from run-sprint.ps1 (2 bad input, 3 prerequisite
+missing, 4 already running or state conflict, 5 docker failure); 3 also for a remote docker target
+(DOCKER_HOST and the like, checked before the image query), and 4 also for a link in the state directory.
 stop-sprint runs after a successful start and after run-sprint exit 5 (a half-started container),
 unless -KeepContainer; it is skipped after run-sprint exit 1, 2, 3 or 4 (exit 1 is the unexpected
 error above; with 2, 3 and 4 no container of this run was started, and after 4 the running one is
@@ -169,7 +170,7 @@ function Get-LogTail {
     param([string]$Root, [string]$Path)
     $linked = Find-LinkedComponent -Root $Root -Path $Path
     if ($linked -ne '') {
-        return @("(entrypoint.log not read: '$(ConvertTo-SafeText $linked 120)' is a link, refused)")
+        return @("(entrypoint.log not read: '$(ConvertTo-SafeText $linked $LinkRelativeWidth)' is a link, refused)")
     }
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return @('(no entrypoint.log on the host side)')

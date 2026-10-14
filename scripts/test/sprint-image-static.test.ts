@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -26,9 +26,25 @@ const harness = read("test", "check-sprint-image.sh");
 /**
  * A POSIX shell that works: the bare name on Linux and macOS, and on Windows Git for Windows'
  * usr/bin copy first (the bare "bash" there can be the WSL launcher, which fails when no distro
- * is installed). Each candidate must run a trivial command, otherwise it is not used.
+ * is installed). Each candidate must run a pipe through an external tool (tr), otherwise it is not used.
  */
+const FORCE_PROBE_FAIL_VAR = "SPRINT_TEST_FORCE_SHELL_PROBE_FAIL";
+const PROBE_COMMAND = "echo x | tr x y";
+const PROBE_EXPECTED = "y";
+
+/**
+ * The environment for running a shell: when the shell is an absolute path (Git for Windows
+ * usr/bin), its own folder goes first on PATH so tools like tr, sed and awk resolve.
+ */
+function shellEnv(shell: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const base = process.env[pathKey] ?? "";
+  const path = isAbsolute(shell) ? dirname(shell) + delimiter + base : base;
+  return { ...process.env, ...extra, [pathKey]: path };
+}
+
 function findPosixShell(name: "sh" | "bash"): string | undefined {
+  if (process.env[FORCE_PROBE_FAIL_VAR]) return undefined;
   const candidates: string[] = [];
   if (process.platform === "win32") {
     const roots = [
@@ -47,14 +63,24 @@ function findPosixShell(name: "sh" | "bash"): string | undefined {
   }
   candidates.push(name);
   for (const candidate of candidates) {
-    const probe = spawnSync(candidate, ["-c", "echo posix-shell-ok"], { encoding: "utf8" });
-    if (probe.status === 0 && probe.stdout.trim() === "posix-shell-ok") return candidate;
+    const probe = spawnSync(candidate, ["-c", PROBE_COMMAND], {
+      encoding: "utf8",
+      env: shellEnv(candidate),
+    });
+    if (probe.status === 0 && probe.stdout.trim() === PROBE_EXPECTED) return candidate;
   }
   return undefined;
 }
 
 const SH = findPosixShell("sh");
 const BASH = findPosixShell("bash");
+// A security test that cannot run must not pass as "skipped" in CI.
+const inCi = Boolean(process.env.CI);
+if (inCi && (SH === undefined || BASH === undefined)) {
+  throw new Error(
+    `CI is set but no working POSIX shell was found (sh: ${SH ?? "none"}, bash: ${BASH ?? "none"}); the entrypoint security tests cannot be skipped in CI`,
+  );
+}
 if (SH === undefined)
   console.warn("SKIPPED: no working POSIX sh was found; pre-stage tests skipped");
 if (BASH === undefined) console.warn("SKIPPED: no working bash was found; id rule test skipped");
@@ -259,7 +285,11 @@ describe("sprint pre-stage (entrypoint-precheck.sh)", () => {
 for line in ${quoted}; do check_entry "$line"; done
 [ "$refused" -eq 0 ] || exit 64
 `;
-    const result = spawnSync(SH ?? "sh", ["-s"], { input: probe, encoding: "utf8" });
+    const result = spawnSync(SH ?? "sh", ["-s"], {
+      input: probe,
+      encoding: "utf8",
+      env: shellEnv(SH ?? "sh"),
+    });
     return { status: result.status, stderr: result.stderr };
   }
 
@@ -278,7 +308,7 @@ check_environment_text "$entries"
     const result = spawnSync(SH ?? "sh", ["-s"], {
       input: probe,
       encoding: "utf8",
-      env: { ...process.env, PAYLOAD: payload },
+      env: shellEnv(SH ?? "sh", { PAYLOAD: payload }),
     });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
@@ -677,7 +707,7 @@ describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
     const result = spawnSync(BASH ?? "bash", ["-s"], {
       input: probe,
       encoding: "utf8",
-      env: { ...process.env, SPRINT_ID: id },
+      env: shellEnv(BASH ?? "bash", { SPRINT_ID: id }),
     });
     expect([0, 64], `bash exit for ${JSON.stringify(id)}: ${result.stderr}`).toContain(
       result.status,

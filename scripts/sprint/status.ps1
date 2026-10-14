@@ -6,7 +6,8 @@ second one. Read-only; what the conductor runs on each poll.
 .DESCRIPTION
 Columns follow PROMPT-BOOK.md section 6. A file that is missing, empty, partly written or not
 a JSON object shows as "unreadable" (or "no status.json") for that row and never stops the
-table. Exit code is 0 in every case that reaches the table, including "nothing to show".
+table. Exit code is 0 in every case that reaches the table, including "nothing to show". A link
+in the state directory shows as "link refused" and is not followed.
 
 The files are written by the sprint container and are untrusted. Every value is cut to a fixed
 width and reduced to printable ASCII before it is printed, state values outside the schema
