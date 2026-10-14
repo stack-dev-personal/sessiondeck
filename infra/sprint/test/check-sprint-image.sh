@@ -4,7 +4,7 @@
 #
 # Usage: infra/sprint/test/check-sprint-image.sh <output-dir> [--i-have-the-go]
 #
-# It builds the image, runs checks 1 to 9, prints one PASS, FAIL or SKIP line
+# It builds the image, runs checks 1 to 10, prints one PASS, FAIL or SKIP line
 # per check with the observed value, writes a copy of the output to
 # <output-dir>/u2-container-check.txt, removes everything it created (the built
 # image is kept on purpose), and exits non-zero if any check failed.
@@ -43,7 +43,10 @@ readonly COMPOSE_PROJECT=sd-0-s0c-harness
 readonly EXIT_CONFIG=64
 readonly REDACTION_MARKER="[REDACTED]"
 readonly STUB_PATH_IN_REPO=infra/sprint/test/claude-stub.sh
-readonly AUTH_PATTERN="auth|login|log in|token|401|credential"
+# The literal texts the real binary prints when it has no login (observed in U2b,
+# Proof 5). Broader words such as auth or token also match the init line and
+# every usage block, so they could never fail.
+readonly AUTH_PATTERN='"error":"authentication_failed"|Not logged in'
 readonly REAL_BINARY_TIMEOUT_S=60
 readonly OUTPUT_HEAD_LINES=5
 readonly OUTPUT_LINE_MAX=300
@@ -52,6 +55,13 @@ readonly GH_PLACEHOLDER="placeholder-gh-not-a-token"
 readonly API_PLACEHOLDER="placeholder-api-not-a-key"
 readonly BASE_URL_PLACEHOLDER="https://placeholder-host-not-a-value.invalid"
 readonly SHELLCHECK_IMAGE="koalaman/shellcheck:stable"
+# Stub sleep mode (see claude-stub.sh) and the stop check.
+readonly SLEEP_PROMPT="stub: sleep until stopped"
+readonly STUB_SLEEPING_FILE="stub-sleeping"
+readonly SIGTERM_EXIT=143
+readonly STOP_GRACE_S=15
+readonly STUB_WAIT_S=90
+readonly HOSTILE_MARKER="HOSTILE-MARKER-RAN"
 
 # --- Arguments and gate ---
 
@@ -371,11 +381,14 @@ check_6_hygiene() {
   fi
 }
 
-# run_guard <name> <env-var-to-name> <env-lines...>: the entrypoint must exit
-# with the configuration status, name the variable, and print no value.
-run_guard() {
-  local name=$1 expect_var=$2
-  shift 2
+# run_guard_forbidding <forbidden-text> <name> <env-var-to-name> <env-lines...>:
+# the pre-stage must exit with the configuration status, name the variable,
+# print no value, and never let the forbidden text (a marker that a hostile
+# BASH_ENV or function would print) appear. An empty forbidden text skips that
+# last check.
+run_guard_forbidding() {
+  local forbidden=$1 name=$2 expect_var=$3
+  shift 3
   printf '%s\n' "$@" >"$tmp_dir/guard.env"
   local out rc
   out="$(docker run --rm --name "$PREFIX-guard" --env-file "$tmp_dir/guard.env" \
@@ -391,7 +404,16 @@ run_guard() {
   else
     pass "7 guard: $name message has no value" "no placeholder in output"
   fi
+  if [ -n "$forbidden" ]; then
+    if echo "$out" | grep -qF -e "$forbidden"; then
+      fail "7 guard: $name hostile code never ran" "marker $forbidden appeared in the output"
+    else
+      pass "7 guard: $name hostile code never ran" "marker absent"
+    fi
+  fi
 }
+
+run_guard() { run_guard_forbidding "" "$@"; }
 
 check_7_guards() {
   run_guard "CLAUDE_CODE_OAUTH_TOKEN missing" CLAUDE_CODE_OAUTH_TOKEN "GH_TOKEN=$GH_PLACEHOLDER"
@@ -405,10 +427,22 @@ check_7_guards() {
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "ANTHROPIC_BASE_URL=$BASE_URL_PLACEHOLDER"
   run_guard "HTTPS_PROXY not on the allow-list" HTTPS_PROXY \
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "HTTPS_PROXY=$BASE_URL_PLACEHOLDER"
-  run_guard "BASH_ENV not on the allow-list" BASH_ENV \
-    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "BASH_ENV=/state/guard/evil.sh"
-  run_guard "LD_PRELOAD not on the allow-list" LD_PRELOAD \
+  # BASH_ENV whose value is a command substitution: bash would run it while
+  # starting, so the marker proves whether anything executed before the refusal.
+  # shellcheck disable=SC2016 # the substitution must reach the container unexpanded
+  run_guard_forbidding "$HOSTILE_MARKER" "BASH_ENV with a command substitution" BASH_ENV \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" 'BASH_ENV=$(echo '"$HOSTILE_MARKER"' >&2)'
+  # An exported function named exit would turn a bash-side refusal into a no-op.
+  run_guard_forbidding "$HOSTILE_MARKER" "exported function overriding exit" "BASH_FUNC_exit" \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "BASH_FUNC_exit%%=() { echo $HOSTILE_MARKER; }"
+  run_guard "LD_PRELOAD with a value" LD_PRELOAD \
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "LD_PRELOAD=/state/guard/evil.so"
+  # Names the image sets keep the image value; without the compose file the
+  # pre-stage refuses a different one (with it, the environment block pins them).
+  run_guard "CLAUDE_CONFIG_DIR changed" CLAUDE_CONFIG_DIR \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "CLAUDE_CONFIG_DIR=/state/guard/cfg"
+  run_guard "PATH changed" PATH \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "PATH=/state/guard/bin:/usr/bin"
 }
 
 check_8_second_run() {
@@ -422,6 +456,39 @@ check_8_second_run() {
   verify_run "second-run"
 }
 
+# docker stop must reach claude: the stub sleeps, docker stop sends SIGTERM to
+# PID 1, and the entrypoint must forward it, collect status 143 and log it.
+check_10_sigterm() {
+  local log="$state_dir/logs/entrypoint.log" sleeping="$state_dir/logs/$STUB_SLEEPING_FILE"
+  local before waited=0 stop_start stop_seconds container_rc after
+  printf '%s\n' "$SLEEP_PROMPT" >"$prompt_file"
+  rm -f "$sleeping"
+  before="$(grep -c "claude exited with status $SIGTERM_EXIT" "$log" || true)"
+  compose up -d --no-build >/dev/null
+  while [ ! -f "$sleeping" ] && [ "$waited" -lt "$STUB_WAIT_S" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if [ ! -f "$sleeping" ]; then
+    fail "10 stub reached its sleep" "no $STUB_SLEEPING_FILE after ${STUB_WAIT_S}s"
+    compose down --remove-orphans >/dev/null 2>&1
+    return
+  fi
+  stop_start=$SECONDS
+  docker stop -t "$STOP_GRACE_S" "$RUN_CONTAINER" >/dev/null
+  stop_seconds=$((SECONDS - stop_start))
+  container_rc="$(docker inspect "$RUN_CONTAINER" --format '{{.State.ExitCode}}')"
+  after="$(grep -c "claude exited with status $SIGTERM_EXIT" "$log" || true)"
+  compose down --remove-orphans >/dev/null 2>&1
+  expect_eq "10 entrypoint logged the forwarded stop" "$((before + 1))" "$after"
+  expect_eq "10 container exit code after docker stop" "$SIGTERM_EXIT" "$container_rc"
+  if [ "$stop_seconds" -lt "$STOP_GRACE_S" ]; then
+    pass "10 stopped within the grace period" "${stop_seconds}s of ${STOP_GRACE_S}s"
+  else
+    fail "10 stopped within the grace period" "${stop_seconds}s: docker had to SIGKILL"
+  fi
+}
+
 check_9_shellcheck() {
   if ! docker image inspect "$SHELLCHECK_IMAGE" >/dev/null 2>&1 && ! docker pull --quiet "$SHELLCHECK_IMAGE" >/dev/null 2>&1; then
     skip "9 shellcheck" "$SHELLCHECK_IMAGE could not be pulled"
@@ -431,7 +498,12 @@ check_9_shellcheck() {
   out="$(docker run --rm --name "$PREFIX-shellcheck" -v "$(to_native "$sprint_dir"):/mnt:ro" "$SHELLCHECK_IMAGE" \
     -s bash -x /mnt/entrypoint.sh /mnt/test/claude-stub.sh /mnt/test/check-sprint-image.sh 2>&1)"
   rc=$?
-  if [ "$rc" -eq 0 ]; then pass "9 shellcheck" "clean"; else fail "9 shellcheck" "exit $rc: $(echo "$out" | head -n 10)"; fi
+  if [ "$rc" -eq 0 ]; then pass "9 shellcheck (bash)" "clean"; else fail "9 shellcheck (bash)" "exit $rc: $(echo "$out" | head -n 10)"; fi
+  # The pre-stage runs under dash, so it is checked as POSIX sh.
+  out="$(docker run --rm --name "$PREFIX-shellcheck-sh" -v "$(to_native "$sprint_dir"):/mnt:ro" "$SHELLCHECK_IMAGE" \
+    -s sh -x /mnt/entrypoint-precheck.sh 2>&1)"
+  rc=$?
+  if [ "$rc" -eq 0 ]; then pass "9 shellcheck (sh)" "clean"; else fail "9 shellcheck (sh)" "exit $rc: $(echo "$out" | head -n 10)"; fi
 }
 
 # --- Main ---
@@ -448,5 +520,6 @@ check_5_real_binary
 check_7_guards
 check_8_second_run
 check_9_shellcheck
+check_10_sigterm
 
 [ "$failures" -eq 0 ]

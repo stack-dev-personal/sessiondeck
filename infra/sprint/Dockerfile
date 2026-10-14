@@ -96,9 +96,13 @@ ENV DISABLE_AUTOUPDATER=1 \
     GH_PROMPT_DISABLED=1
 
 # CR is stripped as a second defense against a CRLF checkout on Windows.
+# entrypoint-precheck.sh is the ENTRYPOINT (POSIX sh, run by dash): it refuses a
+# bad environment before bash starts, then execs the bash entrypoint. Its pinned
+# values must match the ENV block above and the compose environment block.
 COPY entrypoint.sh /usr/local/bin/sprint-entrypoint
-RUN sed -i 's/\r$//' /usr/local/bin/sprint-entrypoint \
- && chmod 0755 /usr/local/bin/sprint-entrypoint
+COPY entrypoint-precheck.sh /usr/local/bin/sprint-precheck
+RUN sed -i 's/\r$//' /usr/local/bin/sprint-entrypoint /usr/local/bin/sprint-precheck \
+ && chmod 0755 /usr/local/bin/sprint-entrypoint /usr/local/bin/sprint-precheck
 
 WORKDIR /work
-ENTRYPOINT ["/usr/local/bin/sprint-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/sprint-precheck"]

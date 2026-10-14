@@ -17,8 +17,20 @@ readonly FACTS="$LOG_DIR/stub-facts.txt"
 readonly SIBLING=sd-0-S0c-sibling
 readonly SIBLING_IMAGE=node:22.23.3-bookworm-slim
 readonly SMOKE_DIR=/state/smoke
+readonly SLEEP_PROMPT="stub: sleep until stopped"
+readonly SLEEP_SECONDS=300
 
 printf '%s\0' "$@" >"$LOG_DIR/claude-argv.bin"
+
+# Sleep mode, chosen by the prompt text (argv[1] after -p) because the harness
+# controls the prompt file and the entrypoint's environment allow-list would
+# refuse a new variable. It lets the harness prove that docker stop reaches the
+# process: exec makes this process the sleeper, so SIGTERM ends it with status
+# 143 and the entrypoint must log exactly that.
+if [ "${2:-}" = "$SLEEP_PROMPT" ]; then
+  : >"$LOG_DIR/stub-sleeping"
+  exec sleep "$SLEEP_SECONDS"
+fi
 
 yes_no() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
 

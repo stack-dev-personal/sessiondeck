@@ -17,6 +17,7 @@ function read(...parts: string[]): string {
 }
 
 const entrypoint = read("entrypoint.sh");
+const precheck = read("entrypoint-precheck.sh");
 const dockerfile = read("Dockerfile");
 const compose = read("docker-compose.yml");
 const override = read("test", "docker-compose.test.yml");
@@ -86,10 +87,38 @@ describe("sprint entrypoint", () => {
     expect(entrypoint).toContain('log "failed at line $2 with status $1"');
   });
 
-  it("forwards SIGTERM and SIGINT to claude and keeps its exit status", () => {
-    expect(entrypoint).toMatch(/trap forward_signal TERM INT/);
+  it("installs the stop handler at the start of stage 2, before any clone", () => {
+    expect(entrypoint).toMatch(/trap on_stop_signal TERM INT/);
+    const trapAt = entrypoint.indexOf("trap on_stop_signal TERM INT");
+    expect(trapAt).toBeGreaterThan(entrypoint.indexOf("exec setpriv"));
+    expect(trapAt).toBeLessThan(entrypoint.indexOf("git config --global"));
+    expect(trapAt).toBeLessThan(entrypoint.indexOf("git clone"));
+  });
+
+  it("checks the stopping flag before the clone and before launching claude", () => {
+    expect(entrypoint).toMatch(/on_stop_signal\(\) \{\n {2}stopping=1\n {2}forward_signal\n\}/);
+    const checks = [...entrypoint.matchAll(/^exit_if_stopping$/gm)].map(
+      (match) => match.index ?? 0,
+    );
+    expect(checks).toHaveLength(2);
+    expect(checks[0]).toBeLessThan(entrypoint.indexOf("git clone"));
+    expect(checks[1]).toBeGreaterThan(entrypoint.indexOf("# --- Run the level-1 prompt headless"));
+    expect(checks[1]).toBeLessThan(entrypoint.indexOf('claude -p "$('));
+  });
+
+  it("forwards SIGTERM to claude, also when it arrives during launch, and keeps its exit status", () => {
     expect(entrypoint).toMatch(/forward_signal\(\) \{[^}]*kill -TERM "\$claude_pid"/s);
+    expect(entrypoint).toMatch(
+      /claude_pid=\$!\n(?:#[^\n]*\n)+if \[ "\$stopping" -eq 1 \]; then\n {2}forward_signal/,
+    );
     expect(entrypoint).toMatch(/wait "\$claude_pid" \|\| rc=\$\?/);
+    expect(entrypoint).toContain("readonly EXIT_STOPPED=143");
+  });
+
+  it("no longer carries the allow-list, which moved to the pre-stage", () => {
+    expect(entrypoint).not.toContain("refuse_unlisted_environment");
+    expect(entrypoint).not.toContain("ALLOWED_ENV_NAMES");
+    expect(entrypoint).toContain("entrypoint-precheck.sh");
   });
 
   it("passes claude's stdout and stderr through the token filter before tee or docker logs", () => {
@@ -117,89 +146,181 @@ describe("sprint entrypoint", () => {
   });
 });
 
-// Names set by ENV instructions, including continuation lines.
-function envNamesFrom(text: string): string[] {
-  const names: string[] = [];
+// Names set by ENV instructions, including continuation lines, with their values.
+function envPairsFrom(text: string): Map<string, string> {
+  const pairs = new Map<string, string>();
   let inEnv = false;
   for (const line of text.split("\n")) {
     if (/^ENV\s/.test(line)) inEnv = true;
     if (inEnv) {
-      for (const match of line.matchAll(/(?:^ENV\s+|^\s+)([A-Za-z_][A-Za-z0-9_]*)=/g)) {
-        names.push(match[1] ?? "");
+      for (const match of line.matchAll(
+        /(?:^ENV\s+|^\s+)([A-Za-z_][A-Za-z0-9_]*)=(\S+?)(?:\s*\\)?$/g,
+      )) {
+        pairs.set(match[1] ?? "", match[2] ?? "");
       }
       inEnv = line.trimEnd().endsWith("\\");
     }
   }
-  return names;
+  return pairs;
 }
 
-describe("sprint entrypoint environment allow-list", () => {
-  const block =
-    /# BEGIN env-allow-list\n([\s\S]*?)# END env-allow-list/.exec(entrypoint)?.[1] ?? "";
-  const allowedNames = /ALLOWED_ENV_NAMES=\(([\s\S]*?)\n\)/.exec(block)?.[1]?.split(/\s+/) ?? [];
+// The names whose value the pre-stage pins, with the shell variable that holds it.
+const PINNED_NAMES = [
+  "DISABLE_AUTOUPDATER",
+  "CLAUDE_CONFIG_DIR",
+  "HOME",
+  "GIT_TERMINAL_PROMPT",
+  "GH_PROMPT_DISABLED",
+];
 
-  function run(names: string[]): { status: number | null; stderr: string } {
-    const quoted = names.map((entry) => `'${entry}'`).join(" ");
-    const script = `readonly EXIT_CONFIG=64\n${block}\nprintf '%s\\0' ${quoted} | refuse_unlisted_environment\n`;
-    const result = spawnSync("bash", ["-s"], { input: script, encoding: "utf8" });
+describe("sprint pre-stage (entrypoint-precheck.sh)", () => {
+  const block = /# BEGIN env-checks\n([\s\S]*?)# END env-checks/.exec(precheck)?.[1] ?? "";
+
+  // check_entry runs in the current shell (no pipe), so `refused` survives the loop.
+  function run(entries: string[]): { status: number | null; stderr: string } {
+    const quoted = entries.map((entry) => `'${entry}'`).join(" ");
+    const probe = `${block}
+for line in ${quoted}; do check_entry "$line"; done
+[ "$refused" -eq 0 ] || exit 64
+`;
+    const result = spawnSync("sh", ["-s"], { input: probe, encoding: "utf8" });
     return { status: result.status, stderr: result.stderr };
   }
 
-  it("runs before the privilege drop and before anything is exported", () => {
-    const checkAt = entrypoint.indexOf("refuse_unlisted_environment </proc/self/environ");
-    expect(checkAt).toBeGreaterThan(-1);
-    expect(checkAt).toBeLessThan(entrypoint.indexOf("setpriv"));
-    expect(checkAt).toBeLessThan(entrypoint.indexOf("export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"));
+  it("is POSIX sh with LF endings, the image entrypoint, and execs the bash entrypoint last", () => {
+    expect(precheck.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(precheck).not.toContain("\r");
+    expect(precheck).not.toMatch(/\[\[|^\s*local\s|<<<|\bmapfile\b|\$\{[A-Za-z_]+\/\//m);
+    expect(precheck).toMatch(/^set -eu$/m);
+    expect(precheck.trimEnd().endsWith('exec "$BASH_ENTRYPOINT" "$@"')).toBe(true);
+    expect(dockerfile).toMatch(/^ENTRYPOINT \["\/usr\/local\/bin\/sprint-precheck"\]$/m);
+    expect(precheck).toContain("BASH_ENTRYPOINT=/usr/local/bin/sprint-entrypoint");
+  });
+
+  it("is checked out with LF line endings", () => {
+    const result = spawnSync("git", ["check-attr", "eol", "infra/sprint/entrypoint-precheck.sh"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toMatch(/: eol: lf$/);
+  });
+
+  it("reads this shell's own environment and stops if it cannot", () => {
+    expect(precheck).toContain("ENVIRON_FILE=/proc/$$/environ");
+    expect(precheck).not.toContain("/proc/self/environ\n");
+    expect(precheck).toMatch(/environment_lines=\$\(tr '\\0' '\\n' <"\$ENVIRON_FILE"\)/);
+    expect(precheck).toContain("could not read the process environment");
+  });
+
+  it("resets PATH before the first external command", () => {
+    const resetAt = precheck.indexOf("PATH=$PINNED_PATH\nexport PATH");
+    expect(resetAt).toBeGreaterThan(-1);
+    expect(resetAt).toBeLessThan(precheck.indexOf("environment_lines=$(tr"));
+  });
+
+  it("never prints a value and neutralises unusual names", () => {
+    expect(precheck).not.toMatch(/printf[^\n]*\$value/);
+    expect(precheck).not.toMatch(/\becho\b/);
+    expect(precheck).toContain("<name with unusual characters>");
+  });
+
+  it("pins the same values as the Dockerfile ENV block and the node base image PATH", () => {
+    const dockerEnv = envPairsFrom(dockerfile);
+    for (const name of PINNED_NAMES) {
+      const value = dockerEnv.get(name);
+      expect(value, `Dockerfile ENV ${name}`).toBeDefined();
+      expect(precheck).toContain(`PINNED_${name}=${value}\n`);
+    }
+    expect(precheck).toContain(
+      "PINNED_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n",
+    );
   });
 
   it("allows the tokens, SPRINT_*, and every name the Dockerfile sets with ENV", () => {
-    const dockerfileNames = envNamesFrom(dockerfile);
-    expect(dockerfileNames.length).toBeGreaterThan(3);
-    for (const name of [...dockerfileNames, ...TOKEN_NAMES]) {
-      expect(allowedNames).toContain(name);
+    const names = [...envPairsFrom(dockerfile).keys(), ...TOKEN_NAMES, "SPRINT_ID"];
+    expect(names.length).toBeGreaterThan(5);
+    for (const name of names) {
+      const result = run([
+        `${name}=${PINNED_NAMES.includes(name) ? (envPairsFrom(dockerfile).get(name) ?? "") : "x"}`,
+      ]);
+      expect(result.status, name).toBe(0);
     }
-  });
-
-  it("does not allow anything that could redirect the token or run code", () => {
-    for (const name of [
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_AUTH_TOKEN",
-      "ANTHROPIC_BASE_URL",
-      "BASH_ENV",
-      "LD_PRELOAD",
-      "NODE_OPTIONS",
-      "HTTPS_PROXY",
-    ]) {
-      expect(allowedNames).not.toContain(name);
-    }
-    expect(allowedNames.some((name) => name.startsWith("GIT_CONFIG"))).toBe(false);
   });
 
   it("accepts a clean environment", () => {
     const result = run([
-      "PATH=/usr/bin",
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "CLAUDE_CODE_OAUTH_TOKEN=x",
       "GH_TOKEN=y",
       "SPRINT_ID=0",
       "_=/usr/bin/setpriv",
       "HOME=/home/sprint",
+      "BASH_ENV=",
+      "LD_PRELOAD=",
     ]);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
 
-  it("refuses unlisted variables with exit 64, naming them and never their values", () => {
+  it("refuses anything that could redirect the token or run code", () => {
+    for (const entry of [
+      "ANTHROPIC_API_KEY=x",
+      "ANTHROPIC_AUTH_TOKEN=x",
+      "ANTHROPIC_BASE_URL=https://h.invalid",
+      "NODE_OPTIONS=--require=/x.js",
+      "HTTPS_PROXY=http://p.invalid",
+      "GIT_CONFIG_COUNT=1",
+      "LD_LIBRARY_PATH=/x",
+      "LD_AUDIT=/x.so",
+      "BASH_FUNC_exit%%=() { :; }",
+    ]) {
+      const result = run([entry]);
+      expect(result.status, entry).toBe(64);
+    }
+  });
+
+  it("accepts BASH_ENV and LD_PRELOAD only when empty", () => {
+    expect(run(["BASH_ENV=", "LD_PRELOAD="]).status).toBe(0);
+    expect(run(["BASH_ENV=/state/x/evil.sh"]).status).toBe(64);
+    expect(run(["BASH_ENV=$(echo MARKER)"]).status).toBe(64);
+    expect(run(["LD_PRELOAD=/state/x/evil.so"]).status).toBe(64);
+  });
+
+  it("refuses a pinned name whose value differs from the image value", () => {
+    for (const entry of [
+      "CLAUDE_CONFIG_DIR=/state/x/cfg",
+      "HOME=/root",
+      "PATH=/state/x/bin:/usr/bin",
+      "DISABLE_AUTOUPDATER=0",
+      "GIT_TERMINAL_PROMPT=1",
+      "GH_PROMPT_DISABLED=0",
+    ]) {
+      expect(run([entry]).status, entry).toBe(64);
+    }
+  });
+
+  it("names the variable and never the value, and tells the user where to look", () => {
     const result = run([
-      "PATH=/usr/bin",
       "ANTHROPIC_BASE_URL=https://secret-value-host.invalid",
       "BASH_FUNC_id%%=() { :; }",
       "LD_PRELOAD=/secret-value.so",
+      "CLAUDE_CONFIG_DIR=/secret-value/cfg",
     ]);
     expect(result.status).toBe(64);
     expect(result.stderr).toContain("ANTHROPIC_BASE_URL");
     expect(result.stderr).toContain("LD_PRELOAD");
+    expect(result.stderr).toContain("CLAUDE_CONFIG_DIR");
     expect(result.stderr).toContain("BASH_FUNC_id%%");
+    expect(result.stderr).toContain(".sprint/env or the Docker proxy settings");
     expect(result.stderr).not.toContain("secret-value");
+  });
+
+  it("does not print terminal escape sequences from a hostile name", () => {
+    const result = run(["BAD\u001b]52;c;x\u0007NAME=1"]);
+    expect(result.status).toBe(64);
+    expect(result.stderr).not.toContain("\u001b");
+    expect(result.stderr).toContain("<name with unusual characters>");
   });
 });
 
@@ -248,13 +369,15 @@ describe("sprint Dockerfile", () => {
     expect(dockerfile).toContain("DISABLE_AUTOUPDATER=1");
   });
 
-  it("copies only the entrypoint and ignores everything else", () => {
+  it("copies only the two entrypoint files and ignores everything else", () => {
     const copies = dockerfile.split("\n").filter((line) => /^\s*COPY\b/.test(line));
-    expect(copies).toHaveLength(1);
-    expect(copies[0]).toContain("entrypoint.sh");
+    expect(copies).toHaveLength(2);
+    expect(copies.join("\n")).toContain("COPY entrypoint.sh ");
+    expect(copies.join("\n")).toContain("COPY entrypoint-precheck.sh ");
     const ignore = read(".dockerignore").split("\n");
     expect(ignore).toContain("*");
     expect(ignore).toContain("!entrypoint.sh");
+    expect(ignore).toContain("!entrypoint-precheck.sh");
   });
 });
 
@@ -287,7 +410,25 @@ describe("sprint compose file", () => {
     expect(compose).toContain("not a security boundary");
   });
 
-  it("gives the test container no environment the entrypoint allow-list would refuse", () => {
+  it("pins the code-running names to empty and the image-owned names to their image values", () => {
+    const block = /\n {4}environment:\n([\s\S]*?)\n {4}volumes:/.exec(compose)?.[1] ?? "";
+    expect(block).toMatch(/^\s+BASH_ENV: ""$/m);
+    expect(block).toMatch(/^\s+LD_PRELOAD: ""$/m);
+    const dockerEnv = envPairsFrom(dockerfile);
+    for (const name of PINNED_NAMES) {
+      expect(block, name).toMatch(new RegExp(`^\\s+${name}: "?${dockerEnv.get(name)}"?$`, "m"));
+    }
+    expect(block).toMatch(
+      /^\s+PATH: \/usr\/local\/sbin:\/usr\/local\/bin:\/usr\/sbin:\/usr\/bin:\/sbin:\/bin$/m,
+    );
+  });
+
+  it("describes the pins as protection against mistakes, not against a writer of .sprint/env", () => {
+    expect(compose).toContain("not a defense against someone who can write");
+    expect(precheck).toContain("not a defense against someone who can write .sprint/env");
+  });
+
+  it("gives the test container no environment the pre-stage would refuse", () => {
     expect(override).not.toMatch(/GIT_CONFIG/);
     expect(override).toContain("/etc/gitconfig");
   });
@@ -320,8 +461,10 @@ describe("sprint container harness", () => {
     expect(harness).not.toMatch(/\|\| : >/);
   });
 
-  it("requires an authentication message for the non-root real binary", () => {
-    expect(harness).toContain("AUTH_PATTERN");
+  it("requires the literal authentication failure for the non-root real binary", () => {
+    expect(harness).toContain(
+      `readonly AUTH_PATTERN='"error":"authentication_failed"|Not logged in'`,
+    );
     expect(harness).toMatch(/-ne 126.*-ne 127/s);
   });
 
@@ -329,5 +472,38 @@ describe("sprint container harness", () => {
     expect(harness).toContain('"$state_dir/logs/sprint.jsonl"');
     expect(harness).toContain("expect_marker");
     expect(harness).toContain("ANTHROPIC_BASE_URL not on the allow-list");
+  });
+
+  it("probes BASH_ENV with a command substitution and an exported exit function, asserting the marker never appears", () => {
+    expect(harness).toContain("BASH_ENV with a command substitution");
+    expect(harness).toContain("BASH_FUNC_exit%%=() {");
+    expect(harness).toContain("hostile code never ran");
+    expect(harness).toContain('grep -qF -e "$forbidden"');
+  });
+
+  it("probes a changed CLAUDE_CONFIG_DIR and PATH and a valued LD_PRELOAD", () => {
+    expect(harness).toContain('run_guard "CLAUDE_CONFIG_DIR changed"');
+    expect(harness).toContain('run_guard "PATH changed"');
+    expect(harness).toContain('run_guard "LD_PRELOAD with a value"');
+  });
+
+  it("drives docker stop at a sleeping stub and requires status 143 in entrypoint.log", () => {
+    expect(harness).toContain("check_10_sigterm");
+    expect(harness).toContain('docker stop -t "$STOP_GRACE_S"');
+    expect(harness).toContain("claude exited with status $SIGTERM_EXIT");
+    expect(harness).toMatch(/^readonly SIGTERM_EXIT=143$/m);
+  });
+
+  it("selects the stub's sleep mode by prompt text, with no new variable and no production switch", () => {
+    const stub = read("test", "claude-stub.sh");
+    expect(stub).toContain('"${2:-}" = "$SLEEP_PROMPT"');
+    expect(stub).toContain("exec sleep");
+    expect(harness).toMatch(/^readonly SLEEP_PROMPT="stub: sleep until stopped"$/m);
+    expect(stub).toContain('readonly SLEEP_PROMPT="stub: sleep until stopped"');
+    expect(override).not.toMatch(/SLEEP/i);
+  });
+
+  it("checks the pre-stage with shellcheck as POSIX sh", () => {
+    expect(harness).toContain("-s sh -x /mnt/entrypoint-precheck.sh");
   });
 });

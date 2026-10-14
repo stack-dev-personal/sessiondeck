@@ -17,50 +17,10 @@ readonly SPRINT_AGENT=sd-sprint-orchestrator
 readonly EXIT_CONFIG=64
 readonly REDACTION_MARKER="[REDACTED]"
 
-# --- Environment allow-list (runs first, as root, before any drop) ---
-#
-# env_file passes every line of .sprint/env into the environment. Anything that
-# can redirect the OAuth token (ANTHROPIC_BASE_URL, proxies, Bedrock or Vertex
-# switches) or run code in this root shell (BASH_ENV, LD_PRELOAD, exported
-# BASH_FUNC_* functions) would defeat the token-only-through-env_file rule, so
-# every variable not named here is refused. The list is: the two tokens, SPRINT_*,
-# the names the Dockerfile sets with ENV, and what Docker, bash and the node base
-# image add themselves (checked against a stock node:22.23.3-bookworm-slim).
-# Names only are printed, never values. The input is the process's initial
-# environment, which also exposes exported bash functions.
-# BEGIN env-allow-list
-readonly -a ALLOWED_ENV_NAMES=(
-  CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN
-  DEBIAN_FRONTEND DISABLE_AUTOUPDATER CLAUDE_CONFIG_DIR HOME GIT_TERMINAL_PROMPT GH_PROMPT_DISABLED
-  PATH HOSTNAME TERM PWD OLDPWD SHLVL _ NODE_VERSION YARN_VERSION
-)
-
-env_name_allowed() {
-  local name=$1 allowed
-  case $name in SPRINT_*) return 0 ;; esac
-  for allowed in "${ALLOWED_ENV_NAMES[@]}"; do
-    if [ "$name" = "$allowed" ]; then return 0; fi
-  done
-  return 1
-}
-
-# Reads NUL-separated NAME=value entries on stdin; prints each refused NAME.
-refuse_unlisted_environment() {
-  local entry name refused=0
-  while IFS= read -r -d '' entry; do
-    name=${entry%%=*}
-    if ! env_name_allowed "$name"; then
-      printf 'entrypoint: ERROR: environment variable %q is not on the allow-list; remove it from .sprint/env\n' "$name" >&2
-      refused=1
-    fi
-  done
-  if [ "$refused" -ne 0 ]; then
-    exit "$EXIT_CONFIG"
-  fi
-}
-# END env-allow-list
-
-refuse_unlisted_environment </proc/self/environ
+# The environment allow-list does not live here. It runs before this script, in
+# entrypoint-precheck.sh (POSIX sh, the image ENTRYPOINT), because bash has
+# already sourced BASH_ENV and imported exported functions by the time any check
+# in this file could run.
 
 # Git asks this helper for credentials. The single quotes keep ${GH_TOKEN}
 # literal here: it is expanded by git's shell at use time, from the environment,
@@ -114,6 +74,27 @@ export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 
 LOG_FILE=""
 
+# docker stop sends SIGTERM to PID 1, and a PID 1 without a handler ignores it,
+# so the handler is installed here, before the clone, not just before claude.
+# It records the request; the steps below check the flag before launching claude,
+# and once claude runs the handler forwards the signal to it. A foreground git
+# command delays the handler until that command ends.
+stopping=0
+claude_pid=""
+
+forward_signal() {
+  if [ -n "$claude_pid" ]; then
+    kill -TERM "$claude_pid" 2>/dev/null || true
+  fi
+}
+
+# shellcheck disable=SC2329 # invoked by the trap below
+on_stop_signal() {
+  stopping=1
+  forward_signal
+}
+trap on_stop_signal TERM INT
+
 log() {
   local line
   line="$(date -u +%Y-%m-%dT%H:%M:%SZ) entrypoint: $*"
@@ -126,6 +107,16 @@ log() {
 die() {
   log "ERROR: $*"
   exit "$EXIT_CONFIG"
+}
+
+# 128 + SIGTERM, the status a signalled process reports.
+readonly EXIT_STOPPED=143
+
+exit_if_stopping() {
+  if [ "$stopping" -eq 1 ]; then
+    log "stop requested before claude was launched; exiting"
+    exit "$EXIT_STOPPED"
+  fi
 }
 
 require_var() {
@@ -191,6 +182,8 @@ fi
 git config --global credential.https://github.com.helper "$CREDENTIAL_HELPER"
 
 # --- Clone or fetch ---
+
+exit_if_stopping
 
 if [ -d "$WORK_DIR/.git" ]; then
   log "fetch path: $WORK_DIR is already a clone"
@@ -260,6 +253,7 @@ redact_stream() {
   '
 }
 
+exit_if_stopping
 cd "$WORK_DIR"
 log "launching claude headless; stream goes to $SESSION_LOG"
 fifo_dir="$(mktemp -d)"
@@ -271,19 +265,15 @@ out_filter_pid=$!
 redact_stream <"$err_fifo" >&2 &
 err_filter_pid=$!
 
-claude_pid=""
-# shellcheck disable=SC2329 # invoked by the trap below
-forward_signal() {
-  if [ -n "$claude_pid" ]; then
-    kill -TERM "$claude_pid" 2>/dev/null || true
-  fi
-}
-trap forward_signal TERM INT
-
 claude -p "$(cat "$PROMPT_FILE")" --agent "$SPRINT_AGENT" \
   --dangerously-skip-permissions --output-format stream-json --verbose \
   >"$out_fifo" 2>"$err_fifo" &
 claude_pid=$!
+# A stop that arrived between the launch and the assignment above was recorded
+# but could not be forwarded yet.
+if [ "$stopping" -eq 1 ]; then
+  forward_signal
+fi
 
 rc=0
 wait "$claude_pid" || rc=$?
