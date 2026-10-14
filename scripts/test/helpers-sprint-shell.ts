@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 /**
@@ -13,6 +14,9 @@ export const FORCE_PROBE_FAIL_VAR = "SPRINT_TEST_FORCE_SHELL_PROBE_FAIL";
 // Each candidate must run a pipe through an external tool (tr), otherwise it is not used.
 const PROBE_COMMAND = "echo x | tr x y";
 const PROBE_EXPECTED = "y";
+const PROBE_TIMEOUT_MS = 10_000;
+// A batch runs dozens of cases; a case that never returns must fail the test, not stall the worker.
+export const SHELL_RUN_TIMEOUT_MS = 50_000;
 
 /**
  * The environment for running a shell: when the shell is an absolute path (Git for Windows
@@ -29,6 +33,7 @@ function probeWorks(candidate: string): boolean {
   const probe = spawnSync(candidate, ["-c", PROBE_COMMAND], {
     encoding: "utf8",
     env: shellEnv(candidate),
+    timeout: PROBE_TIMEOUT_MS,
   });
   return probe.status === 0 && probe.stdout.trim() === PROBE_EXPECTED;
 }
@@ -51,17 +56,19 @@ function gitExecPathCandidate(name: string): string[] {
 }
 
 /**
- * A POSIX shell that works: the bare name on Linux and macOS, and on Windows Git for Windows'
- * usr/bin copy first (the bare "bash" there can be the WSL launcher, which fails when no distro
- * is installed).
+ * A POSIX shell that works: the bare name on Linux and macOS. On Windows, Git for Windows'
+ * usr/bin copy comes first (standard install folders, then the folder git itself reports), and
+ * the bare name last, because the bare "bash" there can be the WSL launcher, which fails when no
+ * distro is installed and is the wrong shell when one is.
  */
 export function findPosixShell(name: "sh" | "bash"): string | undefined {
   if (process.env[FORCE_PROBE_FAIL_VAR]) return undefined;
-  const isWindows = process.platform === "win32";
-  const standard = [...(isWindows ? windowsInstallCandidates(name) : []), name];
-  const found = standard.find(probeWorks);
-  if (found !== undefined || !isWindows) return found;
-  return gitExecPathCandidate(name).find(probeWorks);
+  if (process.platform !== "win32") return [name].find(probeWorks);
+  return (
+    windowsInstallCandidates(name).find(probeWorks) ??
+    gitExecPathCandidate(name).find(probeWorks) ??
+    [name].find(probeWorks)
+  );
 }
 
 export interface ShellCaseResult {
@@ -70,8 +77,7 @@ export interface ShellCaseResult {
   output: string;
 }
 
-const CASE_BEGIN = "@@CASE-BEGIN";
-const CASE_END = "@@CASE-END";
+const MARKER_PREFIX = "@@CASE";
 
 /**
  * Runs every body as a function of ONE shell process, after `prelude` ran once in the parent.
@@ -86,20 +92,27 @@ export function runShellCases(
   prelude: string,
   bodies: readonly string[],
 ): ShellCaseResult[] {
+  // A fresh id per run, so a case cannot print text that parses as its own or another marker.
+  const runId = randomUUID();
+  const begin = `${MARKER_PREFIX}-${runId}-BEGIN`;
+  const end = `${MARKER_PREFIX}-${runId}-END`;
   const cases = bodies.map(
     (body, i) =>
-      `sd_case_${i}() {\n${body}\n}\nprintf '%s\\n' '${CASE_BEGIN} ${i}'\nsd_case_${i} 2>&1\nprintf '\\n%s %s\\n' '${CASE_END} ${i}' "$?"\n`,
+      `sd_case_${i}() {\n${body}\n}\nprintf '%s\\n' '${begin} ${i}'\nsd_case_${i} 2>&1\nprintf '\\n%s %s\\n' '${end} ${i}' "$?"\n`,
   );
   const result = spawnSync(shell, ["-s"], {
     input: `${prelude}\n${cases.join("")}`,
     encoding: "utf8",
     env: shellEnv(shell),
+    timeout: SHELL_RUN_TIMEOUT_MS,
   });
+  if (result.error !== undefined) {
+    throw new Error(
+      `shell did not finish ${bodies.length} cases within ${SHELL_RUN_TIMEOUT_MS} ms: ${result.error.message}`,
+    );
+  }
   const results = new Map<number, ShellCaseResult>();
-  const pattern = new RegExp(
-    `${CASE_BEGIN} (\\d+)\\n([\\s\\S]*?)\\n${CASE_END} \\1 (\\d+)\\n`,
-    "g",
-  );
+  const pattern = new RegExp(`${begin} (\\d+)\\n([\\s\\S]*?)\\n${end} \\1 (\\d+)\\n`, "g");
   for (const match of result.stdout.matchAll(pattern)) {
     results.set(Number(match[1]), { output: match[2] ?? "", status: Number(match[3]) });
   }

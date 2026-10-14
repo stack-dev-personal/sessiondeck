@@ -280,6 +280,8 @@ full and the container contract are in `infra/sprint/README.md`; read that first
 the previous `smoke/status.json` first and prints only sanitized status and log text. The wait limit
 counts from the moment `run-sprint` returns (an image build is reported separately as `start_seconds`),
 and `stop-sprint` is skipped with `-KeepContainer` and after `run-sprint` exit 1, 2, 3 or 4. The sprint id is letters,
-digits and underscore only. The container can plant symbolic links in `.sprint/<id>/`; `run-sprint.ps1`, `smoke-check.ps1` and `status.ps1` refuse any path that is, or sits under, a link below the state root (`lib/sprint-links.ps1`; see the Links bullet in `infra/sprint/README.md`). Tests: the static ones run in
-`pnpm -F @sessiondeck/scripts test`; the PowerShell script tests are `test:sprint-ps`, a separate CI
-step.
+digits and underscore only. The container can plant symbolic links in `.sprint/<id>/`; `run-sprint.ps1`, `smoke-check.ps1` and `status.ps1` refuse any path that is, or sits under, a link below the state root (`lib/sprint-links.ps1`; see the Links bullet in `infra/sprint/README.md`). Tests: every
+`test/sprint-*.test.ts` file (renderer, image static checks, PowerShell scripts) runs with
+`pnpm -F @sessiondeck/scripts test:sprint`, a separate CI step; `pnpm test` runs the rest, and
+`test/test-split.test.ts` guards that each test file is in exactly one of the two runs.
+(`test:sprint-ps` is kept as an alias.)

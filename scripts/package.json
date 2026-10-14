@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:sprint-ps": "vitest run --config vitest.sprint-ps.config.ts",
+    "test:sprint": "vitest run --config vitest.sprint.config.ts",
+    "test:sprint-ps": "pnpm run test:sprint",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },

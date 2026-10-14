@@ -240,8 +240,8 @@ const PINNED_NAMES = [
 describe("sprint pre-stage (entrypoint-precheck.sh)", () => {
   const block = /# BEGIN env-checks\n([\s\S]*?)# END env-checks/.exec(precheck)?.[1] ?? "";
 
-  // Every case runs in a subshell of ONE shell process (runShellCases), so a test with many
-  // entries costs a single process start. check_entry sets `refused`, which survives the loop
+  // Every case runs as a function in the shared shell of ONE process (runShellCases), so a test
+  // with many entries costs a single process start. Cases must end with `return`, never `exit`. check_entry sets `refused`, which survives the loop
   // because the loop is not in a pipe; each case starts from refused=0.
   const SHELL = SH ?? "sh";
   const REFUSED_STATUS = 64;
