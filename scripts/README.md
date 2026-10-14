@@ -274,7 +274,10 @@ full and the container contract are in `infra/sprint/README.md`; read that first
 | `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing or remote docker target; 4 already running or state conflict; 5 docker failure |
 | `scripts/sprint/stop-sprint.ps1` | `-Sprint`, `-DryRun` | 0 stopped or nothing to stop; 2 bad input; 3 docker missing; 5 docker failure |
 | `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show" |
+| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green); 2, 3, 4, 5 passed through from `run-sprint.ps1` |
 
-The sprint id is letters, digits and underscore only. Tests: the static ones run in
+`smoke-check.ps1` is the R0.8 smoke gate in one command (run, wait for green, evidence block, stop); it clears
+the previous `smoke/status.json` first and prints only sanitized status and log text. The sprint id is letters,
+digits and underscore only. Tests: the static ones run in
 `pnpm -F @sessiondeck/scripts test`; the PowerShell script tests are `test:sprint-ps`, a separate CI
 step.

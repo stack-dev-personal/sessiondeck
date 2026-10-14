@@ -115,6 +115,10 @@ The user must decide which of these to adopt, or to accept the risk, before the 
 
 Status: the laptop confirmation is still pending for S0c. No tokens existed during S0c, so the smoke run has not happened with real credentials. The harness runs the same path with a stub `claude` and placeholder tokens.
 
+One command does steps 1 to 4 below and prints the evidence: `scripts/sprint/smoke-check.ps1` (optional `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds 120`, `-PollSeconds 3`, `-KeepContainer`, `-EvidenceFile <path>`). It deletes a previous `smoke/status.json` (that one file; it never uses `-Resume`, because a stale green file would be a false pass), runs `run-sprint.ps1 -Sprint smoke`, polls the status file until it is green, the container exits or the timeout passes, then runs `stop-sprint.ps1 -Sprint smoke` unless `-KeepContainer`. The evidence block has PASS or FAIL, elapsed seconds, the final state, the container exit code, the last 20 lines of `entrypoint.log` as printable ASCII, and a secrets reminder; it never prints docker logs or the env file. Exit codes: 0 PASS; 1 FAIL (timeout, container exited, state not green); 2, 3, 4 or 5 when `run-sprint` itself failed (same meaning as below). Attach the block (read it first) to the S0c confirmation.
+
+The manual steps:
+
 1. `scripts/sprint/run-sprint.ps1 -Sprint smoke`
 2. Within two minutes `.sprint/smoke/status.json` should exist with state `green`. Check with `scripts/sprint/status.ps1`. The smoke prompt asks the session to write `/state/smoke/status.json` with state green and exit. A pass proves auth, clone, the state mount and the socket mount.
 3. On failure look at `.sprint/smoke/logs/entrypoint.log` and `docker logs sprint-smoke`. Both may hold secrets: do not paste them.

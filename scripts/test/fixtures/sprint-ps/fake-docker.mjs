@@ -8,11 +8,15 @@
 // A step may instead be { "seq": [step, step, ...] }: the n-th call with the same key and name
 // uses the n-th entry, and the last entry repeats (for example "present, then auto-removed").
 //
+// A step may also carry "writeFile": { "path": "...", "content": "..." }, written when the step runs
+// (a stand-in for the container writing its status file).
+//
 // A plan key is "<call>" or "<call>:<name>" (the name wins). The name is the first
 // sprint-<id> or sd-<id>... token in argv, or the image reference for image-inspect. Calls are
-// ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect. Unlisted calls succeed with
+// ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect, container (container inspect). Unlisted calls succeed with
 // no output.
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 const SECRET_NAME = /token|secret|password|api_key/i;
 const NAME_IN_ARGV = /(?:sprint|sd)-[A-Za-z0-9_-]+/;
@@ -65,6 +69,10 @@ appendFileSync(
   `${JSON.stringify({ key, name: name ?? null, argv, env: sprintEnv, secretNames })}\n`,
 );
 
+if (step.writeFile) {
+  mkdirSync(dirname(step.writeFile.path), { recursive: true });
+  writeFileSync(step.writeFile.path, step.writeFile.content);
+}
 if (step.out) process.stdout.write(`${step.out}\n`);
 // Real docker writes errors to stderr; the scripts must survive that under ErrorActionPreference Stop.
 if (step.err) process.stderr.write(`${step.err}\n`);

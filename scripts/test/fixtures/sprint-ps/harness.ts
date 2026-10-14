@@ -58,6 +58,8 @@ export interface Step {
   code?: number;
   out?: string;
   err?: string;
+  /** Written when the step runs: a stand-in for the container writing its status file. */
+  writeFile?: { path: string; content: string };
 }
 
 export interface DockerPlan {
@@ -263,6 +265,7 @@ export function runBatch(
 export const RUN_SPRINT = join(SPRINT_SCRIPTS, "run-sprint.ps1");
 export const STATUS = join(SPRINT_SCRIPTS, "status.ps1");
 export const STOP_SPRINT = join(SPRINT_SCRIPTS, "stop-sprint.ps1");
+export const SMOKE_CHECK = join(SPRINT_SCRIPTS, "smoke-check.ps1");
 
 /** Common arguments that point run-sprint at the temp workspace. */
 export function runArgs(
