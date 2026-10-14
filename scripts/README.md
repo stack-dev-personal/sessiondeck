@@ -1,6 +1,7 @@
 # scripts
 
-Workspace package `@sessiondeck/scripts`. Dependency-free Node scripts (Node built-ins only).
+Workspace package `@sessiondeck/scripts`. Node scripts. The fixture capture scripts use Node
+built-ins only; the sprint prompt renderer uses the `yaml` package.
 
 ## Fixture capture (R0.7 tooling)
 
@@ -233,3 +234,54 @@ Close or ignore running Claude Code sessions first; they reload settings live.
 ```
 pnpm -F @sessiondeck/scripts test
 ```
+
+## Sprint prompt renderer
+
+`scripts/sprint/render-prompt.mjs` fills the level-1 prompt (PROMPT-BOOK.md section 3, with the
+section 1 preamble) from one package block of MINI-SPRINT-ORDER.md.
+
+```
+node scripts/sprint/render-prompt.mjs --sprint <id> [--contract-sha <sha>] [--out <file>] [--package-json] [--repo-root <dir>]
+```
+
+- `--sprint` is `0` to `5`, or `smoke` (built in; renders the one-line smoke prompt, no preamble).
+- `--contract-sha` is required for every sprint except `0`, which renders `n/a` without it.
+- `--package-json` prints the parsed package (sprint, name, slug, branch, runs_in, max_parallel,
+  depends_on, user_gates, sessions, merge_order) instead of the prompt. The launcher refuses to start
+  a container when `runs_in` is `local` (Sprint 0).
+- `--out` writes atomically (temp file, then rename) with LF endings and creates the parent directory.
+  Without it the text goes to stdout.
+- `{SESSION_ID}` and `{SESSION_BRANCH}` stay literal for the sprint orchestrator. Any other braced
+  token in the template (typo, wrong case, `{n}`) is an error that names it.
+- A package block is rejected, naming the sprint and key, for: a missing or mistyped key; an unknown
+  key (misspellings such as `user_gates` on a session); a string value that spans lines or contains a
+  `{PLACEHOLDER}` token (write `${VAR}` for shell syntax); `branch` other than `sprint/<id>-<slug>`;
+  `merge_order` that is not every session id once; empty `integration_checks`; a session `depends_on`
+  that names no session in the sprint; a yaml fence in section 3 without a `### Sprint <id>:` heading.
+- Started through a junction or symlink, the CLI resolves the real path before it decides to run.
+- `needs_laptop` and `notes` from the block are appended as two bullets after the template's package list.
+- Exit codes: 0 ok, 2 usage (flags, unknown sprint, missing contract sha), 3 malformed input or
+  unfilled placeholder, 4 file read or write failure. Messages go to stderr.
+
+## Sprint container scripts (R0.8)
+
+`scripts/sprint/*.ps1` start, watch and stop the sprint containers. All four are written for Windows
+PowerShell 5.1 and PowerShell 7 and tested on Windows PowerShell 5.1 only. Setup, the security note (the docker socket is root-equivalent), parameters in
+full and the container contract are in `infra/sprint/README.md`; read that first.
+
+| Command | Parameters | Exit codes |
+|---------|------------|------------|
+| `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing, origin unreadable, renderer failure, or a docker target that is not local (`DOCKER_HOST`, `DOCKER_CONFIG`, `DOCKER_CONTEXT` or the saved context); 4 already running or state conflict; 5 docker failure |
+| `scripts/sprint/stop-sprint.ps1` | `-Sprint`, `-DryRun` | 0 stopped or nothing to stop; 2 bad input; 3 docker missing; 5 docker failure |
+| `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show"; a link in the state directory shows as `link refused` |
+| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green, unexpected error inside `run-sprint`); 2, 3, 4, 5 passed through from `run-sprint.ps1`; 3 also for a remote docker target (checked before the image query), 4 also for a link in the state directory |
+
+`smoke-check.ps1` is the R0.8 smoke gate in one command (run, wait for green, evidence block, stop); it clears
+the previous `smoke/status.json` first and prints only sanitized status and log text. The wait limit
+counts from the moment `run-sprint` returns (an image build is reported separately as `start_seconds`),
+and `stop-sprint` is skipped with `-KeepContainer` and after `run-sprint` exit 1, 2, 3 or 4. The sprint id is letters,
+digits and underscore only. The container can plant symbolic links in `.sprint/<id>/`; `run-sprint.ps1`, `smoke-check.ps1` and `status.ps1` refuse any path that is, or sits under, a link below the state root (`lib/sprint-links.ps1`; see the Links bullet in `infra/sprint/README.md`). Tests: every
+`test/sprint-*.test.ts` file (renderer, image static checks, PowerShell scripts) runs with
+`pnpm -F @sessiondeck/scripts test:sprint`, a separate CI step; `pnpm test` runs the rest, and
+`test/test-split.test.ts` guards that each test file is in exactly one of the two runs.
+(`test:sprint-ps` is kept as an alias.)

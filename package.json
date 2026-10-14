@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@12.10.1",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
   },
   "scripts": {
     "test": "pnpm -r test",
@@ -14,7 +14,7 @@
     "lint:root": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "ci": "pnpm typecheck && pnpm lint && pnpm lint:root && pnpm format:check && pnpm test"
+    "ci": "pnpm typecheck && pnpm lint && pnpm lint:root && pnpm format:check && pnpm test && pnpm -F @sessiondeck/scripts test:sprint"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

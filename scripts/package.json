@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:sprint": "vitest run --config vitest.sprint.config.ts",
+    "test:sprint-ps": "pnpm run test:sprint",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

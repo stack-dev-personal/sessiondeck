@@ -37,3 +37,9 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
+      - name: test sprint tooling (budget 3 min, separate from R0.5)
+        # shell: pwsh makes the step fail to start where pwsh is missing; otherwise every test
+        # skips and the step goes green with nothing tested.
+        shell: pwsh
+        run: pnpm -F @sessiondeck/scripts test:sprint
+        timeout-minutes: 3
