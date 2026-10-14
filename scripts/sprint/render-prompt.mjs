@@ -6,7 +6,16 @@
 //        [--package-json] [--repo-root <dir>]
 //
 // Exit codes: 0 ok, 2 usage, 3 malformed input or unfilled placeholder, 4 file read or write.
-import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { appendPackageExtras, fillTemplate, placeholderValues } from "./lib/fill-template.mjs";
@@ -188,20 +197,54 @@ export function packageSummary({ sources, sprintId }) {
   };
 }
 
+/** Random part of the temp name, so a link planted under a guessed name is never opened. */
+const TEMP_SUFFIX_BYTES = 8;
+/** Create-only: fails with EEXIST on anything already there, including a planted link. */
+const TEMP_OPEN_FLAG = "wx";
+
 /**
- * Writes text with LF endings through a temp file in the same directory, then renames it.
+ * @typedef {object} WriteIo
+ * @property {(path: string) => { isSymbolicLink: () => boolean }} lstat
+ */
+
+/** @type {WriteIo} */
+const DEFAULT_WRITE_IO = { lstat: lstatSync };
+
+/**
+ * The output directory can be one a container writes to, so a link there could point anywhere on
+ * the laptop. A symbolic link or a Windows junction at the destination is refused, not replaced.
+ * @param {string} target
+ * @param {WriteIo} io
+ */
+function assertNotLink(target, io) {
+  let isLink = false;
+  try {
+    isLink = io.lstat(target).isSymbolicLink();
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+  if (isLink) throw ioError(`refusing to write ${target}: it is a symbolic link or junction`);
+}
+
+/**
+ * Writes text with LF endings through a create-only temp file with a random name in the same
+ * directory, then renames it over the destination. Refuses a destination that is a link.
  * @param {string} file
  * @param {string} text
+ * @param {WriteIo} [io] replaceable so tests can report a link on any platform
  */
-export function writeAtomic(file, text) {
+export function writeAtomic(file, text, io = DEFAULT_WRITE_IO) {
   const target = resolve(file);
-  const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+  const suffix = randomBytes(TEMP_SUFFIX_BYTES).toString("hex");
+  const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.${suffix}.tmp`);
   try {
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(tmp, text, { encoding: "utf8" });
+    assertNotLink(target, io);
+    writeFileSync(tmp, text, { encoding: "utf8", flag: TEMP_OPEN_FLAG });
     renameSync(tmp, target);
   } catch (error) {
     rmSync(tmp, { force: true });
+    if (error instanceof RenderError) throw error;
     const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
     throw ioError(`cannot write ${target} (${code})`);
   }

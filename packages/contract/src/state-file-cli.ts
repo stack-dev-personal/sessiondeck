@@ -115,7 +115,8 @@ export async function runCli(
 ): Promise<CliResult> {
   try {
     const result = await dispatch(argv[0], argv.slice(1), options);
-    return { code: EXIT_OK, output: `${JSON.stringify(result)}\n` };
+    // A container session can put a token in a file with plain echo, so read output is scrubbed.
+    return { code: EXIT_OK, output: scrubSecrets(`${JSON.stringify(result)}\n`) };
   } catch (error: unknown) {
     const kind = error instanceof StateFileError ? error.kind : undefined;
     const isWrite = argv[0] === "write-session" || argv[0] === "write-sprint";
