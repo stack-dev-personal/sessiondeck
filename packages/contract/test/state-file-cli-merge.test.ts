@@ -219,6 +219,8 @@ describe("no credential is echoed on any error path", () => {
     const run = spawnSync(process.execPath, argv, { encoding: "utf8" });
     expect(run.status).toBe(EXIT_FAILURE);
     expect(run.stderr).not.toContain(body);
+    expect(run.stderr.trim().split("\n")).toHaveLength(1);
+    expect(run.stderr).toMatch(/^state-file: /);
     expect(run.stdout).toBe("");
   });
 });

@@ -216,6 +216,9 @@ function removeTemp(path) {
   rmSync(path, { force: true });
 }
 
+/** Error codes that mean the temp file is not there, so there is nothing left to remove. */
+const TEMP_ABSENT_CODES = ["ENOENT", "ENOTDIR"];
+
 /**
  * @param {unknown} error
  * @returns {string}
@@ -225,8 +228,9 @@ function errorCodeOf(error) {
 }
 
 /**
- * Removes the temp file after a failed write. A cleanup failure (force only ignores ENOENT, so a
- * file standing where a directory should be gives ENOTDIR on Linux) must not replace the real
+ * Removes the temp file after a failed write. A file standing where a directory should be gives
+ * ENOTDIR on Linux (force only ignores ENOENT): the temp file was never created, so that is
+ * treated like ENOENT and gives no note. Any other cleanup failure must not replace the real
  * error: it is returned as a note to append to it.
  * @param {string} tmp
  * @param {WriteIo} io
@@ -237,7 +241,9 @@ function discardTemp(tmp, io) {
     (io.remove ?? removeTemp)(tmp);
     return "";
   } catch (error) {
-    return `; temp file ${tmp} not removed (${errorCodeOf(error)})`;
+    const code = errorCodeOf(error);
+    if (TEMP_ABSENT_CODES.includes(code)) return "";
+    return `; temp file ${tmp} not removed (${code})`;
   }
 }
 

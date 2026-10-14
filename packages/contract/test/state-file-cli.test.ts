@@ -24,15 +24,13 @@ function spawnCli(...args: string[]): { status: number | null; stdout: string; s
 }
 
 describe("state-file CLI as a process", () => {
-  it("init creates the layout", async () => {
+  // One lifecycle in one test: every process start costs about half a second on Windows.
+  it("init creates the layout, write-session merges into the file, and read prints it", async () => {
     const dir = join(stateDir, "0");
-    const run = spawnCli("init", dir);
-    expect(run.status).toBe(EXIT_OK);
+    const init = spawnCli("init", dir);
+    expect(init.status).toBe(EXIT_OK);
     expect((await stat(join(dir, "gate"))).isDirectory()).toBe(true);
-    expect(JSON.parse(run.stdout)).toMatchObject({ stateDir: dir });
-  });
-
-  it("write-session merges into the existing file and read prints it", async () => {
+    expect(JSON.parse(init.stdout)).toMatchObject({ stateDir: dir });
     const first = spawnCli(
       "write-session",
       stateDir,
@@ -63,12 +61,14 @@ describe("state-file CLI as a process", () => {
     expect(JSON.parse(await readFile(file, "utf8")).updated_at).toMatch(/Z$/);
   });
 
-  it("exits non-zero with a one-line message on an invalid state", () => {
-    const run = spawnCli("write-session", stateDir, "S1", "state=paused");
-    expect(run.status).toBe(EXIT_FAILURE);
-    expect(run.stderr.trim().split("\n")).toHaveLength(1);
-    expect(run.stderr).toMatch(/^state-file: .*state/);
-    expect(run.stdout).toBe("");
+  // The process-level failure contract (exit code, one stderr line, empty stdout) is spawned once,
+  // in state-file-cli-merge.test.ts ("holds for the spawned process as well"); the message itself
+  // is checked in process here.
+  it("fails with a one-line message naming the field on an invalid state", async () => {
+    const run = await runCli(["write-session", stateDir, "S1", "state=paused"]);
+    expect(run.code).toBe(EXIT_FAILURE);
+    expect(run.output.trim().split("\n")).toHaveLength(1);
+    expect(run.output).toMatch(/^state-file: .*state/);
   });
 
   it("read scrubs a credential that a plain echo planted in a text field", async () => {
@@ -89,16 +89,16 @@ describe("state-file CLI as a process", () => {
     ["a tab", "token:\t"],
     ["a space", "token: "],
     ["a carriage return", "token:\r"],
-  ])("read scrubs a credential that follows %s", async (_name, lead) => {
+  ])("read scrubs a credential that follows %s (in process)", async (_name, lead) => {
     const planted = `ghp_${"abcdefghijKLMN"}`;
     expect((await runCli(["write-session", stateDir, "S1", "state=running"])).code).toBe(EXIT_OK);
     const file = join(stateDir, "sessions", "S1.json");
     const content = JSON.parse(await readFile(file, "utf8"));
     await writeFile(file, JSON.stringify({ ...content, last_report: `${lead}${planted}` }));
-    const run = spawnCli("read", file);
-    expect(run.status).toBe(EXIT_OK);
-    expect(run.stdout).not.toContain(planted);
-    expect(JSON.parse(run.stdout)).toMatchObject({ last_report: `${lead}<redacted>` });
+    const run = await runCli(["read", file]);
+    expect(run.code).toBe(EXIT_OK);
+    expect(run.output).not.toContain(planted);
+    expect(JSON.parse(run.output)).toMatchObject({ last_report: `${lead}<redacted>` });
   });
 
   it("read scrubs a credential used as an object key, nested too", async () => {
@@ -122,10 +122,10 @@ describe("state-file CLI as a process", () => {
     });
   });
 
-  it("exits non-zero when the file is missing", () => {
-    const run = spawnCli("read", join(stateDir, "status.json"));
-    expect(run.status).toBe(EXIT_FAILURE);
-    expect(run.stderr).toMatch(/cannot read/);
+  it("exits non-zero when the file is missing", async () => {
+    const run = await runCli(["read", join(stateDir, "status.json")]);
+    expect(run.code).toBe(EXIT_FAILURE);
+    expect(run.output).toMatch(/cannot read/);
   });
 });
 

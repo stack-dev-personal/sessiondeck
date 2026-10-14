@@ -77,7 +77,8 @@ describe("writeAtomic and planted links", () => {
     expect(err.message).toMatch(/cannot write .*EACCES/);
   });
 
-  it("reports the original write error when the temp cleanup fails too (ENOTDIR on Linux)", () => {
+  /** An lstat that fails, so the write fails before anything is created, and a remove that throws `code`. */
+  function failingWrite(code: string): { attempts: string[]; message: string; exitCode: number } {
     const attempts: string[] = [];
     const io = {
       lstat: () => {
@@ -85,14 +86,27 @@ describe("writeAtomic and planted links", () => {
       },
       remove: (path: string) => {
         attempts.push(path);
-        throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
+        throw Object.assign(new Error("cleanup failed"), { code });
       },
     };
     const err = failure(() => writeAtomic(join(dir, "prompt.md"), PROMPT, io));
-    expect(attempts).toHaveLength(1);
-    expect(err.exitCode).toBe(EXIT.IO);
-    expect(err.message).toMatch(/cannot write .*EACCES/);
-    expect(err.message).toMatch(/not removed \(ENOTDIR\)/);
+    return { attempts, message: err.message, exitCode: err.exitCode };
+  }
+
+  it("reports the original write error when the temp cleanup fails too", () => {
+    const result = failingWrite("EBUSY");
+    expect(result.attempts).toHaveLength(1);
+    expect(result.exitCode).toBe(EXIT.IO);
+    expect(result.message).toMatch(/cannot write .*EACCES/);
+    expect(result.message).toMatch(/not removed \(EBUSY\)/);
+  });
+
+  it("adds no cleanup note when the temp file was never created (ENOTDIR, like ENOENT)", () => {
+    const result = failingWrite("ENOTDIR");
+    expect(result.attempts).toHaveLength(1);
+    expect(result.exitCode).toBe(EXIT.IO);
+    expect(result.message).toMatch(/cannot write .*EACCES/);
+    expect(result.message).not.toMatch(/not removed/);
   });
 
   it("does not write through a temp name planted under the old predictable pattern", () => {

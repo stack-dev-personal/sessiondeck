@@ -107,6 +107,21 @@ describe("writeStateFileAtomic", () => {
     ).rejects.toThrow(/not removed: UNKNOWN/);
   });
 
+  it.each(["ENOTDIR", "ENOENT"])(
+    "adds no cleanup note when the temp file is not there (%s)",
+    async (code) => {
+      const { fn: rejecting } = flaky("EXDEV", ALWAYS);
+      const absent = (): Promise<void> => Promise.reject(Object.assign(new Error("x"), { code }));
+      const run = writeStateFileAtomic(
+        join(root, "t.json"),
+        {},
+        { rename: rejecting, remove: absent },
+      );
+      await expect(run).rejects.toThrow(/EXDEV/);
+      await expect(run).rejects.not.toThrow(/not removed/);
+    },
+  );
+
   it("never lets a concurrent reader see a partial file across bounded overwrites", async () => {
     const target = join(root, "status.json");
     await writeStateFileAtomic(target, { n: 0, pad: "p".repeat(4000) });

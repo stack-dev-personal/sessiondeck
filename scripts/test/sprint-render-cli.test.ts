@@ -165,6 +165,7 @@ describe("sprint renderer cli: --out", () => {
     const r = cli(["--sprint", "smoke", "--out", join(blocker, "p.md")]);
     expect(r.code).toBe(EXIT.IO);
     expect(r.err).toContain("cannot write");
+    expect(r.err).not.toContain("not removed"); // no temp file was ever created
     expect(readdirSync(dir)).toEqual(["blocker"]);
   });
 
@@ -234,15 +235,11 @@ describe("sprint renderer cli: real process", () => {
     expect(bogus.status).toBe(EXIT.USAGE);
     expect(bogus.stderr).toContain("unknown argument");
 
-    const noSha = go(["--sprint", "1"]);
-    expect(noSha.status).toBe(EXIT.USAGE);
-
-    const smoke = go(["--sprint", "smoke"]);
-    expect(smoke.status).toBe(EXIT.OK);
-    expect(smoke.stdout).toBe("write /state/smoke/status.json with state green and exit\n");
-
+    // One successful run covers rendering and --out through the link. The other exit-code classes
+    // (a sprint 1 without a sha, the smoke prompt on stdout) are proven in process above.
     const out = join(linkParent, "out", "p.md");
-    expect(go(["--sprint", "3", "--contract-sha", SHA, "--out", out]).status).toBe(EXIT.OK);
+    const written = go(["--sprint", "3", "--contract-sha", SHA, "--out", out]);
+    expect(written.status).toBe(EXIT.OK);
     expect(readFileSync(out, "utf8")).toContain("sprint/3-organize");
   });
 });

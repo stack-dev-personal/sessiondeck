@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { findPosixShell, runShellCases, type ShellCaseResult } from "./helpers-sprint-shell";
 
 // Static checks only (no docker, so they fit the 60 second CI budget). The
 // container behavior is proven by infra/sprint/test/check-sprint-image.sh.
@@ -23,53 +24,19 @@ const compose = read("docker-compose.yml");
 const override = read("test", "docker-compose.test.yml");
 const harness = read("test", "check-sprint-image.sh");
 
-/**
- * A POSIX shell that works: the bare name on Linux and macOS, and on Windows Git for Windows'
- * usr/bin copy first (the bare "bash" there can be the WSL launcher, which fails when no distro
- * is installed). Each candidate must run a pipe through an external tool (tr), otherwise it is not used.
- */
-const FORCE_PROBE_FAIL_VAR = "SPRINT_TEST_FORCE_SHELL_PROBE_FAIL";
-const PROBE_COMMAND = "echo x | tr x y";
-const PROBE_EXPECTED = "y";
-
-/**
- * The environment for running a shell: when the shell is an absolute path (Git for Windows
- * usr/bin), its own folder goes first on PATH so tools like tr, sed and awk resolve.
- */
-function shellEnv(shell: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-  const base = process.env[pathKey] ?? "";
-  const path = isAbsolute(shell) ? dirname(shell) + delimiter + base : base;
-  return { ...process.env, ...extra, [pathKey]: path };
-}
-
-function findPosixShell(name: "sh" | "bash"): string | undefined {
-  if (process.env[FORCE_PROBE_FAIL_VAR]) return undefined;
-  const candidates: string[] = [];
-  if (process.platform === "win32") {
-    const roots = [
-      process.env.ProgramFiles,
-      process.env["ProgramFiles(x86)"],
-      process.env.ProgramW6432,
-      process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Programs") : undefined,
-    ];
-    for (const root of roots) {
-      if (root) candidates.push(join(root, "Git", "usr", "bin", `${name}.exe`));
-    }
-    const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8" });
-    if (exec.status === 0 && exec.stdout.trim()) {
-      candidates.push(join(exec.stdout.trim(), "..", "..", "..", "usr", "bin", `${name}.exe`));
-    }
-  }
-  candidates.push(name);
-  for (const candidate of candidates) {
-    const probe = spawnSync(candidate, ["-c", PROBE_COMMAND], {
+// One git spawn answers every "checked out with LF" test in this file.
+const EOL_PATHS = ["infra/sprint/entrypoint.sh", "infra/sprint/entrypoint-precheck.sh"];
+let eolAttributes: string[] | undefined;
+function eolLine(path: string): string {
+  if (eolAttributes === undefined) {
+    const result = spawnSync("git", ["check-attr", "eol", ...EOL_PATHS], {
+      cwd: repoRoot,
       encoding: "utf8",
-      env: shellEnv(candidate),
     });
-    if (probe.status === 0 && probe.stdout.trim() === PROBE_EXPECTED) return candidate;
+    expect(result.status).toBe(0);
+    eolAttributes = result.stdout.split(/\r?\n/);
   }
-  return undefined;
+  return eolAttributes.find((line) => line.startsWith(`${path}:`)) ?? "";
 }
 
 const SH = findPosixShell("sh");
@@ -94,12 +61,7 @@ describe("sprint entrypoint", () => {
   });
 
   it("is checked out with LF line endings", () => {
-    const result = spawnSync("git", ["check-attr", "eol", "infra/sprint/entrypoint.sh"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toMatch(/: eol: lf$/);
+    expect(eolLine("infra/sprint/entrypoint.sh")).toMatch(/: eol: lf$/);
   });
 
   it("fails fast and never traces or dumps the environment", () => {
@@ -278,40 +240,30 @@ const PINNED_NAMES = [
 describe("sprint pre-stage (entrypoint-precheck.sh)", () => {
   const block = /# BEGIN env-checks\n([\s\S]*?)# END env-checks/.exec(precheck)?.[1] ?? "";
 
-  // check_entry runs in the current shell (no pipe), so `refused` survives the loop.
-  function run(entries: string[]): { status: number | null; stderr: string } {
+  // Every case runs in a subshell of ONE shell process (runShellCases), so a test with many
+  // entries costs a single process start. check_entry sets `refused`, which survives the loop
+  // because the loop is not in a pipe; each case starts from refused=0.
+  const SHELL = SH ?? "sh";
+  const REFUSED_STATUS = 64;
+  const cases = (bodies: string[]): ShellCaseResult[] => runShellCases(SHELL, block, bodies);
+  const entriesBody = (entries: string[]): string => {
     const quoted = entries.map((entry) => `'${entry}'`).join(" ");
-    const probe = `${block}
+    return `refused=0
 for line in ${quoted}; do check_entry "$line"; done
-[ "$refused" -eq 0 ] || exit 64
-`;
-    const result = spawnSync(SH ?? "sh", ["-s"], {
-      input: probe,
-      encoding: "utf8",
-      env: shellEnv(SH ?? "sh"),
-    });
-    return { status: result.status, stderr: result.stderr };
-  }
+[ "$refused" -eq 0 ] || return ${REFUSED_STATUS}`;
+  };
+  /** One case per entry list. */
+  const runEntries = (lists: string[][]): ShellCaseResult[] => cases(lists.map(entriesBody));
+  /** One case per single entry, in order. */
+  const eachEntry = (entries: string[]): ShellCaseResult[] =>
+    runEntries(entries.map((entry) => [entry]));
 
   // The real conversion: environ_to_entries on a NUL-separated stream, then the
-  // checker. The payload is printf %b text (\0 separates entries).
-  function runThroughEnvironFilter(payload: string): {
-    status: number | null;
-    stdout: string;
-    stderr: string;
-  } {
-    const probe = `${block}
-entries=$(printf '%b' "$PAYLOAD" | environ_to_entries)
+  // checker. The payload is printf %b text (a backslash-zero separates entries).
+  const environBody = (payload: string): string => `refused=0
+entries=$(printf '%b' '${payload}' | environ_to_entries)
 check_environment_text "$entries"
-[ "$refused" -eq 0 ] || exit 64
-`;
-    const result = spawnSync(SH ?? "sh", ["-s"], {
-      input: probe,
-      encoding: "utf8",
-      env: shellEnv(SH ?? "sh", { PAYLOAD: payload }),
-    });
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-  }
+[ "$refused" -eq 0 ] || return ${REFUSED_STATUS}`;
 
   it("is POSIX sh with LF endings, the image entrypoint, and execs the bash entrypoint last", () => {
     expect(precheck.startsWith("#!/bin/sh\n")).toBe(true);
@@ -324,12 +276,7 @@ check_environment_text "$entries"
   });
 
   it("is checked out with LF line endings", () => {
-    const result = spawnSync("git", ["check-attr", "eol", "infra/sprint/entrypoint-precheck.sh"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toMatch(/: eol: lf$/);
+    expect(eolLine("infra/sprint/entrypoint-precheck.sh")).toMatch(/: eol: lf$/);
   });
 
   it("reads this shell's own environment and stops if it cannot", () => {
@@ -368,35 +315,38 @@ check_environment_text "$entries"
   itSh(
     "allows the tokens, SPRINT_*, and every name the Dockerfile sets with ENV",
     () => {
-      const names = [...envPairsFrom(dockerfile).keys(), ...TOKEN_NAMES, "SPRINT_ID"];
+      const dockerEnv = envPairsFrom(dockerfile);
+      const names = [...dockerEnv.keys(), ...TOKEN_NAMES, "SPRINT_ID"];
       expect(names.length).toBeGreaterThan(5);
-      for (const name of names) {
-        const result = run([
-          `${name}=${PINNED_NAMES.includes(name) ? (envPairsFrom(dockerfile).get(name) ?? "") : "x"}`,
-        ]);
-        expect(result.status, name).toBe(0);
-      }
+      const results = eachEntry(
+        names.map(
+          (name) => `${name}=${PINNED_NAMES.includes(name) ? (dockerEnv.get(name) ?? "") : "x"}`,
+        ),
+      );
+      names.forEach((name, i) => expect(results[i]?.status, name).toBe(0));
     },
     30_000,
   );
 
   itSh("accepts a clean environment", () => {
-    const result = run([
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "CLAUDE_CODE_OAUTH_TOKEN=x",
-      "GH_TOKEN=y",
-      "SPRINT_ID=0",
-      "_=/usr/bin/setpriv",
-      "HOME=/home/sprint",
-      "BASH_ENV=",
-      "LD_PRELOAD=",
+    const [result] = runEntries([
+      [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "CLAUDE_CODE_OAUTH_TOKEN=x",
+        "GH_TOKEN=y",
+        "SPRINT_ID=0",
+        "_=/usr/bin/setpriv",
+        "HOME=/home/sprint",
+        "BASH_ENV=",
+        "LD_PRELOAD=",
+      ],
     ]);
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    expect(result?.status).toBe(0);
+    expect(result?.output).toBe("");
   });
 
   itSh("refuses anything that could redirect the token or run code", () => {
-    for (const entry of [
+    const entries = [
       "ANTHROPIC_API_KEY=x",
       "ANTHROPIC_AUTH_TOKEN=x",
       "ANTHROPIC_BASE_URL=https://h.invalid",
@@ -408,81 +358,88 @@ check_environment_text "$entries"
       "LD_DEBUG_OUTPUT=",
       "LD_DEBUG_OUTPUT=/x",
       "BASH_FUNC_exit%%=() { :; }",
-    ]) {
-      const result = run([entry]);
-      expect(result.status, entry).toBe(64);
-    }
+    ];
+    const results = eachEntry(entries);
+    entries.forEach((entry, i) => expect(results[i]?.status, entry).toBe(REFUSED_STATUS));
   });
 
   itSh("accepts BASH_ENV and the pinned LD_* names only when empty", () => {
-    expect(run(["BASH_ENV=", "LD_PRELOAD=", "LD_AUDIT=", "LD_LIBRARY_PATH="]).status).toBe(0);
-    expect(run(["LD_AUDIT=/state/x/a.so"]).status).toBe(64);
-    expect(run(["LD_LIBRARY_PATH=/state/x/lib"]).status).toBe(64);
-    expect(run(["BASH_ENV=/state/x/evil.sh"]).status).toBe(64);
-    expect(run(["BASH_ENV=$(echo MARKER)"]).status).toBe(64);
-    expect(run(["LD_PRELOAD=/state/x/evil.so"]).status).toBe(64);
+    const empty = ["BASH_ENV=", "LD_PRELOAD=", "LD_AUDIT=", "LD_LIBRARY_PATH="];
+    const withValue = [
+      "LD_AUDIT=/state/x/a.so",
+      "LD_LIBRARY_PATH=/state/x/lib",
+      "BASH_ENV=/state/x/evil.sh",
+      "BASH_ENV=$(echo MARKER)",
+      "LD_PRELOAD=/state/x/evil.so",
+    ];
+    const [accepted, ...refused] = runEntries([empty, ...withValue.map((entry) => [entry])]);
+    expect(accepted?.status).toBe(0);
+    withValue.forEach((entry, i) => expect(refused[i]?.status, entry).toBe(REFUSED_STATUS));
   });
 
   itSh("refuses an entry whose value has a newline, whatever follows it", () => {
     const tail = "\\nSPRINT_$(echo MARKER)";
-    for (const [name, head] of [
+    const heads = [
       ["BASH_ENV", ""],
       ["LD_PRELOAD", ""],
       ["PATH", PINNED_PATH_VALUE],
       ["HOME", "/home/sprint"],
       ["SPRINT_ID", "0"],
-    ] as const) {
-      const result = runThroughEnvironFilter(`${name}=${head}${tail}\\0`);
-      expect(result.status, name).toBe(64);
-      expect(result.stderr, name).toContain(name);
-      expect(result.stderr, name).toContain("newline");
-      expect(result.stderr, name).not.toContain("MARKER");
-      expect(result.stdout, name).not.toContain("MARKER");
-    }
+    ] as const;
+    const results = cases(heads.map(([name, head]) => environBody(`${name}=${head}${tail}\\0`)));
+    heads.forEach(([name], i) => {
+      const result = results[i];
+      expect(result?.status, name).toBe(REFUSED_STATUS);
+      expect(result?.output, name).toContain(name);
+      expect(result?.output, name).toContain("newline");
+      expect(result?.output, name).not.toContain("MARKER");
+    });
   });
 
   itSh("accepts a NUL-separated clean environment through the same conversion", () => {
-    const result = runThroughEnvironFilter(
-      `PATH=${PINNED_PATH_VALUE}\\0BASH_ENV=\\0LD_AUDIT=\\0SPRINT_ID=0\\0`,
-    );
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    const [result] = cases([
+      environBody(`PATH=${PINNED_PATH_VALUE}\\0BASH_ENV=\\0LD_AUDIT=\\0SPRINT_ID=0\\0`),
+    ]);
+    expect(result?.status).toBe(0);
+    expect(result?.output).toBe("");
   });
 
   itSh("refuses a pinned name whose value differs from the image value", () => {
-    for (const entry of [
+    const entries = [
       "CLAUDE_CONFIG_DIR=/state/x/cfg",
       "HOME=/root",
       "PATH=/state/x/bin:/usr/bin",
       "DISABLE_AUTOUPDATER=0",
       "GIT_TERMINAL_PROMPT=1",
       "GH_PROMPT_DISABLED=0",
-    ]) {
-      expect(run([entry]).status, entry).toBe(64);
-    }
+    ];
+    const results = eachEntry(entries);
+    entries.forEach((entry, i) => expect(results[i]?.status, entry).toBe(REFUSED_STATUS));
   });
 
   itSh("names the variable and never the value, and tells the user where to look", () => {
-    const result = run([
-      "ANTHROPIC_BASE_URL=https://secret-value-host.invalid",
-      "BASH_FUNC_id%%=() { :; }",
-      "LD_PRELOAD=/secret-value.so",
-      "CLAUDE_CONFIG_DIR=/secret-value/cfg",
+    const [result] = runEntries([
+      [
+        "ANTHROPIC_BASE_URL=https://secret-value-host.invalid",
+        "BASH_FUNC_id%%=() { :; }",
+        "LD_PRELOAD=/secret-value.so",
+        "CLAUDE_CONFIG_DIR=/secret-value/cfg",
+      ],
     ]);
-    expect(result.status).toBe(64);
-    expect(result.stderr).toContain("ANTHROPIC_BASE_URL");
-    expect(result.stderr).toContain("LD_PRELOAD");
-    expect(result.stderr).toContain("CLAUDE_CONFIG_DIR");
-    expect(result.stderr).toContain("BASH_FUNC_id%%");
-    expect(result.stderr).toContain(".sprint/env or the Docker proxy settings");
-    expect(result.stderr).not.toContain("secret-value");
+    expect(result?.status).toBe(REFUSED_STATUS);
+    expect(result?.output).toContain("ANTHROPIC_BASE_URL");
+    expect(result?.output).toContain("LD_PRELOAD");
+    expect(result?.output).toContain("CLAUDE_CONFIG_DIR");
+    expect(result?.output).toContain("BASH_FUNC_id%%");
+    expect(result?.output).toContain(".sprint/env or the Docker proxy settings");
+    expect(result?.output).not.toContain("secret-value");
   });
 
   itSh("does not print terminal escape sequences from a hostile name", () => {
-    const result = run(["BAD\u001b]52;c;x\u0007NAME=1"]);
-    expect(result.status).toBe(64);
-    expect(result.stderr).not.toContain("\u001b");
-    expect(result.stderr).toContain("<name with unusual characters>");
+    const [result] = runEntries([["BAD\u001b]52;c;x\u0007NAME=1"]]);
+    expect(result?.status).toBe(REFUSED_STATUS);
+    expect(result?.output).not.toContain("\u001b");
+    expect(result?.output).toContain("<name with unusual characters>");
   });
 });
 
@@ -701,18 +658,21 @@ describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
   );
   const bashPattern = ruleBlock?.[1] ?? "";
 
-  // Runs the entrypoint's own `if ! [[ ... ]]; then die` block with a stub die.
-  function entrypointVerdict(id: string): "accepted" | "refused" {
-    const probe = `die() { echo refused; exit 64; }\n${ruleBlock?.[0] ?? "exit 99"}\necho accepted\n`;
-    const result = spawnSync(BASH ?? "bash", ["-s"], {
-      input: probe,
-      encoding: "utf8",
-      env: shellEnv(BASH ?? "bash", { SPRINT_ID: id }),
-    });
-    expect([0, 64], `bash exit for ${JSON.stringify(id)}: ${result.stderr}`).toContain(
-      result.status,
+  // Runs the entrypoint's own `if ! [[ ... ]]; then die` block with a stub die that records
+  // the verdict, one function call per id inside a single bash process.
+  function entrypointVerdicts(ids: string[]): Array<"accepted" | "refused"> {
+    const rule = ruleBlock?.[0] ?? "return 99";
+    const bodies = ids.map(
+      (id) => `SPRINT_ID='${id}'
+verdict=accepted
+die() { verdict=refused; }
+${rule}
+echo "$verdict"`,
     );
-    return result.stdout.trim() === "accepted" ? "accepted" : "refused";
+    return runShellCases(BASH ?? "bash", "", bodies).map((result, i) => {
+      expect(result.status, `bash exit for ${JSON.stringify(ids[i])}: ${result.output}`).toBe(0);
+      return result.output.trim() === "accepted" ? "accepted" : "refused";
+    });
   }
 
   it("finds both rules", () => {
@@ -728,12 +688,11 @@ describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
   itBash(
     "refuses a hyphenated id in the entrypoint, and the other ids the scripts refuse",
     () => {
-      for (const id of ["a-b", "-x", "", "a b", "..", "a/b", "ok\nx", "_a"]) {
-        expect(entrypointVerdict(id), JSON.stringify(id)).toBe("refused");
-      }
-      for (const id of ["0", "7", "smoke", "a_b", "S0c"]) {
-        expect(entrypointVerdict(id), id).toBe("accepted");
-      }
+      const refused = ["a-b", "-x", "", "a b", "..", "a/b", "ok\nx", "_a"];
+      const accepted = ["0", "7", "smoke", "a_b", "S0c"];
+      const verdicts = entrypointVerdicts([...refused, ...accepted]);
+      refused.forEach((id, i) => expect(verdicts[i], JSON.stringify(id)).toBe("refused"));
+      accepted.forEach((id, i) => expect(verdicts[refused.length + i], id).toBe("accepted"));
     },
     30_000,
   );

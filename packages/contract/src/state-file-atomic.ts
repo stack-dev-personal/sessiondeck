@@ -10,6 +10,8 @@ import { sweepStaleTemps, type SweepOptions } from "./state-file-sweep.ts";
  * backoff and jitter; every other code fails at once.
  */
 export const RENAME_RETRY_CODES: readonly string[] = ["EPERM", "EBUSY", "EACCES"];
+/** Cleanup errors that mean the temp file is not there (ENOTDIR: a file stands where a directory should be). */
+const TEMP_ABSENT_CODES: readonly string[] = ["ENOENT", "ENOTDIR"];
 export const RENAME_MAX_ATTEMPTS = 7;
 /** Delays double from this base: 20, 40, 80, 160, 320, 640 ms, about one second after jitter. */
 export const RENAME_RETRY_DELAY_MS = 20;
@@ -110,9 +112,11 @@ async function discardTemp(tempPath: string, options: AtomicWriteOptions): Promi
     await remove(tempPath);
     return "";
   } catch (error: unknown) {
-    // force:true already ignores ENOENT (temp file never created or already gone), which is the
-    // goal; anything else is reported alongside the original failure, never swallowed.
-    return ` (temp file ${tempPath} not removed: ${errorCode(error) ?? "UNKNOWN"})`;
+    // force:true already ignores ENOENT, but a file standing where a directory should be gives
+    // ENOTDIR on Linux. Both mean the temp file was never created or is already gone, which is the
+    // goal. Anything else is reported alongside the original failure, never swallowed.
+    const code = errorCode(error) ?? "UNKNOWN";
+    return TEMP_ABSENT_CODES.includes(code) ? "" : ` (temp file ${tempPath} not removed: ${code})`;
   }
 }
 
