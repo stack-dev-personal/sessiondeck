@@ -58,6 +58,8 @@ export interface Step {
   code?: number;
   out?: string;
   err?: string;
+  /** The call sleeps this long first (a stand-in for a slow image build). */
+  delayMs?: number;
   /** Written when the step runs: a stand-in for the container writing its status file. */
   writeFile?: { path: string; content: string };
 }

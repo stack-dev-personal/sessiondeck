@@ -40,12 +40,38 @@ $containerName = Get-ContainerName -Id $Sprint
 # Compose names its default network <project>_default; docker rm leaves it behind.
 $networkName = "${containerName}_default"
 
+# A container started with --rm is removed by the daemon while docker stop or docker rm runs, so
+# the answer to a name that vanished in between is not a failure. Docker words these two cases;
+# every other error line stays a failure.
+$GonePattern = '(?i)no such container|removal of container .+ is already in progress'
+
 function Invoke-Docker {
-    param([string[]]$DockerArgs)
-    & docker @DockerArgs | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        Exit-Sprint $ExitDockerFailure "${Tool}: docker $($DockerArgs -join ' ') failed with exit code ${LASTEXITCODE}."
+    param([string[]]$DockerArgs, [switch]$TolerateGone)
+    # Windows PowerShell 5.1 turns a stderr line of a native command into a terminating error
+    # under Stop, even when redirected; the lines are inspected below instead.
+    $ErrorActionPreference = 'Continue'
+    $all = @(& docker @DockerArgs 2>&1)
+    $dockerExit = $LASTEXITCODE
+    $errorLines = @()
+    foreach ($item in $all) {
+        if ($item -is [System.Management.Automation.ErrorRecord]) {
+            $errorLines += $item.ToString()
+        }
+        else {
+            Write-Line ([string]$item)
+        }
     }
+    if ($dockerExit -eq 0) {
+        return
+    }
+    $realErrors = @($errorLines | Where-Object { $_.Trim() -ne '' -and $_ -notmatch $GonePattern })
+    if ($TolerateGone -and $errorLines.Count -gt 0 -and $realErrors.Count -eq 0) {
+        return
+    }
+    foreach ($line in $errorLines) {
+        Write-ErrorLine $line
+    }
+    Exit-Sprint $ExitDockerFailure "${Tool}: docker $($DockerArgs -join ' ') failed with exit code ${dockerExit}."
 }
 
 # Compose names its default network <project>_default; docker rm leaves it behind. Runs on every
@@ -97,10 +123,10 @@ if ($DryRun) {
 }
 
 if ($mainExists) {
-    Invoke-Docker -DockerArgs @('stop', $containerName)
+    Invoke-Docker -DockerArgs @('stop', $containerName) -TolerateGone
 }
 if ($siblings.Count -gt 0) {
-    Invoke-Docker -DockerArgs (@('stop') + $siblings)
+    Invoke-Docker -DockerArgs (@('stop') + $siblings) -TolerateGone
 }
 
 # A container started with --rm is gone as soon as it stops, and docker rm on a missing name
@@ -112,10 +138,10 @@ if ($siblings.Count -gt 0) {
     $siblingsLeft = @($siblings | Where-Object { $stillThere -ccontains $_ })
 }
 if ($mainLeft) {
-    Invoke-Docker -DockerArgs @('rm', $containerName)
+    Invoke-Docker -DockerArgs @('rm', $containerName) -TolerateGone
 }
 if ($siblingsLeft.Count -gt 0) {
-    Invoke-Docker -DockerArgs (@('rm') + $siblingsLeft)
+    Invoke-Docker -DockerArgs (@('rm') + $siblingsLeft) -TolerateGone
 }
 
 [void](Remove-ComposeNetwork)

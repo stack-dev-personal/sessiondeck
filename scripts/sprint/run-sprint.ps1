@@ -9,7 +9,8 @@ Specification: infra/sprint/README.md. Tokens reach the container only through t
 it never reads, prints, hashes or copies its content.
 
 Exit codes: 0 started (or dry run ok), 2 bad input, 3 prerequisite missing (or DOCKER_HOST /
-DOCKER_CONTEXT point away from the local daemon), 4 already running or state conflict,
+DOCKER_CONTEXT / DOCKER_CONFIG, or the saved docker context, point away from the local daemon),
+4 already running or state conflict,
 5 docker failure.
 
 .PARAMETER Sprint
@@ -140,6 +141,9 @@ $composeEnvFile = [IO.Path]::Combine([IO.Path]::GetDirectoryName($composeFile), 
 if (Test-Path -LiteralPath $composeEnvFile) {
     Exit-Sprint $ExitPrerequisite "${Tool}: ${composeEnvFile} exists. Compose would read it for variable interpolation (it can switch the image that receives the tokens). Delete or rename it, then run again."
 }
+
+# Docker is on PATH here (checked above); the saved context lives in the docker config.
+Assert-LocalDockerContext -Tool $Tool
 
 Write-EnvFileWarning -Path $envFilePath
 

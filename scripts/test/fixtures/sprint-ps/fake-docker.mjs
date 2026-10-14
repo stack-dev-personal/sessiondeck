@@ -8,12 +8,14 @@
 // A step may instead be { "seq": [step, step, ...] }: the n-th call with the same key and name
 // uses the n-th entry, and the last entry repeats (for example "present, then auto-removed").
 //
+// A step may carry "delayMs": the call sleeps that long first (a stand-in for a slow image build).
+//
 // A step may also carry "writeFile": { "path": "...", "content": "..." }, written when the step runs
 // (a stand-in for the container writing its status file).
 //
 // A plan key is "<call>" or "<call>:<name>" (the name wins). The name is the first
 // sprint-<id> or sd-<id>... token in argv, or the image reference for image-inspect. Calls are
-// ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect, container (container inspect). Unlisted calls succeed with
+// ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect, container (container inspect), context (context show, answers "default" when unlisted). Unlisted calls succeed with
 // no output.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -36,7 +38,9 @@ const key = callKey(argv);
 const name =
   key === "image-inspect" ? argv[argv.length - 1] : argv.join(" ").match(NAME_IN_ARGV)?.[0];
 const plan = JSON.parse(process.env.FAKE_DOCKER_PLAN ?? "{}");
-const planned = (name !== undefined && plan[`${key}:${name}`]) || plan[key] || {};
+// "docker context show" answers "default" unless the plan says otherwise, like a fresh install.
+const defaultStep = key === "context" ? { out: "default" } : {};
+const planned = (name !== undefined && plan[`${key}:${name}`]) || plan[key] || defaultStep;
 
 const sprintEnv = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => k.startsWith("SPRINT_")),
@@ -69,6 +73,9 @@ appendFileSync(
   `${JSON.stringify({ key, name: name ?? null, argv, env: sprintEnv, secretNames })}\n`,
 );
 
+if (step.delayMs) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, step.delayMs);
+}
 if (step.writeFile) {
   mkdirSync(dirname(step.writeFile.path), { recursive: true });
   writeFileSync(step.writeFile.path, step.writeFile.content);

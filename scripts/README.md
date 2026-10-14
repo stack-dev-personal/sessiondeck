@@ -265,19 +265,21 @@ node scripts/sprint/render-prompt.mjs --sprint <id> [--contract-sha <sha>] [--ou
 
 ## Sprint container scripts (R0.8)
 
-`scripts/sprint/*.ps1` start, watch and stop the sprint containers. They run on Windows PowerShell
-5.1 and PowerShell 7. Setup, the security note (the docker socket is root-equivalent), parameters in
+`scripts/sprint/*.ps1` start, watch and stop the sprint containers. All four are written for Windows
+PowerShell 5.1 and PowerShell 7 and tested on Windows PowerShell 5.1 only. Setup, the security note (the docker socket is root-equivalent), parameters in
 full and the container contract are in `infra/sprint/README.md`; read that first.
 
 | Command | Parameters | Exit codes |
 |---------|------------|------------|
-| `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing or remote docker target; 4 already running or state conflict; 5 docker failure |
+| `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing, origin unreadable, renderer failure, or a docker target that is not local (`DOCKER_HOST`, `DOCKER_CONFIG`, `DOCKER_CONTEXT` or the saved context); 4 already running or state conflict; 5 docker failure |
 | `scripts/sprint/stop-sprint.ps1` | `-Sprint`, `-DryRun` | 0 stopped or nothing to stop; 2 bad input; 3 docker missing; 5 docker failure |
 | `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show" |
-| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green); 2, 3, 4, 5 passed through from `run-sprint.ps1` |
+| `scripts/sprint/smoke-check.ps1` | `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds`, `-PollSeconds`, `-KeepContainer`, `-EvidenceFile` | 0 PASS (smoke status green); 1 FAIL (timeout, container exited, not green, unexpected error inside `run-sprint`); 2, 3, 4, 5 passed through from `run-sprint.ps1` |
 
 `smoke-check.ps1` is the R0.8 smoke gate in one command (run, wait for green, evidence block, stop); it clears
-the previous `smoke/status.json` first and prints only sanitized status and log text. The sprint id is letters,
+the previous `smoke/status.json` first and prints only sanitized status and log text. The wait limit
+counts from the moment `run-sprint` returns (an image build is reported separately as `start_seconds`),
+and `stop-sprint` is skipped with `-KeepContainer` and after `run-sprint` exit 1, 2, 3 or 4. The sprint id is letters,
 digits and underscore only. Tests: the static ones run in
 `pnpm -F @sessiondeck/scripts test`; the PowerShell script tests are `test:sprint-ps`, a separate CI
 step.

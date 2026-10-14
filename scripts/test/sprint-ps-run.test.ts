@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type BatchResult,
+  type DockerPlan,
   dockerForm,
   makeNodeOnlyDir,
   makeWorkspace,
@@ -43,6 +44,7 @@ const DOWN_IMAGE = "sessiondeck-sprint:down";
 const FOREIGN_IMAGE = "ghcr.io/attacker/x:1";
 const REMOTE_HOST = "tcp://remote-daemon.example:2375";
 const REMOTE_CONTEXT = "remote-box";
+const REMOTE_CONFIG_DIR = "C:/remote-docker-config-dir";
 
 // Every case after the bad ids, by index into the batch.
 const FIRST = BAD_IDS.length;
@@ -197,7 +199,12 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
       expect(run(i).code, `case ${i}`).toBe(2);
       expect(run(i).stderr).toContain("letters, digits and underscore");
     });
-    expect(batch.calls.filter((c) => c.name === null || /-\./.test(c.name ?? ""))).toEqual([]);
+    // Only the later cases reach "docker context show"; a bad id must not reach any other call.
+    expect(
+      batch.calls.filter(
+        (c) => c.key !== "context" && (c.name === null || /-\./.test(c.name ?? "")),
+      ),
+    ).toEqual([]);
     expect(readdirSync(ws.state).sort()).toEqual(["0", "2", "3", "5", "smoke"]);
   });
 
@@ -431,7 +438,7 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
 
   it("only ever issues read-only queries plus the compose up per start", () => {
     const keys = new Set(batch.calls.map((c) => c.key));
-    expect([...keys].sort()).toEqual(["image-inspect", "ps", "up"]);
+    expect([...keys].sort()).toEqual(["context", "image-inspect", "ps", "up"]);
     for (const call of batch.calls.filter((c) => c.key === "image-inspect")) {
       expect(call.argv.slice(0, 2)).toEqual(["image", "inspect"]);
     }
@@ -440,9 +447,9 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
 
 describe.skipIf(SHELL === undefined)("run-sprint.ps1 refuses a remote docker target", () => {
   const dryRun = (ws: Workspace) => runArgs(ws, "smoke", ["-DryRun"]);
-  const refusal = (env: Record<string, string>) => {
+  const refusal = (env: Record<string, string>, plan: DockerPlan = {}) => {
     const ws = makeWorkspace();
-    const result = runBatch(ws, RUN_SPRINT, [dryRun(ws)], { env });
+    const result = runBatch(ws, RUN_SPRINT, [dryRun(ws)], { env, plan });
     return { run: result.runs[0]!, calls: result.calls, everything: result.stdout + result.stderr };
   };
 
@@ -464,6 +471,32 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 refuses a remote docker tar
       const ok = refusal({ DOCKER_CONTEXT: local });
       expect(ok.run.code, ok.run.stderr).toBe(0);
     }
+  });
+
+  it("exits 3 naming DOCKER_CONFIG, never its value, before any docker call", () => {
+    const r = refusal({ DOCKER_CONFIG: REMOTE_CONFIG_DIR });
+    expect(r.run.code, r.run.stderr).toBe(3);
+    expect(r.run.stderr).toContain("DOCKER_CONFIG");
+    expect(r.everything).not.toContain(REMOTE_CONFIG_DIR);
+    expect(r.calls).toEqual([]);
+  });
+
+  it("exits 3 when docker context show names a remote context, without echoing its name", () => {
+    const r = refusal({}, { context: { out: REMOTE_CONTEXT } });
+    expect(r.run.code, r.run.stderr).toBe(3);
+    expect(r.run.stderr).toContain("docker context");
+    expect(r.everything).not.toContain(REMOTE_CONTEXT);
+    expect(r.calls.map((c) => c.key)).toEqual(["context"]);
+    expect(r.calls[0]!.argv).toEqual(["context", "show"]);
+  });
+
+  it("exits 3 when docker context show fails or prints nothing, and accepts a local context", () => {
+    const failing = refusal({}, { context: { code: 1, err: "boom" } });
+    expect(failing.run.code, failing.run.stderr).toBe(3);
+    const silent = refusal({}, { context: { out: "" } });
+    expect(silent.run.code, silent.run.stderr).toBe(3);
+    const desktop = refusal({}, { context: { out: "desktop-linux" } });
+    expect(desktop.run.code, desktop.run.stderr).toBe(0);
   });
 });
 

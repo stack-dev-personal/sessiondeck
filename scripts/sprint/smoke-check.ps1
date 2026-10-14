@@ -6,7 +6,7 @@ container.
 
 .DESCRIPTION
 Specification: infra/sprint/README.md, "Smoke test". Runs run-sprint.ps1 -Sprint smoke, polls the
-status file, prints PASS or FAIL with the elapsed time, the final state, the container exit code
+status file, prints PASS or FAIL with the start and wait times, the final state, the container exit code
 and the tail of logs/entrypoint.log, then runs stop-sprint.ps1 -Sprint smoke.
 
 Stale state: run-sprint refuses a sprint whose status.json exists (exit 4), and a stale green file
@@ -18,11 +18,18 @@ state is reduced to a schema word, log lines are cut and reduced to printable AS
 logs and the env file are never printed. The entrypoint log can still hold secrets: do not paste
 the evidence anywhere public without reading it.
 
+Timing: the two minutes (-TimeoutSeconds) count from the moment run-sprint returns. The time
+run-sprint took, which includes an image build of about 10 minutes when the image is missing, is
+printed as start_seconds, and the evidence says when the image was missing.
+
 Exit codes: 0 PASS; 1 FAIL (timeout, container exited, or state not green; also an unexpected
 error inside run-sprint); otherwise the exit code of run-sprint.ps1 when that failed (2 bad
 input, 3 prerequisite missing, 4 already running or state conflict, 5 docker failure).
 stop-sprint runs after a successful start and after run-sprint exit 5 (a half-started container),
-unless -KeepContainer; a failing stop does not change the exit code but is shown in the evidence.
+unless -KeepContainer; it is skipped after run-sprint exit 1, 2, 3 or 4 (exit 1 is the unexpected
+error above; with 2, 3 and 4 no container of this run was started, and after 4 the running one is
+not this run's, so stop-sprint would remove it). A failing stop does not change the exit
+code but is shown in the evidence.
 
 .PARAMETER EnvFile
 Env file with the two tokens, passed to run-sprint.ps1. Default: <state root>/env.
@@ -226,7 +233,11 @@ if ($RepoRoot -ne '') {
     $runArgs['RepoRoot'] = $RepoRoot
 }
 
-$clock = [Diagnostics.Stopwatch]::StartNew()
+# A missing image makes compose build it, about 10 minutes. That time belongs to the start, not to
+# the wait for green, so ask first and report it in the evidence.
+$imageMissing = ((Get-ImageSummary -Image $DefaultSprintImage) -eq '')
+
+$startClock = [Diagnostics.Stopwatch]::StartNew()
 $runExit = 0
 try {
     & $runScript @runArgs
@@ -236,8 +247,12 @@ catch {
     Write-ErrorLine "${Tool}: run-sprint failed unexpectedly: $(ConvertTo-SafeText $_.Exception.Message 300)"
     $runExit = $ExitFail
 }
+$startClock.Stop()
 
 # --- Wait for green, exit of the container, or the timeout ---
+
+# The wait clock starts only now, after run-sprint (and any image build) returned.
+$clock = [Diagnostics.Stopwatch]::StartNew()
 
 $finalState = $NoStatusText
 $facts = @{ Known = $false; Status = ''; ExitCode = '' }
@@ -301,11 +316,19 @@ elseif ($green) {
     $exitCode = $ExitPass
 }
 
-$elapsed = $clock.Elapsed.TotalSeconds.ToString('0.0', [Globalization.CultureInfo]::InvariantCulture)
+$invariant = [Globalization.CultureInfo]::InvariantCulture
+$startSeconds = $startClock.Elapsed.TotalSeconds.ToString('0.0', $invariant)
+$waitSeconds = $clock.Elapsed.TotalSeconds.ToString('0.0', $invariant)
+$imageText = 'present (reused, no build)'
+if ($imageMissing) {
+    $imageText = "missing before the start: compose built it (about 10 minutes, counted in start_seconds, not in the wait)"
+}
 $block = @(
     '=== smoke check evidence ===',
     "RESULT: ${result}",
-    "elapsed_seconds: ${elapsed} (limit ${TimeoutSeconds})",
+    "start_seconds: ${startSeconds} (run-sprint, including any image build)",
+    "wait_seconds: ${waitSeconds} (limit ${TimeoutSeconds}, counted after run-sprint returned)",
+    "image ${DefaultSprintImage}: ${imageText}",
     "final_state: ${finalState}",
     "container: $(Format-ContainerFacts $facts)",
     "run-sprint exit: ${runExit}",

@@ -31,6 +31,11 @@ const LOOKALIKES_ONE = [
   "sd-11-s1-hub",
 ];
 
+// What docker prints when a --rm container disappears between the list and the stop or rm.
+const GONE_NO_SUCH = "Error response from daemon: No such container: sprint-7";
+const GONE_IN_PROGRESS =
+  "Error response from daemon: removal of container sprint-8 is already in progress";
+
 describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", () => {
   let ws: Workspace;
   let batch: BatchResult;
@@ -62,6 +67,10 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
         ["-Sprint", "4"], // 12: everything is auto-removed by docker stop
         ["-Sprint", "6"], // 13: no container, a leftover network
         ["-Sprint", "6", "-DryRun"], // 14
+        ["-Sprint", "7"], // 15: docker stop says "No such container"
+        ["-Sprint", "8"], // 16: docker rm says "removal ... already in progress"
+        ["-Sprint", "9"], // 17: docker rm fails for another reason
+        ["-Sprint", "11"], // 18: a tolerated line next to a real error
       ],
       {
         plan: {
@@ -79,6 +88,18 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
           "ps-a:sd-4-": { seq: [{ out: "sd-4-s1-pg" }, { out: "" }] },
           "network-ls:sprint-4_default": { out: "sprint-4_default" },
           "network-ls:sprint-6_default": { out: "sprint-6_default" },
+          "ps-a:sprint-7": { out: "sprint-7" },
+          "stop:sprint-7": { code: 1, err: GONE_NO_SUCH },
+          "ps-a:sprint-8": { out: "sprint-8" },
+          "rm:sprint-8": { code: 1, err: GONE_IN_PROGRESS },
+          "ps-a:sprint-9": { out: "sprint-9" },
+          "rm:sprint-9": { code: 1, err: "Error response from daemon: permission denied" },
+          "ps-a:sprint-11": { out: "sprint-11" },
+          "stop:sprint-11": {
+            code: 1,
+            err: `${GONE_NO_SUCH}
+Error response from daemon: boom`,
+          },
         },
       },
     );
@@ -200,6 +221,25 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
       expect(run(i).stderr).toContain("letters, digits and underscore");
     }
     expect(batch.calls.some((c) => c.name === null)).toBe(false);
+  });
+
+  it("treats a container that vanished during stop or rm as stopped (exit 0)", () => {
+    expect(run(15).code, run(15).stderr).toBe(0);
+    expect(run(15).stdout).toContain("stopped sprint-7");
+    expect(run(16).code, run(16).stderr).toBe(0);
+    expect(run(16).stdout).toContain("stopped sprint-8");
+    // The network is still cleaned up after a tolerated answer.
+    expect(batch.calls.some((c) => c.key === "network-ls" && c.name === "sprint-8_default")).toBe(
+      true,
+    );
+  });
+
+  it("still fails with exit 5 on any other docker error, and shows docker's message", () => {
+    expect(run(17).code).toBe(5);
+    expect(run(17).stderr).toContain("permission denied");
+    expect(run(17).stderr).toContain("docker rm sprint-9 failed");
+    expect(run(18).code).toBe(5);
+    expect(run(18).stderr).toContain("boom");
   });
 
   it("maps a docker failure to exit 5", () => {

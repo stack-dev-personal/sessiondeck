@@ -84,7 +84,42 @@ describe("sprint entrypoint", () => {
     const trapAt = entrypoint.indexOf('trap \'report_failure "$?" "$LINENO"\' ERR');
     expect(logFileAt).toBeGreaterThan(-1);
     expect(trapAt).toBeGreaterThan(logFileAt);
-    expect(entrypoint).toContain('log "failed at line $2 with status $1"');
+    expect(entrypoint).toContain('log "failed at line $line with status $status"');
+  });
+
+  it("names the failing repository step and logs a fixed hint, never git's own output", () => {
+    // Each step name is set right before its git commands run.
+    const stepAt = (step: string, command: string) => {
+      const at = entrypoint.indexOf(`setup_step=${step}\n`);
+      expect(at, step).toBeGreaterThan(-1);
+      expect(entrypoint.indexOf(command, at), `${step} -> ${command}`).toBeGreaterThan(at);
+      return at;
+    };
+    const fetchAt = stepAt("fetch", "fetch --quiet --prune origin");
+    const cloneAt = stepAt("clone", "git clone --quiet");
+    const checkoutAt = stepAt("checkout", "symbolic-ref --short refs/remotes/origin/HEAD");
+    expect(fetchAt).toBeLessThan(checkoutAt);
+    expect(cloneAt).toBeLessThan(checkoutAt);
+    // Cleared once the checkout is done, so a later failure gets no clone hint.
+    expect(entrypoint.indexOf('setup_step=""\n', checkoutAt)).toBeGreaterThan(checkoutAt);
+    expect(entrypoint).toContain(
+      'readonly HINT_CLONE_OR_FETCH="check that GH_TOKEN has access to this repository, SPRINT_REPO_URL, and the network"',
+    );
+    expect(entrypoint).toContain('readonly HINT_CHECKOUT="check SPRINT_BRANCH"');
+    expect(entrypoint).toContain("clone | fetch) hint=$HINT_CLONE_OR_FETCH ;;");
+    expect(entrypoint).toContain("checkout) hint=$HINT_CHECKOUT ;;");
+    expect(entrypoint).toContain(
+      'log "failed at line $line with status $status during $setup_step: $hint"',
+    );
+    // git's stderr goes to docker logs only: no git command is redirected into the log file.
+    const gitLines = entrypoint.split("\n").filter((l) => /^\s*git\b/.test(l));
+    expect(gitLines.length).toBeGreaterThan(0);
+    for (const line of gitLines) {
+      expect(line).not.toMatch(/LOG_FILE|entrypoint\.log|2>&1|redact_stream/);
+    }
+    const reportAt = entrypoint.indexOf("report_failure() {");
+    const reportBody = entrypoint.slice(reportAt, entrypoint.indexOf("\n}\n", reportAt));
+    expect(reportBody).not.toMatch(/\bgit\b|stderr|2>/);
   });
 
   it("installs the stop handler at the start of stage 2, before any clone", () => {
@@ -579,4 +614,49 @@ describe("sprint container harness", () => {
   it("checks the pre-stage with shellcheck as POSIX sh", () => {
     expect(harness).toContain("-s sh -x /mnt/entrypoint-precheck.sh");
   });
+});
+
+describe("sprint id rule: entrypoint and PowerShell scripts agree", () => {
+  const commonScript = readFileSync(
+    join(repoRoot, "scripts", "sprint", "lib", "sprint-common.ps1"),
+    "utf8",
+  );
+  const powershellPattern = /^\$SprintIdPattern = '([^']+)'$/m.exec(commonScript)?.[1] ?? "";
+  const ruleBlock = /^if ! \[\[ \$SPRINT_ID =~ (\S+) \]\]; then\n {2}die [^\n]*\nfi$/m.exec(
+    entrypoint,
+  );
+  const bashPattern = ruleBlock?.[1] ?? "";
+
+  // Runs the entrypoint's own `if ! [[ ... ]]; then die` block with a stub die.
+  function entrypointVerdict(id: string): "accepted" | "refused" {
+    const probe = `die() { echo refused; exit 64; }\n${ruleBlock?.[0] ?? "exit 99"}\necho accepted\n`;
+    const result = spawnSync("bash", ["-s"], {
+      input: probe,
+      encoding: "utf8",
+      env: { ...process.env, SPRINT_ID: id },
+    });
+    expect([0, 64], `bash exit for ${JSON.stringify(id)}: ${result.stderr}`).toContain(
+      result.status,
+    );
+    return result.stdout.trim() === "accepted" ? "accepted" : "refused";
+  }
+
+  it("finds both rules", () => {
+    expect(powershellPattern).not.toBe("");
+    expect(ruleBlock).not.toBeNull();
+  });
+
+  it("uses the same pattern in both (PowerShell ends with backslash z where bash ends with $)", () => {
+    expect(powershellPattern.endsWith("\\z")).toBe(true);
+    expect(powershellPattern.slice(0, -2) + "$").toBe(bashPattern);
+  });
+
+  it("refuses a hyphenated id in the entrypoint, and the other ids the scripts refuse", () => {
+    for (const id of ["a-b", "-x", "", "a b", "..", "a/b", "ok\nx", "_a"]) {
+      expect(entrypointVerdict(id), JSON.stringify(id)).toBe("refused");
+    }
+    for (const id of ["0", "7", "smoke", "a_b", "S0c"]) {
+      expect(entrypointVerdict(id), id).toBe("accepted");
+    }
+  }, 30_000);
 });

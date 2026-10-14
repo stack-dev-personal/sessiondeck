@@ -160,9 +160,28 @@ if ! mkdir -p "$STATE_DIR/logs" 2>/dev/null; then
 fi
 LOG_FILE="$STATE_DIR/logs/entrypoint.log"
 # Under set -e a failing step would otherwise exit without a reason in the log.
+#
+# The name of the repository step that is running (clone, fetch or checkout; empty
+# otherwise) selects a fixed hint. git's own stderr is deliberately not copied into
+# entrypoint.log: that file stays free of anything a remote prints. It remains in
+# docker logs, which are treated as secret.
+setup_step=""
+readonly HINT_CLONE_OR_FETCH="check that GH_TOKEN has access to this repository, SPRINT_REPO_URL, and the network"
+readonly HINT_CHECKOUT="check SPRINT_BRANCH"
+
 # shellcheck disable=SC2329 # invoked by the ERR trap below
 report_failure() {
-  log "failed at line $2 with status $1"
+  local status=$1 line=$2 hint=""
+  case "$setup_step" in
+    clone | fetch) hint=$HINT_CLONE_OR_FETCH ;;
+    checkout) hint=$HINT_CHECKOUT ;;
+    *) ;;
+  esac
+  if [ -n "$setup_step" ]; then
+    log "failed at line $line with status $status during $setup_step: $hint"
+  else
+    log "failed at line $line with status $status"
+  fi
 }
 trap 'report_failure "$?" "$LINENO"' ERR
 
@@ -186,11 +205,13 @@ git config --global credential.https://github.com.helper "$CREDENTIAL_HELPER"
 exit_if_stopping
 
 if [ -d "$WORK_DIR/.git" ]; then
+  setup_step=fetch
   log "fetch path: $WORK_DIR is already a clone"
   git -C "$WORK_DIR" remote set-url origin "$SPRINT_REPO_URL"
   git -C "$WORK_DIR" fetch --quiet --prune origin
   git -C "$WORK_DIR" remote set-head origin --auto >/dev/null || log "could not refresh origin/HEAD"
 else
+  setup_step=clone
   log "clone path: cloning into $WORK_DIR"
   git clone --quiet "$SPRINT_REPO_URL" "$WORK_DIR"
 fi
@@ -209,6 +230,7 @@ checkout_branch() {
   fi
 }
 
+setup_step=checkout
 default_branch="$(git -C "$WORK_DIR" symbolic-ref --short refs/remotes/origin/HEAD)"
 default_branch="${default_branch#origin/}"
 sprint_branch="${SPRINT_BRANCH:-}"
@@ -220,6 +242,7 @@ else
   log "checkout: sprint branch '${sprint_branch}' not on the remote, using default branch $default_branch"
   checkout_branch "$default_branch"
 fi
+setup_step=""
 
 # --- Run the level-1 prompt headless (infra/sprint/README.md) ---
 #

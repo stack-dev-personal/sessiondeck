@@ -19,9 +19,10 @@ Read the security note before the setup steps. The container is not a sandbox.
 | `scripts/sprint/run-sprint.ps1` | Renders the prompt, creates `.sprint/<id>/`, starts the container detached as `sprint-<id>` |
 | `scripts/sprint/status.ps1` | Prints every `.sprint/*/status.json` (and session files) as tables; read-only |
 | `scripts/sprint/stop-sprint.ps1` | Stops and removes `sprint-<id>` and sibling `sd-<id>-*` containers; keeps the volume and `.sprint/<id>/` |
+| `scripts/sprint/smoke-check.ps1` | The Sprint 0 smoke gate in one command: starts `smoke`, waits for green, prints one evidence block, stops it |
 | `scripts/sprint/render-prompt.mjs` | Prompt renderer used by `run-sprint.ps1` (documented in `scripts/README.md`) |
 | `scripts/sprint/lib/sprint-common.ps1` | Exit codes, id and image patterns, path and environment helpers |
-| `scripts/sprint/lib/sprint-docker.ps1` | Docker queries (container names, image summary) and the `DOCKER_HOST` / `DOCKER_CONTEXT` check |
+| `scripts/sprint/lib/sprint-docker.ps1` | Docker queries (container names, image summary) and the checks that the docker target is local (`DOCKER_HOST`, `DOCKER_CONTEXT`, `DOCKER_CONFIG`, `docker context show`) |
 | `scripts/sprint/lib/sprint-envfile.ps1` | Warns about extra readers of the env file; reads permissions only, never the content |
 | `scripts/sprint/lib/sprint-repourl.ps1` | Clone URL rules (github.com HTTPS only, must match origin) |
 | `scripts/sprint/lib/sprint-sanitize.ps1` | Reduces text from state files to printable ASCII for `status.ps1` |
@@ -55,10 +56,10 @@ The user must decide which of these to adopt, or to accept the risk, before the 
 - Every process in the container can read both tokens from its environment.
 - `docker compose config` against the real env file prints both tokens. Never run it in a session, and never paste its output.
 - Never add `infra/sprint/docker-compose.override.yml` (compose merges that name into any run without `-f`) or `infra/sprint/.env` (compose reads it for interpolation and it could switch the image). `run-sprint.ps1` exits 3 if `infra/sprint/.env` exists and always sets `SPRINT_IMAGE` itself.
-- Compose sends the env file values to whatever daemon `DOCKER_HOST` or `DOCKER_CONTEXT` names. `run-sprint.ps1` exits 3 if `DOCKER_HOST` is set, or if `DOCKER_CONTEXT` is anything other than `default` or `desktop-linux`. It names the variable, never the value. `stop-sprint.ps1` does not check this (it sends no tokens).
+- Compose sends the env file values to whatever daemon the docker target names. `run-sprint.ps1` exits 3 if `DOCKER_HOST` is set, if `DOCKER_CONFIG` is set (another config directory can name any context), if `DOCKER_CONTEXT` is anything other than `default` or `desktop-linux`, or if `docker context show` (the context saved by `docker context use`) prints anything other than `default` or `desktop-linux`. It names the variable, never the value, and never prints a context name. After `docker context use hub-box`, run `docker context use default` (or `desktop-linux`) before starting a sprint. `stop-sprint.ps1` does not check this (it sends no tokens).
 - Git sends `GH_TOKEN` only to `https://github.com`, through a credential helper that reads the environment at use time. The token is not written to `~/.gitconfig`, `/work/.git/config` or a URL.
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are refused on purpose. They rank above `CLAUDE_CODE_OAUTH_TOKEN`, so setting either would bill the API account instead of the subscription.
-- Scope `GH_TOKEN` to this one repository (step 2 below). Know how to revoke both tokens quickly. A GitHub token can be deleted on its token page. Revoking a Claude token is not documented (see step 1).
+- Scope `GH_TOKEN` to this one repository (step 2 below). Know how to revoke both tokens quickly. How to delete a GitHub token was not checked against GitHub's documentation in S0c: find the steps on GitHub before you need them. Revoking a Claude token is not documented (see step 1).
 
 ### The environment allow-list
 
@@ -76,7 +77,7 @@ The user must decide which of these to adopt, or to accept the risk, before the 
 - Redaction replaces the exact values of the two tokens in claude's stdout and stderr (`sprint.jsonl` and `docker logs`) with `[REDACTED]`. A token that JSON escaping would change, an encoded token or a partial token is not matched.
 - Files a session writes under `.sprint/<id>/`, and transcripts inside the container, are not filtered. Treat `.sprint/<id>/`, `entrypoint.log`, `docker logs`, `docker inspect` and `docker cp` output as secret.
 - The state directory is writable by the container, so `status.json`, `sessions/*.json`, `questions.md` and reports are untrusted input. `status.ps1` cuts every value, reduces it to printable ASCII, maps states to the schema words (anything else shows as `invalid`), and skips files over 256 KiB (`too large`). Opened any other way, the raw files and `questions.md` can still carry prompt injection and terminal escape sequences.
-- `-Resume` reuses the work volume and state directory the previous run wrote. Treat them as tainted: git config and hooks in `/work/.git` run on the next fetch or checkout, and a previous run can leave files (for example a shared library) that a later run loads.
+- The work volume `sprint-<id>-work` survives `stop-sprint.ps1`, and every start reuses it, with or without `-Resume`: the entrypoint takes the fetch path whenever `/work/.git` exists. `-Resume` also reuses the state directory. Treat both as tainted after any run you suspect: git config and hooks in `/work/.git` run on the next fetch or checkout, and a previous run can leave files (for example a shared library) that a later run loads. Stopping the sprint does not clean this up. For a fresh clone, stop the sprint, then run `docker volume rm sprint-<id>-work` (for the smoke sprint: `docker volume rm sprint-smoke-work`); the next start clones again. Remove or move `.sprint/<id>/` too if the state directory is suspect.
 - `run-sprint.ps1` accepts only `https://github.com/<owner>/<repo>` clone URLs, and the owner and repository must match the origin remote (compared case-insensitively against the origin URL text). `-AllowForeignRepo` lifts only the origin match, never the github.com rule. A foreign repository's `CLAUDE.md`, hooks and agents run with both tokens. The default trusts the repository's `.git/config`, so a local session that rewrites origin changes what gets cloned.
 - `-Image` names the image that receives both tokens. By default only `sessiondeck-sprint:<tag>` is accepted. Anything else needs `-AllowForeignImage`, and then only for an image you built yourself.
 - Sprint ids: letters, digits and underscore, starting with a letter or digit (no hyphen). Sibling containers are matched by the prefix `sd-<id>-`, so an id that is a prefix of another followed by a hyphen would claim its containers. The id rule prevents that. `stop-sprint.ps1` stops `sprint-<id>` (exact name) and every container whose name starts with `sd-<id>-`. Stopping sprint 0 therefore also removes the `sd-0-*` containers that local sessions started.
@@ -115,16 +116,16 @@ The user must decide which of these to adopt, or to accept the risk, before the 
 
 Status: the laptop confirmation is still pending for S0c. No tokens existed during S0c, so the smoke run has not happened with real credentials. The harness runs the same path with a stub `claude` and placeholder tokens.
 
-One command does steps 1 to 4 below and prints the evidence: `scripts/sprint/smoke-check.ps1` (optional `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds 120`, `-PollSeconds 3`, `-KeepContainer`, `-EvidenceFile <path>`). It deletes a previous `smoke/status.json` (that one file; it never uses `-Resume`, because a stale green file would be a false pass), runs `run-sprint.ps1 -Sprint smoke`, polls the status file until it is green, the container exits or the timeout passes, then runs `stop-sprint.ps1 -Sprint smoke` unless `-KeepContainer`. The evidence block has PASS or FAIL, elapsed seconds, the final state, the container exit code, the last 20 lines of `entrypoint.log` as printable ASCII, and a secrets reminder; it never prints docker logs or the env file. Exit codes: 0 PASS; 1 FAIL (timeout, container exited, state not green); 2, 3, 4 or 5 when `run-sprint` itself failed (same meaning as below). Attach the block (read it first) to the S0c confirmation.
+One command does steps 1 to 4 below and prints the evidence: `scripts/sprint/smoke-check.ps1` (optional `-EnvFile`, `-StateRoot`, `-RepoRoot`, `-TimeoutSeconds 120`, `-PollSeconds 3`, `-KeepContainer`, `-EvidenceFile <path>`). It deletes a previous `smoke/status.json` (that one file; it never uses `-Resume`, because a stale green file would be a false pass), runs `run-sprint.ps1 -Sprint smoke`, polls the status file until it is green, the container exits or the timeout passes, then runs `stop-sprint.ps1 -Sprint smoke`. The timeout counts from the moment `run-sprint` returns, so an image build (about 10 minutes when `sessiondeck-sprint:local` is missing) does not eat the two minutes; the script asks docker first and the evidence says when the image was missing and a build happened. `stop-sprint` is skipped with `-KeepContainer`, and also after `run-sprint` exit 1, 2, 3 or 4 (nothing of this run was started, and after exit 4 the running container is not this run's, so stopping it would be wrong). It still runs after exit 5, because compose may have left a half-started container. The evidence block has PASS or FAIL, `start_seconds` (the time `run-sprint` took) and `wait_seconds` (against the limit), the image line, the final state, the container exit code, the last 20 lines of `entrypoint.log` as printable ASCII, and a secrets reminder; it never prints docker logs or the env file. Exit codes: 0 PASS; 1 FAIL (timeout, container exited, state not green, or an unexpected error inside `run-sprint`); 2, 3, 4 or 5 when `run-sprint` itself failed (same meaning as below). Attach the block (read it first) to the S0c confirmation.
 
 The manual steps:
 
 1. `scripts/sprint/run-sprint.ps1 -Sprint smoke`
-2. Within two minutes `.sprint/smoke/status.json` should exist with state `green`. Check with `scripts/sprint/status.ps1`. The smoke prompt asks the session to write `/state/smoke/status.json` with state green and exit. A pass proves auth, clone, the state mount and the socket mount.
+2. Within two minutes `.sprint/smoke/status.json` should exist with state `green`. Check with `scripts/sprint/status.ps1`. The smoke prompt asks the session to write `/state/smoke/status.json` with state green and exit. A pass proves auth, the repository step (a clone on the first run; a fetch on every later run, because the work volume is kept), the state mount and the socket mount. To prove a clone again, stop the sprint and run `docker volume rm sprint-smoke-work` first. Treat the volume as tainted after any suspect run.
 3. On failure look at `.sprint/smoke/logs/entrypoint.log` and `docker logs sprint-smoke`. Both may hold secrets: do not paste them.
 4. `scripts/sprint/stop-sprint.ps1 -Sprint smoke`
 
-Observed on Claude Code 2.1.295 in the image (2026-10-14, no credentials): as root, `--dangerously-skip-permissions` is refused with "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons". As the non-root user, `claude -p` exits 1 without hanging or onboarding, with the result "Not logged in - Please run /login" (the real text has a middle dot, not a hyphen). So a missing or rejected token shows up as exit 1 and that message in `sprint.jsonl`.
+Observed on Claude Code 2.1.295 in the image (2026-10-14, no credentials): as root, `--dangerously-skip-permissions` is refused with "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons". As the non-root user, `claude -p` exits 1 without hanging or onboarding, with the result "Not logged in - Please run /login" (the real text has a middle dot, not a hyphen). So a missing token shows up as exit 1 and that message in `sprint.jsonl`. Not observed: what a rejected or expired token prints. It may be different text (the harness also accepts an `authentication_failed` error), so do not rely on finding "Not logged in" in that case.
 
 Not verified: `--agent` together with `-p` and a project-scoped agent is not documented either way, so the first real sprint is also its confirmation.
 
@@ -132,7 +133,7 @@ Not verified: `--agent` together with `-p` and a project-scoped agent is not doc
 
 | Path in container | Host | Purpose |
 |-------------------|------|---------|
-| `/work` | named volume `sprint-<id>-work` | fresh clone of the repo; worktrees under `/work/wt/<session>` |
+| `/work` | named volume `sprint-<id>-work` | clone of the repo, made on the first start; kept by `stop-sprint.ps1` and reused by every later start (fetch path); worktrees under `/work/wt/<session>`. `docker volume rm sprint-<id>-work` after stopping gives a fresh clone |
 | `/state/<id>` | bind mount `.sprint/<id>/` | status, prompts, questions, answers, logs, reports, screens, gate (PROMPT-BOOK section 6) |
 | `/var/run/docker.sock` | host socket | lets executors start sibling test containers named `sd-<sprint>-<session>-*`, removed at session end. Root-equivalent: see the security note |
 
@@ -171,15 +172,15 @@ claude -p "$(cat /state/$SPRINT_ID/sprint-prompt.md)" --agent sd-sprint-orchestr
 
 ### SIGTERM and exit codes
 
-`docker stop` sends SIGTERM to PID 1. The entrypoint installs its handler before the clone and forwards the signal to claude. If the stop arrives before claude starts, the container exits 143 without launching it. During a foreground git step the stop waits until that step ends. Docker kills the container after its stop timeout (10 seconds by default). Container exit codes: claude's own status; 64 configuration refused; 143 stopped.
+`docker stop` sends SIGTERM to PID 1. The entrypoint installs its handler before the clone and forwards the signal to claude. If the stop arrives before claude starts, the container exits 143 without launching it. During a foreground git step the stop waits until that step ends. Docker kills the container after its stop timeout (10 seconds by default). Container exit codes: claude's own status; 64 configuration refused; 143 stopped; and the status of a failed setup step, because the script runs under `set -e`: a failed clone, fetch or checkout exits with git's own status (for example 128). A failed step also leaves a line in `entrypoint.log` with the step name and a fixed hint (clone or fetch: check that `GH_TOKEN` has access to this repository, `SPRINT_REPO_URL` and the network; checkout: check `SPRINT_BRANCH`). git's own error text is not copied there; it is only in `docker logs`, which are secret.
 
 ### Resume
 
-`run-sprint.ps1 -Sprint <id> -Resume` starts a new container (compose `--force-recreate`) against the same `.sprint/<id>/`, the existing work volume (fetch path, not clone) and the remote sprint branch. A local branch with unpushed commits is never discarded. The orchestrator's setup step detects the branch and status file and continues from them; sessions with state green are not relaunched. Treat the volume as tainted (security note).
+`run-sprint.ps1 -Sprint <id> -Resume` starts a new container (compose `--force-recreate`) against the same `.sprint/<id>/`, the existing work volume (fetch path, not clone) and the remote sprint branch. A plain start also reuses the work volume when it exists; `-Resume` differs in keeping the state directory and recreating the container. A local branch with unpushed commits is never discarded. The orchestrator's setup step detects the branch and status file and continues from them; sessions with state green are not relaunched. Treat the volume as tainted (security note).
 
 ## Scripts reference
 
-All three run on Windows PowerShell 5.1 and PowerShell 7 (`pwsh`). If scripts are blocked by the execution policy, set `RemoteSigned` for your user, or run one script with `powershell -ExecutionPolicy Bypass -File scripts/sprint/run-sprint.ps1 -Sprint smoke`.
+All four are written for Windows PowerShell 5.1 and PowerShell 7 (`pwsh`) and tested on Windows PowerShell 5.1 only; `pwsh` 7 has not been run. If scripts are blocked by the execution policy, set `RemoteSigned` for your user, or run one script with `powershell -ExecutionPolicy Bypass -File scripts/sprint/run-sprint.ps1 -Sprint smoke`.
 
 Exit codes (shared):
 
@@ -187,7 +188,7 @@ Exit codes (shared):
 |------|---------|
 | 0 | `run-sprint`: started, or dry run ok. `stop-sprint`: stopped, or nothing to stop. `status`: always 0 once it reaches the table, including "nothing to show" |
 | 2 | Bad input: sprint id, `-ContractSha`, `-Image`, repository URL, renderer usage error, or the package's `runs_in` is not `container` |
-| 3 | Prerequisite missing (node, docker, env file, compose file, renderer), `infra/sprint/.env` exists, or `DOCKER_HOST` / `DOCKER_CONTEXT` point away from the local daemon. `stop-sprint`: docker missing |
+| 3 | Prerequisite missing (node, docker, env file, compose file, renderer), `infra/sprint/.env` exists, origin remote unreadable, renderer failure (other than a usage error, which is 2), or the docker target is not the local daemon: `DOCKER_HOST` set, `DOCKER_CONFIG` set, `DOCKER_CONTEXT` or the context from `docker context show` not `default` or `desktop-linux`, or `docker context show` failing. `stop-sprint`: docker missing |
 | 4 | `run-sprint`: container already running, state conflict (`status.json` exists without `-Resume`, or `-Resume` without a state directory) |
 | 5 | Docker failure, including any `docker image inspect` failure other than "No such image" |
 
@@ -210,14 +211,14 @@ Exit codes (shared):
 
 A sprint whose package has `runs_in` other than `container` (Sprint 0) is refused with exit 2 (with `-DryRun` it only warns). The script prints which image will run and when it was created.
 
-`stop-sprint.ps1` parameters: `-Sprint <id>` (as given to `run-sprint.ps1`) and `-DryRun` (print the docker commands instead). It uses `docker stop` and `docker rm` (no volume flag, so the work volume survives), re-lists siblings after the stop and removes only those still present (a sibling started with `--rm` is already gone), and removes the leftover `sprint-<id>_default` network, also when there was nothing to stop.
+`stop-sprint.ps1` parameters: `-Sprint <id>` (as given to `run-sprint.ps1`) and `-DryRun` (print the docker commands instead). It uses `docker stop` and `docker rm` (no volume flag, so the work volume survives), re-lists siblings after the stop and removes only those still present (a sibling started with `--rm` is already gone), treats docker's "No such container" and "removal ... already in progress" answers to `docker stop` or `docker rm` as done (a `--rm` container can vanish between the list and the call; any other docker error is exit 5 and docker's message is shown), and removes the leftover `sprint-<id>_default` network, also when there was nothing to stop.
 
 `status.ps1` parameter: `-Root <dir>` (directory holding the state directories; default `<repo>/.sprint`). It prints one table of sprints (state, sessions, waiting, pr, updated_at, age in minutes) and one of sessions. A missing, partial or non-object file shows as `unreadable` or `no status.json` for that row. Sprint states: running, blocked, merging, gate, awaiting-merge-approval, merged, failed, green.
 
 ## Testing
 
 - Static tests in the default suite (`pnpm -F @sessiondeck/scripts test`): `scripts/test/sprint-image-static.test.ts` checks the Dockerfile, compose file and entrypoint scripts (pinned versions, the allow-list logic, the compose pins, the secrets rules). The prompt renderer has its own tests.
-- PowerShell script tests: `test:sprint-ps`, a separate CI step. They run the three scripts against a fake `docker` and need PowerShell. They were run on Windows PowerShell 5.1 only; `pwsh` 7 was not available in S0c.
+- PowerShell script tests: `test:sprint-ps`, a separate CI step. They run the four scripts against a fake `docker` and need PowerShell. They were run on Windows PowerShell 5.1 only; `pwsh` 7 was not available in S0c.
 - Container harness (needs Docker, builds the image, takes about 11 minutes):
 
   ```

@@ -21,6 +21,10 @@ if (SHELL === undefined) console.warn(`SKIPPED: ${SKIP_REASON}`);
 const HOOK_TIMEOUT_MS = 120_000;
 const POLL = ["-PollSeconds", "1"];
 const GREEN = '{"state":"green"}';
+const IMAGE = "sessiondeck-sprint:local";
+// run-sprint (an image build, in real life) takes longer than the whole wait limit below.
+const SLOW_START_MS = 4000;
+const SHORT_LIMIT_SECONDS = "6";
 const ESC = String.fromCharCode(0x1b);
 const CSI_C1 = String.fromCharCode(0x9b);
 // OSC 52 clipboard write, a cursor move, a C1 CSI and non-ASCII text.
@@ -81,6 +85,7 @@ describe.skipIf(SHELL === undefined)("smoke-check.ps1 PASS path (fake docker on 
       {
         plan: {
           ...stoppable,
+          [`image-inspect:${IMAGE}`]: { out: "sha256:feedbeef created 2026-10-01T00:00:00Z" },
           // Two polls see a running container with no status file; the third poll sees green.
           "container:sprint-smoke": {
             seq: [
@@ -99,7 +104,11 @@ describe.skipIf(SHELL === undefined)("smoke-check.ps1 PASS path (fake docker on 
     expect(run.code).toBe(0);
     expect(run.stdout).toContain("RESULT: PASS");
     expect(run.stdout).toContain("final_state: green");
-    expect(run.stdout).toMatch(/elapsed_seconds: \d+\.\d \(limit 60\)/);
+    expect(run.stdout).toMatch(
+      /wait_seconds: \d+\.\d \(limit 60, counted after run-sprint returned\)/,
+    );
+    expect(run.stdout).toMatch(/start_seconds: \d+\.\d /);
+    expect(run.stdout).toContain("present (reused, no build)");
     expect(callsFor(batch, "container").length).toBeGreaterThanOrEqual(3);
   });
 
@@ -241,6 +250,65 @@ describe.skipIf(SHELL === undefined)("smoke-check.ps1 FAIL paths", () => {
     expect(run.stdout).toContain("(no entrypoint.log on the host side)");
     expect(callsFor(exited, "stop")).toHaveLength(0);
     expect(existsSync(statusPath(exitedWs))).toBe(false);
+  });
+});
+
+describe.skipIf(SHELL === undefined)("smoke-check.ps1 wait clock", () => {
+  let ws: Workspace;
+  let batch: BatchResult;
+
+  beforeAll(() => {
+    ws = makeWorkspace();
+    // The image is missing and compose "builds" it for longer than the wait limit; the session
+    // turns green on the third poll, which is still inside the limit once the clock starts late.
+    batch = runBatch(
+      ws,
+      SMOKE_CHECK,
+      [
+        [
+          "-StateRoot",
+          ws.state,
+          "-EnvFile",
+          ws.envFile,
+          "-RepoRoot",
+          ws.repo,
+          "-TimeoutSeconds",
+          SHORT_LIMIT_SECONDS,
+          ...POLL,
+        ],
+      ],
+      {
+        plan: {
+          ...stoppable,
+          [`image-inspect:${IMAGE}`]: {
+            code: 1,
+            err: `Error response from daemon: No such image: ${IMAGE}`,
+          },
+          up: { delayMs: SLOW_START_MS },
+          "container:sprint-smoke": {
+            seq: [
+              running(),
+              running(),
+              running({ writeFile: { path: statusPath(ws), content: GREEN } }),
+            ],
+          },
+        },
+      },
+    );
+  }, HOOK_TIMEOUT_MS);
+
+  it("starts the wait clock after run-sprint returns, so a slow start does not time out the wait", () => {
+    const run = batch.runs[0]!;
+    expect(run.code, run.stdout).toBe(0);
+    expect(run.stdout).toContain("RESULT: PASS");
+    expect(run.stdout).toMatch(/start_seconds: [4-9]\.\d /);
+    expect(run.stdout).toMatch(/wait_seconds: [2-5]\.\d \(limit 6,/);
+  });
+
+  it("says a build happened when the image was missing", () => {
+    expect(batch.runs[0]!.stdout).toContain(
+      `image ${IMAGE}: missing before the start: compose built it`,
+    );
   });
 });
 
