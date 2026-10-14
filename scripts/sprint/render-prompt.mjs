@@ -16,7 +16,7 @@ import {
   extractPreamble,
   normalizeNewlines,
 } from "./lib/markdown-extract.mjs";
-import { parsePackageBlock } from "./lib/package-block.mjs";
+import { checkNoCycle, parsePackageBlock } from "./lib/package-block.mjs";
 import { EXIT, RenderError, ioError, usageError } from "./lib/render-errors.mjs";
 
 export { EXIT, RenderError };
@@ -95,6 +95,7 @@ export function listPackages(order) {
       );
     }
   }
+  checkNoCycle(new Map(packages.map((p) => [p.sprint, p.depends_on])), ORDER_FILE, "sprint");
   return packages;
 }
 

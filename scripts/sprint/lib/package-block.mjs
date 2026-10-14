@@ -123,17 +123,21 @@ function readSessions(r, sprintLabel) {
       );
     }
   }
-  checkNoCycle(sessions, sprintLabel);
+  checkNoCycle(
+    new Map(sessions.map((s) => [s.id, s.depends_on])),
+    `MINI-SPRINT-ORDER.md, ${sprintLabel}`,
+    "session",
+  );
   return sessions;
 }
 
 /**
- * A depends_on cycle means no session in it can ever start.
- * @param {SessionSpec[]} sessions
- * @param {string} sprintLabel
+ * A depends_on cycle means nothing in it can ever start.
+ * @param {Map<string, string[]>} deps id to the ids it depends on
+ * @param {string} where start of the error message, for example "MINI-SPRINT-ORDER.md, sprint 2"
+ * @param {string} unit what the ids are: "session" or "sprint"
  */
-function checkNoCycle(sessions, sprintLabel) {
-  const deps = new Map(sessions.map((s) => [s.id, s.depends_on]));
+export function checkNoCycle(deps, where, unit) {
   /** @type {Set<string>} */
   const done = new Set();
   /** @param {string} id @param {string[]} path */
@@ -142,14 +146,14 @@ function checkNoCycle(sessions, sprintLabel) {
     if (at !== -1) {
       const loop = [...path.slice(at), id].join(" -> ");
       throw inputError(
-        `MINI-SPRINT-ORDER.md, ${sprintLabel}: key "depends_on" forms a cycle (${loop}), so no session in it could start`,
+        `${where}: key "depends_on" forms a cycle (${loop}), so no ${unit} in it could start`,
       );
     }
     if (done.has(id)) return;
     for (const d of deps.get(id) ?? []) visit(d, [...path, id]);
     done.add(id);
   };
-  for (const s of sessions) visit(s.id, []);
+  for (const id of deps.keys()) visit(id, []);
 }
 
 /**

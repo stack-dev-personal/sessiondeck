@@ -85,7 +85,8 @@ function assertNoStrayBraces(text) {
   const rest = text.replace(BRACED, "");
   const lineNo = rest.split("\n").findIndex((l) => /[{}]/.test(l));
   if (lineNo === -1) return;
-  const line = (rest.split("\n")[lineNo] ?? "").trim();
+  // BRACED never crosses a line, so line numbers in `rest` and `text` match: quote the original.
+  const line = (text.split("\n")[lineNo] ?? "").trim();
   throw inputError(
     `PROMPT-BOOK.md sections 1 and 3: stray brace in "${line}"; ` +
       `a placeholder must be one {NAME} token on a single line`,
@@ -113,9 +114,14 @@ export function fillTemplate(template, preamble, values) {
   assertNoStrayBraces(combined);
   /** @type {string[]} */
   const unfilled = [];
+  /** @type {Set<string>} */
+  const used = new Set();
   const filled = combined.replace(BRACED, (token, name) => {
     if (PASS_THROUGH.includes(name)) return token;
-    if (Object.hasOwn(values, name)) return values[name] ?? "";
+    if (Object.hasOwn(values, name)) {
+      used.add(name);
+      return values[name] ?? "";
+    }
     if (!unfilled.includes(token)) unfilled.push(token);
     return token;
   });
@@ -123,6 +129,13 @@ export function fillTemplate(template, preamble, values) {
     throw inputError(
       `PROMPT-BOOK.md sections 1 and 3: placeholder ${unfilled.join(", ")} has no value; ` +
         `the renderer fills ${Object.keys(values).join(", ")} and leaves ${PASS_THROUGH.join(", ")} literal`,
+    );
+  }
+  const unused = Object.keys(values).filter((name) => !used.has(name));
+  if (unused.length > 0) {
+    throw inputError(
+      `PROMPT-BOOK.md sections 1 and 3: value ${unused.map((n) => `{${n}}`).join(", ")} was never used; ` +
+        `the placeholder is missing from the template or has lost its braces`,
     );
   }
   return filled;

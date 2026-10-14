@@ -7,6 +7,7 @@ const FENCE_CLOSE = /^```\s*$/;
 const SECTION_HEADING = /^## (\d+)\. /;
 const ANY_H2 = /^## /;
 const SPRINT_HEADING = /^### Sprint (\S+?):/;
+const ANY_SPRINT_TEXT_HEADING = /^#{1,6}\s+Sprint/;
 const ANY_H2_OR_H3 = /^#{2,3} /;
 const TEMPLATE_LABEL = "Template:";
 
@@ -143,6 +144,23 @@ export function extractPackageBlocks(order) {
 }
 
 /**
+ * A heading of any level whose text starts with "Sprint" must be a "### Sprint <id>:" heading
+ * inside section 3; anywhere else its package would be skipped silently.
+ * @param {string[]} lines the whole of MINI-SPRINT-ORDER.md
+ */
+function assertNoSprintHeadingElsewhere(lines) {
+  let inSection3 = false;
+  for (const line of lines) {
+    if (ANY_H2.test(line)) inSection3 = Number(SECTION_HEADING.exec(line)?.[1]) === 3;
+    if (!ANY_SPRINT_TEXT_HEADING.test(line)) continue;
+    if (inSection3 && SPRINT_HEADING.test(line)) continue;
+    throw inputError(
+      `MINI-SPRINT-ORDER.md: heading "${line.trim()}" is not a "### Sprint <id>: <name>" heading inside section 3, so its package would be skipped`,
+    );
+  }
+}
+
+/**
  * Section 3 must exist, every "### " heading in it must be a "### Sprint <id>:" heading, and every
  * yaml fence must sit under one; otherwise a package is skipped silently.
  * @param {string[]} lines the whole of MINI-SPRINT-ORDER.md
@@ -156,6 +174,7 @@ function assertEveryYamlFenceHasHeading(lines, claimed) {
   if (odd !== undefined) {
     throw inputError(`${where}: heading "${odd.trim()}" does not match "### Sprint <id>: <name>"`);
   }
+  assertNoSprintHeadingElsewhere(lines);
   const yamlFences = fencesIn(section, where).filter((f) => f.info === "yaml").length;
   if (yamlFences !== claimed) {
     throw inputError(
