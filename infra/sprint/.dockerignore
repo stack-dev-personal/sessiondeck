@@ -1,0 +1,5 @@
+# The build context is infra/sprint only. Ignore everything, then allow the one
+# file the image copies, so nothing else (and never a .sprint/ directory or an
+# env file) can enter a layer.
+*
+!entrypoint.sh

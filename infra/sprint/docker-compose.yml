@@ -1,0 +1,38 @@
+# One sprint container. Start: docker compose -f infra/sprint/docker-compose.yml up -d
+# with SPRINT_ID, SPRINT_BRANCH and SPRINT_REPO_URL set in the shell (the
+# run-sprint script does this). Works unchanged from PowerShell and Git Bash on
+# Docker Desktop for Windows; relative paths resolve from this file's directory.
+#
+# Secrets: CLAUDE_CODE_OAUTH_TOKEN and GH_TOKEN reach the container ONLY through
+# env_file. They are never interpolated (no ${...} anywhere for them), so they
+# are not in this file, in the shell environment, or in build args. The one
+# place they would print is `docker compose config` against a real env file.
+name: sprint-${SPRINT_ID:?set SPRINT_ID}
+
+services:
+  sprint:
+    image: ${SPRINT_IMAGE:-sessiondeck-sprint:local}
+    build:
+      context: .
+    container_name: sprint-${SPRINT_ID}
+    # Default is the repo root's .sprint/env (mode 600, gitignored). Override
+    # with SPRINT_ENV_FILE so tests never need the real one.
+    env_file:
+      - ${SPRINT_ENV_FILE:-../../.sprint/env}
+    # Only non-secret values are interpolated.
+    environment:
+      SPRINT_ID: ${SPRINT_ID}
+      SPRINT_BRANCH: ${SPRINT_BRANCH:-}
+      SPRINT_REPO_URL: ${SPRINT_REPO_URL:?set SPRINT_REPO_URL}
+    volumes:
+      # Fresh clone and worktrees; survives container removal so -Resume works.
+      - work:/work
+      # Status, prompts, logs, reports, screens. SPRINT_STATE_ROOT defaults to
+      # the repo root's .sprint directory.
+      - ${SPRINT_STATE_ROOT:-../../.sprint}/${SPRINT_ID}:/state/${SPRINT_ID}
+      # Lets sessions start sibling test containers (sd-<sprint>-<session>-*).
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  work:
+    name: sprint-${SPRINT_ID}-work
