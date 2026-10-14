@@ -48,6 +48,23 @@ function Invoke-Docker {
     }
 }
 
+# Compose names its default network <project>_default; docker rm leaves it behind. Runs on every
+# path that stops anything, and when nothing was left to stop: a retry after a half-finished stop
+# must still clean up.
+function Remove-ComposeNetwork {
+    param([switch]$Preview)
+    $networks = & docker network ls --filter "name=${networkName}" --format '{{.Name}}'
+    if ($LASTEXITCODE -ne 0 -or (@($networks) -cnotcontains $networkName)) {
+        return $false
+    }
+    if ($Preview) {
+        Write-Line "  docker network rm ${networkName}"
+        return $true
+    }
+    Invoke-Docker -DockerArgs @('network', 'rm', $networkName)
+    return $true
+}
+
 $mainExists = Test-ContainerExists -Name $containerName
 # Test containers a session started (sd-<id>-<session>-*) would otherwise keep using RAM.
 $siblingPrefix = "${SiblingContainerPrefix}${Sprint}-"
@@ -55,6 +72,12 @@ $siblings = Get-SiblingContainerNames -Prefix $siblingPrefix
 
 if (-not $mainExists -and $siblings.Count -eq 0) {
     Write-Line "no container named ${containerName} and none named ${siblingPrefix}*; nothing to stop."
+    if ($DryRun) {
+        [void](Remove-ComposeNetwork -Preview)
+    }
+    elseif (Remove-ComposeNetwork) {
+        Write-Line "removed leftover network ${networkName}."
+    }
     exit $ExitOk
 }
 
@@ -68,26 +91,37 @@ if ($DryRun) {
         Write-Line ("  docker stop " + ($siblings -join ' '))
         Write-Line ("  docker rm " + ($siblings -join ' '))
     }
+    [void](Remove-ComposeNetwork -Preview)
     Write-Line "kept: volume ${containerName}-work and the state directory"
     exit $ExitOk
 }
 
 if ($mainExists) {
     Invoke-Docker -DockerArgs @('stop', $containerName)
-    Invoke-Docker -DockerArgs @('rm', $containerName)
 }
 if ($siblings.Count -gt 0) {
     Invoke-Docker -DockerArgs (@('stop') + $siblings)
-    Invoke-Docker -DockerArgs (@('rm') + $siblings)
 }
 
-$networks = & docker network ls --filter "name=${networkName}" --format '{{.Name}}'
-if ($LASTEXITCODE -eq 0 -and (@($networks) -contains $networkName)) {
-    Invoke-Docker -DockerArgs @('network', 'rm', $networkName)
+# A container started with --rm is gone as soon as it stops, and docker rm on a missing name
+# fails. Ask again and remove only what is still there.
+$mainLeft = $mainExists -and (Test-ContainerExists -Name $containerName)
+$siblingsLeft = @()
+if ($siblings.Count -gt 0) {
+    $stillThere = Get-SiblingContainerNames -Prefix $siblingPrefix
+    $siblingsLeft = @($siblings | Where-Object { $stillThere -ccontains $_ })
+}
+if ($mainLeft) {
+    Invoke-Docker -DockerArgs @('rm', $containerName)
+}
+if ($siblingsLeft.Count -gt 0) {
+    Invoke-Docker -DockerArgs (@('rm') + $siblingsLeft)
 }
 
-$removed = @()
-if ($mainExists) { $removed += $containerName }
-$removed += $siblings
-Write-Line ("stopped and removed " + ($removed -join ' ') + "; kept volume ${containerName}-work and the state directory.")
+[void](Remove-ComposeNetwork)
+
+$stopped = @()
+if ($mainExists) { $stopped += $containerName }
+$stopped += $siblings
+Write-Line ("stopped " + ($stopped -join ' ') + "; kept volume ${containerName}-work and the state directory.")
 exit $ExitOk

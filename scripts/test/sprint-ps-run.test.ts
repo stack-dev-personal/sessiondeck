@@ -33,43 +33,54 @@ const STATE_SUBDIRS = [
 ];
 const SMOKE_PROMPT = "write /state/smoke/status.json with state green and exit\n";
 const SHA = "abc1234";
-const BAD_IDS = ["..", "a/b", "", "-x", "a b", "ok\nx"];
+// "a-b": a hyphen would let sprint "a" claim the sibling containers sd-a-b-* of sprint "a-b".
+const BAD_IDS = ["..", "a/b", "", "-x", "a b", "ok\nx", "a-b"];
 const DEFAULT_IMAGE = "sessiondeck-sprint:local";
 const AMBIENT_IMAGE = "attacker/image:evil";
 const IMAGE_LINE = "sha256:feedbeef created 2026-10-01T00:00:00Z";
-const MISSING_IMAGE = "other:tag";
+const MISSING_IMAGE = "sessiondeck-sprint:other";
+const DOWN_IMAGE = "sessiondeck-sprint:down";
+const FOREIGN_IMAGE = "ghcr.io/attacker/x:1";
+const REMOTE_HOST = "tcp://remote-daemon.example:2375";
+const REMOTE_CONTEXT = "remote-box";
 
 // Every case after the bad ids, by index into the batch.
+const FIRST = BAD_IDS.length;
 const CASE = {
-  missingEnv: 6,
-  unknownSprint: 7,
-  noSha: 8,
-  badSha: 9,
-  sprintZero: 10,
-  smokeStart: 11,
-  noResumeConflict: 12,
-  resumeNoDir: 13,
-  resumeLive: 14,
-  runningRefused: 15,
-  upFails: 16,
-  psFails: 17,
-  smokeDry: 18,
-  sprintThree: 19,
-  sprintZeroDry: 20,
-  smokeBuild: 21,
-  smokeOtherImage: 22,
-  badImage: 23,
-  urlCredentials: 24,
-  urlHttp: 25,
-  urlSsh: 26,
-  urlForeignHost: 27,
-  urlForeignRepo: 28,
-  urlForeignRepoAllowed: 29,
-  urlLeadingSpace: 30,
-  urlTrailingSpace: 31,
-  urlForeignHostAllowed: 32,
-  urlMixedCase: 33,
-  urlFromOrigin: 34,
+  missingEnv: FIRST + 0,
+  unknownSprint: FIRST + 1,
+  noSha: FIRST + 2,
+  badSha: FIRST + 3,
+  sprintZero: FIRST + 4,
+  smokeStart: FIRST + 5,
+  noResumeConflict: FIRST + 6,
+  resumeNoDir: FIRST + 7,
+  resumeLive: FIRST + 8,
+  runningRefused: FIRST + 9,
+  upFails: FIRST + 10,
+  psFails: FIRST + 11,
+  smokeDry: FIRST + 12,
+  sprintThree: FIRST + 13,
+  sprintZeroDry: FIRST + 14,
+  smokeBuild: FIRST + 15,
+  smokeOtherImage: FIRST + 16,
+  badImage: FIRST + 17,
+  urlCredentials: FIRST + 18,
+  urlHttp: FIRST + 19,
+  urlSsh: FIRST + 20,
+  urlForeignHost: FIRST + 21,
+  urlForeignRepo: FIRST + 22,
+  urlForeignRepoAllowed: FIRST + 23,
+  urlLeadingSpace: FIRST + 24,
+  urlTrailingSpace: FIRST + 25,
+  urlForeignHostAllowed: FIRST + 26,
+  urlMixedCase: FIRST + 27,
+  urlFromOrigin: FIRST + 28,
+  foreignImage: FIRST + 29,
+  foreignImageAllowed: FIRST + 30,
+  foreignImageBadShape: FIRST + 31,
+  badTag: FIRST + 32,
+  imageDaemonDown: FIRST + 33,
 } as const;
 
 function packageBranch(sprint: string): string {
@@ -154,6 +165,11 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
         ws.envFile,
         "-DryRun",
       ],
+      dry(["-Image", FOREIGN_IMAGE]),
+      dry(["-Image", FOREIGN_IMAGE, "-AllowForeignImage"]),
+      dry(["-Image", "a b", "-AllowForeignImage"]),
+      dry(["-Image", "sessiondeck-sprint:a/b"]),
+      dry(["-Image", DOWN_IMAGE]),
     ];
     batch = runBatch(ws, RUN_SPRINT, lists, {
       env: { SPRINT_IMAGE: AMBIENT_IMAGE },
@@ -168,6 +184,10 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
           code: 1,
           err: "Error response from daemon: No such image",
         },
+        [`image-inspect:${DOWN_IMAGE}`]: {
+          code: 1,
+          err: "error during connect: Cannot connect to the Docker daemon",
+        },
       },
     });
   }, 120_000);
@@ -175,7 +195,7 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
   it("rejects bad ids with exit 2 naming the rule, before any docker call", () => {
     BAD_IDS.forEach((_, i) => {
       expect(run(i).code, `case ${i}`).toBe(2);
-      expect(run(i).stderr).toContain("letters, digits, hyphen and underscore");
+      expect(run(i).stderr).toContain("letters, digits and underscore");
     });
     expect(batch.calls.filter((c) => c.name === null || /-\./.test(c.name ?? ""))).toEqual([]);
     expect(readdirSync(ws.state).sort()).toEqual(["0", "2", "3", "5", "smoke"]);
@@ -259,6 +279,30 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
     expect(run(CASE.smokeDry).stdout).toContain(`SPRINT_IMAGE=${DEFAULT_IMAGE}`);
     expect(run(CASE.badImage).code).toBe(2);
     expect(run(CASE.badImage).stderr).toContain("-Image");
+  });
+
+  it("accepts only sessiondeck-sprint:<tag> as -Image unless -AllowForeignImage is given", () => {
+    const refused = run(CASE.foreignImage);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("-AllowForeignImage");
+    expect(refused.stderr).not.toContain("attacker");
+    expect(run(CASE.badImage).code).toBe(2);
+    expect(run(CASE.badImage).stderr).toContain("-AllowForeignImage");
+    expect(run(CASE.badTag).code).toBe(2); // a slash is not part of a tag
+    const allowed = run(CASE.foreignImageAllowed);
+    expect(allowed.code, allowed.stderr).toBe(0);
+    expect(allowed.stdout).toContain(`SPRINT_IMAGE=${FOREIGN_IMAGE}`);
+    // The switch widens the image, not the syntax.
+    expect(run(CASE.foreignImageBadShape).code).toBe(2);
+    expect(run(CASE.foreignImageBadShape).stderr).toContain("docker image reference");
+    expect(callsFor(FOREIGN_IMAGE, "image-inspect")).toHaveLength(1); // only the allowed run
+  });
+
+  it("treats only 'No such image' as a missing image; any other inspect failure is exit 5", () => {
+    const down = run(CASE.imageDaemonDown);
+    expect(down.code).toBe(5);
+    expect(down.stderr).toContain("is Docker running?");
+    expect(down.stdout).not.toContain("image missing");
   });
 
   it("renders the one-line smoke prompt and starts with an empty branch", () => {
@@ -390,6 +434,35 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
     expect([...keys].sort()).toEqual(["image-inspect", "ps", "up"]);
     for (const call of batch.calls.filter((c) => c.key === "image-inspect")) {
       expect(call.argv.slice(0, 2)).toEqual(["image", "inspect"]);
+    }
+  });
+});
+
+describe.skipIf(SHELL === undefined)("run-sprint.ps1 refuses a remote docker target", () => {
+  const dryRun = (ws: Workspace) => runArgs(ws, "smoke", ["-DryRun"]);
+  const refusal = (env: Record<string, string>) => {
+    const ws = makeWorkspace();
+    const result = runBatch(ws, RUN_SPRINT, [dryRun(ws)], { env });
+    return { run: result.runs[0]!, calls: result.calls, everything: result.stdout + result.stderr };
+  };
+
+  it("exits 3 naming DOCKER_HOST, never its value, before any docker call", () => {
+    const r = refusal({ DOCKER_HOST: REMOTE_HOST });
+    expect(r.run.code, r.run.stderr).toBe(3);
+    expect(r.run.stderr).toContain("DOCKER_HOST");
+    expect(r.everything).not.toContain("remote-daemon");
+    expect(r.calls).toEqual([]);
+  });
+
+  it("exits 3 naming DOCKER_CONTEXT unless it is default or desktop-linux", () => {
+    const r = refusal({ DOCKER_CONTEXT: REMOTE_CONTEXT });
+    expect(r.run.code, r.run.stderr).toBe(3);
+    expect(r.run.stderr).toContain("DOCKER_CONTEXT");
+    expect(r.everything).not.toContain(REMOTE_CONTEXT);
+    expect(r.calls).toEqual([]);
+    for (const local of ["default", "desktop-linux"]) {
+      const ok = refusal({ DOCKER_CONTEXT: local });
+      expect(ok.run.code, ok.run.stderr).toBe(0);
     }
   });
 });

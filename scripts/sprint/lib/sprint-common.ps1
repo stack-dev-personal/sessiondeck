@@ -12,9 +12,11 @@ $ExitDockerFailure = 5
 
 # The id becomes a directory under .sprint/ and a bind-mount source, so ".." or a path
 # separator would mount the wrong directory. \z, not $, because $ also matches before a
-# trailing newline. Same alphabet as infra/sprint/entrypoint.sh.
-$SprintIdPattern = '^[A-Za-z0-9][A-Za-z0-9_-]*\z'
-$SprintIdRule = 'letters, digits, hyphen and underscore, starting with a letter or digit'
+# trailing newline. No hyphen: stop-sprint matches sibling containers by the prefix sd-<id>-,
+# so ids "a" and "a-b" would claim each other's containers. infra/sprint/entrypoint.sh still
+# accepts hyphens; that is looser than this rule and harmless, because these scripts start it.
+$SprintIdPattern = '^[A-Za-z0-9][A-Za-z0-9_]*\z'
+$SprintIdRule = 'letters, digits and underscore, starting with a letter or digit'
 $ContractShaPattern = '^[A-Za-z0-9._/-]+\z'
 
 $ContainerPrefix = 'sprint-'
@@ -23,7 +25,12 @@ $SiblingContainerPrefix = 'sd-'
 # The image compose runs. Set explicitly on every start so that an ambient SPRINT_IMAGE (or a
 # stray infra/sprint/.env) cannot swap in another image that then receives both tokens.
 $DefaultSprintImage = 'sessiondeck-sprint:local'
+# Accepted without -AllowForeignImage: a locally built sessiondeck-sprint tag.
+$SprintImagePattern = '^sessiondeck-sprint:[A-Za-z0-9._-]+\z'
+# Shape check for anything else, once -AllowForeignImage was given.
 $ImageReferencePattern = '^[A-Za-z0-9][A-Za-z0-9._/:@-]*\z'
+# Docker contexts that point at the local Docker Desktop daemon.
+$LocalDockerContexts = @('default', 'desktop-linux')
 $StatusFileName = 'status.json'
 $SessionsDirName = 'sessions'
 $StateRootDirName = '.sprint'

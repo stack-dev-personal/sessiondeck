@@ -16,7 +16,7 @@ import { makeTempDir, REPO_ROOT } from "../../helpers";
 const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_DOCKER_SOURCE = join(here, "fake-docker.mjs");
 const SECRET_ENV = /token|secret|password|api_key/i;
-const SCRUBBED_PREFIXES = ["SPRINT_", "FAKE_DOCKER_", "ANTHROPIC_"];
+const SCRUBBED_PREFIXES = ["SPRINT_", "FAKE_DOCKER_", "ANTHROPIC_", "DOCKER_"];
 export const SENTINEL = "SENTINEL-must-never-be-read-9f3a";
 export const SPRINT_SCRIPTS = join(REPO_ROOT, "scripts", "sprint");
 
@@ -54,8 +54,14 @@ export interface DockerCall {
   secretNames: string[];
 }
 
+export interface Step {
+  code?: number;
+  out?: string;
+  err?: string;
+}
+
 export interface DockerPlan {
-  [key: string]: { code?: number; out?: string; err?: string };
+  [key: string]: Step | { seq: Step[] };
 }
 
 export interface Workspace {

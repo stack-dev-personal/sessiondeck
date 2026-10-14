@@ -8,8 +8,9 @@ Specification: infra/sprint/README.md. Tokens reach the container only through t
 (compose env_file). This script checks that the file exists and warns about its permissions;
 it never reads, prints, hashes or copies its content.
 
-Exit codes: 0 started (or dry run ok), 2 bad input, 3 prerequisite missing,
-4 already running or state conflict, 5 docker failure.
+Exit codes: 0 started (or dry run ok), 2 bad input, 3 prerequisite missing (or DOCKER_HOST /
+DOCKER_CONTEXT point away from the local daemon), 4 already running or state conflict,
+5 docker failure.
 
 .PARAMETER Sprint
 Sprint id: a package id from MINI-SPRINT-ORDER.md, or "smoke".
@@ -34,7 +35,11 @@ Accept a -RepoUrl that differs from origin. The container runs that repository's
 hooks and agents with both tokens, so use this only for a repository you trust as much as
 this one.
 .PARAMETER Image
-Image compose starts. Default: sessiondeck-sprint:local.
+Image compose starts, and therefore the image that receives both tokens. Default:
+sessiondeck-sprint:local. Without -AllowForeignImage only sessiondeck-sprint:<tag> is accepted.
+.PARAMETER AllowForeignImage
+Accept an -Image that is not sessiondeck-sprint:<tag>. Use it only for an image you built
+yourself; the container gets both tokens.
 .PARAMETER Build
 Pass --build to compose up, so a changed Dockerfile or entrypoint is picked up. Without it
 compose builds only when the image is missing.
@@ -51,6 +56,7 @@ param(
     [string]$RepoUrl = '',
     [switch]$AllowForeignRepo,
     [string]$Image = '',
+    [switch]$AllowForeignImage,
     [switch]$Build
 )
 
@@ -82,9 +88,18 @@ Assert-SprintId -Id $Sprint -Tool $Tool
 if ($Image -eq '') {
     $Image = $DefaultSprintImage
 }
-if (-not ($Image -cmatch $ImageReferencePattern)) {
-    Exit-Sprint $ExitBadInput "${Tool}: -Image must look like a docker image reference (pattern ${ImageReferencePattern})."
+if (-not ($Image -cmatch $SprintImagePattern)) {
+    # The image receives both tokens, so a registry path or someone else's local image needs a
+    # deliberate switch. The value is not echoed.
+    if (-not $AllowForeignImage) {
+        Exit-Sprint $ExitBadInput "${Tool}: -Image must be sessiondeck-sprint:<tag> (pattern ${SprintImagePattern}). The image receives both tokens; pass -AllowForeignImage only for an image you built yourself."
+    }
+    if (-not ($Image -cmatch $ImageReferencePattern)) {
+        Exit-Sprint $ExitBadInput "${Tool}: -Image must look like a docker image reference (pattern ${ImageReferencePattern})."
+    }
 }
+# Compose sends the env_file values to whichever daemon these variables name.
+Assert-LocalDockerTarget -Tool $Tool
 if ($ContractSha -ne '' -and -not ($ContractSha -cmatch $ContractShaPattern)) {
     Exit-Sprint $ExitBadInput "${Tool}: -ContractSha may contain only letters, digits and . _ / -"
 }

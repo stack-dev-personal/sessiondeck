@@ -57,6 +57,11 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
         ["-Sprint", "1", "-DryRun"], // 7: main container plus siblings, with look-alikes
         ["-Sprint", "1"], // 8
         ["-Sprint", "2"], // 9: siblings only
+        ["-Sprint", "a-b"], // 10: hyphens are not allowed in ids
+        ["-Sprint", "3"], // 11: a sibling is auto-removed by docker stop
+        ["-Sprint", "4"], // 12: everything is auto-removed by docker stop
+        ["-Sprint", "6"], // 13: no container, a leftover network
+        ["-Sprint", "6", "-DryRun"], // 14
       ],
       {
         plan: {
@@ -67,6 +72,13 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
           "ps-a:sprint-1": { out: "sprint-1" },
           [`ps-a:${SIBLING_PREFIX_ONE}`]: { out: LOOKALIKES_ONE.join("\n") },
           "ps-a:sd-2-": { out: "sd-2-s9-pg" },
+          "ps-a:sprint-3": { out: "sprint-3" },
+          "ps-a:sd-3-": { seq: [{ out: "sd-3-s1-pg" }, { out: "" }] },
+          "network-ls:sprint-3_default": { out: "sprint-3_default" },
+          "ps-a:sprint-4": { seq: [{ out: "sprint-4" }, { out: "" }] },
+          "ps-a:sd-4-": { seq: [{ out: "sd-4-s1-pg" }, { out: "" }] },
+          "network-ls:sprint-4_default": { out: "sprint-4_default" },
+          "network-ls:sprint-6_default": { out: "sprint-6_default" },
         },
       },
     );
@@ -84,8 +96,10 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
     const stops = batch.calls.filter((c) => c.name?.startsWith("sprint-a1"));
     expect(stops.map((c) => c.key)).toEqual([
       "ps-a", // dry run
+      "network-ls", // dry run previews the network removal
       "ps-a",
       "stop",
+      "ps-a", // asked again: only what is still there gets removed
       "rm",
       "network-ls",
       "network-rm",
@@ -101,14 +115,14 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
 
   it("removes sibling test containers sd-<id>-* and only names with exactly that prefix", () => {
     const stops = batch.calls.filter(
-      (c) => c.key === "stop" && c.argv.some((a) => a.startsWith("sd-")),
+      (c) => c.key === "stop" && c.argv.some((a) => /^sd-[12]-/.test(a)),
     );
     expect(stops.map((c) => c.argv)).toEqual([
       ["stop", ...REAL_SIBLINGS_ONE], // run 8 only: the dry run (run 7) issued nothing
       ["stop", "sd-2-s9-pg"],
     ]);
     const removes = batch.calls.filter(
-      (c) => c.key === "rm" && c.argv.some((a) => a.startsWith("sd-")),
+      (c) => c.key === "rm" && c.argv.some((a) => /^sd-[12]-/.test(a)),
     );
     expect(removes.map((c) => c.argv)).toEqual([
       ["rm", ...REAL_SIBLINGS_ONE],
@@ -138,6 +152,38 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
     expect(batch.calls.some((c) => c.argv.includes("sprint-2"))).toBe(false);
   });
 
+  it("removes only what survives docker stop: an auto-removed sibling is not rm'd, the network still goes", () => {
+    expect(run(11).code, run(11).stderr).toBe(0);
+    const keys = (name: string) => batch.calls.filter((c) => c.name === name).map((c) => c.key);
+    expect(keys("sd-3-s1-pg")).toEqual(["stop"]); // stopped, never rm'd
+    const rms = batch.calls.filter((c) => c.key === "rm" && c.argv.includes("sprint-3"));
+    expect(rms.map((c) => c.argv)).toEqual([["rm", "sprint-3"]]);
+    expect(batch.calls.some((c) => c.key === "rm" && c.argv.includes("sd-3-s1-pg"))).toBe(false);
+    expect(keys("sprint-3_default")).toEqual(["network-ls", "network-rm"]);
+  });
+
+  it("issues no rm at all when docker stop already removed everything, and still removes the network", () => {
+    expect(run(12).code, run(12).stderr).toBe(0);
+    expect(batch.calls.some((c) => c.key === "rm" && c.argv.some((a) => /-4(-|$)/.test(a)))).toBe(
+      false,
+    );
+    expect(batch.calls.filter((c) => c.name === "sprint-4_default").map((c) => c.key)).toEqual([
+      "network-ls",
+      "network-rm",
+    ]);
+  });
+
+  it("cleans up a leftover network even when there is no container to stop (and only previews under -DryRun)", () => {
+    expect(run(13).code, run(13).stderr).toBe(0);
+    expect(run(13).stdout).toContain("nothing to stop");
+    expect(run(13).stdout).toContain("removed leftover network sprint-6_default");
+    expect(run(14).code, run(14).stderr).toBe(0);
+    expect(run(14).stdout).toContain("docker network rm sprint-6_default");
+    expect(
+      batch.calls.filter((c) => c.key === "network-rm" && c.name === "sprint-6_default"),
+    ).toHaveLength(1);
+  });
+
   it("keeps the state directory", () => {
     expect(readFileSync(join(ws.state, "a1", "status.json"), "utf8")).toBe('{"state":"running"}');
   });
@@ -149,9 +195,9 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
   });
 
   it("rejects bad ids with exit 2 before any docker call", () => {
-    for (const i of [3, 4, 5]) {
+    for (const i of [3, 4, 5, 10]) {
       expect(run(i).code).toBe(2);
-      expect(run(i).stderr).toContain("letters, digits, hyphen and underscore");
+      expect(run(i).stderr).toContain("letters, digits and underscore");
     }
     expect(batch.calls.some((c) => c.name === null)).toBe(false);
   });

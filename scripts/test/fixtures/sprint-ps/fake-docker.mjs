@@ -5,11 +5,14 @@
 //   FAKE_DOCKER_LOG   file that receives one JSON line per call
 //   FAKE_DOCKER_PLAN  JSON object: { "<key>": { "code": 0, "out": "text", "err": "text" } }
 //
+// A step may instead be { "seq": [step, step, ...] }: the n-th call with the same key and name
+// uses the n-th entry, and the last entry repeats (for example "present, then auto-removed").
+//
 // A plan key is "<call>" or "<call>:<name>" (the name wins). The name is the first
 // sprint-<id> or sd-<id>... token in argv, or the image reference for image-inspect. Calls are
 // ps, ps-a, up, stop, rm, network-ls, network-rm, image-inspect. Unlisted calls succeed with
 // no output.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 const SECRET_NAME = /token|secret|password|api_key/i;
 const NAME_IN_ARGV = /(?:sprint|sd)-[A-Za-z0-9_-]+/;
@@ -29,7 +32,7 @@ const key = callKey(argv);
 const name =
   key === "image-inspect" ? argv[argv.length - 1] : argv.join(" ").match(NAME_IN_ARGV)?.[0];
 const plan = JSON.parse(process.env.FAKE_DOCKER_PLAN ?? "{}");
-const step = (name !== undefined && plan[`${key}:${name}`]) || plan[key] || {};
+const planned = (name !== undefined && plan[`${key}:${name}`]) || plan[key] || {};
 
 const sprintEnv = Object.fromEntries(
   Object.entries(process.env).filter(([k]) => k.startsWith("SPRINT_")),
@@ -39,6 +42,23 @@ const secretNames = Object.keys(process.env).filter((k) => SECRET_NAME.test(k));
 
 const logFile = process.env.FAKE_DOCKER_LOG;
 if (logFile === undefined) throw new Error("FAKE_DOCKER_LOG is not set");
+
+/**
+ * The step for this call: plain, or the n-th entry of a seq (n = earlier calls with this key and name).
+ * @param {string} file
+ */
+function resolveStep(file) {
+  if (!Array.isArray(planned.seq)) return planned;
+  const earlier = existsSync(file)
+    ? readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l.length > 0)
+        .map((l) => JSON.parse(l))
+        .filter((c) => c.key === key && c.name === (name ?? null)).length
+    : 0;
+  return planned.seq[Math.min(earlier, planned.seq.length - 1)] ?? {};
+}
+const step = resolveStep(logFile);
 
 appendFileSync(
   logFile,
