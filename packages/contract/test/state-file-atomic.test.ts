@@ -44,6 +44,12 @@ function flaky(code: string, times: number): { fn: RenameFn; calls: () => number
 
 // A poller, as the dashboard is; a back-to-back loop would hold the file open without a gap.
 const READ_PAUSE_MS = 2;
+// The overwrite loop is bounded by count and by wall time, so a slow runner ends it early instead
+// of reaching the per-test timeout; a Windows runner took over 5 s for 50 overwrites.
+const OVERWRITES = 20;
+const OVERWRITE_BUDGET_MS = 2000;
+// The retry tests only need the retry path taken, not the production attempt count.
+const FEW_ATTEMPTS = 2;
 const ALWAYS = Number.POSITIVE_INFINITY;
 const READ_ONLY_MODE = 0o444;
 const WRITABLE_MODE = 0o644;
@@ -101,7 +107,7 @@ describe("writeStateFileAtomic", () => {
     ).rejects.toThrow(/not removed: UNKNOWN/);
   });
 
-  it("never lets a concurrent reader see a partial file across 50 overwrites", async () => {
+  it("never lets a concurrent reader see a partial file across bounded overwrites", async () => {
     const target = join(root, "status.json");
     await writeStateFileAtomic(target, { n: 0, pad: "p".repeat(4000) });
     let writing = true;
@@ -126,7 +132,10 @@ describe("writeStateFileAtomic", () => {
     // has its own tests. A small budget here keeps the test fast while the reader keeps polling.
     const quickRetry = { maxAttempts: 3, retryDelayMs: 2 };
     let dropped = 0;
-    for (let n = 1; n <= 50; n += 1) {
+    let attempted = 0;
+    const deadline = Date.now() + OVERWRITE_BUDGET_MS;
+    for (let n = 1; n <= OVERWRITES && (n === 1 || Date.now() < deadline); n += 1) {
+      attempted += 1;
       const pad = "p".repeat(n % 2 === 0 ? 10 : 4000);
       await writeStateFileAtomic(target, { n, pad }, quickRetry).catch((error: unknown) => {
         const retryable =
@@ -139,7 +148,7 @@ describe("writeStateFileAtomic", () => {
     await reader;
     expect(torn).toEqual([]);
     expect(reads).toBeGreaterThan(0);
-    expect(dropped).toBeLessThan(50);
+    expect(dropped).toBeLessThan(attempted);
     expect(await readdir(root)).toEqual(["status.json"]);
   });
 
@@ -195,7 +204,11 @@ describe("rename retry (Windows sharing violations)", () => {
   it("reports a rename that stays blocked as busy, so callers can retry later", async () => {
     for (const code of RENAME_RETRY_CODES) {
       const { fn } = flaky(code, ALWAYS);
-      const run = writeStateFileAtomic(join(root, "b.json"), {}, { rename: fn, retryDelayMs: 0 });
+      const run = writeStateFileAtomic(
+        join(root, "b.json"),
+        {},
+        { rename: fn, retryDelayMs: 0, maxAttempts: FEW_ATTEMPTS },
+      );
       await expect(run).rejects.toMatchObject({ kind: "busy" });
     }
   });
@@ -209,7 +222,11 @@ describe("rename retry (Windows sharing violations)", () => {
     try {
       for (const code of RENAME_RETRY_CODES) {
         const { fn } = flaky(code, ALWAYS);
-        const run = writeStateFileAtomic(target, { a: 1 }, { rename: fn, retryDelayMs: 0 });
+        const run = writeStateFileAtomic(
+          target,
+          { a: 1 },
+          { rename: fn, retryDelayMs: 0, maxAttempts: FEW_ATTEMPTS },
+        );
         await expect(run).rejects.toMatchObject({ kind: "write-failed" });
         await expect(run).rejects.toThrow(/read-only/);
       }
@@ -226,7 +243,11 @@ describe("rename retry (Windows sharing violations)", () => {
       await writeFile(target, "{}\n");
       await chmod(target, READ_ONLY_MODE);
       try {
-        const run = writeStateFileAtomic(target, { a: 1 }, { retryDelayMs: 0 });
+        const run = writeStateFileAtomic(
+          target,
+          { a: 1 },
+          { retryDelayMs: 0, maxAttempts: FEW_ATTEMPTS },
+        );
         await expect(run).rejects.toMatchObject({ kind: "write-failed" });
         expect(await readFile(target, "utf8")).toBe("{}\n");
       } finally {

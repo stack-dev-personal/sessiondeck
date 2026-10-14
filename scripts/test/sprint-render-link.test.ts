@@ -77,6 +77,24 @@ describe("writeAtomic and planted links", () => {
     expect(err.message).toMatch(/cannot write .*EACCES/);
   });
 
+  it("reports the original write error when the temp cleanup fails too (ENOTDIR on Linux)", () => {
+    const attempts: string[] = [];
+    const io = {
+      lstat: () => {
+        throw Object.assign(new Error("denied"), { code: "EACCES" });
+      },
+      remove: (path: string) => {
+        attempts.push(path);
+        throw Object.assign(new Error("not a directory"), { code: "ENOTDIR" });
+      },
+    };
+    const err = failure(() => writeAtomic(join(dir, "prompt.md"), PROMPT, io));
+    expect(attempts).toHaveLength(1);
+    expect(err.exitCode).toBe(EXIT.IO);
+    expect(err.message).toMatch(/cannot write .*EACCES/);
+    expect(err.message).toMatch(/not removed \(ENOTDIR\)/);
+  });
+
   it("does not write through a temp name planted under the old predictable pattern", () => {
     const canary = join(dir, "canary.txt");
     writeFileSync(canary, CANARY);

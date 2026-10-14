@@ -205,10 +205,41 @@ const TEMP_OPEN_FLAG = "wx";
 /**
  * @typedef {object} WriteIo
  * @property {(path: string) => { isSymbolicLink: () => boolean }} lstat
+ * @property {(path: string) => void} [remove] temp file cleanup; replaceable so tests can fail it
  */
 
 /** @type {WriteIo} */
 const DEFAULT_WRITE_IO = { lstat: lstatSync };
+
+/** @param {string} path */
+function removeTemp(path) {
+  rmSync(path, { force: true });
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorCodeOf(error) {
+  return error instanceof Error && "code" in error ? String(error.code) : "unknown";
+}
+
+/**
+ * Removes the temp file after a failed write. A cleanup failure (force only ignores ENOENT, so a
+ * file standing where a directory should be gives ENOTDIR on Linux) must not replace the real
+ * error: it is returned as a note to append to it.
+ * @param {string} tmp
+ * @param {WriteIo} io
+ * @returns {string}
+ */
+function discardTemp(tmp, io) {
+  try {
+    (io.remove ?? removeTemp)(tmp);
+    return "";
+  } catch (error) {
+    return `; temp file ${tmp} not removed (${errorCodeOf(error)})`;
+  }
+}
 
 /**
  * The output directory can be one a container writes to, so a link there could point anywhere on
@@ -243,10 +274,9 @@ export function writeAtomic(file, text, io = DEFAULT_WRITE_IO) {
     writeFileSync(tmp, text, { encoding: "utf8", flag: TEMP_OPEN_FLAG });
     renameSync(tmp, target);
   } catch (error) {
-    rmSync(tmp, { force: true });
+    const note = discardTemp(tmp, io);
     if (error instanceof RenderError) throw error;
-    const code = error instanceof Error && "code" in error ? String(error.code) : "unknown";
-    throw ioError(`cannot write ${target} (${code})`);
+    throw ioError(`cannot write ${target} (${errorCodeOf(error)})${note}`);
   }
 }
 

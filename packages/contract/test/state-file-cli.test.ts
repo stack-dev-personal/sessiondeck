@@ -73,7 +73,7 @@ describe("state-file CLI as a process", () => {
 
   it("read scrubs a credential that a plain echo planted in a text field", async () => {
     const planted = `sk-ant-${"a1B2c3D4e5F6g7H8i9J0"}`;
-    expect(spawnCli("write-session", stateDir, "S1", "state=running").status).toBe(EXIT_OK);
+    expect((await runCli(["write-session", stateDir, "S1", "state=running"])).code).toBe(EXIT_OK);
     const file = join(stateDir, "sessions", "S1.json");
     const content = JSON.parse(await readFile(file, "utf8"));
     await writeFile(file, JSON.stringify({ ...content, last_report: `see ${planted} here` }));
@@ -91,7 +91,7 @@ describe("state-file CLI as a process", () => {
     ["a carriage return", "token:\r"],
   ])("read scrubs a credential that follows %s", async (_name, lead) => {
     const planted = `ghp_${"abcdefghijKLMN"}`;
-    expect(spawnCli("write-session", stateDir, "S1", "state=running").status).toBe(EXIT_OK);
+    expect((await runCli(["write-session", stateDir, "S1", "state=running"])).code).toBe(EXIT_OK);
     const file = join(stateDir, "sessions", "S1.json");
     const content = JSON.parse(await readFile(file, "utf8"));
     await writeFile(file, JSON.stringify({ ...content, last_report: `${lead}${planted}` }));
