@@ -17,6 +17,7 @@ const PROBE_EXPECTED = "y";
 const PROBE_TIMEOUT_MS = 10_000;
 // A batch runs dozens of cases; a case that never returns must fail the test, not stall the worker.
 export const SHELL_RUN_TIMEOUT_MS = 50_000;
+const TIMEOUT_ERROR_CODE = "ETIMEDOUT";
 
 /**
  * The environment for running a shell: when the shell is an absolute path (Git for Windows
@@ -91,6 +92,7 @@ export function runShellCases(
   shell: string,
   prelude: string,
   bodies: readonly string[],
+  timeoutMs: number = SHELL_RUN_TIMEOUT_MS,
 ): ShellCaseResult[] {
   // A fresh id per run, so a case cannot print text that parses as its own or another marker.
   const runId = randomUUID();
@@ -104,12 +106,14 @@ export function runShellCases(
     input: `${prelude}\n${cases.join("")}`,
     encoding: "utf8",
     env: shellEnv(shell),
-    timeout: SHELL_RUN_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   if (result.error !== undefined) {
-    throw new Error(
-      `shell did not finish ${bodies.length} cases within ${SHELL_RUN_TIMEOUT_MS} ms: ${result.error.message}`,
-    );
+    const timedOut = (result.error as NodeJS.ErrnoException).code === TIMEOUT_ERROR_CODE;
+    const what = timedOut
+      ? `shell did not finish ${bodies.length} cases within ${timeoutMs} ms`
+      : "shell failed to run";
+    throw new Error(`${what}: ${result.error.message}`);
   }
   const results = new Map<number, ShellCaseResult>();
   const pattern = new RegExp(`${begin} (\\d+)\\n([\\s\\S]*?)\\n${end} \\1 (\\d+)\\n`, "g");

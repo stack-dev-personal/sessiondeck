@@ -18,6 +18,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const FAKE_DOCKER_SOURCE = join(here, "fake-docker.mjs");
 const SECRET_ENV = /token|secret|password|api_key/i;
 const SCRUBBED_PREFIXES = ["SPRINT_", "FAKE_DOCKER_", "ANTHROPIC_", "DOCKER_"];
+const PROBE_TIMEOUT_MS = 30_000;
 export const SENTINEL = "SENTINEL-must-never-be-read-9f3a";
 export const SPRINT_SCRIPTS = join(REPO_ROOT, "scripts", "sprint");
 
@@ -30,7 +31,7 @@ function probe(command: string): Shell | undefined {
   const r = spawnSync(
     command,
     ["-NoProfile", "-NonInteractive", "-Command", "(Get-Process -Id $PID).Path"],
-    { encoding: "utf8", windowsHide: true },
+    { encoding: "utf8", windowsHide: true, timeout: PROBE_TIMEOUT_MS },
   );
   if (r.status !== 0 || !r.stdout) return undefined;
   return { path: r.stdout.trim(), name: command };
@@ -46,6 +47,8 @@ function detectShell(): Shell | undefined {
 export const SHELL = detectShell();
 export const SKIP_REASON =
   "neither pwsh nor powershell.exe (Windows) was found, so the sprint PowerShell tests cannot run here";
+// Same rule as sprint-shell-helper.test.ts: in CI a missing shell fails the run instead of skipping.
+if (process.env.CI && SHELL === undefined) throw new Error(SKIP_REASON);
 
 export interface DockerCall {
   key: string;

@@ -10,6 +10,8 @@ if (process.env.CI && SH === undefined) {
 const itSh = it.skipIf(SH === undefined);
 const SHELL = SH ?? "sh";
 const REFUSED_STATUS = 64;
+const SHORT_TIMEOUT_MS = 500;
+const MISSING_SHELL = "sd-no-such-shell-binary";
 
 describe("runShellCases", () => {
   itSh("returns output and status per case, in order", () => {
@@ -33,6 +35,16 @@ describe("runShellCases", () => {
 
   itSh("throws when the shell ends before a case reports", () => {
     expect(() => runShellCases(SHELL, "", ["exit 3"])).toThrow(/produced no result/);
+  });
+
+  itSh("reports a timeout when the batch outlives timeoutMs", () => {
+    expect(() => runShellCases(SHELL, "", ["sleep 5"], SHORT_TIMEOUT_MS)).toThrow(
+      /did not finish 1 cases within 500 ms/,
+    );
+  });
+
+  it("says the shell failed to run, not timed out, when it cannot start", () => {
+    expect(() => runShellCases(MISSING_SHELL, "", ["true"])).toThrow(/shell failed to run/);
   });
 
   it("finds no shell when the probe is forced to fail", () => {
