@@ -18,7 +18,9 @@
 set -uo pipefail
 
 # Git Bash would rewrite /var/run/docker.sock and /state style arguments into
-# Windows paths before docker sees them.
+# Windows paths before docker sees them. Conversion is therefore off, and every
+# path handed to a native tool (docker.exe, git.exe) is built in Windows form
+# (C:/...) by to_native; that form also works for bash itself.
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL='*'
 
@@ -36,12 +38,19 @@ readonly SIBLING="$PREFIX-sibling"
 # the stub writes status.json (the documented smoke test).
 readonly TEST_SPRINT_ID=smoke
 readonly TEST_BRANCH=sprint/u2test
+# A project name that cannot be the real sprint-<id> project of the same id.
+readonly COMPOSE_PROJECT=sd-0-s0c-harness
+readonly EXIT_CONFIG=64
+readonly REDACTION_MARKER="[REDACTED]"
+readonly STUB_PATH_IN_REPO=infra/sprint/test/claude-stub.sh
+readonly AUTH_PATTERN="auth|login|log in|token|401|credential"
 readonly REAL_BINARY_TIMEOUT_S=60
 readonly OUTPUT_HEAD_LINES=5
 readonly OUTPUT_LINE_MAX=300
 readonly OAUTH_PLACEHOLDER="placeholder-oauth-not-a-token"
 readonly GH_PLACEHOLDER="placeholder-gh-not-a-token"
 readonly API_PLACEHOLDER="placeholder-api-not-a-key"
+readonly BASE_URL_PLACEHOLDER="https://placeholder-host-not-a-value.invalid"
 readonly SHELLCHECK_IMAGE="koalaman/shellcheck:stable"
 
 # --- Arguments and gate ---
@@ -71,16 +80,16 @@ to_native() {
   if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else echo "$1"; fi
 }
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-sprint_dir="$(cd "$here/.." && pwd)"
-repo_root="$(cd "$sprint_dir/../.." && pwd)"
+here="$(to_native "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)")"
+sprint_dir="$(to_native "$(cd "$here/.." && pwd)")"
+repo_root="$(to_native "$(cd "$sprint_dir/../.." && pwd)")"
 mkdir -p "$out_dir"
+out_dir="$(to_native "$out_dir")"
 out_file="$out_dir/$OUTPUT_NAME"
 : >"$out_file"
 exec > >(tee "$out_file") 2>&1
 
-tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/$PREFIX.XXXXXX")"
-tmp_native="$(to_native "$tmp_dir")"
+tmp_dir="$(to_native "$(mktemp -d "${TMPDIR:-/tmp}/$PREFIX.XXXXXX")")"
 state_root="$tmp_dir/state"
 state_dir="$state_root/$TEST_SPRINT_ID"
 mkdir -p "$state_dir/logs"
@@ -129,13 +138,14 @@ compose() {
     SPRINT_BRANCH="$TEST_BRANCH" \
     SPRINT_REPO_URL=/remote/repo.git \
     SPRINT_IMAGE="$IMAGE" \
-    SPRINT_ENV_FILE="$tmp_native/test.env" \
-    SPRINT_STATE_ROOT="$tmp_native/state" \
+    SPRINT_ENV_FILE="$tmp_dir/test.env" \
+    SPRINT_STATE_ROOT="$tmp_dir/state" \
     HARNESS_CONTAINER="$RUN_CONTAINER" \
     HARNESS_WORK_VOLUME="$WORK_VOLUME" \
-    HARNESS_STUB="$(to_native "$here/claude-stub.sh")" \
-    HARNESS_REMOTE="$tmp_native/remote.git" \
-    docker compose -f "$sprint_dir/docker-compose.yml" -f "$here/docker-compose.test.yml" "$@"
+    HARNESS_STUB="$here/claude-stub.sh" \
+    HARNESS_REMOTE="$tmp_dir/remote.git" \
+    HARNESS_SYSTEM_GITCONFIG="$tmp_dir/system-gitconfig" \
+    docker compose -p "$COMPOSE_PROJECT" -f "$sprint_dir/docker-compose.yml" -f "$here/docker-compose.test.yml" "$@"
 }
 
 # --- Fixtures ---
@@ -148,7 +158,21 @@ make_fixtures() {
   printf 'Write /state/smoke/status.json with state green and exit.\nSecond line with "quotes" and $dollar.\n' >"$prompt_file"
   git clone --quiet --bare "$repo_root" "$remote_dir"
   git -C "$remote_dir" branch "$TEST_BRANCH" HEAD
-  chmod +x "$here/claude-stub.sh"
+  # The bare repo is bind-mounted and owned by another uid; trust it for this
+  # test only, through the system git config of the test container.
+  printf '[safe]\n\tdirectory = /remote/repo.git\n' >"$tmp_dir/system-gitconfig"
+}
+
+# The stub is bind-mounted and executed as-is, so it must be committed
+# executable (git update-index --chmod=+x); the harness never changes tracked modes.
+require_executable_stub() {
+  local mode
+  mode="$(git -C "$repo_root" ls-files -s -- "$STUB_PATH_IN_REPO" | cut -d' ' -f1)"
+  if [ "$mode" != "100755" ]; then
+    echo "refused: $STUB_PATH_IN_REPO has index mode '$mode', expected 100755." >&2
+    echo "Run: git update-index --chmod=+x $STUB_PATH_IN_REPO" >&2
+    exit 1
+  fi
 }
 
 # read_fact <facts-file> <key>
@@ -197,12 +221,18 @@ check_1_contents() {
 # Runs the stub container to completion; sets run_rc and run_seconds.
 run_stub_container() {
   local start=$SECONDS
-  rm -f "$state_dir/status.json"
+  # Remove every per-run artifact so a run that never starts the stub cannot
+  # pass on the previous run's files. entrypoint.log is cumulative on purpose.
+  rm -f "$state_dir/status.json" "$state_dir/logs/stub-facts.txt" \
+    "$state_dir/logs/claude-argv.bin" "$state_dir/logs/sprint.jsonl" \
+    "$tmp_dir/container.log" "$tmp_dir/gitconfig"
   compose up -d --no-build >/dev/null
   run_rc="$(docker wait "$RUN_CONTAINER")"
   run_seconds=$((SECONDS - start))
   docker logs "$RUN_CONTAINER" >"$tmp_dir/container.log" 2>&1
-  docker cp "$RUN_CONTAINER:/home/sprint/.gitconfig" "$tmp_dir/gitconfig" >/dev/null 2>&1 || : >"$tmp_dir/gitconfig"
+  # On failure no file is left, and expect_clean then fails instead of passing.
+  docker cp "$RUN_CONTAINER:/home/sprint/.gitconfig" "$tmp_dir/gitconfig" >/dev/null 2>&1 ||
+    rm -f "$tmp_dir/gitconfig"
   compose down --remove-orphans >/dev/null 2>&1
 }
 
@@ -269,42 +299,94 @@ check_5_real_binary() {
         fail "5 root is refused with the documented message" "exit $rc"
       fi
     else
-      if [ "$rc" -ne 124 ] && [ "$rc" -ne 0 ]; then
-        pass "5 non-root does not hang and ends with an error (expected: authentication failure)" "exit $rc"
+      # 124 is timeout's "hung", 126 and 127 mean the command could not run.
+      if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] && [ "$rc" -ne 126 ] && [ "$rc" -ne 127 ] &&
+        echo "$out" | grep -qiE "$AUTH_PATTERN"; then
+        pass "5 non-root does not hang and fails with an authentication error" "exit $rc"
       else
-        fail "5 non-root does not hang and ends with an error" "exit $rc (124 means it hung); report the output above verbatim"
+        fail "5 non-root does not hang and fails with an authentication error" "exit $rc (124 hung, 126/127 not runnable, or no auth message); report the output above verbatim"
       fi
     fi
   done
 }
 
-count_matches() { grep -rlF -e "$OAUTH_PLACEHOLDER" -e "$GH_PLACEHOLDER" "$@" 2>/dev/null | wc -l | tr -d ' '; }
-
-check_6_hygiene() {
-  expect_zero "6 docker logs" "$(count_matches "$tmp_dir/container.log")"
-  expect_zero "6 /state/<id>/logs/*" "$(count_matches "$state_dir/logs")"
-  expect_zero "6 ~/.gitconfig of the run" "$(count_matches "$tmp_dir/gitconfig")"
-  docker run --rm --name "$PREFIX-gitconfig" -v "$WORK_VOLUME:/work:ro" --entrypoint cat "$IMAGE" /work/.git/config >"$tmp_dir/work-git-config" 2>&1
-  expect_zero "6 /work/.git/config" "$(count_matches "$tmp_dir/work-git-config")"
-  docker history --no-trunc "$IMAGE" >"$tmp_dir/history.txt" 2>&1
-  expect_zero "6 docker history --no-trunc" "$(count_matches "$tmp_dir/history.txt")"
+# expect_clean <name> <file-or-dir>: PASS only when the target exists, is not
+# empty, and holds no placeholder token; a missing or empty target, or a grep
+# error (exit 2), is a FAIL, never a zero count.
+expect_clean() {
+  local name=$1 target=$2 rc
+  if [ -d "$target" ]; then
+    if [ -z "$(find "$target" -type f -size +0c -print -quit)" ]; then
+      fail "$name" "directory has no non-empty file: $target"
+      return
+    fi
+  elif [ ! -s "$target" ]; then
+    fail "$name" "file missing or empty: $target"
+    return
+  fi
+  grep -rlF -e "$OAUTH_PLACEHOLDER" -e "$GH_PLACEHOLDER" "$target" >/dev/null 2>&1
+  rc=$?
+  case "$rc" in
+    1) pass "$name" "0 matches" ;;
+    0) fail "$name" "a placeholder token is present" ;;
+    *) fail "$name" "grep failed with status $rc" ;;
+  esac
 }
 
-# run_guard <name> <env-lines...>: the entrypoint must fail naming the variable.
+# expect_marker <name> <file>: the redaction marker must appear at least once,
+# which proves the leak probe reached the output and was replaced.
+expect_marker() {
+  local name=$1 target=$2 count
+  count="$(grep -cF -e "$REDACTION_MARKER" "$target" 2>/dev/null || true)"
+  if [ -n "$count" ] && [ "$count" -ge 1 ]; then
+    pass "$name" "$count line(s) carry $REDACTION_MARKER"
+  else
+    fail "$name" "no $REDACTION_MARKER found in $target"
+  fi
+}
+
+# capture_or_fail <name> <outfile> <command...>: runs a command into a file and
+# FAILs (returning 1) when the command itself fails.
+capture_or_fail() {
+  local name=$1 outfile=$2
+  shift 2
+  if "$@" >"$outfile" 2>&1; then return 0; fi
+  fail "$name" "command failed: $*"
+  return 1
+}
+
+check_6_hygiene() {
+  expect_clean "6 docker logs" "$tmp_dir/container.log"
+  expect_marker "6 docker logs show the redaction marker" "$tmp_dir/container.log"
+  expect_clean "6 /state/<id>/logs/*" "$state_dir/logs"
+  expect_clean "6 sprint.jsonl" "$state_dir/logs/sprint.jsonl"
+  expect_marker "6 sprint.jsonl shows the redaction marker" "$state_dir/logs/sprint.jsonl"
+  expect_clean "6 ~/.gitconfig of the run" "$tmp_dir/gitconfig"
+  if capture_or_fail "6 /work/.git/config" "$tmp_dir/work-git-config" \
+    docker run --rm --name "$PREFIX-gitconfig" -v "$WORK_VOLUME:/work:ro" --entrypoint cat "$IMAGE" /work/.git/config; then
+    expect_clean "6 /work/.git/config" "$tmp_dir/work-git-config"
+  fi
+  if capture_or_fail "6 docker history --no-trunc" "$tmp_dir/history.txt" docker history --no-trunc "$IMAGE"; then
+    expect_clean "6 docker history --no-trunc" "$tmp_dir/history.txt"
+  fi
+}
+
+# run_guard <name> <env-var-to-name> <env-lines...>: the entrypoint must exit
+# with the configuration status, name the variable, and print no value.
 run_guard() {
   local name=$1 expect_var=$2
   shift 2
   printf '%s\n' "$@" >"$tmp_dir/guard.env"
   local out rc
-  out="$(docker run --rm --name "$PREFIX-guard" --env-file "$tmp_native/guard.env" \
+  out="$(docker run --rm --name "$PREFIX-guard" --env-file "$tmp_dir/guard.env" \
     -e SPRINT_ID=guard -e SPRINT_REPO_URL=/nowhere "$IMAGE" 2>&1)"
   rc=$?
-  if [ "$rc" -ne 0 ] && echo "$out" | grep -q "$expect_var"; then
+  if [ "$rc" -eq "$EXIT_CONFIG" ] && echo "$out" | grep -q "$expect_var"; then
     pass "7 guard: $name" "exit $rc, message names $expect_var"
   else
-    fail "7 guard: $name" "exit $rc, output: $(echo "$out" | head -n 2)"
+    fail "7 guard: $name" "exit $rc (expected $EXIT_CONFIG), output: $(echo "$out" | head -n 2)"
   fi
-  if echo "$out" | grep -qF -e "$OAUTH_PLACEHOLDER" -e "$GH_PLACEHOLDER" -e "$API_PLACEHOLDER"; then
+  if echo "$out" | grep -qF -e "$OAUTH_PLACEHOLDER" -e "$GH_PLACEHOLDER" -e "$API_PLACEHOLDER" -e "$BASE_URL_PLACEHOLDER"; then
     fail "7 guard: $name message has no value" "a placeholder value was printed"
   else
     pass "7 guard: $name message has no value" "no placeholder in output"
@@ -318,6 +400,15 @@ check_7_guards() {
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "ANTHROPIC_API_KEY=$API_PLACEHOLDER"
   run_guard "ANTHROPIC_AUTH_TOKEN set" ANTHROPIC_AUTH_TOKEN \
     "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "ANTHROPIC_AUTH_TOKEN=$API_PLACEHOLDER"
+  # Environment allow-list: variables that could redirect the token or run code.
+  run_guard "ANTHROPIC_BASE_URL not on the allow-list" ANTHROPIC_BASE_URL \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "ANTHROPIC_BASE_URL=$BASE_URL_PLACEHOLDER"
+  run_guard "HTTPS_PROXY not on the allow-list" HTTPS_PROXY \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "HTTPS_PROXY=$BASE_URL_PLACEHOLDER"
+  run_guard "BASH_ENV not on the allow-list" BASH_ENV \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "BASH_ENV=/state/guard/evil.sh"
+  run_guard "LD_PRELOAD not on the allow-list" LD_PRELOAD \
+    "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_PLACEHOLDER" "GH_TOKEN=$GH_PLACEHOLDER" "LD_PRELOAD=/state/guard/evil.so"
 }
 
 check_8_second_run() {
@@ -345,7 +436,8 @@ check_9_shellcheck() {
 
 # --- Main ---
 
-echo "harness start: image=$IMAGE temp=$tmp_dir"
+echo "harness start: image=$IMAGE temp=$tmp_dir project=$COMPOSE_PROJECT"
+require_executable_stub
 make_fixtures
 build_image
 check_1_contents

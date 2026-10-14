@@ -5,7 +5,9 @@
 #
 # Secret hygiene: this script never enables tracing, never dumps the
 # environment, and only ever names a token variable, never prints its value.
-set -euo pipefail
+#
+# -E makes the ERR trap (set after the log file exists) fire inside functions too.
+set -Eeuo pipefail
 
 readonly SPRINT_USER=sprint
 readonly DOCKER_SOCKET=/var/run/docker.sock
@@ -13,6 +15,52 @@ readonly WORK_DIR=/work
 readonly STATE_ROOT=/state
 readonly SPRINT_AGENT=sd-sprint-orchestrator
 readonly EXIT_CONFIG=64
+readonly REDACTION_MARKER="[REDACTED]"
+
+# --- Environment allow-list (runs first, as root, before any drop) ---
+#
+# env_file passes every line of .sprint/env into the environment. Anything that
+# can redirect the OAuth token (ANTHROPIC_BASE_URL, proxies, Bedrock or Vertex
+# switches) or run code in this root shell (BASH_ENV, LD_PRELOAD, exported
+# BASH_FUNC_* functions) would defeat the token-only-through-env_file rule, so
+# every variable not named here is refused. The list is: the two tokens, SPRINT_*,
+# the names the Dockerfile sets with ENV, and what Docker, bash and the node base
+# image add themselves (checked against a stock node:22.23.3-bookworm-slim).
+# Names only are printed, never values. The input is the process's initial
+# environment, which also exposes exported bash functions.
+# BEGIN env-allow-list
+readonly -a ALLOWED_ENV_NAMES=(
+  CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN
+  DEBIAN_FRONTEND DISABLE_AUTOUPDATER CLAUDE_CONFIG_DIR HOME GIT_TERMINAL_PROMPT GH_PROMPT_DISABLED
+  PATH HOSTNAME TERM PWD OLDPWD SHLVL _ NODE_VERSION YARN_VERSION
+)
+
+env_name_allowed() {
+  local name=$1 allowed
+  case $name in SPRINT_*) return 0 ;; esac
+  for allowed in "${ALLOWED_ENV_NAMES[@]}"; do
+    if [ "$name" = "$allowed" ]; then return 0; fi
+  done
+  return 1
+}
+
+# Reads NUL-separated NAME=value entries on stdin; prints each refused NAME.
+refuse_unlisted_environment() {
+  local entry name refused=0
+  while IFS= read -r -d '' entry; do
+    name=${entry%%=*}
+    if ! env_name_allowed "$name"; then
+      printf 'entrypoint: ERROR: environment variable %q is not on the allow-list; remove it from .sprint/env\n' "$name" >&2
+      refused=1
+    fi
+  done
+  if [ "$refused" -ne 0 ]; then
+    exit "$EXIT_CONFIG"
+  fi
+}
+# END env-allow-list
+
+refuse_unlisted_environment </proc/self/environ
 
 # Git asks this helper for credentials. The single quotes keep ${GH_TOKEN}
 # literal here: it is expanded by git's shell at use time, from the environment,
@@ -22,12 +70,6 @@ readonly EXIT_CONFIG=64
 # exits 0, so git never sees a failing helper.
 # shellcheck disable=SC2016 # literal on purpose, see above
 readonly CREDENTIAL_HELPER='!f() { if [ "$1" = get ]; then echo username=x-access-token; echo "password=${GH_TOKEN}"; fi; }; f'
-
-# Headless "claude -p" stops background tasks ten minutes after the main turn
-# goes idle and then exits; that killed a real orchestrator run that was waiting
-# on background subagents. Zero removes the ceiling so the orchestrator decides
-# when it is done. Exported at top level so every claude process inherits it.
-export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 
 # --- Stage 1 (root only): make the docker socket usable, then drop for good ---
 #
@@ -40,10 +82,15 @@ export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 # inside the container; on a Linux host it is root:docker (gid varies). Rather
 # than chmod the socket or keep root, read its gid and hand that gid to the
 # session user as a supplementary group, then re-exec this script unprivileged.
-# setpriv drops the bounding set and sets no_new_privs, so neither the session
-# nor anything it spawns can regain root. On Docker Desktop the gid is 0, so the
-# session user also holds group root; that grants nothing beyond the socket,
-# which is already root-equivalent on the VM and is the point of mounting it.
+#
+# This is NOT a security boundary. The non-root user exists only because claude
+# refuses --dangerously-skip-permissions as root. A process that holds the
+# socket's group can ask the daemon to start containers as root (docker exec -u 0
+# into this container, docker run --privileged -v /:/host), which is
+# root-equivalent on the host or the Docker Desktop VM. setpriv and no_new_privs
+# only stop in-container escalation; they cannot stop that, because the daemon
+# starts those processes outside this process tree. On Docker Desktop the
+# socket gid is 0, so the session user also holds group root.
 if [ "$(id -u)" -eq 0 ]; then
   groups_arg="--clear-groups"
   if [ -S "$DOCKER_SOCKET" ]; then
@@ -57,6 +104,13 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 # --- Stage 2 (non-root) ---
+
+# Headless "claude -p" stops background tasks ten minutes after the main turn
+# goes idle and then exits; that killed a real orchestrator run that was waiting
+# on background subagents. Zero removes the ceiling so the orchestrator decides
+# when it is done. Exported here, after the allow-list check, so every claude
+# process inherits it.
+export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 
 LOG_FILE=""
 
@@ -114,6 +168,12 @@ if ! mkdir -p "$STATE_DIR/logs" 2>/dev/null; then
   die "cannot create $STATE_DIR/logs; check that .sprint/$SPRINT_ID is mounted and writable"
 fi
 LOG_FILE="$STATE_DIR/logs/entrypoint.log"
+# Under set -e a failing step would otherwise exit without a reason in the log.
+# shellcheck disable=SC2329 # invoked by the ERR trap below
+report_failure() {
+  log "failed at line $2 with status $1"
+}
+trap 'report_failure "$?" "$LINENO"' ERR
 
 log "start: sprint=$SPRINT_ID uid=$(id -u) gid=$(id -g) groups=$(id -G | tr ' ' ',')"
 log "tokens present: CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN (values never logged)"
@@ -169,13 +229,79 @@ else
 fi
 
 # --- Run the level-1 prompt headless (infra/sprint/README.md) ---
-# pipefail makes the pipeline's status claude's, not tee's.
+#
+# Everything claude prints passes through redact_stream before it reaches
+# sprint.jsonl or docker logs, because a session can print its own environment
+# (env, gh auth token). The exact values are read from the environment, never
+# from argv. A token that JSON escaping would alter (quotes, backslashes) is not
+# matched; real tokens are plain ASCII.
+#
+# claude runs in the background so this script (PID 1) can forward docker stop's
+# SIGTERM to it; a foreground bash would ignore the signal and docker would
+# SIGKILL claude and its subagents ten seconds later. The streams reach the
+# filters through named pipes so claude's own exit status stays available.
+
+redact_stream() {
+  awk -v marker="$REDACTION_MARKER" '
+    function redact(line, secret,   out, pos) {
+      if (secret == "") return line
+      out = ""
+      while ((pos = index(line, secret)) > 0) {
+        out = out substr(line, 1, pos - 1) marker
+        line = substr(line, pos + length(secret))
+      }
+      return out line
+    }
+    BEGIN {
+      oauth = ENVIRON["CLAUDE_CODE_OAUTH_TOKEN"]
+      gh = ENVIRON["GH_TOKEN"]
+    }
+    { print redact(redact($0, oauth), gh); fflush() }
+  '
+}
 
 cd "$WORK_DIR"
 log "launching claude headless; stream goes to $SESSION_LOG"
-rc=0
+fifo_dir="$(mktemp -d)"
+out_fifo="$fifo_dir/out"
+err_fifo="$fifo_dir/err"
+mkfifo "$out_fifo" "$err_fifo"
+redact_stream <"$out_fifo" | tee "$SESSION_LOG" &
+out_filter_pid=$!
+redact_stream <"$err_fifo" >&2 &
+err_filter_pid=$!
+
+claude_pid=""
+# shellcheck disable=SC2329 # invoked by the trap below
+forward_signal() {
+  if [ -n "$claude_pid" ]; then
+    kill -TERM "$claude_pid" 2>/dev/null || true
+  fi
+}
+trap forward_signal TERM INT
+
 claude -p "$(cat "$PROMPT_FILE")" --agent "$SPRINT_AGENT" \
-  --dangerously-skip-permissions --output-format stream-json --verbose |
-  tee "$SESSION_LOG" || rc=$?
+  --dangerously-skip-permissions --output-format stream-json --verbose \
+  >"$out_fifo" 2>"$err_fifo" &
+claude_pid=$!
+
+rc=0
+wait "$claude_pid" || rc=$?
+# A trapped signal interrupts the first wait (status above 128); the second
+# returns claude's real status once it has exited.
+if [ "$rc" -gt 128 ]; then
+  wait "$claude_pid" || rc=$?
+fi
+
+filter_rc=0
+wait "$out_filter_pid" || filter_rc=$?
+wait "$err_filter_pid" || true
+rm -f "$out_fifo" "$err_fifo"
+rmdir "$fifo_dir"
+
 log "claude exited with status $rc"
+if [ "$rc" -eq 0 ] && [ "$filter_rc" -ne 0 ]; then
+  log "output filter failed with status $filter_rc"
+  rc=$filter_rc
+fi
 exit "$rc"

@@ -20,6 +20,7 @@ const entrypoint = read("entrypoint.sh");
 const dockerfile = read("Dockerfile");
 const compose = read("docker-compose.yml");
 const override = read("test", "docker-compose.test.yml");
+const harness = read("test", "check-sprint-image.sh");
 
 describe("sprint entrypoint", () => {
   it("starts with the bash shebang and contains no CR bytes", () => {
@@ -37,7 +38,7 @@ describe("sprint entrypoint", () => {
   });
 
   it("fails fast and never traces or dumps the environment", () => {
-    expect(entrypoint).toMatch(/^set -euo pipefail$/m);
+    expect(entrypoint).toMatch(/^set -Eeuo pipefail$/m);
     expect(entrypoint).not.toMatch(/set\s+-[a-z]*x/);
     expect(entrypoint).not.toMatch(/set\s+-o\s+xtrace/);
     expect(entrypoint).not.toMatch(/\bprintenv\b/);
@@ -76,6 +77,130 @@ describe("sprint entrypoint", () => {
     expect(entrypoint).not.toMatch(/stub/i);
     expect(compose).not.toMatch(/stub/i);
   });
+
+  it("logs the reason when a step fails under set -e", () => {
+    const logFileAt = entrypoint.indexOf('LOG_FILE="$STATE_DIR/logs/entrypoint.log"');
+    const trapAt = entrypoint.indexOf('trap \'report_failure "$?" "$LINENO"\' ERR');
+    expect(logFileAt).toBeGreaterThan(-1);
+    expect(trapAt).toBeGreaterThan(logFileAt);
+    expect(entrypoint).toContain('log "failed at line $2 with status $1"');
+  });
+
+  it("forwards SIGTERM and SIGINT to claude and keeps its exit status", () => {
+    expect(entrypoint).toMatch(/trap forward_signal TERM INT/);
+    expect(entrypoint).toMatch(/forward_signal\(\) \{[^}]*kill -TERM "\$claude_pid"/s);
+    expect(entrypoint).toMatch(/wait "\$claude_pid" \|\| rc=\$\?/);
+  });
+
+  it("passes claude's stdout and stderr through the token filter before tee or docker logs", () => {
+    expect(entrypoint).toMatch(/redact_stream <"\$out_fifo" \| tee "\$SESSION_LOG"/);
+    expect(entrypoint).toMatch(/redact_stream <"\$err_fifo" >&2/);
+    expect(entrypoint).toMatch(/>"\$out_fifo" 2>"\$err_fifo" &/);
+    // the claude command no longer pipes straight into tee
+    expect(entrypoint).not.toMatch(/--verbose\s*\|\s*tee/);
+  });
+
+  it("reads the secrets for the filter from the environment, never from argv", () => {
+    const filter = /redact_stream\(\) \{[\s\S]*?\n\}\n/.exec(entrypoint)?.[0] ?? "";
+    expect(filter).toContain('ENVIRON["CLAUDE_CODE_OAUTH_TOKEN"]');
+    expect(filter).toContain('ENVIRON["GH_TOKEN"]');
+    expect(filter).not.toMatch(/-v\s+\w+="?\$\{?(CLAUDE_CODE_OAUTH_TOKEN|GH_TOKEN)/);
+    expect(filter).toContain("index(line, secret)");
+    expect(filter).not.toMatch(/gsub|sub\(|match\(/);
+  });
+
+  it("states that the non-root user is not a security boundary", () => {
+    expect(entrypoint).toContain("NOT a security boundary");
+    expect(entrypoint).toContain("root-equivalent");
+    expect(entrypoint).not.toContain("grants nothing beyond the socket");
+    expect(entrypoint).not.toContain("can regain root");
+  });
+});
+
+// Names set by ENV instructions, including continuation lines.
+function envNamesFrom(text: string): string[] {
+  const names: string[] = [];
+  let inEnv = false;
+  for (const line of text.split("\n")) {
+    if (/^ENV\s/.test(line)) inEnv = true;
+    if (inEnv) {
+      for (const match of line.matchAll(/(?:^ENV\s+|^\s+)([A-Za-z_][A-Za-z0-9_]*)=/g)) {
+        names.push(match[1] ?? "");
+      }
+      inEnv = line.trimEnd().endsWith("\\");
+    }
+  }
+  return names;
+}
+
+describe("sprint entrypoint environment allow-list", () => {
+  const block =
+    /# BEGIN env-allow-list\n([\s\S]*?)# END env-allow-list/.exec(entrypoint)?.[1] ?? "";
+  const allowedNames = /ALLOWED_ENV_NAMES=\(([\s\S]*?)\n\)/.exec(block)?.[1]?.split(/\s+/) ?? [];
+
+  function run(names: string[]): { status: number | null; stderr: string } {
+    const quoted = names.map((entry) => `'${entry}'`).join(" ");
+    const script = `readonly EXIT_CONFIG=64\n${block}\nprintf '%s\\0' ${quoted} | refuse_unlisted_environment\n`;
+    const result = spawnSync("bash", ["-s"], { input: script, encoding: "utf8" });
+    return { status: result.status, stderr: result.stderr };
+  }
+
+  it("runs before the privilege drop and before anything is exported", () => {
+    const checkAt = entrypoint.indexOf("refuse_unlisted_environment </proc/self/environ");
+    expect(checkAt).toBeGreaterThan(-1);
+    expect(checkAt).toBeLessThan(entrypoint.indexOf("setpriv"));
+    expect(checkAt).toBeLessThan(entrypoint.indexOf("export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"));
+  });
+
+  it("allows the tokens, SPRINT_*, and every name the Dockerfile sets with ENV", () => {
+    const dockerfileNames = envNamesFrom(dockerfile);
+    expect(dockerfileNames.length).toBeGreaterThan(3);
+    for (const name of [...dockerfileNames, ...TOKEN_NAMES]) {
+      expect(allowedNames).toContain(name);
+    }
+  });
+
+  it("does not allow anything that could redirect the token or run code", () => {
+    for (const name of [
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "BASH_ENV",
+      "LD_PRELOAD",
+      "NODE_OPTIONS",
+      "HTTPS_PROXY",
+    ]) {
+      expect(allowedNames).not.toContain(name);
+    }
+    expect(allowedNames.some((name) => name.startsWith("GIT_CONFIG"))).toBe(false);
+  });
+
+  it("accepts a clean environment", () => {
+    const result = run([
+      "PATH=/usr/bin",
+      "CLAUDE_CODE_OAUTH_TOKEN=x",
+      "GH_TOKEN=y",
+      "SPRINT_ID=0",
+      "_=/usr/bin/setpriv",
+      "HOME=/home/sprint",
+    ]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("refuses unlisted variables with exit 64, naming them and never their values", () => {
+    const result = run([
+      "PATH=/usr/bin",
+      "ANTHROPIC_BASE_URL=https://secret-value-host.invalid",
+      "BASH_FUNC_id%%=() { :; }",
+      "LD_PRELOAD=/secret-value.so",
+    ]);
+    expect(result.status).toBe(64);
+    expect(result.stderr).toContain("ANTHROPIC_BASE_URL");
+    expect(result.stderr).toContain("LD_PRELOAD");
+    expect(result.stderr).toContain("BASH_FUNC_id%%");
+    expect(result.stderr).not.toContain("secret-value");
+  });
 });
 
 describe("sprint Dockerfile", () => {
@@ -92,6 +217,22 @@ describe("sprint Dockerfile", () => {
 
   it("does not reference .sprint", () => {
     expect(dockerfile).not.toMatch(/\.sprint\b/);
+  });
+
+  it("pins the base image by tag and digest", () => {
+    expect(dockerfile).toMatch(/^FROM node:22\.23\.3-bookworm@sha256:[0-9a-f]{64}$/m);
+  });
+
+  it("verifies the GitHub CLI keyring against both published fingerprints", () => {
+    expect(dockerfile).toContain("gpg --show-keys --with-colons /etc/apt/keyrings/githubcli.gpg");
+    expect(dockerfile).toContain("2C6106201985B60E6C7AC87323F3D4EA75716059");
+    expect(dockerfile).toContain("7F38BBB59D064DBCB3D84D725612B36462313325");
+    expect(dockerfile).toContain("exit 1");
+    const verifyAt = dockerfile.indexOf("gpg --show-keys");
+    expect(verifyAt).toBeGreaterThan(-1);
+    expect(verifyAt).toBeLessThan(
+      dockerfile.indexOf("apt-get install -y --no-install-recommends gh"),
+    );
   });
 
   it("pins pnpm to the root packageManager version", () => {
@@ -139,5 +280,54 @@ describe("sprint compose file", () => {
   it("leaves the stub to the test override only", () => {
     expect(override).toContain("HARNESS_STUB");
     expect(override).toContain("/usr/local/sbin/claude");
+  });
+
+  it("says the socket is root-equivalent and the container is not a boundary", () => {
+    expect(compose).toContain("root-equivalent");
+    expect(compose).toContain("not a security boundary");
+  });
+
+  it("gives the test container no environment the entrypoint allow-list would refuse", () => {
+    expect(override).not.toMatch(/GIT_CONFIG/);
+    expect(override).toContain("/etc/gitconfig");
+  });
+});
+
+describe("sprint container harness", () => {
+  it("uses its own compose project, never sprint-<id>", () => {
+    expect(harness).toMatch(/readonly COMPOSE_PROJECT=sd-0-s0c-harness$/m);
+    expect(harness).toContain('docker compose -p "$COMPOSE_PROJECT"');
+    expect(harness).not.toMatch(/COMPOSE_PROJECT=sprint-/);
+  });
+
+  it("builds every path for native tools in Windows form", () => {
+    expect(harness).toMatch(/^here="\$\(to_native /m);
+    expect(harness).toMatch(/^sprint_dir="\$\(to_native /m);
+    expect(harness).toMatch(/^repo_root="\$\(to_native /m);
+    expect(harness).toMatch(/^tmp_dir="\$\(to_native "\$\(mktemp/m);
+    expect(harness).not.toMatch(/\$tmp_native/);
+  });
+
+  it("does not change file modes of tracked files", () => {
+    expect(harness).not.toMatch(/chmod \+x/);
+    expect(harness).toContain("require_executable_stub");
+  });
+
+  it("fails instead of passing when a checked file is missing or a command fails", () => {
+    expect(harness).toContain("expect_clean()");
+    expect(harness).toContain("file missing or empty");
+    expect(harness).toContain("capture_or_fail");
+    expect(harness).not.toMatch(/\|\| : >/);
+  });
+
+  it("requires an authentication message for the non-root real binary", () => {
+    expect(harness).toContain("AUTH_PATTERN");
+    expect(harness).toMatch(/-ne 126.*-ne 127/s);
+  });
+
+  it("clears per-run artifacts and proves the output filter and the allow-list", () => {
+    expect(harness).toContain('"$state_dir/logs/sprint.jsonl"');
+    expect(harness).toContain("expect_marker");
+    expect(harness).toContain("ANTHROPIC_BASE_URL not on the allow-list");
   });
 });

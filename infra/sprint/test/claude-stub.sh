@@ -4,9 +4,12 @@
 #
 # It records its argv (NUL separated, so a multi-line prompt survives) and a few
 # facts about the process, performs the smoke action, and prints one
-# stream-json result line. It never records or prints its environment: the only
-# secret-related output is a yes/no from comparing the git credential helper's
-# answer with GH_TOKEN.
+# stream-json result line. It never records its environment. The harness runs
+# it with placeholder tokens only; to prove the entrypoint's output filter it
+# deliberately prints both placeholder values, once to stdout and once to
+# stderr, as a session running `env` would. Otherwise the only secret-related
+# output is a yes/no from comparing the git credential helper's answer with
+# GH_TOKEN.
 set -euo pipefail
 
 readonly LOG_DIR="/state/${SPRINT_ID}/logs"
@@ -48,4 +51,6 @@ mkdir -p "$SMOKE_DIR"
 printf '{"state":"green"}\n' >"$SMOKE_DIR/status.json.tmp"
 mv "$SMOKE_DIR/status.json.tmp" "$SMOKE_DIR/status.json"
 
+printf '{"type":"assistant","text":"leak-probe %s %s"}\n' "$CLAUDE_CODE_OAUTH_TOKEN" "$GH_TOKEN"
+printf 'leak-probe-stderr %s %s\n' "$CLAUDE_CODE_OAUTH_TOKEN" "$GH_TOKEN" >&2
 echo '{"type":"result","subtype":"success","is_error":false,"result":"stub"}'

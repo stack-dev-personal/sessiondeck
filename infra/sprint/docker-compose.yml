@@ -31,6 +31,11 @@ services:
       # the repo root's .sprint directory.
       - ${SPRINT_STATE_ROOT:-../../.sprint}/${SPRINT_ID}:/state/${SPRINT_ID}
       # Lets sessions start sibling test containers (sd-<sprint>-<session>-*).
+      # Holding this socket (the session user gets its group, which is group 0
+      # on Docker Desktop) is root-equivalent on the host or the Docker Desktop
+      # VM: a session can docker exec -u 0 or docker run --privileged -v /:/host.
+      # The non-root user in the image exists only because claude refuses root;
+      # it is not a security boundary and neither is this container.
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:

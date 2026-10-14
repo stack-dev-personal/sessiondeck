@@ -7,11 +7,14 @@
 # above CLAUDE_CODE_OAUTH_TOKEN and would silently bill the API instead of the
 # subscription.
 
-# Pinned tag (not a floating "22") so rebuilds are reproducible. The full
-# (not slim) image is used because it already carries ca-certificates, which
-# apt needs to reach the mirrors over https (next step), and the compilers that
-# node-gyp falls back to when a native addon has no prebuilt binary.
-FROM node:22.23.3-bookworm
+# Pinned tag and index digest (not a floating "22") so rebuilds are
+# reproducible and a republished tag cannot change what runs with the tokens.
+# The digest was confirmed with `docker buildx imagetools inspect
+# node:22.23.3-bookworm` on 2026-10-14. The full (not slim) image is used
+# because it already carries ca-certificates, which apt needs to reach the
+# mirrors over https (next step), and the compilers that node-gyp falls back to
+# when a native addon has no prebuilt binary.
+FROM node:22.23.3-bookworm@sha256:0e5f906573693feaa1e21057ebdcfdb5bd5021f050b2dc7c9deceb629c7da2a8
 
 # Versions. PNPM_VERSION must equal the root package.json packageManager field
 # (scripts/test/sprint-image-static.test.ts enforces this).
@@ -34,12 +37,35 @@ RUN apt-get update \
       bash ca-certificates curl git gnupg jq procps util-linux \
  && rm -rf /var/lib/apt/lists/*
 
+# GitHub CLI keyring, verified against the two primary-key fingerprints GitHub
+# publishes (cli/cli docs/install_linux.md): the build fails unless the keyring
+# holds at least one of them and no primary key outside that list. The
+# unpinned Docker apt key and the unpinned apt package versions are known,
+# logged gaps (no primary source for the Docker fingerprint was confirmed).
+RUN set -eu; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli.gpg; \
+    scratch="$(mktemp -d)"; \
+    printf '%s\n' 2C6106201985B60E6C7AC87323F3D4EA75716059 \
+      7F38BBB59D064DBCB3D84D725612B36462313325 >"$scratch/allowed.txt"; \
+    GNUPGHOME="$scratch" gpg --show-keys --with-colons /etc/apt/keyrings/githubcli.gpg \
+      >"$scratch/keys.txt"; \
+    awk -F: '$1=="pub"{want=1;next} want&&$1=="fpr"{print $10;want=0}' "$scratch/keys.txt" \
+      >"$scratch/primaries.txt"; \
+    unexpected="$(grep -vxF -f "$scratch/allowed.txt" "$scratch/primaries.txt" || true)"; \
+    if [ -n "$unexpected" ]; then \
+      echo "gh keyring holds a primary key outside the published fingerprints:" >&2; \
+      echo "$unexpected" >&2; exit 1; \
+    fi; \
+    if ! grep -qxF -f "$scratch/allowed.txt" "$scratch/primaries.txt"; then \
+      echo "gh keyring holds none of the published fingerprints" >&2; exit 1; \
+    fi; \
+    rm -rf "$scratch"
+
 # GitHub CLI and the Docker CLI (client and compose plugin only, no daemon) from
 # their vendors' signed apt repositories.
-RUN install -m 0755 -d /etc/apt/keyrings \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      -o /etc/apt/keyrings/githubcli.gpg \
- && curl -fsSL https://download.docker.com/linux/debian/gpg \
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
  && echo "deb [signed-by=/etc/apt/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
