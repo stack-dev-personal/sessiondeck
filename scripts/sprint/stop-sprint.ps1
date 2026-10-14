@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-Stops and removes the container sprint-<id>. Keeps the work volume (resume needs it) and
-.sprint/<id>/.
+Stops and removes the container sprint-<id> and any sibling test containers sd-<id>-*. Keeps
+the work volume (resume needs it) and .sprint/<id>/.
 
 .DESCRIPTION
 Uses docker stop and docker rm rather than compose down: compose would need the env file and
@@ -48,26 +48,46 @@ function Invoke-Docker {
     }
 }
 
-if (-not (Test-ContainerExists -Name $containerName)) {
-    Write-Line "no container named ${containerName}; nothing to stop."
+$mainExists = Test-ContainerExists -Name $containerName
+# Test containers a session started (sd-<id>-<session>-*) would otherwise keep using RAM.
+$siblingPrefix = "${SiblingContainerPrefix}${Sprint}-"
+$siblings = Get-SiblingContainerNames -Prefix $siblingPrefix
+
+if (-not $mainExists -and $siblings.Count -eq 0) {
+    Write-Line "no container named ${containerName} and none named ${siblingPrefix}*; nothing to stop."
     exit $ExitOk
 }
 
 if ($DryRun) {
     Write-Line "dry run: nothing was stopped. Would run:"
-    Write-Line "  docker stop ${containerName}"
-    Write-Line "  docker rm ${containerName}"
+    if ($mainExists) {
+        Write-Line "  docker stop ${containerName}"
+        Write-Line "  docker rm ${containerName}"
+    }
+    if ($siblings.Count -gt 0) {
+        Write-Line ("  docker stop " + ($siblings -join ' '))
+        Write-Line ("  docker rm " + ($siblings -join ' '))
+    }
     Write-Line "kept: volume ${containerName}-work and the state directory"
     exit $ExitOk
 }
 
-Invoke-Docker -DockerArgs @('stop', $containerName)
-Invoke-Docker -DockerArgs @('rm', $containerName)
+if ($mainExists) {
+    Invoke-Docker -DockerArgs @('stop', $containerName)
+    Invoke-Docker -DockerArgs @('rm', $containerName)
+}
+if ($siblings.Count -gt 0) {
+    Invoke-Docker -DockerArgs (@('stop') + $siblings)
+    Invoke-Docker -DockerArgs (@('rm') + $siblings)
+}
 
 $networks = & docker network ls --filter "name=${networkName}" --format '{{.Name}}'
 if ($LASTEXITCODE -eq 0 -and (@($networks) -contains $networkName)) {
     Invoke-Docker -DockerArgs @('network', 'rm', $networkName)
 }
 
-Write-Line "stopped and removed ${containerName}; kept volume ${containerName}-work and the state directory."
+$removed = @()
+if ($mainExists) { $removed += $containerName }
+$removed += $siblings
+Write-Line ("stopped and removed " + ($removed -join ' ') + "; kept volume ${containerName}-work and the state directory.")
 exit $ExitOk

@@ -18,6 +18,12 @@ $SprintIdRule = 'letters, digits, hyphen and underscore, starting with a letter 
 $ContractShaPattern = '^[A-Za-z0-9._/-]+\z'
 
 $ContainerPrefix = 'sprint-'
+# Sibling test containers a session starts are named sd-<sprint>-<session>-* (infra/sprint/README.md).
+$SiblingContainerPrefix = 'sd-'
+# The image compose runs. Set explicitly on every start so that an ambient SPRINT_IMAGE (or a
+# stray infra/sprint/.env) cannot swap in another image that then receives both tokens.
+$DefaultSprintImage = 'sessiondeck-sprint:local'
+$ImageReferencePattern = '^[A-Za-z0-9][A-Za-z0-9._/:@-]*\z'
 $StatusFileName = 'status.json'
 $SessionsDirName = 'sessions'
 $StateRootDirName = '.sprint'

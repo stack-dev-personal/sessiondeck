@@ -55,7 +55,7 @@ export interface DockerCall {
 }
 
 export interface DockerPlan {
-  [key: string]: { code?: number; out?: string };
+  [key: string]: { code?: number; out?: string; err?: string };
 }
 
 export interface Workspace {
@@ -69,6 +69,21 @@ export interface Workspace {
   log: string;
 }
 
+/** The origin URL text of the temp repo; run-sprint compares -RepoUrl against it. */
+export const ORIGIN_URL = "https://github.com/Owner/Repo";
+/** A -RepoUrl that run-sprint accepts for the temp repo (same repo, other spelling). */
+export const SAME_REPO_URL = "https://github.com/owner/repo.git";
+
+function gitInitWithOrigin(repo: string): void {
+  for (const args of [
+    ["init", "-q"],
+    ["remote", "add", "origin", ORIGIN_URL],
+  ]) {
+    const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", windowsHide: true });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
+  }
+}
+
 export function makeWorkspace(): Workspace {
   const base = makeTempDir();
   const repo = join(base, "repo");
@@ -77,6 +92,7 @@ export function makeWorkspace(): Workspace {
     copyFileSync(join(REPO_ROOT, file), join(repo, file));
   }
   writeFileSync(join(repo, "infra", "sprint", "docker-compose.yml"), "# stub, never run\n");
+  gitInitWithOrigin(repo);
   const state = join(base, "state");
   mkdirSync(state);
   const envFile = join(base, "fake-env-file.txt");
@@ -173,6 +189,8 @@ export interface BatchOptions {
   plan?: DockerPlan;
   /** Replace PATH with just this directory (used for the missing-docker case). */
   onlyPath?: string;
+  /** Extra environment for the PowerShell process (for example an ambient SPRINT_IMAGE). */
+  env?: Record<string, string>;
 }
 
 function section(text: string, index: number): string {
@@ -215,7 +233,10 @@ export function runBatch(
     {
       encoding: "utf8",
       windowsHide: true,
-      env: childEnv(ws, options.plan ?? {}, pathPrefix, options.onlyPath !== undefined),
+      env: {
+        ...childEnv(ws, options.plan ?? {}, pathPrefix, options.onlyPath !== undefined),
+        ...options.env,
+      },
     },
   );
   const stdout = r.stdout ?? "";
@@ -238,7 +259,12 @@ export const STATUS = join(SPRINT_SCRIPTS, "status.ps1");
 export const STOP_SPRINT = join(SPRINT_SCRIPTS, "stop-sprint.ps1");
 
 /** Common arguments that point run-sprint at the temp workspace. */
-export function runArgs(ws: Workspace, sprint: string, extra: string[] = []): string[] {
+export function runArgs(
+  ws: Workspace,
+  sprint: string,
+  extra: string[] = [],
+  repoUrl: string = SAME_REPO_URL,
+): string[] {
   return [
     "-Sprint",
     sprint,
@@ -249,7 +275,7 @@ export function runArgs(ws: Workspace, sprint: string, extra: string[] = []): st
     "-EnvFile",
     ws.envFile,
     "-RepoUrl",
-    "https://example.invalid/owner/repo.git",
+    repoUrl,
     ...extra,
   ];
 }

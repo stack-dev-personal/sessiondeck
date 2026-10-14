@@ -17,6 +17,20 @@ afterAll(cleanupTempDirs);
 
 if (SHELL === undefined) console.warn(`SKIPPED: ${SKIP_REASON}`);
 
+const SIBLING_PREFIX_ONE = "sd-1-";
+// What a loose docker name filter returns for sprint 1: two real siblings and five names that
+// merely contain or resemble the prefix. Only the first two may ever be touched.
+const REAL_SIBLINGS_ONE = ["sd-1-s1-hub", "sd-1-s2-postgres"];
+const LOOKALIKES_ONE = [
+  REAL_SIBLINGS_ONE[0]!,
+  "sd-10-s1-hub",
+  "sd-1",
+  "x-sd-1-y",
+  "SD-1-s1-hub",
+  REAL_SIBLINGS_ONE[1]!,
+  "sd-11-s1-hub",
+];
+
 describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", () => {
   let ws: Workspace;
   let batch: BatchResult;
@@ -40,6 +54,9 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
         ["-Sprint", ""], // 4
         ["-Sprint", "b/c"], // 5
         ["-Sprint", "d1"], // 6: docker stop fails
+        ["-Sprint", "1", "-DryRun"], // 7: main container plus siblings, with look-alikes
+        ["-Sprint", "1"], // 8
+        ["-Sprint", "2"], // 9: siblings only
       ],
       {
         plan: {
@@ -47,6 +64,9 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
           "network-ls:sprint-a1_default": { out: "sprint-a1_default" },
           "ps-a:sprint-d1": { out: "sprint-d1" },
           "stop:sprint-d1": { code: 1 },
+          "ps-a:sprint-1": { out: "sprint-1" },
+          [`ps-a:${SIBLING_PREFIX_ONE}`]: { out: LOOKALIKES_ONE.join("\n") },
+          "ps-a:sd-2-": { out: "sd-2-s9-pg" },
         },
       },
     );
@@ -79,6 +99,45 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
     expect(all).not.toContain("down");
   });
 
+  it("removes sibling test containers sd-<id>-* and only names with exactly that prefix", () => {
+    const stops = batch.calls.filter(
+      (c) => c.key === "stop" && c.argv.some((a) => a.startsWith("sd-")),
+    );
+    expect(stops.map((c) => c.argv)).toEqual([
+      ["stop", ...REAL_SIBLINGS_ONE], // run 8 only: the dry run (run 7) issued nothing
+      ["stop", "sd-2-s9-pg"],
+    ]);
+    const removes = batch.calls.filter(
+      (c) => c.key === "rm" && c.argv.some((a) => a.startsWith("sd-")),
+    );
+    expect(removes.map((c) => c.argv)).toEqual([
+      ["rm", ...REAL_SIBLINGS_ONE],
+      ["rm", "sd-2-s9-pg"],
+    ]);
+    const touched = batch.calls
+      .filter((c) => c.key === "stop" || c.key === "rm")
+      .flatMap((c) => c.argv);
+    for (const bystander of LOOKALIKES_ONE.filter((n) => !REAL_SIBLINGS_ONE.includes(n))) {
+      expect(touched).not.toContain(bystander);
+    }
+    expect(touched).not.toContain("-v");
+  });
+
+  it("shows the siblings under -DryRun and still removes nothing", () => {
+    expect(run(7).code, run(7).stderr).toBe(0);
+    expect(run(7).stdout).toContain("docker stop sprint-1");
+    expect(run(7).stdout).toContain(`docker stop ${REAL_SIBLINGS_ONE.join(" ")}`);
+    expect(run(7).stdout).toContain(`docker rm ${REAL_SIBLINGS_ONE.join(" ")}`);
+    expect(run(7).stdout).not.toContain("sd-10-");
+    expect(run(7).stdout).not.toContain("SD-1-");
+  });
+
+  it("stops siblings even when the main container is already gone", () => {
+    expect(run(9).code, run(9).stderr).toBe(0);
+    expect(run(9).stdout).toContain("sd-2-s9-pg");
+    expect(batch.calls.some((c) => c.argv.includes("sprint-2"))).toBe(false);
+  });
+
   it("keeps the state directory", () => {
     expect(readFileSync(join(ws.state, "a1", "status.json"), "utf8")).toBe('{"state":"running"}');
   });
@@ -103,6 +162,13 @@ describe.skipIf(SHELL === undefined)("stop-sprint.ps1 (fake docker on PATH)", ()
     expect(batch.calls.some((c) => c.name === "sprint-d1" && c.key === "rm")).toBe(false);
   });
 });
+
+const ESC = "\u001b";
+const BEL = "\u0007";
+const CSI = "\u009b";
+// Over the 256 KiB cap in status.ps1.
+const OVERSIZE_BYTES = 300_000;
+const FIELD_WIDTH = 40;
 
 describe.skipIf(SHELL === undefined)("status.ps1", () => {
   let ws: Workspace;
@@ -135,6 +201,42 @@ describe.skipIf(SHELL === undefined)("status.ps1", () => {
     put("2/status.json", '{"sprint":"2","sta'); // half written
     put("3/status.json", "[1, 2]"); // valid JSON, wrong shape
     put("4/logs/x.txt", "no status yet"); // directory without status.json
+    // A prompt-injected session writes terminal escape sequences into every free-text field.
+    const osc52 = `${ESC}]52;c;ZXZpbA==${BEL}${ESC}[2A${ESC}[2K`;
+    put(
+      "5/status.json",
+      JSON.stringify({
+        sprint: "5",
+        state: `${osc52}green`,
+        updated_at: `${ESC}[31mnot a date${CSI}`,
+        pr: `${osc52}${CSI}31m`,
+        sessions: { S1: { state: `${CSI}31mrunning` }, S2: { state: 7 }, S3: { state: "green" } },
+        questions: [osc52],
+        gate: { state: `${ESC}]0;pwn${BEL}` },
+        needs_laptop_confirmation: ["a", "b"],
+      }),
+    );
+    put(
+      `5/sessions/S${CSI}[2J.json`, // a C1 control in a file name
+      JSON.stringify({
+        state: `${ESC}[31mrunning`,
+        current_unit: `${"A".repeat(500)}${ESC}[2J`,
+        updated_at: "2026-10-14T01:00:00Z",
+      }),
+    );
+    put(`6${CSI}[2J/status.json`, '{"state":"running"}'); // a C1 control in a directory name
+    put("7/status.json", `{"state":"running","pad":"${"x".repeat(OVERSIZE_BYTES)}"}`);
+    put("8/status.json", JSON.stringify({ state: "RUNNING" })); // wrong case is not the enum
+    put(
+      "9/status.json",
+      JSON.stringify({
+        state: "gate",
+        questions: ["questions/S2.md"],
+        gate: { state: "fail" },
+        needs_laptop_confirmation: ["R1.1 hook p95 on Windows", "R1.2"],
+        updated_at: "2026-10-14T01:00:00Z",
+      }),
+    );
     treeBefore = listTree(ws.state);
     batch = runBatch(ws, STATUS, [
       ["-Root", ws.state],
@@ -146,8 +248,10 @@ describe.skipIf(SHELL === undefined)("status.ps1", () => {
   it("prints one table with a good, a malformed and a missing file", () => {
     const out = batch.runs[0]!.stdout;
     expect(batch.runs[0]!.code).toBe(0);
-    expect(out).toMatch(/sprint\s+state\s+sessions\s+pr\s+updated_at\s+age_min/);
-    expect(out).toMatch(/^1\s+running\s+2 green, 1 blocked\s+-\s+2026-10-12T01:00:00Z\s+\d+/m);
+    expect(out).toMatch(/sprint\s+state\s+sessions\s+waiting\s+pr\s+updated_at\s+age_min/);
+    expect(out).toMatch(
+      /^1\s+running\s+2 green, 1 blocked\s+questions=0 gate=- needs_laptop_confirmation=0\s+-\s+2026-10-12T01:00:00Z\s+\d+/m,
+    );
     expect(out).toMatch(/^2\s+unreadable/m);
     expect(out).toMatch(/^3\s+unreadable/m);
     expect(out).toMatch(/^4\s+no status\.json/m);
@@ -158,6 +262,45 @@ describe.skipIf(SHELL === undefined)("status.ps1", () => {
     expect(out).toMatch(/sprint\s+session\s+state\s+current_unit\s+updated_at\s+age_min/);
     expect(out).toMatch(/^1\s+S1\s+running\s+U2\s+2026-10-14T01:00:00Z\s+\d+/m);
     expect(out).toMatch(/^1\s+S2\s+unreadable/m);
+  });
+
+  it("shows what is waiting on the user: questions, gate state, laptop confirmations", () => {
+    expect(batch.runs[0]!.stdout).toMatch(
+      /^9\s+gate\s+-\s+questions=1 gate=fail needs_laptop_confirmation=2\s+-\s+2026-10-14T01:00:00Z\s+\d+/m,
+    );
+  });
+
+  it("prints only printable ASCII: ESC, BEL, U+009B and an OSC 52 payload never reach the terminal", () => {
+    const out = batch.runs[0]!.stdout;
+    expect(batch.runs[0]!.code).toBe(0);
+    expect(out).toMatch(/^[\x20-\x7e\r\n]*$/); // no C0, DEL, C1 or non-ASCII anywhere
+    expect(out).not.toContain(ESC);
+    expect(out).not.toContain(BEL);
+    expect(out).not.toContain(CSI);
+    // The payload text is harmless once the introducer is gone; it is shown, defanged, not run.
+    expect(out).toContain("?]52;c;ZXZpbA==??[2A?[2K");
+  });
+
+  it("maps state to the schema enum and shows everything else as invalid", () => {
+    const out = batch.runs[0]!.stdout;
+    // sprint 5: hostile state, a bad session state, a number as a session state, a hostile gate.
+    expect(out).toMatch(
+      /^5\s+invalid\s+2 invalid, 1 green\s+questions=1 gate=invalid needs_laptop_confirmation=2\s/m,
+    );
+    expect(out).toMatch(/^8\s+invalid\s/m); // RUNNING is not running
+    expect(out).toMatch(/^5\s+S\?\[2J\s+invalid\s/m); // session state with ESC, and the C1 file name
+  });
+
+  it("truncates every field to the fixed width and cleans directory names", () => {
+    const out = batch.runs[0]!.stdout;
+    const unit = out.match(/A{3,}\S*/)![0];
+    expect(unit.length).toBeLessThanOrEqual(FIELD_WIDTH);
+    expect(unit.endsWith("...")).toBe(true);
+    expect(out).toMatch(/^6\?\[2J\s+running\s/m);
+  });
+
+  it("does not parse an oversize file and says so", () => {
+    expect(batch.runs[0]!.stdout).toMatch(/^7\s+too large\s/m);
   });
 
   it("says so and exits 0 when there is nothing to show", () => {

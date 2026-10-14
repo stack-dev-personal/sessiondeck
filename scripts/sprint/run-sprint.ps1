@@ -26,7 +26,18 @@ Repository root. Default: two levels above this script.
 .PARAMETER StateRoot
 Directory that holds one state directory per sprint. Default: <repo>/.sprint.
 .PARAMETER RepoUrl
-https clone URL for the container. Default: the origin remote of the repository.
+https://github.com/OWNER/REPO clone URL for the container. Default: the origin remote of the
+repository. Any other value must name the same owner and repository as origin (compared
+case-insensitively against the origin URL text) unless -AllowForeignRepo is given.
+.PARAMETER AllowForeignRepo
+Accept a -RepoUrl that differs from origin. The container runs that repository's CLAUDE.md,
+hooks and agents with both tokens, so use this only for a repository you trust as much as
+this one.
+.PARAMETER Image
+Image compose starts. Default: sessiondeck-sprint:local.
+.PARAMETER Build
+Pass --build to compose up, so a changed Dockerfile or entrypoint is picked up. Without it
+compose builds only when the image is missing.
 #>
 [CmdletBinding()]
 param(
@@ -37,7 +48,10 @@ param(
     [string]$EnvFile = '',
     [string]$RepoRoot = '',
     [string]$StateRoot = '',
-    [string]$RepoUrl = ''
+    [string]$RepoUrl = '',
+    [switch]$AllowForeignRepo,
+    [string]$Image = '',
+    [switch]$Build
 )
 
 Set-StrictMode -Version Latest
@@ -47,6 +61,7 @@ $libDir = [IO.Path]::Combine($PSScriptRoot, 'lib')
 . ([IO.Path]::Combine($libDir, 'sprint-common.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-docker.ps1'))
 . ([IO.Path]::Combine($libDir, 'sprint-envfile.ps1'))
+. ([IO.Path]::Combine($libDir, 'sprint-repourl.ps1'))
 
 $Tool = 'run-sprint'
 # Same directories as STATE_SUBDIRS in packages/contract/src/state-file-paths.ts. Only the
@@ -56,13 +71,20 @@ $PromptFileName = 'sprint-prompt.md'
 $RendererRelativePath = 'render-prompt.mjs'
 # Renderer exit 2 is a usage error (unknown sprint id, missing --contract-sha).
 $RendererUsageExit = 2
-# Clone URLs must be https without credentials: the container authenticates with GH_TOKEN
-# through a credential helper and has no SSH keys.
-$HttpsUrlPattern = '^https://[^/@]+/\S+\z'
+# Only containers run this way; "local" packages (sprint 0) are run by sessions on the laptop.
+$ContainerRunsIn = 'container'
+# The compose file's directory; compose reads a .env file there for interpolation even with -f.
+$ComposeDirEnvFileName = '.env'
 
 # --- 1. Input validation, before anything else ---
 
 Assert-SprintId -Id $Sprint -Tool $Tool
+if ($Image -eq '') {
+    $Image = $DefaultSprintImage
+}
+if (-not ($Image -cmatch $ImageReferencePattern)) {
+    Exit-Sprint $ExitBadInput "${Tool}: -Image must look like a docker image reference (pattern ${ImageReferencePattern})."
+}
 if ($ContractSha -ne '' -and -not ($ContractSha -cmatch $ContractShaPattern)) {
     Exit-Sprint $ExitBadInput "${Tool}: -ContractSha may contain only letters, digits and . _ / -"
 }
@@ -97,20 +119,40 @@ if ($missing.Count -gt 0) {
     Exit-Sprint $ExitPrerequisite ("${Tool}: missing prerequisites:`n  - " + ($missing -join "`n  - "))
 }
 
+# compose reads <compose dir>/.env for variable interpolation even when -f is given; the file
+# is gitignored, so it would not show in git status, and it could switch the image.
+$composeEnvFile = [IO.Path]::Combine([IO.Path]::GetDirectoryName($composeFile), $ComposeDirEnvFileName)
+if (Test-Path -LiteralPath $composeEnvFile) {
+    Exit-Sprint $ExitPrerequisite "${Tool}: ${composeEnvFile} exists. Compose would read it for variable interpolation (it can switch the image that receives the tokens). Delete or rename it, then run again."
+}
+
 Write-EnvFileWarning -Path $envFilePath
 
-if ($RepoUrl -eq '') {
-    if (-not (Test-CommandAvailable 'git')) {
-        Exit-Sprint $ExitPrerequisite "${Tool}: git is not on PATH; install it or pass -RepoUrl <https clone url>."
-    }
-    $RepoUrl = ([string](& git -C $repo remote get-url origin)).Trim()
-    if ($LASTEXITCODE -ne 0 -or $RepoUrl -eq '') {
-        Exit-Sprint $ExitPrerequisite "${Tool}: cannot read the origin remote of ${repo}; pass -RepoUrl <https clone url>."
+# The URL is never echoed when rejected: it may carry credentials.
+$repoUrlRule = 'https://github.com/OWNER/REPO or https://github.com/OWNER/REPO.git, without credentials, port, query or spaces'
+$usedOrigin = ($RepoUrl -eq '')
+if ($usedOrigin) {
+    $RepoUrl = Get-OriginUrl -Repo $repo
+    if ($RepoUrl -eq '') {
+        Exit-Sprint $ExitPrerequisite "${Tool}: cannot read the origin remote of ${repo} (is git installed?); pass -RepoUrl <clone url>."
     }
 }
-# The URL is not echoed when rejected: it may carry credentials.
-if (-not ($RepoUrl -cmatch $HttpsUrlPattern)) {
-    Exit-Sprint $ExitBadInput "${Tool}: the repository URL must be https://host/path without embedded credentials."
+$repoKey = Get-GitHubRepoKey -Url $RepoUrl
+if ($null -eq $repoKey) {
+    Exit-Sprint $ExitBadInput "${Tool}: the repository URL must be ${repoUrlRule}."
+}
+if (-not $usedOrigin -and -not $AllowForeignRepo) {
+    $originUrl = Get-OriginUrl -Repo $repo
+    if ($originUrl -eq '') {
+        Exit-Sprint $ExitPrerequisite "${Tool}: cannot read the origin remote of ${repo} to compare with -RepoUrl; fix the remote or pass -AllowForeignRepo."
+    }
+    $originKey = Get-GitHubRepoKey -Url $originUrl -AllowSsh
+    if ($null -eq $originKey) {
+        Exit-Sprint $ExitBadInput "${Tool}: the origin remote is not a github.com URL, so -RepoUrl cannot be checked against it; pass -AllowForeignRepo to accept it."
+    }
+    if ($repoKey -cne $originKey) {
+        Exit-Sprint $ExitBadInput "${Tool}: -RepoUrl names a different repository than origin. The container would run that repository's CLAUDE.md, hooks and agents with both tokens; pass -AllowForeignRepo only if you trust it."
+    }
 }
 
 # --- 3. Package facts from the renderer (also validates the sprint id) ---
@@ -144,6 +186,19 @@ $branch = ''
 if ($null -ne $package.branch) {
     $branch = [string]$package.branch
 }
+# A package whose sessions run on the laptop (sprint 0) must not be started in a container: an
+# unwatched orchestrator would redo the same work on the same p0/* branches as the local sessions.
+$runsIn = ''
+if ($null -ne $package.PSObject.Properties['runs_in']) {
+    $runsIn = [string]$package.runs_in
+}
+if ($runsIn -cne $ContainerRunsIn) {
+    $runsInMessage = "${Tool}: sprint ${Sprint} has runs_in='${runsIn}', not '${ContainerRunsIn}'; its sessions are run locally (see CONDUCTOR.md), not in a container."
+    if (-not $DryRun) {
+        Exit-Sprint $ExitBadInput $runsInMessage
+    }
+    Write-ErrorLine "warning: ${runsInMessage} Without -DryRun this would exit 2."
+}
 
 # --- 4. State conflicts and running containers, before writing anything ---
 
@@ -156,7 +211,9 @@ elseif (Test-Path -LiteralPath $statusFile -PathType Leaf) {
     Exit-Sprint $ExitStateConflict "${Tool}: ${statusFile} already exists, so sprint ${Sprint} has run before. Pass -Resume to continue it."
 }
 
-if (Test-ContainerRunning -Name $containerName) {
+# -Resume is the documented restart for a stalled sprint whose container is still alive, and
+# it passes --force-recreate, so only a plain start refuses.
+if (-not $Resume -and (Test-ContainerRunning -Name $containerName)) {
     Exit-Sprint $ExitStateConflict "${Tool}: container ${containerName} is already running. Stop it with scripts/sprint/stop-sprint.ps1 -Sprint ${Sprint}."
 }
 
@@ -171,6 +228,7 @@ Stop-OnRendererFailure -RendererExit $LASTEXITCODE
 # --- 6. Start the container ---
 
 $composeVariables = [ordered]@{
+    SPRINT_IMAGE      = $Image
     SPRINT_ID         = $Sprint
     SPRINT_BRANCH     = $branch
     SPRINT_REPO_URL   = $RepoUrl
@@ -181,6 +239,21 @@ $composeArgs = @('compose', '-p', $containerName, '-f', (ConvertTo-DockerPath $c
 if ($Resume) {
     # A resumed sprint must not reuse the stopped container's old environment.
     $composeArgs += '--force-recreate'
+}
+if ($Build) {
+    $composeArgs += '--build'
+}
+
+# Which image will run: compose builds only when the tag is missing, so say what exists.
+$imageSummary = Get-ImageSummary -Image $Image
+if ($Build) {
+    Write-Line "image ${Image}: -Build given, compose rebuilds it first; this can take about 10 minutes."
+}
+elseif ($imageSummary -eq '') {
+    Write-Line "image ${Image}: image missing: compose will build it, this can take about 10 minutes."
+}
+else {
+    Write-Line "image ${Image}: ${imageSummary} (compose reuses it; pass -Build after changing infra/sprint)"
 }
 
 if ($DryRun) {

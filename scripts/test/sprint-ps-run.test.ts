@@ -10,6 +10,7 @@ import {
   runArgs,
   runBatch,
   RUN_SPRINT,
+  SAME_REPO_URL,
   SENTINEL,
   SHELL,
   SKIP_REASON,
@@ -32,8 +33,44 @@ const STATE_SUBDIRS = [
 ];
 const SMOKE_PROMPT = "write /state/smoke/status.json with state green and exit\n";
 const SHA = "abc1234";
-const REPO_URL = "https://example.invalid/owner/repo.git";
 const BAD_IDS = ["..", "a/b", "", "-x", "a b", "ok\nx"];
+const DEFAULT_IMAGE = "sessiondeck-sprint:local";
+const AMBIENT_IMAGE = "attacker/image:evil";
+const IMAGE_LINE = "sha256:feedbeef created 2026-10-01T00:00:00Z";
+const MISSING_IMAGE = "other:tag";
+
+// Every case after the bad ids, by index into the batch.
+const CASE = {
+  missingEnv: 6,
+  unknownSprint: 7,
+  noSha: 8,
+  badSha: 9,
+  sprintZero: 10,
+  smokeStart: 11,
+  noResumeConflict: 12,
+  resumeNoDir: 13,
+  resumeLive: 14,
+  runningRefused: 15,
+  upFails: 16,
+  psFails: 17,
+  smokeDry: 18,
+  sprintThree: 19,
+  sprintZeroDry: 20,
+  smokeBuild: 21,
+  smokeOtherImage: 22,
+  badImage: 23,
+  urlCredentials: 24,
+  urlHttp: 25,
+  urlSsh: 26,
+  urlForeignHost: 27,
+  urlForeignRepo: 28,
+  urlForeignRepoAllowed: 29,
+  urlLeadingSpace: 30,
+  urlTrailingSpace: 31,
+  urlForeignHostAllowed: 32,
+  urlMixedCase: 33,
+  urlFromOrigin: 34,
+} as const;
 
 function packageBranch(sprint: string): string {
   const r = spawnSync(
@@ -52,6 +89,7 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
   const run = (i: number) => batch.runs[i]!;
   const callsFor = (name: string, key: string) =>
     batch.calls.filter((c) => c.name === name && c.key === key);
+  const dry = (extra: string[], url?: string) => runArgs(ws, "smoke", ["-DryRun", ...extra], url);
 
   beforeAll(() => {
     ws = makeWorkspace();
@@ -75,27 +113,61 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
         "-EnvFile",
         missingEnv,
         "-RepoUrl",
-        REPO_URL,
+        SAME_REPO_URL,
       ], // 6
-      runArgs(ws, "7"), // 7
-      runArgs(ws, "1"), // 8
-      runArgs(ws, "1", ["-ContractSha", "bad sha!"]), // 9
-      runArgs(ws, "0"), // 10
-      runArgs(ws, "smoke"), // 11
-      runArgs(ws, "2", ["-ContractSha", SHA]), // 12
-      runArgs(ws, "3", ["-Resume", "-ContractSha", SHA]), // 13
-      runArgs(ws, "2", ["-Resume", "-ContractSha", SHA]), // 14
-      runArgs(ws, "4", ["-ContractSha", SHA]), // 15
-      runArgs(ws, "5", ["-ContractSha", SHA]), // 16
-      runArgs(ws, "1", ["-ContractSha", SHA]), // 17
-      runArgs(ws, "smoke", ["-DryRun"]), // 18
+      runArgs(ws, "7"),
+      runArgs(ws, "1"),
+      runArgs(ws, "1", ["-ContractSha", "bad sha!"]),
+      runArgs(ws, "0"),
+      runArgs(ws, "smoke"),
+      runArgs(ws, "2", ["-ContractSha", SHA]),
+      runArgs(ws, "4", ["-Resume", "-ContractSha", SHA]),
+      runArgs(ws, "2", ["-Resume", "-ContractSha", SHA]),
+      runArgs(ws, "4", ["-ContractSha", SHA]),
+      runArgs(ws, "5", ["-ContractSha", SHA]),
+      runArgs(ws, "1", ["-ContractSha", SHA]),
+      dry([]),
+      runArgs(ws, "3", ["-ContractSha", SHA]),
+      runArgs(ws, "0", ["-DryRun"]),
+      runArgs(ws, "smoke", ["-Build"]),
+      dry(["-Image", MISSING_IMAGE]),
+      dry(["-Image", "a b"]),
+      dry([], "https://user:hunter2@github.com/owner/repo"),
+      dry([], "http://github.com/owner/repo"),
+      dry([], "git@github.com:owner/repo.git"),
+      dry([], "https://gitlab.com/owner/repo"),
+      dry([], "https://github.com/attacker/repo"),
+      dry(["-AllowForeignRepo"], "https://github.com/attacker/repo"),
+      dry([], " https://github.com/owner/repo"),
+      dry([], "https://github.com/owner/repo "),
+      dry(["-AllowForeignRepo"], "https://gitlab.com/owner/repo"),
+      dry([], "https://github.com/OWNER/REPO.git"),
+      // No -RepoUrl at all: the clone URL is the origin remote.
+      [
+        "-Sprint",
+        "smoke",
+        "-RepoRoot",
+        ws.repo,
+        "-StateRoot",
+        ws.state,
+        "-EnvFile",
+        ws.envFile,
+        "-DryRun",
+      ],
     ];
     batch = runBatch(ws, RUN_SPRINT, lists, {
+      env: { SPRINT_IMAGE: AMBIENT_IMAGE },
       plan: {
         "ps:sprint-1": { code: 1 },
+        "ps:sprint-2": { out: "sprint-2" },
         "ps:sprint-4": { out: "sprint-4" },
         "ps:sprint-5": { out: "sprint-50\nsprint-5x" },
         "up:sprint-5": { code: 7 },
+        [`image-inspect:${DEFAULT_IMAGE}`]: { out: IMAGE_LINE },
+        [`image-inspect:${MISSING_IMAGE}`]: {
+          code: 1,
+          err: "Error response from daemon: No such image",
+        },
       },
     });
   }, 120_000);
@@ -106,56 +178,92 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
       expect(run(i).stderr).toContain("letters, digits, hyphen and underscore");
     });
     expect(batch.calls.filter((c) => c.name === null || /-\./.test(c.name ?? ""))).toEqual([]);
-    expect(readdirSync(ws.state).sort()).toEqual(["0", "2", "5", "smoke"]);
+    expect(readdirSync(ws.state).sort()).toEqual(["0", "2", "3", "5", "smoke"]);
   });
 
   it("names a missing env file with exit 3", () => {
-    expect(run(6).code).toBe(3);
-    expect(run(6).stderr).toContain("env file");
-    expect(run(6).stderr).toContain("envfile.txt");
+    const r = run(CASE.missingEnv);
+    expect(r.code).toBe(3);
+    expect(r.stderr).toContain("env file");
+    expect(r.stderr).toContain("envfile.txt");
   });
 
   it("stops with the renderer's message on unknown sprint or missing sha", () => {
-    expect(run(7).code).toBe(2);
-    expect(run(7).stderr).toContain("unknown sprint");
-    expect(run(8).code).toBe(2);
-    expect(run(8).stderr).toContain("--contract-sha");
-    expect(run(9).code).toBe(2);
+    expect(run(CASE.unknownSprint).code).toBe(2);
+    expect(run(CASE.unknownSprint).stderr).toContain("unknown sprint");
+    expect(run(CASE.noSha).code).toBe(2);
+    expect(run(CASE.noSha).stderr).toContain("--contract-sha");
+    expect(run(CASE.badSha).code).toBe(2);
     expect(existsSync(join(ws.state, "7"))).toBe(false);
   });
 
-  it("starts sprint 0: layout, rendered prompt, and the recorded compose call", () => {
-    expect(run(10).code, run(10).stderr).toBe(0);
-    const dir = join(ws.state, "0");
+  it("refuses sprint 0 (runs_in local) with exit 2 naming runs_in, writing and starting nothing", () => {
+    const r = run(CASE.sprintZero);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("runs_in='local'");
+    expect(r.stderr).toContain("CONDUCTOR.md");
+    expect(callsFor("sprint-0", "up")).toHaveLength(0);
+  });
+
+  it("-DryRun on a local package warns about runs_in, exits 0 and still starts nothing", () => {
+    const r = run(CASE.sprintZeroDry);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("runs_in='local'");
+    expect(r.stderr).toContain("would exit 2");
+    expect(r.stdout).toContain("dry run: nothing was started");
+    expect(callsFor("sprint-0", "up")).toHaveLength(0);
+    expect(readFileSync(join(ws.state, "0", "sprint-prompt.md"), "utf8")).toContain(
+      "sprint/0-bootstrap",
+    );
+  });
+
+  it("starts a container package: layout, rendered prompt, and the recorded compose call", () => {
+    const r = run(CASE.sprintThree);
+    expect(r.code, r.stderr).toBe(0);
+    const dir = join(ws.state, "3");
     expect(readdirSync(dir).sort()).toEqual([...STATE_SUBDIRS, "sprint-prompt.md"].sort());
     expect(existsSync(join(dir, "status.json"))).toBe(false);
     const prompt = readFileSync(join(dir, "sprint-prompt.md"), "utf8");
-    expect(prompt).toContain("sprint/0-bootstrap");
+    expect(prompt).toContain("sprint/3-");
     expect(prompt.includes("\r")).toBe(false);
 
-    const [up] = callsFor("sprint-0", "up");
+    const [up] = callsFor("sprint-3", "up");
     expect(up!.argv).toEqual([
       "compose",
       "-p",
-      "sprint-0",
+      "sprint-3",
       "-f",
       dockerForm(join(ws.repo, "infra", "sprint", "docker-compose.yml")),
       "up",
       "-d",
     ]);
     expect(up!.env).toEqual({
-      SPRINT_ID: "0",
-      SPRINT_BRANCH: packageBranch("0"),
-      SPRINT_REPO_URL: REPO_URL,
+      SPRINT_IMAGE: DEFAULT_IMAGE,
+      SPRINT_ID: "3",
+      SPRINT_BRANCH: packageBranch("3"),
+      SPRINT_REPO_URL: SAME_REPO_URL,
       SPRINT_ENV_FILE: dockerForm(ws.envFile),
       SPRINT_STATE_ROOT: dockerForm(ws.state),
     });
     expect(up!.secretNames).toEqual([]);
-    expect(callsFor("sprint-0", "ps")).toHaveLength(1);
+    expect(callsFor("sprint-3", "ps")).toHaveLength(1);
+  });
+
+  it("sets SPRINT_IMAGE itself: an ambient value never reaches compose", () => {
+    const ups = batch.calls.filter((c) => c.key === "up");
+    expect(ups.length).toBeGreaterThan(0);
+    for (const up of ups) {
+      expect(up.env.SPRINT_IMAGE, up.name ?? "").not.toBe(AMBIENT_IMAGE);
+    }
+    expect(run(CASE.smokeOtherImage).stdout).toContain(`SPRINT_IMAGE=${MISSING_IMAGE}`);
+    expect(run(CASE.smokeDry).stdout).toContain(`SPRINT_IMAGE=${DEFAULT_IMAGE}`);
+    expect(run(CASE.badImage).code).toBe(2);
+    expect(run(CASE.badImage).stderr).toContain("-Image");
   });
 
   it("renders the one-line smoke prompt and starts with an empty branch", () => {
-    expect(run(11).code, run(11).stderr).toBe(0);
+    const r = run(CASE.smokeStart);
+    expect(r.code, r.stderr).toBe(0);
     expect(readFileSync(join(ws.state, "smoke", "sprint-prompt.md"), "utf8")).toBe(SMOKE_PROMPT);
     const [up] = callsFor("sprint-smoke", "up");
     expect(up!.env.SPRINT_ID).toBe("smoke");
@@ -163,15 +271,18 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
   });
 
   it("refuses without -Resume when status.json exists, and without a state dir when resuming", () => {
-    expect(run(12).code).toBe(4);
-    expect(run(12).stderr).toContain("-Resume");
-    expect(run(13).code).toBe(4);
-    expect(existsSync(join(ws.state, "3"))).toBe(false);
+    expect(run(CASE.noResumeConflict).code).toBe(4);
+    expect(run(CASE.noResumeConflict).stderr).toContain("-Resume");
+    expect(run(CASE.resumeNoDir).code).toBe(4);
+    expect(existsSync(join(ws.state, "4"))).toBe(false);
     expect(callsFor("sprint-2", "up")).toHaveLength(1); // only the -Resume run reached docker
   });
 
-  it("-Resume keeps the state dir, re-renders the prompt, and recreates the container", () => {
-    expect(run(14).code, run(14).stderr).toBe(0);
+  it("-Resume keeps the state dir and recreates the container even while it is running", () => {
+    const r = run(CASE.resumeLive);
+    expect(r.code, r.stderr).toBe(0);
+    // The plan says sprint-2 is running; -Resume does not refuse over that, it recreates.
+    expect(callsFor("sprint-2", "ps")).toHaveLength(0);
     const dir = join(ws.state, "2");
     expect(readFileSync(join(dir, "keep.txt"), "utf8")).toBe("kept");
     expect(readFileSync(join(dir, "status.json"), "utf8")).toBe('{"state":"running"}');
@@ -179,32 +290,90 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
     expect(callsFor("sprint-2", "up")[0]!.argv.slice(-3)).toEqual(["up", "-d", "--force-recreate"]);
   });
 
-  it("refuses to start over a running container and points at stop-sprint", () => {
-    expect(run(15).code).toBe(4);
-    expect(run(15).stderr).toContain("stop-sprint.ps1");
+  it("without -Resume a running container is refused with exit 4 and a pointer to stop-sprint", () => {
+    const r = run(CASE.runningRefused);
+    expect(r.code).toBe(4);
+    expect(r.stderr).toContain("stop-sprint.ps1");
     expect(callsFor("sprint-4", "up")).toHaveLength(0);
     expect(existsSync(join(ws.state, "4"))).toBe(false);
   });
 
   it("maps docker failures to exit 5 and ignores look-alike container names", () => {
     // sprint-50 and sprint-5x are running, sprint-5 is not, so the start was attempted and failed.
-    expect(run(16).code).toBe(5);
+    expect(run(CASE.upFails).code).toBe(5);
     expect(callsFor("sprint-5", "up")).toHaveLength(1);
-    expect(run(17).code).toBe(5);
-    expect(run(17).stderr).toContain("docker ps failed");
+    expect(run(CASE.psFails).code).toBe(5);
+    expect(run(CASE.psFails).stderr).toContain("docker ps failed");
     expect(callsFor("sprint-1", "up")).toHaveLength(0);
   });
 
   it("-DryRun prints the command and variables and makes no state-changing docker call", () => {
-    const out = run(18).stdout;
-    expect(run(18).code).toBe(0);
-    expect(out).toContain("would run: docker compose -p sprint-smoke -f ");
-    expect(out).toContain("up -d");
-    expect(out).toContain("SPRINT_ID=smoke");
-    expect(out).toContain(`SPRINT_ENV_FILE=${dockerForm(ws.envFile)}`);
-    expect(out).toContain(`SPRINT_STATE_ROOT=${dockerForm(ws.state)}`);
-    expect(callsFor("sprint-smoke", "up")).toHaveLength(1); // the real start in case 11 only
-    expect(callsFor("sprint-smoke", "ps")).toHaveLength(2);
+    const r = run(CASE.smokeDry);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("would run: docker compose -p sprint-smoke -f ");
+    expect(r.stdout).toContain("up -d");
+    expect(r.stdout).toContain("SPRINT_ID=smoke");
+    expect(r.stdout).toContain(`SPRINT_ENV_FILE=${dockerForm(ws.envFile)}`);
+    expect(r.stdout).toContain(`SPRINT_STATE_ROOT=${dockerForm(ws.state)}`);
+    expect(callsFor("sprint-smoke", "up")).toHaveLength(2); // the real starts only: cases 11 and 21
+  });
+
+  it("prints the image id and created time compose will use, or says it will build", () => {
+    expect(run(CASE.smokeStart).stdout).toContain(`image ${DEFAULT_IMAGE}: ${IMAGE_LINE}`);
+    const missing = run(CASE.smokeOtherImage);
+    expect(missing.code, missing.stderr).toBe(0); // docker's stderr must not abort the script
+    expect(missing.stdout).toContain(
+      `image ${MISSING_IMAGE}: image missing: compose will build it, this can take about 10 minutes`,
+    );
+  });
+
+  it("-Build passes --build to compose up and says so; nothing else ever does", () => {
+    const r = run(CASE.smokeBuild);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("-Build given, compose rebuilds it first");
+    const withBuild = batch.calls.filter((c) => c.argv.includes("--build"));
+    expect(withBuild).toHaveLength(1);
+    expect(withBuild[0]!.argv.slice(-3)).toEqual(["up", "-d", "--build"]);
+    expect(batch.calls.flatMap((c) => c.argv)).not.toContain("build");
+  });
+
+  it("accepts only github.com https URLs without credentials, and never echoes a rejected URL", () => {
+    for (const bad of [
+      CASE.urlCredentials,
+      CASE.urlHttp,
+      CASE.urlSsh,
+      CASE.urlForeignHost,
+      CASE.urlLeadingSpace,
+      CASE.urlTrailingSpace,
+      CASE.urlForeignHostAllowed, // the switch widens the repository, never the host
+    ]) {
+      expect(run(bad).code, `case ${bad}`).toBe(2);
+      expect(run(bad).stderr).toContain("https://github.com/OWNER/REPO");
+      expect(run(bad).stderr).not.toContain("hunter2");
+      expect(run(bad).stdout).not.toContain("hunter2");
+    }
+    expect(JSON.stringify(batch.calls)).not.toContain("hunter2");
+  });
+
+  it("requires the repository of the origin remote unless -AllowForeignRepo is given", () => {
+    const refused = run(CASE.urlForeignRepo);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain("different repository than origin");
+    expect(refused.stderr).toContain("-AllowForeignRepo");
+    expect(refused.stderr).not.toContain("attacker");
+
+    const allowed = run(CASE.urlForeignRepoAllowed);
+    expect(allowed.code, allowed.stderr).toBe(0);
+    expect(allowed.stdout).toContain("SPRINT_REPO_URL=https://github.com/attacker/repo");
+  });
+
+  it("compares owner and repo case-insensitively and takes origin itself when no URL is given", () => {
+    const mixed = run(CASE.urlMixedCase);
+    expect(mixed.code, mixed.stderr).toBe(0);
+    expect(mixed.stdout).toContain("SPRINT_REPO_URL=https://github.com/OWNER/REPO.git");
+    const fromOrigin = run(CASE.urlFromOrigin);
+    expect(fromOrigin.code, fromOrigin.stderr).toBe(0);
+    expect(fromOrigin.stdout).toContain("SPRINT_REPO_URL=https://github.com/Owner/Repo");
   });
 
   it("never reads the env file: the sentinel is in no output, argv or recorded variable", () => {
@@ -216,12 +385,12 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 (fake docker on PATH)", () 
     }
   });
 
-  it("only ever issues read-only queries plus the one compose up per start", () => {
+  it("only ever issues read-only queries plus the compose up per start", () => {
     const keys = new Set(batch.calls.map((c) => c.key));
-    expect([...keys].sort()).toEqual(["ps", "up"]);
-    const withDocker = batch.calls.flatMap((c) => c.argv);
-    expect(withDocker).not.toContain("build");
-    expect(withDocker).not.toContain("--build");
+    expect([...keys].sort()).toEqual(["image-inspect", "ps", "up"]);
+    for (const call of batch.calls.filter((c) => c.key === "image-inspect")) {
+      expect(call.argv.slice(0, 2)).toEqual(["image", "inspect"]);
+    }
   });
 });
 
@@ -235,6 +404,23 @@ describe.skipIf(SHELL === undefined)("run-sprint.ps1 prerequisites", () => {
     expect(only.code).toBe(3);
     expect(only.stderr).toContain("docker (not on PATH)");
     expect(only.stderr).not.toContain("node (not on PATH)");
+    expect(result.calls).toEqual([]);
+  });
+
+  it("fails with exit 3 when infra/sprint/.env exists, before any docker call", () => {
+    const ws = makeWorkspace();
+    const composeEnv = join(ws.repo, "infra", "sprint", ".env");
+    writeFileSync(composeEnv, `SPRINT_IMAGE=${AMBIENT_IMAGE}\n`);
+    const result = runBatch(ws, RUN_SPRINT, [
+      runArgs(ws, "smoke"),
+      runArgs(ws, "smoke", ["-DryRun"]),
+    ]);
+    for (const r of result.runs) {
+      expect(r.code, r.stderr).toBe(3);
+      expect(r.stderr).toContain(".env exists");
+      expect(r.stderr).toContain("variable interpolation");
+      expect(r.stderr + r.stdout).not.toContain(AMBIENT_IMAGE); // the file is never read
+    }
     expect(result.calls).toEqual([]);
   });
 
