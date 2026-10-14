@@ -262,3 +262,19 @@ node scripts/sprint/render-prompt.mjs --sprint <id> [--contract-sha <sha>] [--ou
 - `needs_laptop` and `notes` from the block are appended as two bullets after the template's package list.
 - Exit codes: 0 ok, 2 usage (flags, unknown sprint, missing contract sha), 3 malformed input or
   unfilled placeholder, 4 file read or write failure. Messages go to stderr.
+
+## Sprint container scripts (R0.8)
+
+`scripts/sprint/*.ps1` start, watch and stop the sprint containers. They run on Windows PowerShell
+5.1 and PowerShell 7. Setup, the security note (the docker socket is root-equivalent), parameters in
+full and the container contract are in `infra/sprint/README.md`; read that first.
+
+| Command | Parameters | Exit codes |
+|---------|------------|------------|
+| `scripts/sprint/run-sprint.ps1` | `-Sprint`, `-Resume`, `-ContractSha`, `-DryRun`, `-EnvFile`, `-RepoRoot`, `-StateRoot`, `-RepoUrl`, `-AllowForeignRepo`, `-Image`, `-AllowForeignImage`, `-Build` | 0 started or dry run ok; 2 bad input; 3 prerequisite missing or remote docker target; 4 already running or state conflict; 5 docker failure |
+| `scripts/sprint/stop-sprint.ps1` | `-Sprint`, `-DryRun` | 0 stopped or nothing to stop; 2 bad input; 3 docker missing; 5 docker failure |
+| `scripts/sprint/status.ps1` | `-Root` | 0 whenever it reaches the table, including "nothing to show" |
+
+The sprint id is letters, digits and underscore only. Tests: the static ones run in
+`pnpm -F @sessiondeck/scripts test`; the PowerShell script tests are `test:sprint-ps`, a separate CI
+step.
