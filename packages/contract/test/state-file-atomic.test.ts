@@ -1,4 +1,14 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -35,6 +45,8 @@ function flaky(code: string, times: number): { fn: RenameFn; calls: () => number
 // A poller, as the dashboard is; a back-to-back loop would hold the file open without a gap.
 const READ_PAUSE_MS = 2;
 const ALWAYS = Number.POSITIVE_INFINITY;
+const READ_ONLY_MODE = 0o444;
+const WRITABLE_MODE = 0o644;
 
 describe("writeStateFileAtomic", () => {
   it("leaves only the target after success, with a trailing newline", async () => {
@@ -186,6 +198,49 @@ describe("rename retry (Windows sharing violations)", () => {
       const run = writeStateFileAtomic(join(root, "b.json"), {}, { rename: fn, retryDelayMs: 0 });
       await expect(run).rejects.toMatchObject({ kind: "busy" });
     }
+  });
+
+  it("reports a read-only target as write-failed, since retrying cannot help", async () => {
+    // Read-only attribute on Windows, mode 444 on Linux. The blocked rename is injected so the
+    // test behaves the same on both: only the stat of the target tells the two cases apart.
+    const target = join(root, "status.json");
+    await writeFile(target, "{}\n");
+    await chmod(target, READ_ONLY_MODE);
+    try {
+      for (const code of RENAME_RETRY_CODES) {
+        const { fn } = flaky(code, ALWAYS);
+        const run = writeStateFileAtomic(target, { a: 1 }, { rename: fn, retryDelayMs: 0 });
+        await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+        await expect(run).rejects.toThrow(/read-only/);
+      }
+    } finally {
+      await chmod(target, WRITABLE_MODE);
+    }
+  });
+
+  // Only Windows refuses a real rename over a read-only file; POSIX checks the directory instead.
+  it.skipIf(process.platform !== "win32")(
+    "reports a really read-only target as write-failed with the real rename",
+    async () => {
+      const target = join(root, "status.json");
+      await writeFile(target, "{}\n");
+      await chmod(target, READ_ONLY_MODE);
+      try {
+        const run = writeStateFileAtomic(target, { a: 1 }, { retryDelayMs: 0 });
+        await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+        expect(await readFile(target, "utf8")).toBe("{}\n");
+      } finally {
+        await chmod(target, WRITABLE_MODE);
+      }
+    },
+  );
+
+  it("still reports busy for a writable target that exists", async () => {
+    const target = join(root, "status.json");
+    await writeFile(target, "{}\n");
+    const { fn } = flaky("EBUSY", ALWAYS);
+    const run = writeStateFileAtomic(target, { a: 1 }, { rename: fn, retryDelayMs: 0 });
+    await expect(run).rejects.toMatchObject({ kind: "busy" });
   });
 
   it("keeps a permanent failure as write-failed, not busy", async () => {

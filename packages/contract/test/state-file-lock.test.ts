@@ -7,6 +7,7 @@ import {
   LOCK_STALE_MS,
   LOCK_SUFFIX,
   LOCK_WAIT_MS,
+  RELEASE_RETRIES,
   StateFileError,
   withFileLock,
 } from "../src/state-file";
@@ -146,6 +147,69 @@ describe("withFileLock", () => {
   it("does not fail when its own lock is already gone at release", async () => {
     await withFileLock(target, () => rm(lockFile()));
     expect(await readdir(root)).toEqual([]);
+  });
+});
+
+describe("a failed token write", () => {
+  it("removes the empty lock so the next writer is not blocked, and reports write-failed", async () => {
+    const writeToken = (): Promise<void> =>
+      Promise.reject(Object.assign(new Error("disk full"), { code: "ENOSPC" }));
+    const run = withFileLock(target, () => Promise.resolve(), { writeToken });
+    await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+    await expect(run).rejects.toThrow(/ENOSPC/);
+    expect(await readdir(root)).toEqual([]);
+    // Space is back: the very next writer gets the lock at once instead of timing out.
+    const time = fakeTime(Date.now());
+    await withFileLock(target, () => Promise.resolve(), time);
+    expect(time.slept).toEqual([]);
+  });
+});
+
+describe("release when the token cannot be read", () => {
+  const readFailing =
+    (code: string, failures: number) =>
+    (path: string): Promise<string> => {
+      if (failures > 0) {
+        failures -= 1;
+        return Promise.reject(Object.assign(new Error("simulated"), { code }));
+      }
+      return readFile(path, "utf8");
+    };
+
+  it.each(["EPERM", "EBUSY", "EACCES"])(
+    "retries a read that fails with %s and then removes the lock",
+    async (code) => {
+      const time = fakeTime(Date.now());
+      const ran = await withFileLock(target, () => Promise.resolve("done"), {
+        ...time,
+        readToken: readFailing(code, 2),
+      });
+      expect(ran).toBe("done");
+      expect(time.slept.length).toBe(2);
+      expect(await readdir(root)).toEqual([]);
+    },
+  );
+
+  it("leaves the lock for stale takeover, without throwing, when every read fails", async () => {
+    const time = fakeTime(Date.now());
+    const ran = await withFileLock(target, () => Promise.resolve("written"), {
+      ...time,
+      readToken: readFailing("EPERM", Number.POSITIVE_INFINITY),
+    });
+    expect(ran).toBe("written");
+    expect(time.slept.length).toBe(RELEASE_RETRIES - 1);
+    expect(await readdir(root)).toEqual(["status.json.lock"]);
+  });
+
+  it("does not retry a code that is not a sharing violation, and does not throw", async () => {
+    const time = fakeTime(Date.now());
+    const ran = await withFileLock(target, () => Promise.resolve("written"), {
+      ...time,
+      readToken: readFailing("EIO", Number.POSITIVE_INFINITY),
+    });
+    expect(ran).toBe("written");
+    expect(time.slept).toEqual([]);
+    expect(await readdir(root)).toEqual(["status.json.lock"]);
   });
 });
 

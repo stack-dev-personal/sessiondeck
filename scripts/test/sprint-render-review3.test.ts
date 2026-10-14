@@ -134,9 +134,13 @@ describe("sprint renderer review 3, finding 3: Sprint headings at any level", ()
   });
 
   it("fails on a Sprint heading outside section 3", () => {
-    const err = listFailure(`${real.order}\n### Sprint 7: late\n`);
+    // A yaml fence follows the heading so the older "has no yaml fence" check cannot fire first;
+    // only the any-level heading guard can name this one.
+    const late = '\n### Sprint 7: late\n\n```yaml\nsprint: "7"\n```\n';
+    const err = listFailure(`${real.order}${late}`);
     expect(err.exitCode).toBe(EXIT.INPUT);
-    expect(err.message).toMatch(/Sprint 7/);
+    expect(err.message).toContain('is not a "### Sprint <id>: <name>" heading inside section 3');
+    expect(err.message).toContain("### Sprint 7: late");
   });
 
   it("keeps the six real h3 blocks in the real file", () => {

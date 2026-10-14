@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { errorCode, StateFileError } from "./state-file-error.ts";
 import { sweepStaleTemps, type SweepOptions } from "./state-file-sweep.ts";
@@ -56,6 +56,19 @@ async function writeFlushed(tempPath: string, text: string): Promise<void> {
   }
 }
 
+/** Owner write bit; Windows maps the read-only attribute to its absence. */
+const OWNER_WRITE_BIT = 0o200;
+
+/** True only when the target exists and is not writable; any stat failure counts as "unknown". */
+async function isReadOnly(path: string): Promise<boolean> {
+  try {
+    return ((await stat(path)).mode & OWNER_WRITE_BIT) === 0;
+  } catch {
+    // Missing or unreadable: nothing shows the target is permanently blocked, so keep "busy".
+    return false;
+  }
+}
+
 async function renameWithRetry(
   from: string,
   to: string,
@@ -75,10 +88,13 @@ async function renameWithRetry(
       const sharing = RENAME_RETRY_CODES.includes(code);
       if (!sharing || attempt >= maxAttempts) {
         // A sharing violation that outlasts the budget is "busy": the content is fine and the
-        // write can be repeated later. Any other code is a real failure such as a full disk.
+        // write can be repeated later. Any other code is a real failure such as a full disk, and
+        // so is a read-only target, which no retry can ever replace.
+        const readOnly = sharing && (await isReadOnly(to));
+        const why = readOnly ? "; the file is read-only, clear that first" : "";
         throw new StateFileError(
-          sharing ? "busy" : "write-failed",
-          `cannot replace ${to}: ${code} after ${attempt} attempt(s)`,
+          sharing && !readOnly ? "busy" : "write-failed",
+          `cannot replace ${to}: ${code} after ${attempt} attempt(s)${why}`,
           { cause: error },
         );
       }

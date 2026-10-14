@@ -38,5 +38,8 @@ jobs:
         run: pnpm -r test
         timeout-minutes: 1
       - name: test sprint PowerShell scripts (budget 3 min, separate from R0.5)
+        # shell: pwsh makes the step fail to start where pwsh is missing; otherwise every test
+        # skips and the step goes green with nothing tested.
+        shell: pwsh
         run: pnpm -F @sessiondeck/scripts test:sprint-ps
         timeout-minutes: 3
