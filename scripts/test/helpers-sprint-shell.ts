@@ -16,6 +16,9 @@ const PROBE_COMMAND = "echo x | tr x y";
 const PROBE_EXPECTED = "y";
 const PROBE_TIMEOUT_MS = 10_000;
 // A batch runs dozens of cases; a case that never returns must fail the test, not stall the worker.
+// Limit: the timeout reliably bounds shell builtins. On Windows, Node stops the shell but then
+// waits for any external child (such as sleep.exe) to release the output pipe, so a case hung in
+// an external command can still outlast it.
 export const SHELL_RUN_TIMEOUT_MS = 50_000;
 const TIMEOUT_ERROR_CODE = "ETIMEDOUT";
 

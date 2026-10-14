@@ -27,26 +27,41 @@ export interface Shell {
   name: string;
 }
 
-function probe(command: string): Shell | undefined {
+interface ProbeOutcome {
+  shell?: Shell;
+  /** The spawn error code (ENOENT, ETIMEDOUT, ...) when the probe could not run to completion. */
+  errorCode?: string;
+}
+
+function probe(command: string): ProbeOutcome {
   const r = spawnSync(
     command,
     ["-NoProfile", "-NonInteractive", "-Command", "(Get-Process -Id $PID).Path"],
     { encoding: "utf8", windowsHide: true, timeout: PROBE_TIMEOUT_MS },
   );
-  if (r.status !== 0 || !r.stdout) return undefined;
-  return { path: r.stdout.trim(), name: command };
+  const errorCode = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  if (r.status !== 0 || !r.stdout) return { errorCode };
+  return { shell: { path: r.stdout.trim(), name: command } };
 }
 
 /** pwsh when installed, else Windows PowerShell on Windows, else nothing (tests skip). */
-function detectShell(): Shell | undefined {
+function detectShell(): ProbeOutcome {
   const pwsh = probe("pwsh");
-  if (pwsh) return pwsh;
-  return process.platform === "win32" ? probe("powershell.exe") : undefined;
+  if (pwsh.shell) return pwsh;
+  if (process.platform !== "win32") return pwsh;
+  const winPs = probe("powershell.exe");
+  return winPs.shell ? winPs : { errorCode: winPs.errorCode ?? pwsh.errorCode };
 }
 
-export const SHELL = detectShell();
-export const SKIP_REASON =
+const DETECTED = detectShell();
+export const SHELL = DETECTED.shell;
+const BASE_SKIP_REASON =
   "neither pwsh nor powershell.exe (Windows) was found, so the sprint PowerShell tests cannot run here";
+// The probe's error code tells "not installed" (ENOENT) from "hung" (ETIMEDOUT) when debugging CI.
+export const SKIP_REASON =
+  DETECTED.errorCode === undefined
+    ? BASE_SKIP_REASON
+    : `${BASE_SKIP_REASON} (probe error: ${DETECTED.errorCode})`;
 // Same rule as sprint-shell-helper.test.ts: in CI a missing shell fails the run instead of skipping.
 if (process.env.CI && SHELL === undefined) throw new Error(SKIP_REASON);
 

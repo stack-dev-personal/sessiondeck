@@ -11,6 +11,9 @@ const itSh = it.skipIf(SH === undefined);
 const SHELL = SH ?? "sh";
 const REFUSED_STATUS = 64;
 const SHORT_TIMEOUT_MS = 500;
+const MAX_TIMEOUT_ELAPSED_MS = 2_000;
+// Shell builtins only: a child process such as sleep can hold the output pipe open past the timeout on Windows.
+const BUSY_LOOP_CASE = "while :; do :; done";
 const MISSING_SHELL = "sd-no-such-shell-binary";
 
 describe("runShellCases", () => {
@@ -37,10 +40,12 @@ describe("runShellCases", () => {
     expect(() => runShellCases(SHELL, "", ["exit 3"])).toThrow(/produced no result/);
   });
 
-  itSh("reports a timeout when the batch outlives timeoutMs", () => {
-    expect(() => runShellCases(SHELL, "", ["sleep 5"], SHORT_TIMEOUT_MS)).toThrow(
+  itSh("reports a timeout when the batch outlives timeoutMs, and returns promptly", () => {
+    const started = Date.now();
+    expect(() => runShellCases(SHELL, "", [BUSY_LOOP_CASE], SHORT_TIMEOUT_MS)).toThrow(
       /did not finish 1 cases within 500 ms/,
     );
+    expect(Date.now() - started).toBeLessThan(MAX_TIMEOUT_ELAPSED_MS);
   });
 
   it("says the shell failed to run, not timed out, when it cannot start", () => {
