@@ -108,6 +108,25 @@ function messageOf(error: unknown): string {
   return scrubSecrets(text.split("\n")[0] ?? "");
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * JSON for the terminal with every string value and every object key scrubbed. A container
+ * session can put a token in a file with plain echo. Scrubbing the finished JSON text would
+ * miss a token right after a newline or tab, because stringify has turned that into a backslash
+ * and a letter, which the word-start rule reads as part of a word. So scrub each string before
+ * it is escaped.
+ */
+function renderScrubbed(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) => {
+    if (typeof inner === "string") return scrubSecrets(inner);
+    if (!isPlainObject(inner)) return inner;
+    return Object.fromEntries(Object.entries(inner).map(([k, v]) => [scrubSecrets(k), v]));
+  });
+}
+
 /** Runs one command; failures come back as a one-line message, never a stack trace. */
 export async function runCli(
   argv: readonly string[],
@@ -115,8 +134,7 @@ export async function runCli(
 ): Promise<CliResult> {
   try {
     const result = await dispatch(argv[0], argv.slice(1), options);
-    // A container session can put a token in a file with plain echo, so read output is scrubbed.
-    return { code: EXIT_OK, output: scrubSecrets(`${JSON.stringify(result)}\n`) };
+    return { code: EXIT_OK, output: `${renderScrubbed(result)}\n` };
   } catch (error: unknown) {
     const kind = error instanceof StateFileError ? error.kind : undefined;
     const isWrite = argv[0] === "write-session" || argv[0] === "write-sprint";

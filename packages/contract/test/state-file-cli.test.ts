@@ -84,6 +84,44 @@ describe("state-file CLI as a process", () => {
     expect(JSON.parse(run.stdout)).toMatchObject({ last_report: "see <redacted> here" });
   });
 
+  it.each([
+    ["a newline", "token:\n"],
+    ["a tab", "token:\t"],
+    ["a space", "token: "],
+    ["a carriage return", "token:\r"],
+  ])("read scrubs a credential that follows %s", async (_name, lead) => {
+    const planted = `ghp_${"abcdefghijKLMN"}`;
+    expect(spawnCli("write-session", stateDir, "S1", "state=running").status).toBe(EXIT_OK);
+    const file = join(stateDir, "sessions", "S1.json");
+    const content = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...content, last_report: `${lead}${planted}` }));
+    const run = spawnCli("read", file);
+    expect(run.status).toBe(EXIT_OK);
+    expect(run.stdout).not.toContain(planted);
+    expect(JSON.parse(run.stdout)).toMatchObject({ last_report: `${lead}<redacted>` });
+  });
+
+  it("read scrubs a credential used as an object key, nested too", async () => {
+    const planted = `ghp_${"abcdefghijKLMN"}`;
+    const file = join(stateDir, "status.json");
+    const base = {
+      sprint: "0",
+      name: "x",
+      branch: "b",
+      state: "running",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const sessions = { [planted]: { state: "running" } };
+    await writeFile(file, JSON.stringify({ ...base, sessions, extra: [{ [planted]: 1 }] }));
+    const run = await runCli(["read", file]);
+    expect(run.code).toBe(EXIT_OK);
+    expect(run.output).not.toContain(planted);
+    expect(JSON.parse(run.output)).toMatchObject({
+      sessions: { "<redacted>": { state: "running" } },
+      extra: [{ "<redacted>": 1 }],
+    });
+  });
+
   it("exits non-zero when the file is missing", () => {
     const run = spawnCli("read", join(stateDir, "status.json"));
     expect(run.status).toBe(EXIT_FAILURE);
