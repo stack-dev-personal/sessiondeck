@@ -12,12 +12,12 @@ type PlainObject = Record<string, unknown>;
 
 export interface MergeOptions extends StatusWriteOptions {
   lock?: LockOptions;
-}
-
-export interface SessionMergeOptions extends MergeOptions {
   /** Discard whatever the file holds, including content that is not JSON, and write only the overrides. */
   replace?: boolean;
 }
+
+/** Kept for callers of the first version, when only session merges could replace. */
+export type SessionMergeOptions = MergeOptions;
 
 function isPlainObject(value: unknown): value is PlainObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -70,7 +70,7 @@ export function mergeSprintStatus(
   return withFileLock(
     path,
     async () => {
-      const current = (await readRawObject(path)) ?? {};
+      const current = (options.replace ? undefined : await readRawObject(path)) ?? {};
       return writeSprintStatus(stateDir, mergeSprintFields(current, overrides), options);
     },
     options.lock,

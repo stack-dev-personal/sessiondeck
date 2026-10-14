@@ -72,9 +72,12 @@ async function renameWithRetry(
       return;
     } catch (error: unknown) {
       const code = errorCode(error) ?? "UNKNOWN";
-      if (!RENAME_RETRY_CODES.includes(code) || attempt >= maxAttempts) {
+      const sharing = RENAME_RETRY_CODES.includes(code);
+      if (!sharing || attempt >= maxAttempts) {
+        // A sharing violation that outlasts the budget is "busy": the content is fine and the
+        // write can be repeated later. Any other code is a real failure such as a full disk.
         throw new StateFileError(
-          "write-failed",
+          sharing ? "busy" : "write-failed",
           `cannot replace ${to}: ${code} after ${attempt} attempt(s)`,
           { cause: error },
         );

@@ -13,7 +13,7 @@ import { scrubSecrets } from "./state-file-secrets.ts";
 
 const ISSUE_LIMIT = 5;
 /** Windows PowerShell 5.1 `Set-Content -Encoding UTF8` writes this mark; JSON.parse rejects it. */
-const BYTE_ORDER_MARK = "﻿";
+const BYTE_ORDER_MARK = "\uFEFF";
 
 /** zod echoes the offending value ("received 'x'"), which could be a credential: say what is allowed. */
 function describeIssue(issue: ZodIssue): string {

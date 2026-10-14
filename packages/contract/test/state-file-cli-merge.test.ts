@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { EXIT_FAILURE, EXIT_OK, REPLACE_FLAG, USAGE, runCli } from "../src/state-file-cli";
+import {
+  EXIT_BUSY,
+  EXIT_FAILURE,
+  EXIT_OK,
+  REPLACE_FLAG,
+  USAGE,
+  runCli,
+} from "../src/state-file-cli";
 
 const CLI_PATH = fileURLToPath(new URL("../src/state-file-cli.ts", import.meta.url));
 const NODE_FLAGS = ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"];
@@ -81,6 +88,69 @@ describe("smoke package and merging over odd files", () => {
     const run = await runCli(["write-sprint", stateDir, "state=running"], { lock });
     expect(run.code).toBe(EXIT_FAILURE);
     expect(run.output).toMatch(/held by another writer/);
+  });
+});
+
+describe("write-sprint over an unparsable status.json", () => {
+  const sprintArgs = ["sprint=0", "name=n", "branch=b", "state=running"];
+  const statusFile = (): string => join(stateDir, "status.json");
+
+  it.each([
+    ["0 bytes", ""],
+    ["truncated JSON", '{"sprint":"0","sta'],
+    ["a JSON array", "[]"],
+  ])("names the replace flag for %s, and the flag then overwrites", async (_name, text) => {
+    await writeFile(statusFile(), text);
+    const refused = await runCli(["write-sprint", stateDir, ...sprintArgs]);
+    expect(refused.code).toBe(EXIT_FAILURE);
+    expect(refused.output).toContain(`pass ${REPLACE_FLAG} to overwrite it`);
+    const forced = await runCli(["write-sprint", stateDir, REPLACE_FLAG, ...sprintArgs]);
+    expect(forced.code).toBe(EXIT_OK);
+    expect(await readJson(statusFile())).toMatchObject({ sprint: "0", state: "running" });
+  });
+
+  it("with the flag, drops the old content instead of merging it", async () => {
+    await runCli(["write-sprint", stateDir, ...sprintArgs, 'sessions={"S0":{"state":"green"}}']);
+    const forced = await runCli(["write-sprint", stateDir, ...sprintArgs, REPLACE_FLAG]);
+    expect(forced.code).toBe(EXIT_OK);
+    expect(await readJson(statusFile())).not.toHaveProperty("sessions");
+  });
+
+  it("documents the flag on write-sprint in the usage text", () => {
+    expect(USAGE).toContain(`write-sprint <stateDir> [${REPLACE_FLAG}]`);
+  });
+});
+
+describe("a file that stays busy", () => {
+  const blocked = (code: string) => ({
+    rename: (): Promise<void> => Promise.reject(Object.assign(new Error("x"), { code })),
+    sleep: (): Promise<void> => Promise.resolve(),
+  });
+
+  it.each(["EPERM", "EBUSY", "EACCES"])(
+    "exits with the retry code on %s and says to run it again",
+    async (code) => {
+      for (const argv of [
+        ["write-session", stateDir, "S1", "state=running"],
+        ["write-sprint", stateDir, "sprint=0", "name=n", "branch=b", "state=running"],
+      ]) {
+        const run = await runCli(argv, blocked(code));
+        expect(run.code).toBe(EXIT_BUSY);
+        expect(run.output).toMatch(/busy, run the same command again/);
+      }
+    },
+  );
+
+  it("uses 75, distinct from the ordinary failure code, and documents it", () => {
+    expect(EXIT_BUSY).toBe(75);
+    expect(EXIT_BUSY).not.toBe(EXIT_FAILURE);
+    expect(USAGE).toContain("75 file busy");
+  });
+
+  it("keeps a permanent write failure at the ordinary failure code", async () => {
+    const run = await runCli(["write-session", stateDir, "S1", "state=running"], blocked("ENOSPC"));
+    expect(run.code).toBe(EXIT_FAILURE);
+    expect(run.output).not.toMatch(/busy/);
   });
 });
 

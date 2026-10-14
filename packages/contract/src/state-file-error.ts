@@ -4,6 +4,8 @@ export type StateFileErrorKind =
   | "secret"
   | "schema"
   | "write-failed"
+  /** The target stayed open in another process for the whole retry budget; retry the write later. */
+  | "busy"
   | "not-found"
   | "invalid-json"
   | "read-failed"

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -118,6 +118,76 @@ describe("withFileLock", () => {
   it("reports a lock folder that cannot be created", async () => {
     await writeFile(join(root, "file"), "");
     const run = withFileLock(join(root, "file", "x.json"), () => Promise.resolve());
+    await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+  });
+
+  it("writes a random token into the lock, a different one for each holder", async () => {
+    const tokens: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      await withFileLock(target, async () => {
+        tokens.push(await readFile(lockFile(), "utf8"));
+      });
+    }
+    expect(tokens[0]).toMatch(/^[0-9a-f]{16}$/);
+    expect(tokens[1]).toMatch(/^[0-9a-f]{16}$/);
+    expect(tokens[0]).not.toBe(tokens[1]);
+  });
+
+  it("leaves a lock that another writer took over while this holder was paused", async () => {
+    await withFileLock(target, async () => {
+      // Holder A is paused past the stale threshold; B takes the lock over and is still inside.
+      await rm(lockFile());
+      await writeFile(lockFile(), "token-of-b");
+    });
+    // A's release must not delete the lock that now belongs to B.
+    expect(await readFile(lockFile(), "utf8")).toBe("token-of-b");
+  });
+
+  it("does not fail when its own lock is already gone at release", async () => {
+    await withFileLock(target, () => rm(lockFile()));
+    expect(await readdir(root)).toEqual([]);
+  });
+});
+
+describe("a lock that cannot be created", () => {
+  const denied = (code: string) => (): Promise<void> =>
+    Promise.reject(Object.assign(new Error("denied"), { code }));
+
+  it.each(["EPERM", "EACCES", "ENOENT"])(
+    "fails at once with write-failed on %s when no lock file exists",
+    async (code) => {
+      const time = fakeTime(Date.now());
+      const run = withFileLock(target, () => Promise.resolve(), { ...time, create: denied(code) });
+      await expect(run).rejects.toMatchObject({ kind: "write-failed" });
+      await expect(run).rejects.toThrow(new RegExp(code));
+      await expect(run).rejects.not.toThrow(/held by another writer/);
+      expect(time.slept).toEqual([]);
+    },
+  );
+
+  it.each(["EPERM", "EACCES"])(
+    "still counts %s as contention when a lock file exists",
+    async (code) => {
+      await writeFile(lockFile(), "someone");
+      const time = fakeTime(Date.now());
+      const run = withFileLock(target, () => Promise.resolve(), { ...time, create: denied(code) });
+      await expect(run).rejects.toMatchObject({ kind: "lock-timeout" });
+      expect(time.slept.length).toBe(LOCK_WAIT_MS / LOCK_POLL_MS);
+    },
+  );
+
+  it("retries once when the lock file vanishes between the failed create and the check", async () => {
+    let calls = 0;
+    const create = (): Promise<void> => {
+      calls += 1;
+      return calls === 1 ? denied("EPERM")() : Promise.resolve();
+    };
+    await withFileLock(target, () => Promise.resolve(), { create });
+    expect(calls).toBe(2);
+  });
+
+  it("fails with write-failed for a code that is not contention", async () => {
+    const run = withFileLock(target, () => Promise.resolve(), { create: denied("ENOSPC") });
     await expect(run).rejects.toMatchObject({ kind: "write-failed" });
   });
 });

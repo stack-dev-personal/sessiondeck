@@ -4,7 +4,7 @@
 // (needs Node 22.6 or newer). Commands:
 //   init <stateDir>
 //   write-session <stateDir> <sessionId> [--replace] key=value ...  (merged into the existing file)
-//   write-sprint <stateDir> key=value ...                           (merged; sessions per id)
+//   write-sprint <stateDir> [--replace] key=value ...               (merged; sessions per id)
 //   read <file>
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -21,13 +21,17 @@ import {
 
 export const EXIT_OK = 0;
 export const EXIT_FAILURE = 1;
+/** EX_TEMPFAIL from sysexits.h: the file stayed busy for the whole retry budget; run it again. */
+export const EXIT_BUSY = 75;
 export const REPLACE_FLAG = "--replace";
 export const USAGE =
   "usage: init <stateDir> | write-session <stateDir> <sessionId> [--replace] key=value... | " +
-  "write-sprint <stateDir> key=value... | read <file>. " +
+  "write-sprint <stateDir> [--replace] key=value... | read <file>. " +
   "Values are JSON when they parse (pr=4, question_file=null, sessions={...}), else text; " +
   "text fields (branch, name, current_unit, last_report, verify) keep numbers as text. " +
-  `${REPLACE_FLAG} overwrites a session file that is not valid JSON.`;
+  `${REPLACE_FLAG} overwrites a status file that is not valid JSON. ` +
+  `Exit codes: ${EXIT_OK} ok, ${EXIT_FAILURE} failed, ` +
+  `${EXIT_BUSY} file busy (another program holds it open): run the same command again.`;
 
 /** Fields whose schema type is text: `current_unit=3` means the text "3", not the number. */
 export const TEXT_FIELDS: readonly string[] = [
@@ -70,6 +74,11 @@ function parsePairs(pairs: readonly string[]): Record<string, unknown> {
   return Object.fromEntries(entries);
 }
 
+function splitReplaceFlag(args: readonly string[]): { pairs: string[]; replace: boolean } {
+  const pairs = args.filter((arg) => arg !== REPLACE_FLAG);
+  return { pairs, replace: pairs.length !== args.length };
+}
+
 async function dispatch(
   command: string | undefined,
   args: readonly string[],
@@ -83,12 +92,12 @@ async function dispatch(
     return readStatusFile(first);
   }
   if (command === "write-session" && first !== undefined && second !== undefined) {
-    const pairs = rest.filter((arg) => arg !== REPLACE_FLAG);
-    const replace = pairs.length !== rest.length;
+    const { pairs, replace } = splitReplaceFlag(rest);
     return mergeSessionStatus(first, second, parsePairs(pairs), { ...options, replace });
   }
   if (command === "write-sprint" && first !== undefined) {
-    return mergeSprintStatus(first, parsePairs(args.slice(1)), options);
+    const { pairs, replace } = splitReplaceFlag(args.slice(1));
+    return mergeSprintStatus(first, parsePairs(pairs), { ...options, replace });
   }
   return usage();
 }
@@ -108,13 +117,12 @@ export async function runCli(
     const result = await dispatch(argv[0], argv.slice(1), options);
     return { code: EXIT_OK, output: `${JSON.stringify(result)}\n` };
   } catch (error: unknown) {
-    const hint =
-      error instanceof StateFileError &&
-      error.kind === "invalid-json" &&
-      argv[0] === "write-session"
-        ? `; pass ${REPLACE_FLAG} to overwrite it`
-        : "";
-    return { code: EXIT_FAILURE, output: `state-file: ${messageOf(error)}${hint}\n` };
+    const kind = error instanceof StateFileError ? error.kind : undefined;
+    const isWrite = argv[0] === "write-session" || argv[0] === "write-sprint";
+    const hint = kind === "invalid-json" && isWrite ? `; pass ${REPLACE_FLAG} to overwrite it` : "";
+    const retry = kind === "busy" ? "; the file is busy, run the same command again" : "";
+    const code = kind === "busy" ? EXIT_BUSY : EXIT_FAILURE;
+    return { code, output: `state-file: ${messageOf(error)}${hint}${retry}\n` };
   }
 }
 

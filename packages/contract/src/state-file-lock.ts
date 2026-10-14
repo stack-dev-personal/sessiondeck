@@ -1,4 +1,5 @@
-import { mkdir, open, rm, stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { errorCode, StateFileError } from "./state-file-error.ts";
 import { RENAME_RETRY_CODES } from "./state-file-atomic.ts";
@@ -19,6 +20,8 @@ export interface LockOptions {
   staleMs?: number;
   waitMs?: number;
   pollMs?: number;
+  /** Creates the lock file exclusively and writes the token; replaceable to simulate a denied create. */
+  create?: (lockPath: string, token: string) => Promise<void>;
 }
 
 /**
@@ -26,26 +29,59 @@ export interface LockOptions {
  * or EACCES instead of EEXIST or ENOENT. All of these mean "someone else is using it right now".
  */
 const CONTENDED_CODES: readonly string[] = ["EEXIST", "ENOENT", ...RENAME_RETRY_CODES];
+/** Codes that can also mean "cannot create here at all" (no ACL right, wrong owner, no folder). */
+const AMBIGUOUS_CODES: readonly string[] = ["EPERM", "EACCES", "ENOENT"];
+const TOKEN_BYTES = 8;
 const RELEASE_RETRIES = 5;
 const RELEASE_RETRY_DELAY_MS = 20;
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function tryCreate(lockPath: string): Promise<boolean> {
+async function createExclusive(lockPath: string, token: string): Promise<void> {
+  const handle = await open(lockPath, "wx");
   try {
-    const handle = await open(lockPath, "wx");
+    await handle.writeFile(token, "utf8");
+  } finally {
     await handle.close();
+  }
+}
+
+async function lockFileExists(lockPath: string): Promise<boolean> {
+  try {
+    await stat(lockPath);
     return true;
   } catch (error: unknown) {
-    if (CONTENDED_CODES.includes(errorCode(error) ?? "")) return false;
-    throw new StateFileError(
-      "write-failed",
-      `cannot lock ${lockPath}: ${errorCode(error) ?? "UNKNOWN"}`,
-      {
-        cause: error,
-      },
-    );
+    if (errorCode(error) === "ENOENT") return false;
+    return true; // cannot tell, so treat it as present and let the wait budget decide
   }
+}
+
+function cannotLock(lockPath: string, error: unknown): StateFileError {
+  const code = errorCode(error) ?? "UNKNOWN";
+  return new StateFileError("write-failed", `cannot lock ${lockPath}: ${code}`, { cause: error });
+}
+
+/**
+ * True when the lock was created; false when another writer holds it. A denied create (deny ACL,
+ * a bind mount owned by another uid) looks like contention by its code but leaves no lock file,
+ * so that case fails at once instead of spinning and blaming a writer that does not exist. The
+ * file may also have just vanished while Windows finished deleting it, hence one second try.
+ */
+async function tryCreate(lockPath: string, token: string, options: LockOptions): Promise<boolean> {
+  const create = options.create ?? createExclusive;
+  let lastError: unknown;
+  for (let pass = 0; pass < 2; pass += 1) {
+    try {
+      await create(lockPath, token);
+      return true;
+    } catch (error: unknown) {
+      const code = errorCode(error) ?? "";
+      if (!CONTENDED_CODES.includes(code)) throw cannotLock(lockPath, error);
+      if (!AMBIGUOUS_CODES.includes(code) || (await lockFileExists(lockPath))) return false;
+      lastError = error;
+    }
+  }
+  throw cannotLock(lockPath, lastError);
 }
 
 /**
@@ -70,7 +106,7 @@ async function removeIfStale(lockPath: string, now: number, staleMs: number): Pr
   }
 }
 
-async function acquire(lockPath: string, options: LockOptions): Promise<void> {
+async function acquire(lockPath: string, token: string, options: LockOptions): Promise<void> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? realSleep;
   const staleMs = options.staleMs ?? LOCK_STALE_MS;
@@ -84,7 +120,7 @@ async function acquire(lockPath: string, options: LockOptions): Promise<void> {
     });
   }
   const deadline = now() + waitMs;
-  while (!(await tryCreate(lockPath))) {
+  while (!(await tryCreate(lockPath, token, options))) {
     await removeIfStale(lockPath, now(), staleMs);
     if (now() >= deadline) {
       throw new StateFileError(
@@ -96,21 +132,38 @@ async function acquire(lockPath: string, options: LockOptions): Promise<void> {
   }
 }
 
-/** Runs fn while holding the lock of targetPath; the lock is always released. */
+/**
+ * Removes the lock only if it still holds our token. If this holder was paused past the stale
+ * threshold, another writer took the lock over; deleting it would let a third writer in.
+ */
+async function release(lockPath: string, token: string): Promise<void> {
+  let held: string;
+  try {
+    held = await readFile(lockPath, "utf8");
+  } catch (error: unknown) {
+    if (errorCode(error) === "ENOENT") return; // already taken over and released by someone else
+    throw cannotLock(lockPath, error);
+  }
+  if (held !== token) return;
+  await rm(lockPath, {
+    force: true,
+    maxRetries: RELEASE_RETRIES,
+    retryDelay: RELEASE_RETRY_DELAY_MS,
+  });
+}
+
+/** Runs fn while holding the lock of targetPath; the lock is released if it is still ours. */
 export async function withFileLock<T>(
   targetPath: string,
   fn: () => Promise<T>,
   options: LockOptions = {},
 ): Promise<T> {
   const lockPath = targetPath + LOCK_SUFFIX;
-  await acquire(lockPath, options);
+  const token = randomBytes(TOKEN_BYTES).toString("hex");
+  await acquire(lockPath, token, options);
   try {
     return await fn();
   } finally {
-    await rm(lockPath, {
-      force: true,
-      maxRetries: RELEASE_RETRIES,
-      retryDelay: RELEASE_RETRY_DELAY_MS,
-    });
+    await release(lockPath, token);
   }
 }

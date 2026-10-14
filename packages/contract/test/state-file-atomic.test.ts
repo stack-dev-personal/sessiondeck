@@ -117,7 +117,9 @@ describe("writeStateFileAtomic", () => {
     for (let n = 1; n <= 50; n += 1) {
       const pad = "p".repeat(n % 2 === 0 ? 10 : 4000);
       await writeStateFileAtomic(target, { n, pad }, quickRetry).catch((error: unknown) => {
-        if (!(error instanceof StateFileError) || error.kind !== "write-failed") throw error;
+        const retryable =
+          error instanceof StateFileError && ["write-failed", "busy"].includes(error.kind);
+        if (!retryable) throw error;
         dropped += 1;
       });
     }
@@ -127,6 +129,25 @@ describe("writeStateFileAtomic", () => {
     expect(reads).toBeGreaterThan(0);
     expect(dropped).toBeLessThan(50);
     expect(await readdir(root)).toEqual(["status.json"]);
+  });
+
+  it("hands a reader the previous complete content at the moment of the rename", async () => {
+    // Deterministic check of the old-or-new guarantee: no timing, no reader loop. A writer that
+    // touched the target before the rename (a plain writeFile) would fail the first assertion.
+    const target = join(root, "status.json");
+    const before = { n: 0, pad: "p".repeat(4000) };
+    await writeStateFileAtomic(target, before);
+    const previous = await readFile(target, "utf8");
+    const seen: { target: string; temp: string }[] = [];
+    const inspecting: RenameFn = async (from, to) => {
+      seen.push({ target: await readFile(to, "utf8"), temp: await readFile(from, "utf8") });
+      await rename(from, to);
+    };
+    await writeStateFileAtomic(target, { n: 1, pad: "q" }, { rename: inspecting });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.target).toBe(previous);
+    expect(JSON.parse(seen[0]?.temp ?? "")).toEqual({ n: 1, pad: "q" });
+    expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ n: 1, pad: "q" });
   });
 
   it("uses distinct temp names for concurrent writers", async () => {
@@ -157,6 +178,20 @@ describe("rename retry (Windows sharing violations)", () => {
     await expect(run).rejects.toThrow(`cannot replace ${target}: EPERM after 3 attempt(s)`);
     expect(calls()).toBe(3);
     expect(await readdir(root)).toEqual([]);
+  });
+
+  it("reports a rename that stays blocked as busy, so callers can retry later", async () => {
+    for (const code of RENAME_RETRY_CODES) {
+      const { fn } = flaky(code, ALWAYS);
+      const run = writeStateFileAtomic(join(root, "b.json"), {}, { rename: fn, retryDelayMs: 0 });
+      await expect(run).rejects.toMatchObject({ kind: "busy" });
+    }
+  });
+
+  it("keeps a permanent failure as write-failed, not busy", async () => {
+    const { fn } = flaky("ENOSPC", ALWAYS);
+    const run = writeStateFileAtomic(join(root, "b.json"), {}, { rename: fn });
+    await expect(run).rejects.toMatchObject({ kind: "write-failed" });
   });
 
   it("uses the default attempt count", async () => {
