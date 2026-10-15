@@ -8,5 +8,8 @@ export default defineConfig({
     include: [SPRINT_TOOLING_TESTS],
     // Each PowerShell test starts real PowerShell processes; Windows runners are slow.
     testTimeout: 60_000,
+    // Lets the worker answer vitest's reporter updates between the long synchronous PowerShell
+    // batches; without it vitest exits 1 on a worker RPC timeout with every test passing.
+    setupFiles: ["./test/sprint-yield-setup.ts"],
   },
 });

@@ -95,7 +95,9 @@ describe("sprint entrypoint", () => {
     expect(exportAt).toBeGreaterThan(-1);
     expect(exportAt).toBeLessThan(entrypoint.indexOf('claude -p "$('));
     // After the privilege drop, so the re-exec'd stage 2 process sets it for every claude child.
-    expect(exportAt).toBeGreaterThan(entrypoint.indexOf("exec setpriv"));
+    const dropAt = entrypoint.indexOf("exec setpriv");
+    expect(dropAt).toBeGreaterThan(-1);
+    expect(exportAt).toBeGreaterThan(dropAt);
   });
 
   it("runs the documented headless command", () => {
