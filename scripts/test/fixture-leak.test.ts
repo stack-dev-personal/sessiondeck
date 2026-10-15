@@ -70,7 +70,7 @@ describe("leak check", () => {
       "Stop/a.json": {
         session_id: SID_A,
         tool_use_id: "toolu_01ABCdefGHIjklMNOpqrstuvwxyz1234",
-        id: "task-synthetic-1",
+        task_id: "task-synthetic-1",
       },
     });
     expect(leakCheck(root).total).toBe(0);
@@ -99,8 +99,8 @@ describe("leak check", () => {
 
   it("derives the user and project names from raw and flags them in any form", () => {
     const raw = makeRaw();
-    expect(deriveLiterals(raw)).toEqual({ users: ["zed"], projects: ["alpha"] });
-    expect(deriveLiterals(null)).toEqual({ users: [], projects: [] });
+    expect(deriveLiterals(raw)).toEqual({ users: ["zed"], projects: ["alpha"], names: [] });
+    expect(deriveLiterals(null)).toEqual({ users: [], projects: [], names: [] });
     const root = fixturesWith({ "Stop/a.json": { x: "folder Alpha here", y: "/data/zed" } });
     const r = leakCheck(root, { rawRoot: raw });
     expect(r.byCategory["project-name"]).toBe(1);
@@ -116,7 +116,7 @@ describe("leak check", () => {
     expect(bad.stdout).toContain("FAIL");
     expect(bad.stdout).toContain("patterns only");
     expect(bad.stdout).not.toContain("example.org");
-    const clean = fixturesWith({ "Stop/a.json": { x: "<TEXT 3>" } });
+    const clean = fixturesWith({ "Stop/a.json": { prompt: "<TEXT 3>" } });
     expect(runNode(LEAK, [clean, "--raw", join(clean, "no-raw")]).status).toBe(0);
     expect(runNode(LEAK, [join(clean, "missing")]).status).toBe(2);
   });

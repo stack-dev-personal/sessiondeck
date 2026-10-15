@@ -161,8 +161,8 @@ describe("Scrubber", () => {
       hook_event_name: "Stop",
       permission_mode: "auto",
       stop_hook_active: false,
-      n: 12.5,
-      nothing: null,
+      duration_ms: 12.5,
+      result: null,
       model: { id: "claude-test-1", display_name: "Test 1" },
       effort: { level: "high" },
       version: "2.1.301",
@@ -194,12 +194,12 @@ describe("Scrubber", () => {
   it("redacts whole-value tokens, emails and account-like keys, in that order", () => {
     const s = new Scrubber();
     const out = s.value({
-      note: "ghp_abcdefghijklmnopqrstuvwxyz0123",
-      contact: "someone@example.com",
+      summary: "ghp_abcdefghijklmnopqrstuvwxyz0123",
+      label: "someone@example.com",
       workspace: { repo: { owner: "acme-corp", name: "private-repo", host: "github.com" } },
     }) as Out;
-    expect(out.note).toBe("<REDACTED>");
-    expect(out.contact).toBe("<EMAIL>");
+    expect(out.summary).toBe("<REDACTED>");
+    expect(out.label).toBe("<EMAIL>");
     expect(out.workspace.repo.owner).toBe("<ACCOUNT>");
     expect(out.workspace.repo.name).toBe("<TEXT 12>");
     expect(out.workspace.repo.host).toBe("github.com");

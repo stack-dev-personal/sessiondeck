@@ -10,7 +10,8 @@
  *   statusLine/NN-<tag>.json      20 samples;  subagentStatusLine/NN-<tag>.json  5 samples
  *   sessions/golden-session.jsonl one scrubbed hook payload per line, capture order
  *   synthetic/<Event>/01.json     uncaptured events (see lib/fixture-synthetic.mjs)
- * Deterministic: same raw set, same output. Prints counts only, never values. The raw directory
+ * Exits 1 after writing when a key name is not in lib/fixture-keys.mjs (written as <KEY_n>); the
+ * key paths are listed, never the names. Deterministic: same raw set, same output. Prints counts only, never values. The raw directory
  * is only read. Everything written passes through the default-deny Scrubber.
  */
 import { existsSync, mkdirSync, readdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
@@ -126,7 +127,8 @@ function main() {
     ),
     ...pickSubagentStatus(byEvent.get("subagentStatusLine") ?? [], SUBAGENT_WANT),
   ];
-  // Dedupe by source file, keeping the first tag; then order for stable numbering.
+  // Dedupe by source file; the later pick wins, so an extra's tag (interrupted, after-ask) replaces
+  // the untagged group pick. Then order for stable numbering.
   const unique = [...new Map(picks.map((p) => [`${p.dir}/${p.item.file}`, p])).values()];
   unique.sort((a, b) =>
     a.dir < b.dir
@@ -169,6 +171,14 @@ function main() {
   const denied = [...scrubber.denied].sort((a, b) => b[1] - a[1]);
   console.log(`placeholder paths (${denied.length}), key path: strings replaced`);
   for (const [path, n] of denied) console.log(`  ${path}: ${n}`);
+  const unknown = [...scrubber.unknownKeys].sort();
+  if (unknown.length > 0) {
+    console.error(
+      `UNKNOWN KEYS (${unknown.length} paths): review, then add to lib/fixture-keys.mjs`,
+    );
+    for (const [path, n] of unknown) console.error(`  ${path}: ${n}`);
+    process.exitCode = 1;
+  }
 }
 
 try {

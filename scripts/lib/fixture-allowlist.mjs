@@ -5,7 +5,7 @@
 // ("tasks[].status"). Numbers, booleans and null are always kept and never reach this table.
 // Every other string becomes a placeholder (see fixture-scrub-core.mjs).
 
-/** @typedef {{ re: RegExp, why: string }} KeepRule */
+/** @typedef {{ re: RegExp, why: string, builtinOnly?: boolean }} KeepRule */
 
 const ENUM = /^[a-z][a-z0-9_-]{1,39}$/;
 const WORD = /^[A-Za-z][A-Za-z0-9_-]{1,39}$/;
@@ -23,6 +23,10 @@ export const KEEP = {
     re: ENUM,
     why: "SessionEnd reason enum (free-text reasons fall through to a placeholder)",
   },
+  error: {
+    re: /^(?:rate_limit|authentication_failed|billing_error|invalid_request|server_error|max_output_tokens|unknown)$/,
+    why: "StopFailure error class (closed set); free-text errors fall through to a placeholder",
+  },
   trigger: { re: /^(manual|auto)$/, why: "compaction trigger" },
   notification_type: { re: ENUM, why: "Notification discriminator" },
   model: { re: MODEL, why: "SessionStart model id" },
@@ -33,7 +37,10 @@ export const KEEP = {
   },
   "tasks[].model": { re: MODEL, why: "subagentStatusLine row model" },
   version: { re: /^\d+\.\d+\.\d+(?:[-+.][A-Za-z0-9.]+)?$/, why: "Claude Code version" },
-  "output_style.name": { re: /^[A-Za-z0-9 _-]{1,40}$/, why: "output style name" },
+  "output_style.name": {
+    re: /^(?:default|Explanatory|Learning)$/,
+    why: "built-in output style names (custom styles have user-chosen names and are replaced)",
+  },
   "effort.level": { re: ENUM, why: "effort level enum" },
   "tasks[].effort": { re: ENUM, why: "subagent effort enum" },
   "prompt_cache.ttl": { re: /^\d+[smhd]$/, why: "cache ttl such as 1h" },
@@ -42,16 +49,19 @@ export const KEEP = {
   "tasks[].status": { re: ENUM, why: "subagent row status enum" },
   "tasks[].type": { re: ENUM, why: "subagent row type enum" },
   "tool_input.output_mode": { re: ENUM, why: "Grep output mode enum" },
-  "tool_response.type": { re: ENUM, why: "response kind enum" },
-  "tool_response.mode": { re: ENUM, why: "response mode enum" },
-  "tool_response.status": { re: ENUM, why: "response status enum" },
-  "tool_response.file.type": { re: ENUM, why: "Read result kind enum" },
-  "tool_response[].type": { re: ENUM, why: "content block type" },
-  "tool_response[].source.type": { re: ENUM, why: "image source type" },
-  "tool_response[].source.media_type": { re: /^[a-z]+\/[a-z0-9.+-]+$/, why: "image media type" },
+  "tool_response.type": { re: ENUM, why: "response kind enum", builtinOnly: true },
+  "tool_response.mode": { re: ENUM, why: "response mode enum", builtinOnly: true },
+  "tool_response.status": { re: ENUM, why: "response status enum", builtinOnly: true },
+  "tool_response.file.type": { re: ENUM, why: "Read result kind enum", builtinOnly: true },
+  "tool_response[].type": { re: /^(?:text|image)$/, why: "content block type (closed set)" },
+  "tool_response[].source.type": { re: /^(?:base64|url)$/, why: "image source type (closed set)" },
+  "tool_response[].source.media_type": {
+    re: /^image\/(?:png|jpeg|gif|webp)$/,
+    why: "image media type (closed set)",
+  },
   "mcp_server.source": { re: ENUM, why: "MCP server origin enum (user, claudeai, dynamic)" },
   "prompt_cache.last_miss_cause.causes[]": { re: ENUM, why: "cache miss cause enum" },
-  "tool_response.task_type": { re: ENUM, why: "background task type enum" },
+  "tool_response.task_type": { re: ENUM, why: "background task type enum", builtinOnly: true },
   "workspace.repo.host": {
     re: /^(github\.com|gitlab\.com|bitbucket\.org)$/,
     why: "public git host",
@@ -91,6 +101,7 @@ export const ID_KEYS = new Set([
   "prompt_id",
   "background_tasks[].id",
   "tasks[].id",
+  "task_id",
   "tool_response.agentId",
   "tool_response.resumedAgentId",
   "tool_response.backgroundTaskId",
@@ -113,6 +124,19 @@ export const MCP_KEYS = new Set(["mcp_server", "mcp_server.name"]);
 /** Keys that hold an account, org, repo owner or user id. */
 export const ACCOUNT_KEY =
   /(^|\.)(account|organization|org|owner|user|username|login)(_?(id|uuid|name))?$/i;
+
+/**
+ * The KEEP rule that applies to a string at path, or undefined. Rules marked builtinOnly (the
+ * tool_response enums) apply only when the payload's tool_name is a built-in tool: a private MCP
+ * or custom tool can put any slug in those fields.
+ * @param {string} path
+ * @param {boolean} builtinTool
+ * @returns {KeepRule | undefined}
+ */
+export function keepRule(path, builtinTool) {
+  const rule = Object.hasOwn(KEEP, path) ? KEEP[path] : undefined;
+  return rule?.builtinOnly === true && !builtinTool ? undefined : rule;
+}
 
 /** Object keys whose child key names are user content (question text and the like). */
 export const USER_KEYED = new Set(["answers", "annotations", "env", "headers", "variables"]);

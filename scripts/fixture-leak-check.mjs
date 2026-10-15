@@ -6,7 +6,7 @@
  *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>]
  *
  * With raw/ present the user name and project directory names are derived from it at run time;
- * without raw/ (CI) only the pattern checks run.
+ * without raw/ (CI) only the pattern and structure checks run (CI)
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -29,7 +29,7 @@ const r = leakCheck(root, { rawRoot: rawPresent ? raw : null });
 console.log(`mode: ${rawPresent ? "raw-derived literals + patterns" : "patterns only (no raw/)"}`);
 console.log(`files scanned: ${r.files}`);
 console.log(
-  `derived literals: users=${r.literals.users} projects=${r.literals.projects} (skipped short=${r.literals.skipped})`,
+  `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped})`,
 );
 for (const [c, n] of Object.entries(r.byCategory).sort()) console.log(`  ${c}: ${n}`);
 for (const f of r.perFile.slice(0, 50)) console.log(`  ${f.file}: ${f.category} x${f.count}`);

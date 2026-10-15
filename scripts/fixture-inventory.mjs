@@ -6,7 +6,7 @@
  *   node scripts/fixture-inventory.mjs [captureDir] [--shapes]
  *
  * captureDir defaults to packages/contract/fixtures/raw. --shapes also lists nested key paths
- * with value types. An event with zero captures is simply absent from the list.
+ * with value types. A registered hook event with zero captures is listed as NO CAPTURES with a trigger hint.
  */
 import { existsSync } from "node:fs";
 import { buildInventory } from "./lib/fixture-inventory-core.mjs";

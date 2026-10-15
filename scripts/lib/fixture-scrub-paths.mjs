@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 
 /** Directory names that are layout, not content. */
-const STRUCT = new Set([
+export const STRUCT = new Set([
   ".claude",
   "projects",
   "subagents",

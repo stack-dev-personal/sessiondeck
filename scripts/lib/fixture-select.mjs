@@ -104,9 +104,40 @@ export function pickExtras(byEvent) {
   return extras;
 }
 
-/** Capture order: epoch from the file name, then file name. */
-const byCapture = (/** @type {{ item: RawItem }} */ a, /** @type {{ item: RawItem }} */ b) =>
-  a.item.epoch - b.item.epoch || (a.item.file < b.item.file ? -1 : 1);
+/**
+ * Causal rank used to break ties between events captured in the same millisecond: SessionStart
+ * first, a prompt before the work it starts, PreToolUse before PermissionRequest before
+ * PostToolUse for the same call, Stop and SessionEnd last. Events of equal rank in one millisecond
+ * are unordered (the final fallback, the capture file name, ends in a random suffix).
+ */
+const CAUSAL_RANK = new Map(
+  [
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "PreToolUse",
+    "PermissionRequest",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PreCompact",
+    "PostCompact",
+    "Notification",
+    "SubagentStop",
+    "Stop",
+    "SessionEnd",
+  ].map((name, i) => [name, i]),
+);
+const OTHER_RANK = CAUSAL_RANK.size / 2;
+const rankOf = (/** @type {string} */ event) => CAUSAL_RANK.get(event) ?? OTHER_RANK;
+
+/** Capture order: epoch from the file name, then causal rank, then file name. */
+export const byCapture = (
+  /** @type {{ event: string, item: RawItem }} */ a,
+  /** @type {{ event: string, item: RawItem }} */ b,
+) =>
+  a.item.epoch - b.item.epoch ||
+  rankOf(a.event) - rankOf(b.event) ||
+  (a.item.file < b.item.file ? -1 : a.item.file > b.item.file ? 1 : 0);
 
 /**
  * Chooses the golden session: first event SessionStart, last event SessionEnd, at most maxEvents hook events, and

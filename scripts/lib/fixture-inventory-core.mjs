@@ -1,5 +1,27 @@
 // Builds the inventory text: event -> count -> distinct top-level key sets. Key names only.
 import { keysOf, listEvents, readEvent } from "./fixture-files.mjs";
+import { HOOK_EVENTS } from "./hook-events.mjs";
+
+/** How to make Claude Code fire each registered hook event, shown for events with no captures. */
+export const TRIGGER_HINTS = Object.freeze({
+  SessionStart: "start a new claude session",
+  UserPromptSubmit: "submit any prompt",
+  PreToolUse: "let Claude run any tool",
+  PostToolUse: "let Claude run any tool to completion",
+  PostToolUseFailure: "make a tool fail, for example read a file that does not exist",
+  PermissionRequest: "run a tool that needs approval in default permission mode",
+  PermissionDenied: "deny a permission prompt, or trigger an auto-mode denial",
+  Notification: "leave a permission or idle prompt unanswered",
+  SubagentStart: "ask Claude to delegate work to a subagent",
+  SubagentStop: "let a subagent finish",
+  TaskCreated: "create a task with the task tools (agent-team sessions)",
+  TaskCompleted: "complete a task with the task tools (agent-team sessions)",
+  Stop: "let Claude finish a turn",
+  StopFailure: "end a turn with an API error, for example a rate limit",
+  PreCompact: "run /compact",
+  PostCompact: "run /compact and let it finish",
+  SessionEnd: "exit the session with /exit or /clear",
+});
 
 /**
  * Structural type of a value, never the value itself.
@@ -65,6 +87,14 @@ export function buildInventory(root, opts = {}) {
       for (const it of items) collectShapes(it.payload, "", shapes);
       for (const s of [...shapes].sort()) lines.push(`    ~ ${s}`);
     }
+  }
+  const captured = new Set(listEvents(root));
+  for (const event of HOOK_EVENTS) {
+    if (captured.has(event)) continue;
+    const hint = Object.hasOwn(TRIGGER_HINTS, event)
+      ? TRIGGER_HINTS[/** @type {keyof typeof TRIGGER_HINTS} */ (event)]
+      : "no hint";
+    lines.push(`NO CAPTURES\t${event}\ttrigger: ${hint}`);
   }
   lines.push(`TOTAL\t${total}`);
   return { text: `${lines.join("\n")}\n`, total };

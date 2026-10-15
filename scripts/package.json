@@ -7,6 +7,7 @@
     "test": "vitest run",
     "test:sprint": "vitest run --config vitest.sprint.config.ts",
     "test:sprint-ps": "pnpm run test:sprint",
+    "fixture:leak": "node fixture-leak-check.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint ."
   },
