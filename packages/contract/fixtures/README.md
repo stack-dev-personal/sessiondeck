@@ -1,0 +1,118 @@
+# Contract fixtures
+
+Scrubbed Claude Code payloads that the reducer, the envelope walk and the statusLine schema are
+tested against (R0.7). Everything outside `raw/`, `settings/`, `synthetic/` was captured from real
+sessions and then passed through the default-deny scrub below.
+
+## Provenance
+
+- Claude Code versions seen in the captures: 2.1.295, 2.1.300, 2.1.301 (the statusLine `version` field).
+- OS: Windows 11 (the laptop). Capture date: 2026-10-15, several real sessions across more than one project.
+- Captured with `node scripts/capture-install.mjs` (hooks, `statusLine` and `subagentStatusLine`
+  pointing at `scripts/capture-fixtures.mjs`), then `--uninstall`. Raw files land in `raw/`, which is
+  gitignored, never loaded by tests and never reviewed or committed.
+- Produced from `raw/` by script only:
+
+```
+node scripts/fixture-inventory.mjs            # event -> count -> key sets (names only)
+node scripts/fixture-scrub.mjs                # scrub, select, write this directory
+node scripts/fixture-leak-check.mjs           # the gate: exit 0 or counts of findings
+```
+
+`fixture-scrub.mjs` is deterministic: the same `raw/` gives byte-identical output.
+
+## Layout
+
+```
+<Event>/NN-<slug>.json            hook payloads (13 captured events)
+statusLine/NN-<tag>.json          20 statusLine stdin samples
+subagentStatusLine/NN-<tag>.json  5 subagentStatusLine stdin samples
+sessions/golden-session.jsonl     one real session, hook payloads in capture order, one per line
+synthetic/<Event>/01-synthetic.json   NOT captured, see below
+settings/                         installer test input, not a payload directory
+```
+
+`<Event>/` and `statusLine/` follow the layout `packages/contract/test/helpers.ts` expects. The
+golden session is `.jsonl` on purpose: `loadFixtures()` only reads `.json`, so it is not treated as
+a one-payload fixture. Each line is the bare payload (no wrapper); order is the capture order
+(epoch ms in the raw file name, then file name). The file names carry a running number and a
+slug made of placeholder-safe values only (tool name, source, reason, tag).
+
+Selection: one representative (the smallest payload) per distinct top-level key set per event. Tool
+events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`) are also split by
+tool name (all MCP tools count as one), the key set of `tool_input` and, for `PostToolUse`, the
+shape of `tool_response`. Notification, SessionStart, SessionEnd, PreCompact and PostCompact are
+also split by `notification_type`, `source`, `reason` and `trigger`. Extras: all `PermissionRequest`
+captures, the first `Stop` after an `AskUserQuestion`. statusLine: highest context and rate-limit
+percentages, a `current_usage: null` sample, one per key set, samples after a compaction, first
+tick and mid-session samples across sessions, then evenly spread. subagentStatusLine: distinct
+sessions and row counts first.
+
+## Scrub rules
+
+Default deny. A string survives verbatim only if its key path is on the allowlist in
+`scripts/lib/fixture-allowlist.mjs` (one line of reason per key) and its value matches that key's
+pattern. Numbers, booleans and null are always kept. Every key name is kept, except key names that
+are user content (question text under `answers`, keys with spaces or dots), which become
+`<TEXT n>`.
+
+Kept verbatim (structural): `hook_event_name`, `permission_mode`, `source`, `reason`, `trigger`,
+`notification_type`, `model` (id and display name), `version`, `output_style.name`,
+`effort.level`, `prompt_cache.ttl`, status and type enums of background tasks and subagent rows,
+`tool_response` kind enums (`type`, `mode`, `status`), image `media_type`, MCP server `source`,
+cache miss cause enums, `workspace.repo.host` for public git hosts, built-in `tool_name` and
+built-in `agent_type` values.
+
+Placeholder vocabulary:
+
+| Placeholder | Replaces |
+|-------------|----------|
+| `<HOME>` | the user home directory, in every slash form and drive-letter case; output is always forward slashes |
+| `<ROOT>` | an absolute path outside the home directory |
+| `<PROJECT_A>`, `<PROJECT_B>`, ... | project directories (the segment after `projects/`, or the first directory under home), lettered in sorted order of the real names; the encoded folder under `.claude/projects/` and `AppData/Local/Temp/claude/` maps to the same letter as its cwd |
+| `<DIR_n>`, `<FILE_n>` | other directory and file names, numbered by first use, same name gives same number; the file extension is kept |
+| `<TEXT n>` | any other string (prompts, messages, commands, tool inputs and outputs, titles, descriptions, branch names, repo names, session names); n is the original length |
+| `<AGENT_n>` | custom agent types and names (built-ins such as `general-purpose` stay) |
+| `<MCP_n>`, `<TOOL_n>` | MCP server names; MCP tool names become `mcp__<MCP_n>__<TOOL_m>` |
+| `<REDACTED>` | a value that is wholly a token (`sk-`, `ghp_`, `gho_`, `AKIA`, `xox`, `Bearer`, 32+ char hex or base64 runs) |
+| `<EMAIL>`, `<ACCOUNT>` | an email-shaped value; an account, org or repo-owner value |
+
+Ids are remapped, not kept: `session_id`, `agent_id`, `tool_use_id`, `prompt_id` and task ids become
+a sha256-derived id of the same shape and length. The mapping is the same everywhere (including
+inside `transcript_path` and `scratchpad_dir`), so a session reads consistently across files. The
+shape of `transcript_path` is kept: `<HOME>/.claude/projects/<PROJECT_x>/<session-id>.jsonl`.
+
+Gate: `node scripts/fixture-leak-check.mjs` scans this directory (not `raw/`, not `settings/`) for
+the user name or home path in any slash form, the real project directory names (both derived from
+`raw/` at run time when it exists), email shapes, token patterns, strings longer than 200 chars and
+non-placeholder values under free-text keys. Without `raw/` (CI) it runs the pattern checks only.
+It prints counts and file names, never values.
+
+## Captured and synthetic
+
+Captured (13 hook events): Notification, PermissionRequest, PostCompact, PostToolUse,
+PostToolUseFailure, PreCompact, PreToolUse, SessionEnd, SessionStart, Stop, SubagentStart,
+SubagentStop, UserPromptSubmit; plus statusLine and subagentStatusLine.
+
+Not captured, so SYNTHETIC (conductor decision 7, 2026-10-15), one file each under
+`synthetic/<Event>/`: TaskCreated, TaskCompleted (task tools are disabled on this machine),
+PermissionDenied (the session ran in `auto` and `plan` modes, never the default mode, so no
+denial), StopFailure (no API failure happened). Their common fields are copied from a scrubbed
+captured `UserPromptSubmit`; the event-specific fields (`task_id`, `task_subject`,
+`task_description`; `tool_name`, `tool_input`, `tool_use_id`, `reason`; `error`, `error_details`,
+`last_assistant_message`) come from the Claude Code hooks reference. `docs/research/2026-10-08-feasibility-and-oss.md`
+lists these events only as "unverified at research time" and has no field list, so these four
+payloads are unverified. Do not treat them as evidence of the real payload. `synthetic/` is not a
+payload directory for `loadFixtures()`, but `findMisplacedFixtures()` in
+`packages/contract/test/helpers.ts` flags `.json` nested below it until `synthetic` is added to that
+helper's excluded directories (open item for the unit that owns that file).
+
+## Golden session
+
+`sessions/golden-session.jsonl`: one complete session, SessionStart (source `startup`) to
+SessionEnd (reason `clear`), 295 hook events, one `session_id`, no statusLine ticks. Counts by
+type: PreToolUse 135, PostToolUse 131, SubagentStop 10, UserPromptSubmit 5, PostToolUseFailure 4,
+Stop 4, Notification 2, SessionStart 1, SessionEnd 1, SubagentStart 1, PermissionRequest 1. It was
+chosen as the session that starts at SessionStart and ends at SessionEnd, fits under 400 events, and
+has the most distinct event types, including a PermissionRequest, a subagent and several Stops. It
+contains no AskUserQuestion and no compaction; those are covered by the per-event fixtures.

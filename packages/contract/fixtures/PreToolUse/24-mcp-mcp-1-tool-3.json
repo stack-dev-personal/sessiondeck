@@ -1,0 +1,22 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "258941d6-831a-4db4-8bd4-658cc76fc40d",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__<MCP_1>__<TOOL_3>",
+  "tool_input": {
+    "url": "<TEXT 72>",
+    "teamId": "<TEXT 21>"
+  },
+  "tool_use_id": "toolu_wbAiUE9NgfAwovrOkbSuvc89",
+  "mcp_server": {
+    "name": "<MCP_2>",
+    "source": "claudeai"
+  }
+}

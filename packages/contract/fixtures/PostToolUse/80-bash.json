@@ -1,0 +1,34 @@
+{
+  "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad",
+  "prompt_id": "56f2a215-25d8-412a-8cdf-711b856a5a5a",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "<TEXT 1055>",
+    "timeout": 120000,
+    "description": "<TEXT 76>"
+  },
+  "tool_response": {
+    "stdout": "<TEXT 185>",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false,
+    "gitOperation": {
+      "pr": {
+        "number": 111,
+        "url": "<TEXT 54>",
+        "action": "<TEXT 7>"
+      }
+    }
+  },
+  "tool_use_id": "toolu_62TzFgOhrdQOEAcZc0TGfI2N",
+  "duration_ms": 8993
+}

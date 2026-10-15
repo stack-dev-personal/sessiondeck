@@ -1,0 +1,19 @@
+{
+  "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5/scratchpad",
+  "prompt_id": "f7f4f8e7-d120-488e-82c1-9483dfb2c437",
+  "permission_mode": "auto",
+  "agent_id": "01d141932c0a188dc",
+  "agent_type": "",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5/subagents/agent-01d141932c0a188dc.jsonl",
+  "last_assistant_message": "<TEXT 10>",
+  "background_tasks": [],
+  "session_crons": []
+}

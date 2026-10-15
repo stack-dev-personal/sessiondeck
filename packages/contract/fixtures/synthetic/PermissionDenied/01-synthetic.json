@@ -1,0 +1,16 @@
+{
+  "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_H>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494/scratchpad",
+  "prompt_id": "24b36247-891f-4c44-8b2e-2545a3f979a3",
+  "permission_mode": "auto",
+  "hook_event_name": "PermissionDenied",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "<TEXT 30>",
+    "description": "<TEXT 20>"
+  },
+  "tool_use_id": "toolu_synthetic0000000000001",
+  "reason": "<TEXT 60>"
+}

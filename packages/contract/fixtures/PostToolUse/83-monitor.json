@@ -1,0 +1,25 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_B>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "5fb27086-7942-40d3-875f-baedd523016d",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Monitor",
+  "tool_input": {
+    "description": "<TEXT 97>",
+    "timeout_ms": 1800000,
+    "command": "<TEXT 217>"
+  },
+  "tool_response": {
+    "taskId": "gvScWy5Ck",
+    "timeoutMs": 1800000,
+    "persistent": false
+  },
+  "tool_use_id": "toolu_d1VTpXr3pihNoaNOLv4EvJ3m",
+  "duration_ms": 45
+}

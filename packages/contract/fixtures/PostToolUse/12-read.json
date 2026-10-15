@@ -1,0 +1,28 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "9294e436-0327-47af-88c8-cc469bc57749",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "<HOME>/projects/<PROJECT_D>/<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_3>.md"
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "<HOME>/projects/<PROJECT_D>/<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_3>.md",
+      "content": "<TEXT 11801>",
+      "numLines": 44,
+      "startLine": 1,
+      "totalLines": 44
+    }
+  },
+  "tool_use_id": "toolu_1A8DnM8NQRUbMVBJMoCOAMub",
+  "duration_ms": 25
+}

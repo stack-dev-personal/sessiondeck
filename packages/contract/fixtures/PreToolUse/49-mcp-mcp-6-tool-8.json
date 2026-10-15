@@ -1,0 +1,28 @@
+{
+  "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>/<DIR_5>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad",
+  "prompt_id": "932e3f13-5b53-4c3d-8256-32834d4c6673",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__<MCP_6>__<TOOL_8>",
+  "tool_input": {
+    "action": "<TEXT 4>",
+    "tabId": 1360566803,
+    "region": [
+      1100,
+      0,
+      1495,
+      300
+    ]
+  },
+  "tool_use_id": "toolu_IdzfalaqQfEdspYJcXCtc2Ik",
+  "mcp_server": {
+    "name": "<MCP_6>",
+    "source": "dynamic"
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910/scratchpad",
+  "prompt_id": "968ddb83-7723-494a-882b-10952ebd5e7e",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "<TEXT 681>",
+    "description": "<TEXT 60>"
+  },
+  "tool_response": {
+    "stdout": "<TEXT 552>",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false,
+    "gitOperation": {
+      "push": {
+        "branch": "<TEXT 23>"
+      }
+    },
+    "bashEditDiff": {
+      "files": [
+        {
+          "filePath": "<HOME>/projects/<PROJECT_D>/<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_3>.md",
+          "hunks": [
+            {
+              "oldStart": 3,
+              "oldLines": 7,
+              "newStart": 3,
+              "newLines": 7,
+              "lines": [
+                "<TEXT 107>",
+                "<TEXT 101>",
+                "<TEXT 105>",
+                "<TEXT 90>",
+                "<TEXT 115>",
+                "<TEXT 1>",
+                "<TEXT 46>",
+                "<TEXT 1>"
+              ]
+            },
+            {
+              "oldStart": 23,
+              "oldLines": 6,
+              "newStart": 23,
+              "newLines": 7,
+              "lines": [
+                "<TEXT 570>",
+                "<TEXT 1996>",
+                "<TEXT 1202>",
+                "<TEXT 580>",
+                "<TEXT 1>",
+                "<TEXT 110>",
+                "<TEXT 116>"
+              ]
+            }
+          ]
+        },
+        {
+          "filePath": "<HOME>/projects/<PROJECT_D>/<DIR_12>/<FILE_4>.md",
+          "hunks": [
+            {
+              "oldStart": 1,
+              "oldLines": 7,
+              "newStart": 1,
+              "newLines": 7,
+              "lines": [
+                "<TEXT 33>",
+                "<TEXT 1>",
+                "<TEXT 93>",
+                "<TEXT 5703>",
+                "<TEXT 5758>",
+                "<TEXT 141>",
+                "<TEXT 101>",
+                "<TEXT 98>"
+              ]
+            },
+            {
+              "oldStart": 61,
+              "oldLines": 7,
+              "newStart": 61,
+              "newLines": 7,
+              "lines": [
+                "<TEXT 1245>",
+                "<TEXT 1216>",
+                "<TEXT 892>",
+                "<TEXT 999>",
+                "<TEXT 1000>",
+                "<TEXT 1>",
+                "<TEXT 103>",
+                "<TEXT 104>"
+              ]
+            },
+            {
+              "oldStart": 458,
+              "oldLines": 7,
+              "newStart": 458,
+              "newLines": 7,
+              "lines": [
+                "<TEXT 97>",
+                "<TEXT 61>",
+                "<TEXT 1>",
+                "<TEXT 1135>",
+                "<TEXT 1234>",
+                "<TEXT 1>",
+                "<TEXT 1112>",
+                "<TEXT 1>"
+              ]
+            },
+            {
+              "oldStart": 720,
+              "oldLines": 4,
+              "newStart": 720,
+              "newLines": 4,
+              "lines": [
+                "<TEXT 1>",
+                "<TEXT 70>",
+                "<TEXT 1>",
+                "<TEXT 1935>",
+                "<TEXT 1985>"
+              ]
+            }
+          ]
+        }
+      ],
+      "moreFiles": 1,
+      "changedFiles": [
+        "<HOME>/projects/<PROJECT_D>/<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_3>.md",
+        "<HOME>/projects/<PROJECT_D>/<DIR_12>/<FILE_4>.md",
+        "<HOME>/projects/<PROJECT_D>/<DIR_12>/<FILE_5>.md"
+      ]
+    }
+  },
+  "tool_use_id": "toolu_VvCjy4aGg1RSNOT7c1ga99WR",
+  "duration_ms": 7337
+}
