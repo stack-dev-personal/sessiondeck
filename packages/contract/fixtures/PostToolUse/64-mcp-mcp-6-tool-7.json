@@ -11,7 +11,7 @@
   "hook_event_name": "PostToolUse",
   "tool_name": "mcp__<MCP_6>__<TOOL_7>",
   "tool_input": {
-    "tabId": 1360566803,
+    "tabId": 0,
     "url": "<TEXT 36>"
   },
   "tool_response": [

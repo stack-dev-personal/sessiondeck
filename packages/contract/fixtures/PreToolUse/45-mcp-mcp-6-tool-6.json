@@ -11,7 +11,7 @@
   "hook_event_name": "PreToolUse",
   "tool_name": "mcp__<MCP_6>__<TOOL_6>",
   "tool_input": {
-    "tabId": 1360566803,
+    "tabId": 0,
     "width": 1280,
     "height": 800
   },

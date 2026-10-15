@@ -4,6 +4,8 @@
  *   fixtures/<Event>/*.json         scrubbed, committed fixtures. <Event> is the hook_event_name
  *                                   for hook events, plus statusLine/ and subagentStatusLine/.
  *   fixtures/settings/              settings-merge test inputs. Not a payload directory.
+ *   fixtures/sessions/              golden session (.jsonl). Not a payload directory.
+ *   fixtures/synthetic/<Event>/     hand-written payloads for uncaptured events. Not loaded by loadFixtures().
  * A .json directly in fixtures/, or nested deeper than fixtures/<Event>/, is a layout error.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -11,7 +13,7 @@ import { join } from "node:path";
 import type { Envelope, EventKind } from "../src/envelope";
 
 export const FIXTURES_DIR = join(import.meta.dirname, "..", "fixtures");
-const EXCLUDED_DIRS = new Set(["raw", "settings"]);
+const EXCLUDED_DIRS = new Set(["raw", "settings", "sessions", "synthetic"]);
 
 /** Test-only ULID-shaped id. */
 export const TEST_ULID = "01HZX3K9QJ5V8M2N4P6R7S8T9W";

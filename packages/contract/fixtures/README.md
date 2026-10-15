@@ -35,7 +35,7 @@ settings/                         installer test input, not a payload directory
 `<Event>/` and `statusLine/` follow the layout `packages/contract/test/helpers.ts` expects. The
 golden session is `.jsonl` on purpose: `loadFixtures()` only reads `.json`, so it is not treated as
 a one-payload fixture. Each line is the bare payload (no wrapper); order is the capture order
-(epoch ms in the raw file name, then file name). The file names carry a running number and a
+(epoch ms in the raw file name; events in the same millisecond are ordered by cause: SessionStart, UserPromptSubmit, SubagentStart, PreToolUse, PermissionRequest, PostToolUse, PostToolUseFailure, PreCompact, PostCompact, Notification, SubagentStop, Stop, SessionEnd; two events of the same type in one millisecond are unordered and fall back to the file name, whose last part is random). The file names carry a running number and a
 slug made of placeholder-safe values only (tool name, source, reason, tag).
 
 Selection: one representative (the smallest payload) per distinct top-level key set per event. Tool
@@ -100,12 +100,11 @@ PermissionDenied (the session ran in `auto` and `plan` modes, never the default 
 denial), StopFailure (no API failure happened). Their common fields are copied from a scrubbed
 captured `UserPromptSubmit`; the event-specific fields (`task_id`, `task_subject`,
 `task_description`; `tool_name`, `tool_input`, `tool_use_id`, `reason`; `error`, `error_details`,
-`last_assistant_message`) come from the Claude Code hooks reference. `docs/research/2026-10-08-feasibility-and-oss.md`
+`last_assistant_message`) come from the Claude Code hooks reference. The 2026-10-08 feasibility research note
 lists these events only as "unverified at research time" and has no field list, so these four
 payloads are unverified. Do not treat them as evidence of the real payload. `synthetic/` is not a
-payload directory for `loadFixtures()`, but `findMisplacedFixtures()` in
-`packages/contract/test/helpers.ts` flags `.json` nested below it until `synthetic` is added to that
-helper's excluded directories (open item for the unit that owns that file).
+payload directory for `loadFixtures()`; `packages/contract/test/helpers.ts` excludes `synthetic` and
+`sessions` from both `loadFixtures()` and `findMisplacedFixtures()`.
 
 ## Golden session
 
