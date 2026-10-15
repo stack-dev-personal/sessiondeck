@@ -87,9 +87,15 @@ describe("sprint entrypoint", () => {
   });
 
   it("lifts the headless background-task ceiling before running claude", () => {
-    const exportAt = entrypoint.indexOf("export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0");
+    // A real top-level statement (line start, value exactly 0), not a comment or a nested line.
+    const exports = [...entrypoint.matchAll(/^export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0$/gm)];
+    expect(exports).toHaveLength(1);
+    expect(entrypoint).not.toMatch(/CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=[^0\s]/);
+    const exportAt = exports[0]?.index ?? -1;
     expect(exportAt).toBeGreaterThan(-1);
     expect(exportAt).toBeLessThan(entrypoint.indexOf('claude -p "$('));
+    // After the privilege drop, so the re-exec'd stage 2 process sets it for every claude child.
+    expect(exportAt).toBeGreaterThan(entrypoint.indexOf("exec setpriv"));
   });
 
   it("runs the documented headless command", () => {
