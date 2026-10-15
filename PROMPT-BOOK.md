@@ -79,7 +79,8 @@ Merging methodology
 
 Status (PROMPT-BOOK.md section 6)
 - Write /state/{SPRINT_ID}/sessions/{SESSION_ID}.json at intake, after every unit, and at exit. States: running, blocked, green, failed.
-- While a unit runs, rewrite that file at least every 15 minutes (updated_at, current_unit) so the conductor can tell a live session from a dead one.
+- Heartbeat: while a foreground subagent call runs you take no turns, so you cannot rewrite the file yourself. Before any delegation expected to run longer than a few minutes, start a background shell heartbeat (a Bash command run in the background, not an Agent call) that rewrites updated_at in your status file at least every 10 minutes, writing a temporary file and renaming it over the status file. It dies with the session, so a dead session still goes stale. Stop it when the call returns.
+- The conductor treats a status file whose updated_at is older than 15 minutes as stale (a dead or hung session).
 - green means: PR open against the sprint branch, CI green on the branch, VERIFY table has every handoff requirement at pass or "verified by CI", reviewer verdict merge, security gate pass where required.
 - Session log: docs/sessions/{SESSION_BRANCH_SLUG}.md on your branch, per /sprint-loop.
 
