@@ -14,7 +14,7 @@
 | U1 fixture inventory, scrub, select (scripts plus scrubbed set, README) | R0.7 | sd-executor-contract | none | reviewed (round 3), verification next |
 | U2 captured-fixture walks (envelope, statusLine) and CONTRACT.md observed payloads | R0.1, R0.4, R0.7 | sd-executor-contract | U1 | pending |
 | U3 reducer TODO(fixture) finalization and golden timeline | R0.2, R0.3 | sd-executor-contract | U1 | pending |
-| U4 conductor decisions: ADR docker socket, PROMPT-BOOK section 6, entrypoint export, capture path docs, guard rule, Read deny rules | decisions 1, 3, 4, 5 | sd-executor-contract (widened scope) | none | reviewed (round 3); .claude items in U4b |
+| U4 conductor decisions: ADR docker socket, PROMPT-BOOK section 6, entrypoint export, capture path docs, guard rule, Read deny rules | decisions 1, 3, 4, 5 | sd-executor-contract (widened scope) | none | done (U4 round 3; U4b patch merge, gate pass) |
 | Close: rebase, full suite, VERIFY-P0 rows incl. laptop confirmations, PR | all | sd-verifier | U1-U4 | pending |
 
 ## Decisions made
@@ -65,7 +65,15 @@ Process note (resume 1): the round-3 sd-reviewer and sd-security-reviewer calls 
 
 ### U4b .claude items (decisions 4 and 5)
 - Executor sd-executor-contract, commit f781950. Direct edit of .claude/hooks/guard.mjs refused again by Claude Code as a sensitive file; not circumvented. Shipped as docs/patches/S0b-claude-dir.patch (guard rule for capture-install --apply, two Read deny entries for the capture directory, fixture-capture SKILL.md raw path, scripts/test/guard.test.ts) plus docs/patches/README.md. Proof: git apply --check on a fresh worktree of HEAD OK; guard test 21 pass on the patched copy; eslint, prettier, tsc clean. The user applies it from a plain terminal.
+- Researcher (code.claude.com/docs/en/permissions, 2026-10-15): //path is absolute; on Windows C:Usersalice is matched as /c/Users/alice; * is one segment; Read deny is best effort for Grep and Glob and does not cover Bash. Both deny forms kept; the //c/Users/*/ form is the documented one.
+- Review iteration 1 at f781950: security Gate: pass (1 MEDIUM wording overstated the guard, 3 LOW); reviewer merge (3 MINOR). Fix round 1 c1f4a9b.
+- Iteration 2 at c1f4a9b: security Gate: pass (1 MEDIUM: node-anchoring dropped coverage, incl. CLAUDECODE= node ..., which also passes the installer refusal; 3 LOW); reviewer merge (2 MINOR). Fix round 2 9d5d39b.
+- Iteration 3 at 9d5d39b: security Gate: pass with a new MEDIUM (regex slowdown: about 3,500 spaces outlast the 5 s hook timeout, and a timed-out hook lets the command run); reviewer merge (1 MINOR README wording). Shipping a known slowdown in a guard was not acceptable, so one targeted fix round (8c97dc6: single anchor, whitespace-free path prefix, substring pre-check, 9 timing tests; guard.test.ts 84 pass, slowest 144 ms) followed by a security re-check: Gate: pass, 1 LOW deferred.
+- Residual risk (security, recorded as asked): the rule prevents accidents, not a hostile session. A compromised session already has the user's privileges and can write the user-level settings file with node fs or run the installer through node -e import(); the controls for that are decision 5 (only the user applies) and the user reviewing their settings file, not a regex.
+- Process note: the Edit tool refuses .claude/ paths even inside the throwaway temp worktree; the executor built the patch there with small node scripts. The repo worktree's .claude/ was never written (git diff 6baa15c..HEAD -- .claude is empty). Flagged to the user in the report.
 
 ## Deferred findings (resume 1)
 - [LOW, security] PROMPT-BOOK.md:82-86: heartbeat rules are prose only; ship a fixed heartbeat script (cap argument, stop file, exit when the parent process is gone, updated_at only) with a test. Owner: sprint tooling (S0c follow-up or Sprint 1 tooling unit).
 - [MINOR, review] PROMPT-BOOK.md:83: "unit budget (at most 60 minutes)" is not defined elsewhere; a unit longer than 60 minutes looks stale at 75. Fix with the heartbeat script: define the budget in section 2 or restart the heartbeat between foreground calls.
+- [LOW, security] docs/patches/S0b-claude-dir.patch:21 (guard.mjs:28 once applied): NODE pattern still quadratic on crafted input; git push # capture-install --apply followed by 100,000 { takes 8.1 s, past the 5 s hook timeout, so the bare-push-on-main check is skipped. Needs deliberate 70k+ character input. Fix: exclude { from the unquoted prefix, cap command length (fail closed), run the bare-push check before the regex rules, add 100k timing cases. Pre-existing, unrelated to this patch: the bare-push check is bypassed by git -C . push. Owner: next unit that touches guard.mjs.
+- [LOW, security] scripts/lib/fixture-leak-structure.mjs:121 numbers under placeholder keys; fixture-leak-core.mjs:57 path exemption; README.md:105 wording: folded into U2.
