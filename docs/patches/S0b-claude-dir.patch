@@ -1,0 +1,149 @@
+diff --git a/.claude/hooks/guard.mjs b/.claude/hooks/guard.mjs
+index ecc9112..d19d86e 100644
+--- a/.claude/hooks/guard.mjs
++++ b/.claude/hooks/guard.mjs
+@@ -21,6 +21,9 @@ const RULES = [
+   { re: /\bgit\s+reset\s+--hard\b/, why: 'git reset --hard discards work; stash or ask the user' },
+   { re: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(\/|~|\$HOME|\.\.|[A-Za-z]:[\\/])/, why: 'recursive delete outside the repo is forbidden' },
+   { re: /[\\/]\.claude[\\/]settings\.json\b/, why: 'the user-level ~/.claude/settings.json is off limits; only the probe installer edits it, in its own tests with CLAUDE_CONFIG_DIR' },
++  // Conductor decision 5: only the user, from a plain terminal, applies the capture installer.
++  // Previews (no flag, or --dry-run) stay allowed. Matches in either order, any path or quoting form.
++  { re: /capture-install\S*[^|;&\n]*?(?:^|[\s"'=])--apply\b|(?:^|[\s"'])--apply\b[^|;&\n]*capture-install/, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
+ ];
+ 
+ function currentBranch(cwd) {
+diff --git a/.claude/settings.json b/.claude/settings.json
+index 289a564..c179bd0 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -31,7 +31,9 @@
+       "Bash(git reset --hard*)",
+       "Read(./.env)",
+       "Read(./.env.*)",
+-      "Read(./**/probe.json)"
++      "Read(./**/probe.json)",
++      "Read(~/AppData/Local/sessiondeck/capture/**)",
++      "Read(//c/Users/*/AppData/Local/sessiondeck/capture/**)"
+     ]
+   },
+   "hooks": {
+diff --git a/.claude/skills/fixture-capture/SKILL.md b/.claude/skills/fixture-capture/SKILL.md
+index 068412e..da78c36 100644
+--- a/.claude/skills/fixture-capture/SKILL.md
++++ b/.claude/skills/fixture-capture/SKILL.md
+@@ -9,11 +9,11 @@ Why: several hook payload fields are undocumented or version-gated. The reducer,
+ ## S0: build the capture script
+ `scripts/capture-fixtures.mjs`, run via exec form so it works on Windows:
+ 
+-- Hook mode: reads stdin, writes `packages/contract/fixtures/raw/<hook_event_name>/<epoch>-<short session id>.json`, exits 0, never writes stdout.
++- Hook mode: reads stdin, writes the raw file into the capture tool's directory under local app data, `%LOCALAPPDATA%/sessiondeck/capture/raw/<hook_event_name>/<epoch-ms>-<8-char session id prefix>-<random suffix>.json`, exits 0, never writes stdout. The user's uninstall step (`scripts/UNINSTALL.txt` step 5) copies that tree to `packages/contract/fixtures/raw/` (gitignored, never committed). Sessions read only the copy; the app-data directory is denied to Read in `.claude/settings.json`.
+ - statusLine mode (`--statusline`): same write under `raw/statusLine/`, then prints one short line so the user's status line keeps working.
+ - subagentStatusLine mode (`--subagents`): same under `raw/subagentStatusLine/`, prints nothing (empty content hides the rows, which is acceptable for a day).
+ - `scripts/capture-install.mjs`: merges entries for all 17 events plus `statusLine` and `subagentStatusLine` into `~/.claude/settings.json` without removing existing hooks, writes a backup next to it, and prints the diff. `--uninstall` reverses it from the backup. Test the merge against `packages/contract/fixtures/settings/with-harness-hooks.json` before touching the real file.
+-- Tell the user: run `node scripts/capture-install.mjs`, work normally for a day across at least two projects, include one long session (so `rate_limits` appears), one session with subagents, one `/compact`, one permission prompt you answer, one AskUserQuestion, one `/clear`, and one session you close by killing the terminal (for liveness fixtures later). Then run `--uninstall`.
++- Tell the user: run `node scripts/capture-install.mjs --apply` yourself from a plain terminal (the guard blocks `--apply` inside sessions; a run without `--apply` is a preview), work normally for a day across at least two projects, include one long session (so `rate_limits` appears), one session with subagents, one `/compact`, one permission prompt you answer, one AskUserQuestion, one `/clear`, and one session you close by killing the terminal (for liveness fixtures later). Then run `--uninstall`.
+ 
+ ## S0b: scrub and commit
+ 1. Inventory: `node scripts/fixture-inventory.mjs` prints a table of event → count → distinct top-level key sets. Any event with zero captures is reported to the user with what to do to trigger it.
+diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
+new file mode 100644
+index 0000000..dfaa2e3
+--- /dev/null
++++ b/scripts/test/guard.test.ts
+@@ -0,0 +1,96 @@
++import { spawnSync } from "node:child_process";
++import { readFileSync } from "node:fs";
++import { dirname, resolve } from "node:path";
++import { fileURLToPath } from "node:url";
++import { describe, expect, it } from "vitest";
++
++const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
++const guardPath = resolve(repoRoot, ".claude", "hooks", "guard.mjs");
++const BLOCKED = 2;
++const ALLOWED = 0;
++
++function runGuard(command: string): { status: number | null; stderr: string } {
++  const input = JSON.stringify({
++    tool_name: "Bash",
++    tool_input: { command },
++    cwd: repoRoot,
++  });
++  const result = spawnSync(process.execPath, [guardPath], {
++    input,
++    encoding: "utf8",
++  });
++  return { status: result.status, stderr: result.stderr };
++}
++
++describe("guard: capture-install --apply (conductor decision 5)", () => {
++  const blocked = [
++    "node scripts/capture-install.mjs --apply",
++    "node C:/Users/someone/projects/sessiondeck/scripts/capture-install.mjs --apply",
++    'node "scripts/capture-install.mjs" --apply',
++    "node 'scripts/capture-install.mjs' '--apply'",
++    "node.exe scripts/capture-install.mjs --apply",
++    "node scripts/capture-install.mjs --out C:/tmp/x --apply",
++    "node scripts/capture-install.mjs --uninstall --apply",
++    "node scripts\\capture-install.mjs --apply",
++    "node C:\\repo\\scripts\\capture-install.mjs --out D:\\cap --apply",
++    "cd scripts && node capture-install.mjs --apply",
++    "node scripts/capture-install --apply",
++  ];
++  it.each(blocked)("blocks: %s", (command) => {
++    const { status, stderr } = runGuard(command);
++    expect(status).toBe(BLOCKED);
++    expect(stderr).toContain("capture-install --apply");
++  });
++
++  const allowed = [
++    "node scripts/capture-install.mjs",
++    "node scripts/capture-install.mjs --dry-run",
++    "node scripts/capture-install.mjs --uninstall",
++    "node scripts/capture-install.mjs --uninstall --dry-run",
++    "node scripts/capture-install.mjs --out C:/tmp/x",
++    "node scripts/capture-install.mjs --dry-run && echo applied-later",
++    "git status",
++  ];
++  it.each(allowed)("allows: %s", (command) => {
++    expect(runGuard(command).status).toBe(ALLOWED);
++  });
++
++  it("ignores non-Bash tools and empty input", () => {
++    const other = spawnSync(process.execPath, [guardPath], {
++      input: JSON.stringify({
++        tool_name: "Read",
++        tool_input: { command: "capture-install --apply" },
++      }),
++      encoding: "utf8",
++    });
++    expect(other.status).toBe(ALLOWED);
++    const empty = spawnSync(process.execPath, [guardPath], {
++      input: "",
++      encoding: "utf8",
++    });
++    expect(empty.status).toBe(ALLOWED);
++  });
++});
++
++describe(".claude/settings.json deny rules (conductor decision 5)", () => {
++  const settings = JSON.parse(
++    readFileSync(resolve(repoRoot, ".claude", "settings.json"), "utf8"),
++  ) as {
++    permissions: { deny: string[] };
++  };
++
++  it("denies Read of the capture directory in home-relative and absolute forms", () => {
++    expect(settings.permissions.deny).toEqual(
++      expect.arrayContaining([
++        "Read(~/AppData/Local/sessiondeck/capture/**)",
++        "Read(//c/Users/*/AppData/Local/sessiondeck/capture/**)",
++      ]),
++    );
++  });
++
++  it("keeps the existing secret deny rules", () => {
++    expect(settings.permissions.deny).toEqual(
++      expect.arrayContaining(["Read(./.env)", "Read(./.env.*)", "Read(./**/probe.json)"]),
++    );
++  });
++});
