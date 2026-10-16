@@ -6,7 +6,7 @@ import {
   safeParseEnvelope,
   type Envelope,
 } from "../src/envelope";
-import { kindForFixtureDir, loadFixtures, makeEnvelope, TEST_ULID, wrapFixture } from "./helpers";
+import { makeEnvelope, TEST_ULID } from "./helpers";
 
 describe("EnvelopeSchema", () => {
   it.each(EVENT_KINDS)("accepts a valid envelope of kind %s", (kind) => {
@@ -98,25 +98,5 @@ describe("isHookEnvelope", () => {
     expect(isHookEnvelope(status)).toBe(false);
     const nameless: Envelope = { ...parseEnvelope(makeEnvelope()), hook_event_name: undefined };
     expect(isHookEnvelope(nameless)).toBe(false);
-  });
-});
-
-const fixtures = loadFixtures();
-
-// TODO(fixture): captured fixtures arrive in S0b; this block un-skips itself when they exist.
-if (fixtures.length === 0)
-  it.skip("TODO(fixture): no captured fixtures yet; envelope walk not exercised", () => {
-    expect.fail("TODO(fixture): captured fixtures are exercised by the describe block below");
-  });
-describe.skipIf(fixtures.length === 0)("captured fixtures wrapped in an envelope", () => {
-  it.each(fixtures.map((f) => [`${f.dir}/${f.file}`, f] as const))("%s parses", (_name, fx) => {
-    const parsed = safeParseEnvelope(wrapFixture(fx));
-    expect(parsed.success).toBe(true);
-    if (kindForFixtureDir(fx.dir) === "hook") {
-      expect((fx.payload as Record<string, unknown>)["hook_event_name"]).toBe(fx.dir);
-    }
-    if (parsed.success) {
-      expect(parsed.data.payload).toEqual(fx.payload);
-    }
   });
 });

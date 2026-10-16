@@ -128,3 +128,27 @@ export function wrapFixture(fx: LoadedFixture): Envelope {
     payload: fx.payload,
   };
 }
+
+/** Hand-written payloads for uncaptured events: fixtures/synthetic/<Event>/*.json. Never part of loadFixtures(). */
+export function loadSyntheticFixtures(root: string = FIXTURES_DIR): LoadedFixture[] {
+  return loadFixtures(join(root, "synthetic"));
+}
+
+/** The golden session: one bare hook payload per line, in capture order. Dir is the payload's event name. */
+export function loadGoldenSession(root: string = FIXTURES_DIR): LoadedFixture[] {
+  const path = join(root, "sessions", "golden-session.jsonl");
+  if (!existsSync(path)) {
+    return [];
+  }
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line, i) => {
+      const payload: unknown = JSON.parse(line);
+      return {
+        dir: stringField(payload, "hook_event_name") ?? "unknown",
+        file: `line-${i + 1}`,
+        payload,
+      };
+    });
+}
