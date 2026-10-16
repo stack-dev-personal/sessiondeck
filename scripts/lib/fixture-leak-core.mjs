@@ -47,16 +47,26 @@ export function listFixtureFiles(dir, top = true) {
   return out;
 }
 
+// A path piece that reads as a folder or file name: words joined by - _ or ., each word letters only
+// (lower, UPPER or Capitalized) with optional trailing digits, or digits with an optional letter
+// suffix. Random base64 ("aB3dE5gH7jK") has case switches and digits between letters, so it fails.
+const NAME_WORD = /^(?:(?:[a-z]+|[A-Z]+|[A-Z][a-z]+)[0-9]*|[0-9]+(?:[a-z]+|[A-Z]+)?)$/;
+
+/** @param {string} piece */
+const looksLikeName = (piece) => piece.split(/[-_.]/).every((w) => w === "" || NAME_WORD.test(w));
+
 /** @param {string} text */
 function tokenRuns(text) {
   const stripped = text.replace(UUID_OR_TOOLU, "");
   let n = 0;
   for (const m of stripped.matchAll(/[A-Za-z0-9+/_=-]{32,}/g)) {
     // A long relative file path ("docs/research/2026-10-08-some-note.md") is not a secret, but a
-    // key used as one of its folder or file names ("keys/<40 chars>.pem") still is: test each part.
+    // key used as one of its folder or file names ("keys/<40 chars>.pem") still is: test each part,
+    // and require every part to read as a name, so a base64 secret cut into short pieces by "/"
+    // ("aB3dE5gH7jK9/mN1pQ3sT5vW7yZ9bC1d.pem") does not pass either.
     const after = stripped.slice((m.index ?? 0) + m[0].length);
     if (m[0].includes("/") && /^\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])/.test(after)) {
-      if (m[0].split("/").some((part) => isToken(part))) n += 1;
+      if (m[0].split("/").some((part) => isToken(part) || !looksLikeName(part))) n += 1;
       continue;
     }
     if (isToken(m[0])) n += 1;
@@ -76,9 +86,12 @@ const segmentPathRe = (/** @type {string} */ s) => {
   return new RegExp(`(?:[\\\\/]${e}(?![A-Za-z0-9])|(?<![A-Za-z0-9])${e}[\\\\/])`, "i");
 };
 
+/** Expected-result files next to the golden session: hand-written, so text checks only. */
+const TIMELINE_FILE = /^sessions\/[^/]+\.timeline\.json$/;
+
 /** Whether the file is a captured or synthetic payload (as opposed to prose or installer input). */
 const isPayload = (/** @type {string} */ file, /** @type {string} */ rel) =>
-  /\.jsonl?$/.test(file) && !TEXT_ONLY_TOP.has(rel.split("/")[0] ?? "");
+  /\.jsonl?$/.test(file) && !TEXT_ONLY_TOP.has(rel.split("/")[0] ?? "") && !TIMELINE_FILE.test(rel);
 
 /** @param {string} file @param {string} text @returns {unknown[]} */
 function parseDocs(file, text) {
@@ -92,7 +105,7 @@ function parseDocs(file, text) {
 
 /**
  * @param {string} fixturesRoot
- * @param {{ rawRoot?: string | null }} [opts] raw capture dir to derive literals from; omit on CI
+ * @param {{ rawRoot?: string | null, textFiles?: { path: string, label: string, allow?: string[] }[] }} [opts] rawRoot: raw capture dir to derive literals from, omit on CI; textFiles: extra hand-written files (outside the fixtures dir) that get the text checks only, reported under their label; allow: raw-derived words that are public in that file (the project's own name, ordinary English that is also a folder name in the capture)
  * @returns {{ files: number, total: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { users: number, projects: number, segments: number, names: number, skipped: number } }}
  */
 export function leakCheck(fixturesRoot, opts = {}) {
@@ -101,14 +114,26 @@ export function leakCheck(fixturesRoot, opts = {}) {
   const skipped = lit.projects.length - projects.length;
   // A literal that is also a schema key word ("workspace", "text") would match every payload's key
   // names; the structural check already guarantees values under path and name keys are placeholders.
-  const nameRes = [...projects, ...lit.names]
-    .filter((n) => !KNOWN_LOWER.has(n.toLowerCase()))
-    .map(literalRe);
+  const withRe = (/** @type {string[]} */ names, /** @type {(s: string) => RegExp} */ make) =>
+    names.map((n) => ({ n: n.toLowerCase(), re: make(n) }));
+  const nameRes = withRe(
+    [...projects, ...lit.names].filter((n) => !KNOWN_LOWER.has(n.toLowerCase())),
+    literalRe,
+  );
   const segments = lit.segments.filter((n) => !KNOWN_LOWER.has(n.toLowerCase()));
   // Path segments: next to a path separator in any file; as a bare word only in prose (.md,
   // settings/) and only when it is not a short lowercase word, which would be ordinary English.
-  const segPathRes = segments.map(segmentPathRe);
-  const segBareRes = segments.filter((n) => !/^[a-z]{1,4}$/.test(n)).map(literalRe);
+  const segPathRes = withRe(segments, segmentPathRe);
+  const segBareRes = withRe(
+    segments.filter((n) => !/^[a-z]{1,4}$/.test(n)),
+    literalRe,
+  );
+  const allowByLabel = new Map(
+    (opts.textFiles ?? []).map((f) => [
+      f.label,
+      new Set((f.allow ?? []).map((a) => a.toLowerCase())),
+    ]),
+  );
   const userRes = lit.users.map(
     (u) =>
       new RegExp(
@@ -120,10 +145,19 @@ export function leakCheck(fixturesRoot, opts = {}) {
   /** @type {Record<string, number>} */
   const byCategory = {};
   const perFile = [];
-  const files = existsSync(fixturesRoot) ? listFixtureFiles(fixturesRoot) : [];
-  for (const file of files) {
+  const fixtureFiles = existsSync(fixturesRoot) ? listFixtureFiles(fixturesRoot) : [];
+  const files = [
+    ...fixtureFiles.map((file) => ({
+      file,
+      rel: relative(fixturesRoot, file).split("\\").join("/"),
+    })),
+    ...(opts.textFiles ?? [])
+      .filter((f) => existsSync(f.path))
+      .map((f) => ({ file: f.path, rel: f.label })),
+  ];
+  for (const { file, rel } of files) {
     const text = readFileSync(file, "utf8");
-    const rel = relative(fixturesRoot, file).split("\\").join("/");
+    const allowed = allowByLabel.get(rel) ?? new Set();
     /** @type {Map<string, number>} */
     const counts = new Map();
     const hit = (/** @type {string} */ c, n = 1) => counts.set(c, (counts.get(c) ?? 0) + n);
@@ -132,9 +166,10 @@ export function leakCheck(fixturesRoot, opts = {}) {
     // Hand-written files (.md, settings/) can name the user without a Users/ prefix.
     if (!isPayload(file, rel) && userBareRes.some((re) => re.test(text))) hit("user-name");
     if (!/\.(?:jsonl?|md)$/.test(file)) hit("unscanned-file");
-    for (const re of nameRes) if (re.test(text)) hit("project-name");
-    for (const re of segPathRes) if (re.test(text)) hit("project-name");
-    if (!isPayload(file, rel)) for (const re of segBareRes) if (re.test(text)) hit("project-name");
+    for (const x of nameRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
+    for (const x of segPathRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
+    if (!isPayload(file, rel))
+      for (const x of segBareRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
     if (EMAIL.test(text.replace(/<EMAIL>/g, ""))) hit("email");
     if (TOKEN_IN_TEXT.test(text)) hit("token-prefix");
     const runs = tokenRuns(text);
@@ -142,8 +177,7 @@ export function leakCheck(fixturesRoot, opts = {}) {
     if (file.endsWith(".json") || file.endsWith(".jsonl")) {
       try {
         const docs = parseDocs(file, text);
-        if (!TEXT_ONLY_TOP.has(rel.split("/")[0] ?? ""))
-          for (const d of docs) checkStructure(d, hit, docAllowFor(rel));
+        if (isPayload(file, rel)) for (const d of docs) checkStructure(d, hit, docAllowFor(rel));
       } catch {
         hit("unparseable-json");
       }
