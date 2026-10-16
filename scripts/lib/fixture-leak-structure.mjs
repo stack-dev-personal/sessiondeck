@@ -20,6 +20,8 @@ import { isToken } from "./fixture-scrub-core.mjs";
 import { STRUCT } from "./fixture-scrub-paths.mjs";
 
 export const MAX_STRING = 200;
+/** A path segment that is a placeholder key ("<KEY_1>", or "<key>" for user-keyed names); same rule as the scrubber. */
+const PLACEHOLDER_SEGMENT = /(?:^|\.)<[^.>]*>(?:\[\])*(?:\.|$)/;
 const GENERIC_PLACEHOLDER = /^<(?:TEXT \d+|REDACTED|EMAIL|ACCOUNT)>$/;
 const TOOL_OK = /^(?:mcp__<MCP_\d+>__<TOOL_\d+>|<TOOL_\d+>)$/;
 const UUID_SRC = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -120,7 +122,10 @@ function visit(v, path, builtin, hit, allow) {
     const category = stringFinding(v, path, builtin, allow);
     if (category !== null) hit(category);
   } else if (typeof v === "number") {
-    if ((ACCOUNT_KEY.test(path) || ID_LIKE_KEY.test(lastKey(path))) && v !== 0) hit("id-number");
+    // The scrubber zeroes numbers under id-like keys and under placeholder keys.
+    const zeroed =
+      ACCOUNT_KEY.test(path) || ID_LIKE_KEY.test(lastKey(path)) || PLACEHOLDER_SEGMENT.test(path);
+    if (zeroed && v !== 0) hit("id-number");
   } else if (Array.isArray(v)) {
     for (const el of v) visit(el, `${path}[]`, builtin, hit, allow);
   } else if (v !== null && typeof v === "object") {

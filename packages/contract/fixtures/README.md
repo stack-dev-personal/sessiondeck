@@ -102,8 +102,8 @@ SubagentStop, UserPromptSubmit; plus statusLine and subagentStatusLine.
 
 Not captured, so SYNTHETIC (conductor decisions 7 and 3, 2026-10-15), under
 `synthetic/<Event>/`: TaskCreated, TaskCompleted (two files: `01-synthetic.json` and
-`02-subagent.json`, a task created by a subagent), PermissionDenied (the session ran in `auto` and
-`plan` modes, never the default mode, so no denial), StopFailure (no API failure happened). Task
+`02-subagent.json`, a task created by a subagent), PermissionDenied (no permission was refused in
+auto mode during the capture), StopFailure (no API failure happened). Task
 tools are disabled on this machine. Their common fields are copied from a scrubbed captured
 `UserPromptSubmit`.
 

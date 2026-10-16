@@ -158,10 +158,7 @@ function main() {
     scrubber.value((hookEvents.get("UserPromptSubmit") ?? [])[0]?.payload ?? {})
   );
   for (const s of buildSynthetic(template)) {
-    write(
-      join(out, "synthetic", s.event, s.file),
-      `${JSON.stringify(s.payload, null, 2)}\n`,
-    );
+    write(join(out, "synthetic", s.event, s.file), `${JSON.stringify(s.payload, null, 2)}\n`);
   }
 
   const summary = [...counters].map(([d, n]) => `${d}=${n}`).join(" ");

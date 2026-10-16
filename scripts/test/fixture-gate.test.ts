@@ -184,6 +184,16 @@ describe("string values are default-deny without raw/", () => {
     });
     expect(r["id-number"]).toBe(3);
   });
+
+  it("flags a nonzero number under a placeholder key, as the scrubber zeroes those", () => {
+    const r = categories({
+      "Stop/a.json": {
+        tool_input: { answers: { "<TEXT 5>": 42, nested: { "<TEXT 6>": { n: 7 } } } },
+      },
+      "Stop/b.json": { tool_input: { answers: { "<TEXT 5>": 0, "<TEXT 6>": { n: 0 } } } },
+    });
+    expect(r["id-number"]).toBe(2);
+  });
 });
 
 describe("literals derived from raw/", () => {

@@ -86,6 +86,19 @@ describe("leak check", () => {
     expect(r.perFile.find((f) => f.file === "other.md")?.category).toBe("token-run");
   });
 
+  it("flags a key used as a folder or file name in a path, in text-only files", () => {
+    const key = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5";
+    const root = fixturesWith({
+      "README.md": `Put it in keys/${key}.pem please.`,
+      "settings/s.json": { note: `certs/${key}/ca.pem` },
+    });
+    const r = leakCheck(root);
+    expect(r.perFile.map((f) => [f.file, f.category])).toEqual([
+      ["README.md", "token-run"],
+      ["settings/s.json", "token-run"],
+    ]);
+  });
+
   it("flags a non-placeholder value under a free-text key, at depth and in arrays", () => {
     const root = fixturesWith({
       "PostToolUse/a.json": {

@@ -52,9 +52,13 @@ function tokenRuns(text) {
   const stripped = text.replace(UUID_OR_TOOLU, "");
   let n = 0;
   for (const m of stripped.matchAll(/[A-Za-z0-9+/_=-]{32,}/g)) {
-    // A long relative file path ("docs/research/2026-10-08-some-note.md") is not a secret.
+    // A long relative file path ("docs/research/2026-10-08-some-note.md") is not a secret, but a
+    // key used as one of its folder or file names ("keys/<40 chars>.pem") still is: test each part.
     const after = stripped.slice((m.index ?? 0) + m[0].length);
-    if (m[0].includes("/") && /^\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])/.test(after)) continue;
+    if (m[0].includes("/") && /^\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])/.test(after)) {
+      if (m[0].split("/").some((part) => isToken(part))) n += 1;
+      continue;
+    }
     if (isToken(m[0])) n += 1;
   }
   return n;
