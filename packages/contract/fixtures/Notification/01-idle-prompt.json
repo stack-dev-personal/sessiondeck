@@ -1,0 +1,10 @@
+{
+  "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5/scratchpad",
+  "prompt_id": "f7f4f8e7-d120-488e-82c1-9483dfb2c437",
+  "hook_event_name": "Notification",
+  "message": "<TEXT 32>",
+  "notification_type": "idle_prompt"
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "a9648976-1965-4d5a-8cf8-eb285b22406f",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_L>/a9648976-1965-4d5a-8cf8-eb285b22406f.jsonl",
+  "cwd": "<HOME>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<DIR_33>/a9648976-1965-4d5a-8cf8-eb285b22406f/scratchpad",
+  "prompt_id": "88b3b551-5540-45b6-8fdc-a96ee1210358",
+  "hook_event_name": "SessionEnd",
+  "reason": "other"
+}

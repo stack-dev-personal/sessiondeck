@@ -1,0 +1,21 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_B>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "9294e436-0327-47af-88c8-cc469bc57749",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUseFailure",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "<TEXT 37>",
+    "description": "<TEXT 57>"
+  },
+  "tool_use_id": "toolu_ncGukp6sBCu4DtVLS0Im1TDj",
+  "error": "<TEXT 76>",
+  "is_interrupt": false,
+  "duration_ms": 4785
+}

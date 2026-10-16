@@ -1,0 +1,69 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "9294e436-0327-47af-88c8-cc469bc57749",
+  "effort": {
+    "level": "xhigh"
+  },
+  "session_name": "<TEXT 24>",
+  "model": {
+    "id": "claude-fable-5-1",
+    "display_name": "Fable 5.1"
+  },
+  "workspace": {
+    "current_dir": "<HOME>/projects/<PROJECT_A>",
+    "project_dir": "<HOME>/projects/<PROJECT_A>",
+    "added_dirs": [
+      "<HOME>",
+      "<HOME>/.claude",
+      "<HOME>/<PROJECT_M>",
+      "<HOME>/<PROJECT_N>"
+    ],
+    "repo": {
+      "host": "github.com",
+      "owner": "<ACCOUNT>",
+      "name": "<TEXT 7>"
+    }
+  },
+  "version": "2.1.300",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 0.00028060000000000004,
+    "total_duration_ms": 11546,
+    "total_api_duration_ms": 1464,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 74416,
+    "total_output_tokens": 5,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 5,
+      "cache_creation_input_tokens": 37007,
+      "cache_read_input_tokens": 37407
+    },
+    "used_percentage": 7,
+    "remaining_percentage": 93
+  },
+  "exceeds_200k_tokens": false,
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 6,
+      "resets_at": 1792101600
+    },
+    "seven_day": {
+      "used_percentage": 20,
+      "resets_at": 1792555200
+    }
+  }
+}

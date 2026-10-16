@@ -6,7 +6,7 @@ Start: `claude --agent sd-orchestrator` in the repo root, paste everything below
 
 ---
 
-You are the project manager for the fixture slice of Phase 0 of sessiondeck. Read docs/planning/phases/phase-0-contract.md and packages/contract/src/state.ts. I have run the capture hook for a day; raw payloads are in packages/contract/fixtures/raw/.
+You are the project manager for the fixture slice of Phase 0 of sessiondeck. Read docs/planning/phases/phase-0-contract.md and packages/contract/src/state.ts. I have run the capture hook for a day; raw payloads were written by the capture tool to its directory under local app data (%LOCALAPPDATA%/sessiondeck/capture/raw/<event>/<epoch-ms>-<8-char session id prefix>-<random suffix>.json), and the uninstaller's copy command (scripts/UNINSTALL.txt step 5) puts a copy at packages/contract/fixtures/raw/ (gitignored, never committed). Read the copy in packages/contract/fixtures/raw/; do not read the app-data directory itself.
 
 Goal: scrub secrets and paths from the raw fixtures into packages/contract/fixtures/ (keep one representative per event per distinct shape, at least 50 total across at least 12 events, plus 20 statusLine samples including at least one with rate_limits), finalize every TODO(fixture) transition in reduce(), and produce the golden state timeline test for one real session.
 

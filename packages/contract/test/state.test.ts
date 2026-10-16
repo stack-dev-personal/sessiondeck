@@ -1,6 +1,7 @@
 /*
  * Reducer tests. Every hook payload here is SYNTHETIC: built inline from the documented field
- * lists (docs/hooks.md), not captured. Real-session fixtures arrive with S0b.
+ * lists (docs/hooks.md), not captured. Tests against captured fixtures are in state-fixtures.test.ts
+ * and state-golden.test.ts.
  */
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
@@ -394,13 +395,15 @@ describe("field updates", () => {
   });
 });
 
-describe("provisional behavior (fixtures pending)", () => {
-  it.each(["PostToolUseFailure", "TaskCreated", "TaskCompleted", "PreCompact"])(
-    "%s leaves state unchanged and updates last_event_at",
+describe("provisional behavior registry", () => {
+  it.each(["TaskCreated", "TaskCompleted", "PreCompact"])(
+    "%s never changes the state or its timestamp",
     (name) => {
       const prev = snap("working", { state_since: 300 });
-      const next = reduce(prev, hook(name, { subject: "s", tool_response: {}, error: "x" }));
-      expect(next).toEqual({ ...prev, last_event_at: T0 + 1 });
+      const next = reduce(prev, hook(name, { task_subject: "s", trigger: "auto" }));
+      expect(next.state).toBe("working");
+      expect(next.state_since).toBe(300);
+      expect(next.last_event_at).toBe(T0 + 1);
     },
   );
 
@@ -411,43 +414,6 @@ describe("provisional behavior (fixtures pending)", () => {
 
   it("every provisional entry names a registered hook event", () => {
     for (const p of PROVISIONAL_BEHAVIOR) expect(HOOK_EVENTS).toContain(p.event);
-  });
-
-  // TODO(fixture): PostToolUseFailure payload fields are unverified. Intended: a payload that marks
-  // an API error moves the session to error (state_detail = error type); a plain tool failure moves
-  // it to working.
-  it.skip("PostToolUseFailure with api error gives error, plain tool failure gives working", () => {
-    expect.fail("TODO(fixture): write once a PostToolUseFailure fixture exists");
-  });
-
-  // TODO(fixture): TaskCreated payload unverified. Intended: tasks.total + 1, tasks.last_subject
-  // from the payload subject; state unchanged.
-  it.skip("TaskCreated increments tasks.total and records last_subject", () => {
-    expect.fail("TODO(fixture): write once a TaskCreated fixture exists");
-  });
-
-  // TODO(fixture): TaskCompleted payload unverified. Intended: tasks.completed + 1,
-  // tasks.last_subject from the payload subject; state unchanged.
-  it.skip("TaskCompleted increments tasks.completed and records last_subject", () => {
-    expect.fail("TODO(fixture): write once a TaskCompleted fixture exists");
-  });
-
-  // TODO(fixture): PreCompact payload unverified. Intended: read the compaction trigger (manual or
-  // auto) into state_detail; state unchanged.
-  it.skip("PreCompact records the compaction trigger in state_detail", () => {
-    expect.fail("TODO(fixture): write once a PreCompact fixture exists");
-  });
-
-  // TODO(fixture): a subagent's StopFailure is unconfirmed. Today it moves the session to error;
-  // intended: confirm against a captured subagent failure whether the session should move at all.
-  it.skip("a subagent StopFailure moves (or does not move) the session to error", () => {
-    expect.fail("TODO(fixture): write once a subagent StopFailure fixture exists");
-  });
-
-  // TODO(fixture): PostToolUse tool_response unverified. Intended: detect an interrupted or failed
-  // result from tool_response instead of treating every PostToolUse as success.
-  it.skip("PostToolUse reads tool_response to detect an interrupted result", () => {
-    expect.fail("TODO(fixture): write once a PostToolUse fixture with tool_response exists");
   });
 });
 
@@ -516,13 +482,6 @@ describe("timelines", () => {
       ended_reason: "other",
       last_event_at: 1_700,
     });
-  });
-
-  // TODO(fixture): S0b supplies a real session's fixture sequence under packages/contract/fixtures/.
-  // Intended: wrap each fixture as an envelope in capture order, reduce, and assert the hand-verified
-  // state timeline (R0.2).
-  it.skip("golden timeline from a real session's fixtures", () => {
-    expect.fail("TODO(fixture): write the golden timeline once S0b captures a real session");
   });
 });
 

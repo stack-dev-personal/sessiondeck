@@ -1,0 +1,52 @@
+{
+  "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad",
+  "effort": {
+    "level": "xhigh"
+  },
+  "model": {
+    "id": "claude-fable-5-1",
+    "display_name": "Fable 5.1"
+  },
+  "workspace": {
+    "current_dir": "<HOME>/projects/<PROJECT_A>",
+    "project_dir": "<HOME>/projects/<PROJECT_A>",
+    "added_dirs": [
+      "<HOME>",
+      "<HOME>/.claude",
+      "<HOME>/<PROJECT_M>",
+      "<HOME>/<PROJECT_N>"
+    ],
+    "repo": {
+      "host": "github.com",
+      "owner": "<ACCOUNT>",
+      "name": "<TEXT 7>"
+    }
+  },
+  "version": "2.1.301",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 0,
+    "total_duration_ms": 4756,
+    "total_api_duration_ms": 0,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1000000,
+    "current_usage": null,
+    "used_percentage": null,
+    "remaining_percentage": null
+  },
+  "exceeds_200k_tokens": false,
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  }
+}

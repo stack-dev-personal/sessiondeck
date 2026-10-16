@@ -7,6 +7,7 @@ export const END_REASON_MAX_CHARS = 120;
 export const MODEL_ID_MAX_CHARS = 120;
 export const AGENT_TYPE_MAX_CHARS = 120;
 export const AGENT_ID_MAX_CHARS = 120;
+export const TASK_SUBJECT_MAX_CHARS = 200;
 /** Rows kept in snapshot.subagents; the oldest ended rows go first. */
 export const SUBAGENT_ROWS_MAX = 50;
 

@@ -1,0 +1,47 @@
+{
+  "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>/<DIR_5>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad",
+  "prompt_id": "932e3f13-5b53-4c3d-8256-32834d4c6673",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad/<DIR_27>/<FILE_33>.mjs",
+    "old_string": "<TEXT 67>",
+    "new_string": "<TEXT 106>",
+    "replace_all": false
+  },
+  "tool_response": {
+    "filePath": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fef17e22-168c-4fef-8964-9af573b7f2e9/scratchpad/<DIR_27>/<FILE_33>.mjs",
+    "oldString": "<TEXT 67>",
+    "newString": "<TEXT 106>",
+    "originalFile": "<TEXT 10404>",
+    "structuredPatch": [
+      {
+        "oldStart": 67,
+        "oldLines": 7,
+        "newStart": 67,
+        "newLines": 7,
+        "lines": [
+          "<TEXT 1>",
+          "<TEXT 3>",
+          "<TEXT 64>",
+          "<TEXT 4>",
+          "<TEXT 43>",
+          "<TEXT 1>",
+          "<TEXT 39>",
+          "<TEXT 36>"
+        ]
+      }
+    ],
+    "userModified": false,
+    "replaceAll": false
+  },
+  "tool_use_id": "toolu_IrBNUoiX5e0OUhlkBIXU8d71",
+  "duration_ms": 31
+}

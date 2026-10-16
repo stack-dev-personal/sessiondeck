@@ -1,0 +1,26 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_B>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "b44a1fe3-1eda-4a74-8bcf-e0068ffb5ea1",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "PowerShell",
+  "tool_input": {
+    "command": "<TEXT 598>",
+    "timeout": 90000,
+    "description": "<TEXT 70>"
+  },
+  "tool_response": {
+    "stdout": "<TEXT 280>",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false
+  },
+  "tool_use_id": "toolu_6jTcicajGLZs2KyTjqMIsAJB",
+  "duration_ms": 26012
+}

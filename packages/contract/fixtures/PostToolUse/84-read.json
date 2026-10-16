@@ -1,0 +1,30 @@
+{
+  "session_id": "f8c38fd0-8071-4912-8ef9-342ea8729793",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_I>/f8c38fd0-8071-4912-8ef9-342ea8729793.jsonl",
+  "cwd": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>/<DIR_4>/<DIR_5>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_I>/f8c38fd0-8071-4912-8ef9-342ea8729793/scratchpad",
+  "prompt_id": "ddbffd3f-220b-4d4f-8cbd-d38d4f631339",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>/<DIR_4>/<DIR_5>/<FILE_39>.html",
+    "allow_large": true
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>/<DIR_4>/<DIR_5>/<FILE_39>.html",
+      "content": "<TEXT 31509>",
+      "numLines": 334,
+      "startLine": 1,
+      "totalLines": 1582,
+      "truncatedByTokenCap": true
+    }
+  },
+  "tool_use_id": "toolu_4dllSsV5quJL9JNQQ24sNdae",
+  "duration_ms": 216
+}

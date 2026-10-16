@@ -1,0 +1,31 @@
+{
+  "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_H>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494/scratchpad",
+  "prompt_id": "116c0717-6a43-47c0-8a09-dd60f9b8e324",
+  "permission_mode": "auto",
+  "agent_type": "<AGENT_1>",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "<HOME>/projects/<PROJECT_H>/.claude/<FILE_38>.json",
+    "offset": 1,
+    "limit": 30
+  },
+  "tool_response": {
+    "type": "text",
+    "file": {
+      "filePath": "<HOME>/projects/<PROJECT_H>/.claude/<FILE_38>.json",
+      "content": "<TEXT 760>",
+      "numLines": 30,
+      "startLine": 1,
+      "totalLines": 53
+    }
+  },
+  "tool_use_id": "toolu_PlX5Y7QHYn3n9FSrDALw9sgP",
+  "duration_ms": 48
+}

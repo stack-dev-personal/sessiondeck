@@ -1,0 +1,10 @@
+{
+  "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910/scratchpad",
+  "prompt_id": "90d787f3-267f-4b71-8169-dc07e7ba8d18",
+  "hook_event_name": "Notification",
+  "message": "<TEXT 28>",
+  "notification_type": "permission_prompt"
+}

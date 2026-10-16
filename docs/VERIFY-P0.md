@@ -1,34 +1,34 @@
 # VERIFY-P0: Phase 0 contract, requirements R0.1 to R0.8
 
-- Branch: `p0/scaffold`, HEAD `16ff3478dbe3ff5f85adaf4a1153acd5bac2cb10` (16ff347), clean tree apart from this file
-- Date (UTC): 2026-10-09, runs 05:48Z to 05:52Z
+- Branch: `p0/scaffold`, HEAD `16ff3478dbe3ff5f85adaf4a1153acd5bac2cb10` (16ff347), clean tree apart from this file (S0 pass). Rows marked S0b were re-run on `p0/fixtures` at 21da7db, 2026-10-16, 05:00Z to 05:10Z (see the S0b section at the end)
+- Date (UTC): 2026-10-09, runs 05:48Z to 05:52Z (S0 rows); 2026-10-16 (S0b rows)
 - Machine: Windows 11 Home 10.0.26200 (Git Bash, MINGW64), Node v24.19.0, pnpm 12.10.1; CI runs Node 22 and 24 on ubuntu-latest and windows-latest
 - Verifier: sd-verifier. Every row below comes from a command run at 16ff347 in this pass.
 
 ## Scope of this pass
 
-S0 builds the contract, reducer, capture tooling and scaffold. The user's capture day and the fixture session S0b come after S0 by plan (`docs/planning/04-session-map.md` section 2, `docs/handoffs/S00b-fixtures-and-reducer-finalization.md`). Clauses that need captured real-session fixtures (R0.1 fixture walk, R0.2 golden timeline, R0.4 captured statusLine parse, R0.7 fixture count and scrub review) therefore wait for S0b and are marked `pending S0b`. They exist as skipped tests that un-skip themselves (or fail loudly) once fixtures exist. R0.8 belongs to S0c. All other clauses are proven now, on synthetic payloads where stated. Result values: `pass`, `fail`, `pending S0b`, `out of scope (S0c)`. S0c (sprint tooling) adds the result `needs laptop confirmation (live tokens)` and its own section at the end of this file.
+S0 builds the contract, reducer, capture tooling and scaffold. The user's capture day and the fixture session S0b come after S0 by plan (`docs/planning/04-session-map.md` section 2, `docs/handoffs/S00b-fixtures-and-reducer-finalization.md`). Clauses that needed captured real-session fixtures (R0.1 fixture walk, R0.2 golden timeline, R0.4 captured statusLine parse, R0.7 fixture count and scrub review) were first marked pending and existed as placeholder tests until fixtures existed. S0b supplied the fixtures and every one of those rows now carries a result from a run at 21da7db (or the commit named in the row); none is pending. R0.8 belongs to S0c. All other clauses are proven now, on synthetic payloads where stated. Result values: `pass`, `fail`, `out of scope (S0c)`. S0c (sprint tooling) added the result `needs laptop confirmation (live tokens)`, resolved by the laptop run of 2026-10-15 recorded in the S0b section; S0c has its own section above the S0b section.
 
 ## Results
 
 | Requirement | Clause | Command | Key output | Result | Timestamp |
 |---|---|---|---|---|---|
-| R0.1 | rejects missing v, id, host, kind, ts, seq | `pnpm -F @sessiondeck/contract test` (`packages/contract/test/envelope.test.ts:21` `it.each([v,id,host,kind,ts,seq])("rejects a missing %s")`) | envelope.test.ts 23 tests, 1 skipped, rest pass; contract 238 passed / 13 skipped / 0 failed | pass | 05:49Z |
-| R0.1 | validates every captured fixture when wrapped | same; skipped test `packages/contract/test/envelope.test.ts:108` (`describe.skipIf(fixtures.length === 0)` at :111); `git ls-files packages/contract/fixtures` lists only settings/ | no captured fixtures in repo, walk not exercised | pending S0b | 05:49Z |
-| R0.2 | reduce() is pure and total | same (`packages/contract/test/state.test.ts:190` "R0.2 purity and totality": every state x event x payload gives a valid fresh snapshot; `:182` input not mutated) | state.test.ts 69 tests, 7 skipped, rest pass | pass | 05:49Z |
-| R0.2 | real-session fixture sequence produces the expected timeline | same; skipped test `packages/contract/test/state.test.ts:524` "golden timeline from a real session's fixtures" (`expect.fail` TODO) | skipped; only a synthetic timeline test at :458 runs | pending S0b | 05:49Z |
-| R0.3 | PermissionRequest gives waiting_permission | same (`state.test.ts:22` "PermissionRequest moves to waiting_permission") | pass | pass | 05:49Z |
-| R0.3 | Notification permission_prompt while already waiting is a no-op | same (`state.test.ts:28`) | pass | pass | 05:49Z |
-| R0.3 | Stop after AskUserQuestion gives waiting_input | same (`state.test.ts:65` "PreToolUse(AskUserQuestion) then Stop gives waiting_input") | pass | pass | 05:49Z |
-| R0.3 | StopFailure gives error | same (`state.test.ts:101` "StopFailure gives error and records the error type") | pass | pass | 05:49Z |
-| R0.3 | SessionEnd gives ended with reason | same (`state.test.ts:108` "SessionEnd gives ended with ended_reason taken from reason") | pass | pass | 05:49Z |
-| R0.3 | liveness dead gives exited | same (`state.test.ts:118` "liveness alive:false gives exited") | pass | pass | 05:49Z |
-| R0.3 | same-pid new session_id marks previous ended | same (`state.test.ts:152` "supersedeSamePid ends the previous session on the same host and pid as superseded") | pass | pass | 05:49Z |
+| R0.1 | rejects missing v, id, host, kind, ts, seq | `pnpm -r test` at 21da7db (`packages/contract/test/envelope.test.ts:21` `it.each([v,id,host,kind,ts,seq])("rejects a missing %s")`); also `pnpm exec vitest run test/envelope-walk.test.ts test/envelope.test.ts --coverage.enabled=false` in packages/contract | envelope.test.ts 22 passed (incl. 6 missing-field rejections), envelope-walk 512 passed, 0 failed, 0 skipped; contract 27 files, 1048 passed / 0 skipped / 0 failed. The S0 first pass (16ff347) had 23 tests with 1 skipped; the skip is gone | pass | S0 05:49Z; re-confirmed at 21da7db 2026-10-16 05:05Z |
+| R0.1 | validates every captured fixture when wrapped | `pnpm exec vitest run test/envelope-walk.test.ts test/envelope.test.ts test/statusline.test.ts --coverage.enabled=false` in packages/contract at 21da7db (`envelope-walk.test.ts`) | 3 files, 578 passed, 0 failed, 0 skipped (512 + 22 + 44; identical to the 9839118 run). Walked: hooks 176 files over 13 events, statusLine 20, subagentStatusLine 5, golden session 295 lines, synthetic 5 (reported separately, not captured; see the synthetic note in the S0b section). Each category has a not-empty guard and a wrapped-fixture test that removing v, id, host, kind, ts or seq is rejected | pass | 2026-10-16 05:05Z (was 9839118, 04:17Z) |
+| R0.2 | reduce() is pure and total | `pnpm exec vitest run test/state.test.ts test/state-fixtures.test.ts test/state-golden.test.ts --coverage.enabled=false` at 21da7db (`packages/contract/test/state.test.ts:191` describe "R0.2 purity and totality", `:209` every state x event x payload gives a valid, fresh snapshot with last_event_at = e.ts, `:229`, `:234`, `:242`); frozen inputs: `packages/contract/test/state-golden.test.ts:218` describe "golden session: purity", `:219` same input twice gives deep-equal output, `:224` "deep-frozen inputs are neither mutated nor rejected, and the result is unchanged" (`replayAll(freeze)` at `:62` deep-freezes the state and every envelope, `:64-70`) | state.test.ts 61, state-golden.test.ts 13, state-fixtures.test.ts 32: 106 passed, 0 failed, 0 skipped; the frozen replay of all 295 events neither throws nor changes the result | pass | 2026-10-16 05:06Z |
+| R0.2 | real-session fixture sequence produces the expected timeline (golden) | same command; `packages/contract/test/state-golden.test.ts:78` describe, `:79` "has the 295 events the timeline file was written for", `:83` "produces exactly the hand-verified state changes", `:107` every change names the transition row that fires it, `:118` "ends in the hand-verified final snapshot", `:138` bookkeeping invariants after every event, `:155` events 217 and 229 change nothing but last_event_at, `:165` and `:174` no subagent event leaves idle or waiting_input; fixtures `packages/contract/fixtures/sessions/golden-session.jsonl`, `golden-session.timeline.json`, `golden-session.timeline.md` | 295 events, 11 state changes, final state ended with detail clear; all 13 golden tests pass. Hand-verified 11/11 against transitions.ts by sd-reviewer twice (iteration 1 at 22a648d and iteration 2 at dc35b08; session log `docs/sessions/p0-fixtures.md` U3, lines 86 and 92). The verifier did not repeat the hand verification and cites it. The earlier skipped placeholder (`expect.fail` TODO) no longer exists | pass | 2026-10-16 05:06Z |
+| R0.3 clause 1 | PermissionRequest gives waiting_permission | same command (`packages/contract/test/state.test.ts:23` synthetic; captured sequence `packages/contract/test/state-fixtures.test.ts:53` "for every captured PermissionRequest", 4 captured fixtures) | pass, 0 skipped | pass | 2026-10-16 05:06Z |
+| R0.3 clause 2 | Notification permission_prompt while already waiting is a no-op | same command (`state.test.ts:29` synthetic, related `:41`, `:49`, `:58`; captured `state-fixtures.test.ts:65`) | pass | pass | 2026-10-16 05:06Z |
+| R0.3 clause 3 | Stop after AskUserQuestion gives waiting_input | same command (`state.test.ts:66` synthetic, `:74` ExitPlanMode, `:81` Bash gives idle; captured `state-fixtures.test.ts:72` and `:78` "the whole captured ask sequence ends in waiting_input") | pass | pass | 2026-10-16 05:06Z |
+| R0.3 clause 4 | StopFailure gives error | same command (`state.test.ts:102` "StopFailure gives error and records the error type"; `state-fixtures.test.ts:283` describe "StopFailure (synthetic payload, not captured)", `:286`, `:294`). No captured sequence: no StopFailure occurred in the capture (conductor decision 7; synthetic note of 2026-10-16 in the S0b section) | pass on a synthetic payload | pass (synthetic payload) | 2026-10-16 05:06Z |
+| R0.3 clause 5 | SessionEnd gives ended with reason | same command (`state.test.ts:109` synthetic, `:115` without a string reason gives 'unknown'; captured `state-fixtures.test.ts:91` "for every captured SessionEnd", 3 captured fixtures) | pass | pass | 2026-10-16 05:06Z |
+| R0.3 clause 6 | liveness dead gives exited | same command (`state.test.ts:119` "liveness alive:false gives exited; no change when already ended", `:129`, `:134`, `:140`). Synthetic only: liveness events come from the probe, not from Claude Code, so there is no captured sequence | pass | pass (synthetic payload) | 2026-10-16 05:06Z |
+| R0.3 clause 7 | same-pid new session_id marks previous ended | same command (`state.test.ts:149` describe supersedeSamePid, `:153` "ends the previous session on the same host and pid as superseded", `:164`, `:178`, `:183`). Synthetic only: no captured sequence holds two sessions on one pid | pass | pass (synthetic payload) | 2026-10-16 05:06Z |
 | R0.4 | parses a sample with rate_limits (synthetic) | same (`packages/contract/test/statusline.test.ts:28`) | pass; payloads are synthetic (session_id "synthetic-session") | pass | 05:49Z |
 | R0.4 | parses a sample without rate_limits (synthetic) | same (`statusline.test.ts:41`) | pass | pass | 05:49Z |
 | R0.4 | parses current_usage null (synthetic) | same (`statusline.test.ts:46`) | pass | pass | 05:49Z |
 | R0.4 | #52326 leak: percentage carrying the resets_at epoch becomes null (synthetic) | same (`statusline.test.ts:131` "nulls the #52326 leak"; `:143` out-of-range and non-finite) | pass | pass | 05:49Z |
-| R0.4 | parses captured statusLine fixtures | same; skipped tests `statusline.test.ts:182` and `describe.skipIf(statusFixtures.length === 0)` at :187 | skipped, no captured samples yet | pending S0b | 05:49Z |
+| R0.4 | parses captured statusLine fixtures; with and without rate_limits, current_usage null, #52326 leak | `pnpm exec vitest run test/statusline.test.ts --coverage.enabled=false` in packages/contract at 21da7db (`statusline.test.ts`); also inside `pnpm -r test` | 44 passed, 0 failed, 0 skipped (same as at 9839118). All 20 statusLine (17 with `rate_limits`) and 5 subagentStatusLine samples parse; captured five_hour and seven_day windows normalize; the captured current_usage-null sample parses. The leak case is DERIVED from a captured sample (the capture has no leak, its max is 96): percentage above 100 becomes null | pass | 2026-10-16 05:05Z (was 9839118, 04:17Z) |
 | R0.5 | CI green on both OSes | `gh run list --branch p0/scaffold --limit 3`; `gh run view 37890035505 --json conclusion,headSha,jobs` | run 37890035505 is for headSha 16ff347, conclusion success; all four jobs success: ubuntu-latest node 22, ubuntu-latest node 24, windows-latest node 22, windows-latest node 24 | pass | 05:49Z |
 | R0.5 | `pnpm -r test` under 60 s | `time pnpm -r test` (twice) | wall 8.9 s and 8.9 s (contract 12 files, scripts 17 files); CI test step "test (R0.5 budget 60 s)": ubuntu/22 10 s, ubuntu/24 12 s, windows/24 31 s, windows/22 35 s | pass | 05:49Z |
 | R0.6 | `docs/planning/` matches the vault copy | `diff -rq --strip-trailing-cr C:/Users/stack/vault/projects/sessiondeck/planning docs/planning` | no output, exit 0 (content equal; checkout is CRLF) | pass | 05:49Z |
@@ -36,8 +36,8 @@ S0 builds the contract, reducer, capture tooling and scaffold. The user's captur
 | R0.6 | scaffold test | `pnpm -F @sessiondeck/scripts test` (`scripts/test/scaffold.test.ts`, "R0.6 project scaffold files") | scaffold.test.ts 23 tests pass | pass | 05:49Z |
 | R0.7 | capture tooling exists and works: 17 hook events plus statusLine registered in exec form, existing hooks preserved, hook silent and exit 0, payload written under raw/<event>/, uninstall restores | harness (step 9, transcript below) plus `pnpm -F @sessiondeck/scripts test` | install exit 0; 17 events registered; Stop group shows `"command":"node"` with `args`, the fixture's own `stop-notify.sh` group preserved; hook exit 0, 0 stdout bytes, 0 stderr bytes; file under `raw/Stop/`; uninstall exit 0; `restored equals original: true`; scripts suite 17 files, 227 passed / 3 skipped / 0 failed | pass | 05:50Z |
 | R0.7 | raw captures cannot be committed by accident | `git ls-files packages/contract/fixtures`; `git check-ignore -v packages/contract/fixtures/raw/x` | tracked: only `fixtures/settings/README.md` and `with-harness-hooks.json`; ignored by `.gitignore:45:packages/contract/fixtures/raw/` | pass | 05:49Z |
-| R0.7 | at least 50 raw fixtures across at least 12 hook events plus 20 statusLine samples committed, scrubbed, reviewed by sd-security-reviewer | `git ls-files packages/contract/fixtures` | 0 captured fixtures committed; needs the user's capture day | pending S0b | 05:49Z |
-| R0.8 | `run-sprint.ps1 -Sprint smoke` produces `.sprint/smoke/status.json` with state green within two minutes on Docker Desktop for Windows | live: not run (no tokens on this machine by design). Proven now: harness `bash infra/sprint/test/check-sprint-image.sh` with the stub `claude` (see S0c section, E2); `powershell.exe scripts/sprint/smoke-check.ps1` with placeholder tokens (E5) | Harness: first and second run each show "status.json visible on host with state green", exit 0. Placeholder run: container started as uid=1000, tokens present (values never logged), `RESULT: FAIL` at the clone step (exit 128, expected), start 1.8 s, `stop-sprint` exit 0, no container left. Not proven: real auth, real clone, a real session writing green within 120 s | needs laptop confirmation (live tokens) | 22:08Z |
+| R0.7 | at least 50 raw fixtures across at least 12 hook events plus 20 statusLine samples committed, scrubbed, reviewed by sd-security-reviewer | at 21da7db: `git ls-files packages/contract/fixtures` (counts per dir); `git ls-files packages/contract/fixtures \| grep -c /raw/`; `git check-ignore -v packages/contract/fixtures/raw/x`; `pnpm -r test` (`fixtures-counts.test.ts` also run alone); `pnpm -F @sessiondeck/scripts run fixture:leak`; `docs/sessions/p0-fixtures.md` U1 | 176 captured hook fixtures across 13 events (PreToolUse 62, PostToolUse 84, PostToolUseFailure 6, PermissionRequest 4, Notification 3, SessionStart 3, SessionEnd 3, Stop 3, SubagentStop 3, UserPromptSubmit 2, PreCompact 1, PostCompact 1, SubagentStart 1); 20 statusLine samples; 5 subagentStatusLine; 3 golden session files under `fixtures/sessions`; tracked paths under `raw/`: 0 (`.gitignore:45:packages/contract/fixtures/raw/` ignores it; the local `raw/` directory holds 17 entries, count only, not read); 5 synthetic files (TaskCreated, TaskCompleted, PermissionDenied, StopFailure; not counted toward captured totals; synthetic note of 2026-10-16 in the S0b section); `fixtures-counts.test.ts` 7 passed; contract 27 files, 1048 passed / 0 skipped; leak gate `files scanned: 213`, `PASS: no leaks found` (210 at bdcbaca; the 3 extra files are consistent with the golden timeline and CONTRACT.md scans added in U2 and U3); sd-security-reviewer "Gate: pass" at 3899726 (before the fixture commit), a6984c2, 2c61aa2, then the U2 and U3 gates (see Definition of done) | pass | 2026-10-16 05:07Z (was bdcbaca, 03:37Z) |
+| R0.8 | `run-sprint.ps1 -Sprint smoke` produces `.sprint/smoke/status.json` with state green within two minutes on Docker Desktop for Windows | live smoke run with real tokens on the laptop, reported by the conductor (2026-10-15); evidence file `C:/Users/stack/projects/sessiondeck/.sprint/0/gate/smoke-evidence-run2.txt` read by the verifier (quoted in full in the S0b section; nothing token-shaped in it). Earlier: harness `bash infra/sprint/test/check-sprint-image.sh` with the stub `claude` (S0c section, E2) and the placeholder run (E5) | `RESULT: PASS`, `final_state: green`, `wait_seconds: 16.2` counted after run-sprint returned (start_seconds 2.8, so about 19 s from invoking run-sprint; limit 120 s), `container: running`, run-sprint exit 0, stop-sprint exit 0. The verifier did not run this (no tokens on this machine); the result is the conductor's laptop run plus the evidence file | pass (laptop run 2026-10-15, evidence file) | 2026-10-15 (run), recorded 2026-10-16 05:08Z |
 | R0.8 | the renderer has a test per package block in `MINI-SPRINT-ORDER.md` | `pnpm -F @sessiondeck/scripts test:sprint` (renderer files: `pnpm exec vitest run -c vitest.sprint.config.ts test/sprint-render` in `scripts/`); `scripts/test/sprint-render.test.ts:26` ("one test per package block"), `:27` finds exactly sprints 0 to 5, `:31` one yaml fence per tested block, `:37` `it.each(packages)` | 7 files, 126 passed / 0 failed (verified by CI in the sprint tooling step); CLI re-run at 33bde60 exits 0 for 0, 1 to 5 (`--contract-sha 0123abc`) and smoke; renders sprint 0 (54 lines), 1 (61), 2 (54), 3 (55), 4 (58), 5 (56) and smoke (1) with exit 0; `--sprint 9` exits 2 with the valid ids. No `{NAME}` placeholder left except the two documented pass-throughs `{SESSION_ID}` and `{SESSION_BRANCH}` and the literal `${CLAUDE_PROJECT_DIR}` text inside package 0 | pass | 23:15Z |
 | R0.8 | tokens enter only through `.sprint/env` | static tests + harness check 6 + repo grep (S0c section, E6) | `git check-ignore -v .sprint/env` hits `.gitignore:18 .sprint/`; compose has `env_file: ${SPRINT_ENV_FILE:-../../.sprint/env}` and no interpolated token; Dockerfile has no token ARG/ENV (`sprint-image-static.test.ts:490`); `run-sprint.ps1` only `Test-Path`s the file (line 131) and has no `Get-Content`/hash/copy anywhere in `scripts/sprint`; harness check 6: 0 matches in docker logs, state logs, `sprint.jsonl`, `~/.gitconfig`, `/work/.git/config`, `docker history --no-trunc`; no token-shaped value in tracked files | pass | 22:07Z |
 | R0.8 handoff | `infra/sprint/Dockerfile` | `infra/sprint/test/check-sprint-image.sh` build + checks 5, 9; `sprint-image-static.test.ts` (63 tests) | image `sessiondeck-sprint:local` id bfb55e2edf3e built from it; non-root uid 1000 (harness 2); root refused with the documented message, non-root exits 1 with an auth error (check 5); shellcheck clean (check 9); no token in `docker history` | pass | 21:38Z |
@@ -47,8 +47,8 @@ S0 builds the contract, reducer, capture tooling and scaffold. The user's captur
 | R0.8 handoff | `scripts/sprint/status.ps1` | same command, now `test:sprint` (`sprint-ps-stop-status.test.ts`, 27 tests with stop) | pass in the 279 (verified by CI); output reduced to printable ASCII, link rows shown as `link refused` | pass | 23:15Z |
 | R0.8 handoff | `scripts/sprint/stop-sprint.ps1` | same command; placeholder smoke run (E5) and harness check 10 | `stop-sprint: ran, exit 0` after the smoke run; "stopped sprint-smoke; kept volume sprint-smoke-work and the state directory"; `docker ps -a --filter name=sd-0-S0c --filter name=sprint-smoke` empty afterwards | pass | 22:08Z |
 | R0.8 handoff | `scripts/sprint/render-prompt.mjs` with unit tests against every package block | see the second R0.8 row; 7 renderer test files | 126 passed (verified by CI) / 0 failed; 6 package blocks plus smoke render | pass | 23:15Z |
-| R0.8 handoff | `.sprint/` state layout and the atomic-write helper `packages/contract/src/state-file.ts` | `pnpm -r test` (contract), re-run at 33bde60: 9 `state-file-*.test.ts` files (index, secrets, layout, status, lock, atomic, merge, cli-merge, cli) | contract 22 files, 434 passed / 13 skipped (433 on ubuntu CI) (the 13 are the S0 `pending S0b` skips) / 0 failed; `state-file.ts` 100 % lines and branches; `state-file-cli.ts` 96.33 % lines (uncovered 158-161); no per-file threshold failed (run exit 0; verified by CI on both OSes) | pass | 23:12Z |
-| R0.8 handoff | smoke package (`-Sprint smoke`) | `node scripts/sprint/render-prompt.mjs --sprint smoke`; harness; `smoke-check.ps1` | renders exactly one line (`write /state/smoke/status.json with state green and exit`), runs through the container end to end with the stub (green) and with placeholders (to the clone). The real-token green run is the first R0.8 row, not this one | pass (package and harness); live run needs laptop confirmation (live tokens) | 22:08Z |
+| R0.8 handoff | `.sprint/` state layout and the atomic-write helper `packages/contract/src/state-file.ts` | `pnpm -r test` (contract), re-run at 33bde60: 9 `state-file-*.test.ts` files (index, secrets, layout, status, lock, atomic, merge, cli-merge, cli) | contract 22 files, 434 passed / 13 skipped (433 on ubuntu CI) (the 13 were the S0 pending-fixture skips; at 21da7db the contract suite has 0 skips) / 0 failed; `state-file.ts` 100 % lines and branches; `state-file-cli.ts` 96.33 % lines (uncovered 158-161); no per-file threshold failed (run exit 0; verified by CI on both OSes) | pass | 23:12Z |
+| R0.8 handoff | smoke package (`-Sprint smoke`) | `node scripts/sprint/render-prompt.mjs --sprint smoke`; harness; `smoke-check.ps1`; live run 2026-10-15 | renders exactly one line (`write /state/smoke/status.json with state green and exit`), runs through the container end to end with the stub (green), with placeholders (to the clone), and with real tokens (green after 16.2 s, evidence file in the S0b section) | pass | 2026-10-15 (live run), recorded 2026-10-16 05:08Z |
 | R0.8 handoff | `infra/sprint/README.md` turned into documentation: `claude setup-token` procedure, token lifetime, GitHub fine-grained token scopes | read `infra/sprint/README.md`: setup step 1 (`:88`), step 2 (`:89-95`), security note (`:30-84`), smoke test (`:116-131`) | `claude setup-token` steps, one-year lifetime and "revoking is not documented" at `:88`; fine-grained scopes (Contents RW, Pull requests RW, Actions R, Commit statuses R, Metadata R, 366-day maximum) at `:90-95`; the README itself says the GitHub details came through a summarizer and must be checked on the token page, and that revoking either token is unverified. Research is recorded in `docs/sessions/p0-sprint-tooling.md:22,73` (no separate note under `docs/research/`) | pass | 22:06Z (README diff since b4b8177 touches only the Testing section) |
 
 ### Static gates (supporting, same commit)
@@ -68,16 +68,17 @@ Test counts (`pnpm -r test`, identical on both runs; skipped = the pending and p
 | `@sessiondeck/contract` | 12 | 238 | 13 | 0 |
 | `@sessiondeck/scripts` | 17 | 227 | 3 | 0 |
 
-Contract skips: 13, all `TODO(fixture)` or provisional placeholders (`envelope.test.ts:108`, `statusline.test.ts:182`, `state-permission.test.ts:101`, `state-review2.test.ts:78`, `state.test.ts:419,425,431,437,443,449,524`, plus the two `describe.skipIf(...length === 0)` blocks that hold the captured-fixture walks). Scripts skips: 3, platform or environment skips (symlink privilege, POSIX-only block on Windows).
+Contract skips: 13, all `TODO(fixture)` or provisional placeholders (`envelope.test.ts:108`, `statusline.test.ts:182`, `state-permission.test.ts:101`, `state-review2.test.ts:78`, `state.test.ts:419,425,431,437,443,449,524`, plus the two `describe.skipIf(...length === 0)` blocks that hold the captured-fixture walks). Scripts skips: 3, platform or environment skips (symlink privilege, POSIX-only block on Windows). Superseded at 21da7db (S0b section): contract 27 files, 1048 passed, 0 skipped; scripts 25 files, 418 passed, 3 skipped.
 
 ## Definition of done
 
 | Item | Command | Key output | Result | Timestamp |
 |---|---|---|---|---|
-| 100% line coverage on `packages/contract/src/state.ts` and `envelope.ts` | `pnpm -F @sessiondeck/contract test` (vitest `--coverage`, v8) | `envelope.ts \| 100 \| 100 \| 100 \| 100`; `state.ts \| 100 \| 100 \| 100 \| 100`; All files 100 lines. Per-file `lines: 100` thresholds in `packages/contract/vitest.config.ts` cover envelope.ts, state.ts and the nine files the reducer is built from (the run exits 0, so thresholds held). `grep -rnE "istanbul ignore\|c8 ignore\|v8 ignore"` over packages and scripts: no matches. Note: `transcript.ts` shows 0 across the row (no executable lines) and has no threshold | pass | 05:49Z |
-| `docs/CONTRACT.md` exists and its diagram is generated from the transition table | `pnpm -F @sessiondeck/contract gen:doc -- --check`; drift test `packages/contract/test/docs.test.ts:47` ("generated block '%s' is up to date") | `docs/CONTRACT.md is up to date.`; docs.test.ts passes | pass | 05:49Z |
-| sd-reviewer has signed off | see session log (`docs/sessions/p0-scaffold.md`), recorded by the orchestrator | not marked by the verifier | see session log | n/a |
-| sd-security-reviewer has signed off the fixtures | see session log (`docs/sessions/p0-scaffold.md`), recorded by the orchestrator | not marked by the verifier; no fixtures exist yet | see session log | n/a |
+| 100% line coverage on `packages/contract/src/state.ts` and `envelope.ts` | `pnpm -r test` at 21da7db (contract script `vitest run --coverage`, v8) | `envelope.ts \| 100 \| 100 \| 100 \| 100`; `state.ts \| 100 \| 100 \| 100 \| 100`; `transitions.ts \| 100 \| 100 \| 100 \| 100` (columns: statements, branches, functions, lines); all-files lines 98.83 (some other files, for example state-file-sweep.ts at 87.09, are lower; they carry no 100 % requirement). Per-file `lines: 100` thresholds in `packages/contract/vitest.config.ts` apply to envelope.ts, state.ts and the files the reducer is built from; the run exits 0, so the thresholds held. `transcript.ts` shows 0 across the row (no executable lines) and has no threshold. The S0 pass at 16ff347 (05:49Z) was also pass | pass | 2026-10-16 05:00Z |
+| `docs/CONTRACT.md` exists and its diagram is generated from the transition table | `pnpm -F @sessiondeck/contract gen:doc -- --check` at 21da7db; drift test `packages/contract/test/docs.test.ts` (inside the 1048) | `docs/CONTRACT.md is up to date.`, exit 0; docs.test.ts passes. S0 pass at 16ff347 also pass | pass | 2026-10-16 05:03Z |
+| sd-reviewer has signed off | `docs/sessions/p0-fixtures.md`: U3 iteration 2 at dc35b08 "merge, no findings" (line 92), U2 iteration 1 at 26961d8 "merge" (line 79), U4b "merge" (lines 69 to 71), U1 round 3 "fix-then-merge" with the MAJOR resolved by record (lines 52 and 53) | recorded by the orchestrator in the session log; the verifier cites it and did not repeat the reviews. The session log's close task (this verification, then the PR) is still open | pass (as recorded) | 2026-10-16 05:09Z |
+| sd-security-reviewer has signed off the fixtures | `docs/sessions/p0-fixtures.md`: U1 round 1 "Gate: pass" at 3899726 (before the fixture commit; 4 MEDIUM, 3 LOW on the controls, data clean, line 49), round 2 at a6984c2 "Gate: pass", round 3 at 2c61aa2 "Gate: pass" (0 CRITICAL, 0 HIGH, 3 LOW, line 52); U2 at 26961d8 "Gate: pass" (2 LOW, line 79); U3 iteration 1 at 22a648d "Gate: pass" (1 MEDIUM, 2 LOW, line 86, fixed in dfba834 and dc35b08) and iteration 2 at dc35b08 "Gate: pass" (2 LOW deferred, line 92); U4b gates at f781950, c1f4a9b, 9d5d39b and the re-check after 8c97dc6 "Gate: pass" (lines 69 to 71). Leak gate at 21da7db: 213 files, PASS | pass (as recorded; the verifier cites the reports and re-ran only the leak gate) | 2026-10-16 05:09Z |
+| U4b `.claude/` changes are applied | `docs/patches/S0b-claude-dir.patch` exists (with `docs/patches/README.md`); session log line 73: the repo worktree's `.claude/` was never written | Claude Code refused edits under `.claude/` in this non-interactive session, so the guard.mjs rule, the Read deny rule and the fixture-capture SKILL.md change ship as a patch; reviewed (merge and security gate pass, lines 69 to 71), NOT YET APPLIED. A user step; not counted in the totals | not applied (user step) | 2026-10-16 05:09Z |
 | `sd-security-reviewer` has signed off the sprint tooling (tokens, docker socket) (added by S0c) | recorded evidence, not re-run: `docs/sessions/p0-sprint-tooling.md` decisions 21 and 22; verbatim reports in `C:/Users/stack/projects/sessiondeck/.sprint/0/tmp-S0c/R6-final-reviews.md` section A (a18255d) and section F (b4b8177) | "Gate: pass for the whole branch" at a18255d and again at b4b8177; no CRITICAL or HIGH; one LOW deferred (`packages/contract/src/state-file-secrets.ts:40`: token-start rule misses a token right after a literal backslash-letter pair). `sd-reviewer` "Verdict: merge" at b4b8177 (section E). Tokens clause: R0.8 token row above. Socket clause: README states the socket mount is root-equivalent (`infra/sprint/README.md:34`, section "The docker socket and the container" `:32-50`) and lists alternatives with cost (`:42-50`). User acceptance of the socket (or choice of an alternative) is a user step and is still open; it is not counted as a fail | pass (as recorded; verifier cites the reports, it did not re-run the reviews) | 22:10Z |
 
 ## CI detail (run 37890035505, headSha 16ff347, conclusion success)
@@ -130,15 +131,15 @@ Observations for the reader (not failures):
 
 ## Totals
 
-Requirement table: 37 rows (24 from S0 plus 13 from S0c, which replace the old R0.8 row), 32 pass / 0 fail / 4 pending S0b / 1 needs laptop confirmation (live tokens). Definition of done: 3 more pass (coverage, CONTRACT.md, sprint-tooling security sign-off as recorded); the sd-reviewer and fixtures sign-off rows read "see session log" and are not counted. S0c rows were brought up to date at 33bde60 (counts and commands only; no result value changed). The S0c evidence is in the section below.
+Requirement table: 37 rows (24 from S0 plus 13 from S0c, which replaced the old R0.8 row). The four rows that were waiting for the fixture session (R0.1 fixture walk, R0.2 golden timeline, R0.4 captured statusLine, R0.7 fixture count and review) are all pass at 21da7db (R0.1 and R0.4 re-confirmed from 9839118, R0.7 from bdcbaca), and the R0.8 live row is pass on the laptop run of 2026-10-15. Requirement result: 37 pass / 0 fail / 0 pending / 0 needs laptop confirmation. Definition of done: 5 pass (coverage, CONTRACT.md, sd-reviewer as recorded, sd-security-reviewer fixtures as recorded, sprint-tooling security sign-off as recorded), plus 1 user step open and not counted (apply `docs/patches/S0b-claude-dir.patch`). The S0b section at the end has the commit, commands and outputs.
 
-Overall: 35 pass / 0 fail / 4 pending S0b / 1 needs laptop confirmation (live tokens)
+Overall: 42 pass / 0 fail / 0 pending (open, not counted: apply the U4b patch)
 
 ## S0c: sprint tooling (R0.8 and the sprint-tooling sign-off)
 
 - Branch `p0/sprint-tooling`, HEAD 33bde60 (updated pass; earlier passes verified 842e199 and 61811a7). Since 61811a7: a6e9510 (batched spawns in the S0c tests; ENOTDIR treated as nothing to remove), a2ac93d and 0966704 (sprint tooling tests moved to `test:sprint` and their own CI step; drift guard `test-split.test.ts`; README testing section), 0d2ef5b and 33bde60 (root `ci` script runs `test:sprint`; PowerShell harness throws on CI when no PowerShell starts; shell batch timeout tested). Code under `scripts/sprint`, `infra/sprint` and `packages/contract/src` changed only in the `discardTemp` ENOTDIR handling. Base `sprint/0-bootstrap` at 3702f2c, no rebase needed. Date (UTC) 2026-10-14, local runs about 23:10Z to 23:20Z.
 - Machine: Windows 11 Home 10.0.26200, AMD Ryzen AI 9 465, 31,898 MB RAM, Node v24.19.0, pnpm 12.10.1, Docker server 29.8.1, Compose v5.6.0. Commands run one at a time, no background processes.
-- Verifier: sd-verifier. Result value added in this pass: `needs laptop confirmation (live tokens)` (the clause needs real `CLAUDE_CODE_OAUTH_TOKEN` and `GH_TOKEN`, which this machine does not hold by design; what is proven now is stated in the row; it is neither pass nor fail).
+- Verifier: sd-verifier. Result value added in this pass: `needs laptop confirmation (live tokens)` (the clause needs real `CLAUDE_CODE_OAUTH_TOKEN` and `GH_TOKEN`, which this machine does not hold by design; what was proven then is stated in the row; it was neither pass nor fail, and was resolved on 2026-10-15, see the S0b section).
 
 ### E1: full suites at 33bde60 (local, 2026-10-14, Windows, Node v24.19.0, commands run one at a time)
 
@@ -183,7 +184,7 @@ History, not current: at 61811a7 the pull_request run 38646834253 failed once on
 
 Review verdicts as recorded by the orchestrator (not re-run): a6e9510 sd-reviewer merge, sd-security-reviewer "Gate: pass (whole branch at a6e9510)"; a2ac93d and 0966704 sd-reviewer merge, sd-security-reviewer "Gate: pass for the whole branch at 0966704" with one LOW (bare-name shell fallback on Windows, hardening for later); 0d2ef5b and 33bde60 sd-reviewer merge at 33bde60 with one MINOR deferred (`scripts/test/fixtures/sprint-ps/harness.ts:52` probe error code can name pwsh's ENOENT when powershell.exe exited non-zero). Earlier MINOR still deferred: `discardTemp` says "temp file not removed (ENOTDIR)" when no temp file was created (a6e9510 treats ENOTDIR as nothing to remove in `scripts/sprint/render-prompt.mjs` and `packages/contract/src/state-file-atomic.ts`).
 
-Note on "verified by CI": the S0c rows verified by local runs (R0.8 renderer, state-file helper, handoff rows for the PowerShell scripts) are also backed by CI at 33bde60: push and pull_request runs both green on all four jobs. The container rows (Dockerfile, compose, entrypoint, stop) and the placeholder smoke run are not CI-covered (CI has no image build). The R0.5 S0 row (run 37890035505 at 16ff347) is unchanged. The live smoke row stays "needs laptop confirmation (live tokens)".
+Note on "verified by CI": the S0c rows verified by local runs (R0.8 renderer, state-file helper, handoff rows for the PowerShell scripts) are also backed by CI at 33bde60: push and pull_request runs both green on all four jobs. The container rows (Dockerfile, compose, entrypoint, stop) and the placeholder smoke run are not CI-covered (CI has no image build). The R0.5 S0 row (run 37890035505 at 16ff347) is unchanged. The live smoke row stayed "needs laptop confirmation (live tokens)" at that time; it became pass on the laptop run of 2026-10-15 (S0b section).
 
 ### E2: container harness (cited, not re-run; image not rebuilt)
 
@@ -231,8 +232,111 @@ Proven by this run: the container starts as non-root (uid 1000), the tokens reac
 
 ### Unverified here
 
-- Real-token smoke (green within 120 s): laptop only. README `:118` states this too.
+- Real-token smoke (green within 120 s): was laptop only; resolved by the laptop run of 2026-10-15 (S0b section, laptop confirmations).
 - Deferred review findings (not fails): LOW bare-name shell fallback on Windows (hardening for later); MINOR `scripts/test/fixtures/sprint-ps/harness.ts:52` probe error code; MINOR `discardTemp` wording; LOW token-start rule in `state-file-secrets.ts:40`.
 - Not observed: a rejected or expired token's message; `--agent` with `-p` and a project-scoped agent (README `:129-131`).
 - GitHub token scope details are marked in the README as unchecked against GitHub's page.
 - User decision on the docker socket (accept, proxy, ECI or rootless DinD) is open; README `:50` says it must be made before writing `.sprint/env`.
+
+## S0b: fixtures and reducer finalization (R0.1, R0.2, R0.3, R0.4, R0.7, plus the laptop confirmations)
+
+- Branch `p0/fixtures`, HEAD 21da7db ("test(contract): compute CONTRACT.md observed table once per file (R0.5, R0.7)"), clean tree before this file was edited. Phase doc `docs/planning/phases/phase-0-contract.md`; handoff `docs/handoffs/S00b-fixtures-and-reducer-finalization.md`; session log `docs/sessions/p0-fixtures.md`.
+- Date (UTC): 2026-10-16, runs 05:00Z to 05:10Z. Machine: Windows 11 Home 10.0.26200, Git Bash, Node v24.19.0, pnpm 12.10.1 (versions as in the S0 pass; not re-queried). Commands run sequentially from the repo root, one at a time, nothing in the background.
+- Verifier: sd-verifier. Handled with care: nothing under `packages/contract/fixtures/raw/` was read (only an entry count), and neither `.sprint/env` nor `.sprint/smoke/logs/` was opened.
+
+### Synthetic fixtures note (2026-10-16)
+
+TaskCreated, TaskCompleted, PermissionDenied and StopFailure were not captured. Conductor decision 7: task tools are disabled on this machine (no task events), the capture ran in default permission mode (so no denial), and no StopFailure occurred. Their five files under `packages/contract/fixtures/synthetic/` are marked synthetic, are walked and reported separately by the envelope walk, and are not counted toward the captured totals (176 hook fixtures, 13 events). Affected rows: R0.3 clause 4 (StopFailure), R0.7 count, R0.1 walk. TaskCreated and TaskCompleted reducer behavior stays provisional (session log U3).
+
+### Commands run at 21da7db
+
+| Command | Key output | Wall | Exit |
+|---|---|---|---|
+| `pnpm -r test` | contract: 27 files, 1048 passed / 0 skipped / 0 failed (vitest 21.35 s); scripts: 25 files, 418 passed / 3 skipped / 0 failed (vitest 23.83 s). R0.5 budget 60 s: within | 27.2 s | 0 |
+| `pnpm -r typecheck` | `packages/contract typecheck: Done`, `scripts typecheck: Done` | 11.7 s | 0 |
+| `pnpm -r lint` | both packages Done | 6.8 s | 0 |
+| `pnpm -F @sessiondeck/contract gen:doc -- --check` | `docs/CONTRACT.md is up to date.` | 2.4 s | 0 |
+| `pnpm -F @sessiondeck/scripts run fixture:leak` | `mode: raw-derived literals + patterns`, `files scanned: 213`, `derived literals: users=1 projects=20 names=45 (skipped short=1)`, `PASS: no leaks found` | 18.0 s | 0 |
+| contract coverage: the contract `test` script, `vitest run --coverage` (part of `pnpm -r test`; per-file `lines: 100` thresholds in `packages/contract/vitest.config.ts`) | line coverage: `state.ts` 100, `envelope.ts` 100, `transitions.ts` 100 (also 100 on statements, branches and functions); all files 98.83 lines; no threshold failure | within the 27.2 s | 0 |
+
+Wall times for the last four commands were taken from a second timing run of the same commands (the first run, whose output is quoted, did not record wall time); both runs exited 0 with identical output. The targeted `pnpm exec vitest run <files> --coverage.enabled=false` runs quoted in the rows (envelope-walk plus envelope 534 passed; statusline 44; state, state-fixtures and state-golden 106; fixtures-counts 7) all passed with 0 skipped.
+
+Tail of `pnpm -r test` (ANSI removed):
+
+```
+packages/contract test:  state.ts          |     100 |      100 |     100 |     100 |
+packages/contract test:  statusline.ts     |     100 |      100 |     100 |     100 |
+packages/contract test:  tracking.ts       |     100 |      100 |     100 |     100 |
+packages/contract test:  transcript.ts     |       0 |        0 |       0 |       0 |
+packages/contract test:  transitions.ts    |     100 |      100 |     100 |     100 |
+packages/contract test:  wire.ts           |     100 |      100 |     100 |     100 |
+packages/contract test: Done
+scripts test:  Test Files  25 passed (25)
+scripts test:       Tests  418 passed | 3 skipped (421)
+scripts test:    Duration  23.83s (transform 4.62s, setup 0ms, collect 25.72s, tests 187.80s, environment 7ms, prepare 13.98s)
+scripts test: Done
+real	0m27.197s
+```
+
+Note on the scripts counts: the S0c section reports scripts 18 files / 232 passed because the sprint tooling tests lived in `test:sprint`; at 21da7db `pnpm -r test` reports 25 files / 418 passed / 3 skipped (the verifier did not investigate the difference; S0b's own sessions added scripts tests, session log U1 to U3 "scripts 418 pass"). `pnpm -F @sessiondeck/scripts test:sprint` was not run in this pass, so the S0c sprint tooling rows keep their 33bde60 evidence.
+
+### Laptop confirmations (2026-10-15, from the conductor; recorded, not re-run by the verifier)
+
+(a) R0.8 live smoke run with real tokens: PASS on 2026-10-15, status green 16.2 s after container start. Evidence file `C:/Users/stack/projects/sessiondeck/.sprint/0/gate/smoke-evidence-run2.txt` (read in this pass; 1,631 bytes; nothing token-shaped in it), quoted in full:
+
+```
+=== smoke check evidence ===
+RESULT: PASS
+start_seconds: 2.8 (run-sprint, including any image build)
+wait_seconds: 16.2 (limit 180, counted after run-sprint returned)
+image sessiondeck-sprint:local: present (reused, no build)
+final_state: green
+container: running
+run-sprint exit: 0
+stop-sprint: ran, exit 0
+--- last 20 lines of C:\Users\stack\projects\sessiondeck\.sprint\smoke\logs\entrypoint.log (printable ASCII only) ---
+2026-10-15T14:29:23Z entrypoint: start: sprint=smoke uid=1000 gid=1000 groups=1000,0
+2026-10-15T14:29:23Z entrypoint: tokens present: CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN (values never logged)
+2026-10-15T14:29:23Z entrypoint: clone path: cloning into /work
+2026-10-15T14:29:24Z entrypoint: checkout: sprint branch '' not on the remote, using default branch main
+2026-10-15T14:29:24Z entrypoint: launching claude headless; stream goes to /state/smoke/logs/sprint.jsonl
+2026-10-15T14:29:29Z entrypoint: claude exited with status 1
+2026-10-15T15:00:39Z entrypoint: start: sprint=smoke uid=1000 gid=1000 groups=1000,0
+2026-10-15T15:00:39Z entrypoint: tokens present: CLAUDE_CODE_OAUTH_TOKEN GH_TOKEN (values never logged)
+2026-10-15T15:00:39Z entrypoint: fetch path: /work is already a clone
+2026-10-15T15:00:41Z entrypoint: checkout: sprint branch '' not on the remote, using default branch main
+2026-10-15T15:00:41Z entrypoint: launching claude headless; stream goes to /state/smoke/logs/sprint.jsonl
+2026-10-15T15:00:56Z entrypoint: claude exited with status 143
+---
+NOTE: the entrypoint log and docker logs can hold secrets. Read them yourself; do not paste them into a chat or an issue.
+=== end evidence ===
+```
+
+Reading of the evidence: the file shows RESULT: PASS with final_state green and wait_seconds 16.2 (limit 180 in the script, looser than the requirement's 120 s; 2.8 s plus 16.2 s is about 19 s, inside 120 s). The entrypoint log lists two container runs: 14:29 (claude exited with status 1) and 15:00 (claude exited with status 143, a SIGTERM stop). The file does not say which run produced the PASS and does not show the content of `status.json`; the green state comes from its `final_state: green` line.
+
+(b) Capture installer, real install and uninstall (2026-10-15, conductor, from a plain terminal): backups written beside the user-level settings file; the exec-form hooks fire on Windows 11 Home 10.0.26200 with Claude Code 2.1.301; no `_capture-errors.log` was produced. This closes the "exec form fires on Windows" laptop item from the S0 harness (which proved the installer only inside a sandbox). Recorded, not re-run.
+
+(c) The project guard hook (`.claude/hooks/guard.mjs`) still fires with the capture hook installed (conductor, 2026-10-15). This also answers the needs_laptop item "verify guard.mjs fires via `${CLAUDE_PROJECT_DIR}` in exec form". Recorded, not re-run.
+
+### Requirement results at 21da7db
+
+| Requirement | Result | Where |
+|---|---|---|
+| R0.1 | pass | rows R0.1 (two rows), re-confirmed from 9839118 |
+| R0.2 | pass | rows R0.2 (purity with frozen inputs; golden timeline: 295 events, 11 changes, final ended/clear, hand-verified 11/11 twice by sd-reviewer) |
+| R0.3 | pass | seven clause rows; captured sequences for clauses 1, 2, 3, 5; clause 4 (StopFailure), 6 (liveness dead) and 7 (same pid) are synthetic only |
+| R0.4 | pass | statusLine rows, re-confirmed from 9839118 |
+| R0.7 | pass | fixture-count row, re-confirmed from bdcbaca; tooling and ignore rows are S0 and unchanged |
+| R0.8 (live) | pass | laptop run 2026-10-15 above |
+
+### Not verified in this pass
+
+- Hand verification of the golden timeline (11 changes): cited from sd-reviewer in the session log, not repeated.
+- Laptop items (a to c): recorded from the conductor; the verifier read only the evidence file for (a).
+- `pnpm -F @sessiondeck/scripts test:sprint` and CI at 21da7db (no CI run on this commit was queried); the container harness was not re-run.
+- U4b: `.claude/` changes ship only as `docs/patches/S0b-claude-dir.patch`, not applied, so the guard rule for `capture-install.mjs --apply` and the Read deny rule on the capture directory are not in force in the repo. The user applies the patch.
+- Open question recorded in the session log: `docs/planning/01-architecture.md:103` still lists PostToolUseFailure under error; a vault and repo edit is for the user.
+
+### Totals (S0b)
+
+Requirement rows touched by S0b: R0.1 (2), R0.2 (2), R0.3 (7), R0.4 (1), R0.7 (1), R0.8 (2): 15 rows, 15 pass / 0 fail / 0 pending. Definition of done rows touched: coverage, CONTRACT.md, sd-reviewer, sd-security-reviewer fixtures: 4 pass; U4b patch applied: open (user step). No row in this file is pending.

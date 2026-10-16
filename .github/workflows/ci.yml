@@ -34,6 +34,8 @@ jobs:
       - run: pnpm -r lint
       - run: pnpm lint:root
       - run: pnpm format:check
+      - name: fixture leak gate (R0.7, patterns and structure, no raw/ needed)
+        run: pnpm -F @sessiondeck/scripts fixture:leak
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1

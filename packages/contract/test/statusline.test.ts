@@ -171,23 +171,34 @@ describe("normalizeRateLimitWindow", () => {
   });
 });
 
-const statusFixtures = loadFixtures().filter((f) => f.dir === "statusLine");
+const allFixtures = loadFixtures();
+const statusFixtures = allFixtures.filter((f) => f.dir === "statusLine");
+const subagentFixtures = allFixtures.filter((f) => f.dir === "subagentStatusLine");
+const CAPTURED_STATUSLINE_COUNT = 20;
+const CAPTURED_SUBAGENT_COUNT = 5;
 
 function parsedFixtures() {
   return statusFixtures.map((f) => StatusLinePayloadSchema.parse(f.payload));
 }
 
-// TODO(fixture): S0b un-skips this by committing fixtures/statusLine/*.json.
-if (statusFixtures.length === 0)
-  it.skip("TODO(fixture): no captured statusLine fixtures yet", () => {
-    expect.fail(
-      "TODO(fixture): captured statusLine fixtures are exercised by the describe block below",
-    );
+describe("captured statusLine fixtures", () => {
+  it("walks all 20 statusLine samples and 5 subagentStatusLine samples (never an empty walk)", () => {
+    expect(statusFixtures).toHaveLength(CAPTURED_STATUSLINE_COUNT);
+    expect(subagentFixtures).toHaveLength(CAPTURED_SUBAGENT_COUNT);
   });
-describe.skipIf(statusFixtures.length === 0)("captured statusLine fixtures", () => {
-  it.each(statusFixtures.map((f) => [f.file, f] as const))("%s parses", (_name, fx) => {
+
+  it.each(statusFixtures.map((f) => [f.file, f] as const))("statusLine %s parses", (_name, fx) => {
     expect(StatusLinePayloadSchema.safeParse(fx.payload).success).toBe(true);
   });
+
+  it.each(subagentFixtures.map((f) => [f.file, f] as const))(
+    "subagentStatusLine %s parses and keeps its row list",
+    (_name, fx) => {
+      const parsed = StatusLinePayloadSchema.safeParse(fx.payload);
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(Array.isArray(parsed.data["tasks"])).toBe(true);
+    },
+  );
 
   it("covers the R0.4 cases: with rate_limits, without, and current_usage null", () => {
     const all = parsedFixtures();
@@ -202,9 +213,24 @@ describe.skipIf(statusFixtures.length === 0)("captured statusLine fixtures", () 
         (w): w is RateLimitPeriod => w != null,
       ),
     );
+    expect(windows.length).toBeGreaterThan(0);
     for (const w of windows) {
       const out = normalizeRateLimitWindow(w, 0);
       expect(out.used_pct === null || (out.used_pct >= 0 && out.used_pct <= 100)).toBe(true);
     }
+  });
+
+  it("DERIVED from a captured sample (the capture has no leak): a percentage above 100 becomes null (#52326)", () => {
+    const source = statusFixtures.find((f) => {
+      const w = StatusLinePayloadSchema.parse(f.payload).rate_limits?.five_hour;
+      return w != null && typeof w.resets_at === "number";
+    });
+    expect(source).toBeDefined();
+    const clone = structuredClone(source?.payload) as {
+      rate_limits: { five_hour: { used_percentage: unknown } };
+    };
+    clone.rate_limits.five_hour.used_percentage = 1_760_000_000;
+    const window = StatusLinePayloadSchema.parse(clone).rate_limits?.five_hour;
+    expect(normalizeRateLimitWindow(window, 0).used_pct).toBeNull();
   });
 });

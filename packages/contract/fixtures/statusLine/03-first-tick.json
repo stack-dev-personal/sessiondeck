@@ -1,0 +1,86 @@
+{
+  "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_C>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/607fbcc7-a1cf-4a09-8832-af0d790aada5/scratchpad",
+  "prompt_id": "fa73f9bc-720a-4079-8239-22092d7b9bbf",
+  "effort": {
+    "level": "xhigh"
+  },
+  "session_name": "<TEXT 28>",
+  "model": {
+    "id": "claude-fable-5-1",
+    "display_name": "Fable 5.1"
+  },
+  "workspace": {
+    "current_dir": "<HOME>/projects/<PROJECT_C>",
+    "project_dir": "<HOME>/projects/<PROJECT_A>",
+    "added_dirs": [
+      "<HOME>",
+      "<HOME>/.claude",
+      "<HOME>/<PROJECT_M>",
+      "<HOME>/<PROJECT_N>"
+    ],
+    "git_worktree": "<TEXT 19>",
+    "repo": {
+      "host": "github.com",
+      "owner": "<ACCOUNT>",
+      "name": "<TEXT 7>"
+    }
+  },
+  "version": "2.1.300",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 47.73927794999996,
+    "total_duration_ms": 74063454,
+    "total_api_duration_ms": 4327984,
+    "total_lines_added": 831,
+    "total_lines_removed": 9
+  },
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    },
+    "used_percentage": 0,
+    "remaining_percentage": 100
+  },
+  "exceeds_200k_tokens": false,
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1792083303,
+    "requests": 178,
+    "misses": 1,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.9859157117891223,
+    "cache_write_tokens": 766502,
+    "miss_recache_tokens": 47884,
+    "last_miss_at": 1792073440,
+    "last_miss_cause": null,
+    "miss_causes": {},
+    "recache_tokens_if_cold": null
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 11,
+      "resets_at": 1792083600
+    },
+    "seven_day": {
+      "used_percentage": 16,
+      "resets_at": 1792555200
+    }
+  }
+}
