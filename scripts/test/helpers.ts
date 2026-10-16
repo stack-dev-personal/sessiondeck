@@ -112,8 +112,10 @@ interface HookMain {
 /**
  * Runs a hook entry file (the repo's or a copy in a temp dir) in this process through its exported
  * `main`, with the same sandboxed environment runScript would give a child. Nothing is written to
- * process.env or the working directory. Direct writes to process.stdout / process.stderr during the
- * call (which the hook must never make) are collected into stdout / stderr so tests still see them.
+ * process.env or the working directory. Direct writes to process.stdout / process.stderr and calls to
+ * console.* during the call (which the hook must never make) are collected into stdout / stderr so
+ * tests see them. Writes through a captured reference to the original stream or console would
+ * escape; capture-silence.test.ts statically forbids such code in the deployed files.
  * The exit code is always 0, as the entry file's wrapper sets.
  */
 export async function runHookInProcess(
@@ -130,12 +132,7 @@ export async function runHookInProcess(
   };
   // Overlapping calls would share one spy, so concurrent callers pass trackStray: false.
   const track = opts.trackStray !== false;
-  const outSpy = track
-    ? vi.spyOn(process.stdout, "write").mockImplementation(stray(out))
-    : undefined;
-  const errSpy = track
-    ? vi.spyOn(process.stderr, "write").mockImplementation(stray(err))
-    : undefined;
+  const spies = track ? straySpies(stray(out), stray(err)) : [];
   try {
     await mod.main({
       argv: args,
@@ -144,10 +141,31 @@ export async function runHookInProcess(
       stdout: (text) => out.push(text),
     });
   } finally {
-    outSpy?.mockRestore();
-    errSpy?.mockRestore();
+    for (const spy of spies) spy.mockRestore();
   }
   return { code: 0, stdout: out.join(""), stderr: err.join("") };
+}
+
+/** console methods whose output would reach a real process's stdout (log, info, debug) or stderr. */
+const CONSOLE_STDOUT = ["log", "info", "debug"] as const;
+const CONSOLE_STDERR = ["warn", "error"] as const;
+
+/**
+ * Spies on process.stdout/stderr.write and on the global console. Vitest replaces `console` in each
+ * worker, so console output never reaches process.stdout.write and needs its own spies.
+ */
+function straySpies(onOut: (chunk: unknown) => boolean, onErr: (chunk: unknown) => boolean) {
+  const toSink =
+    (sink: (chunk: unknown) => boolean) =>
+    (...args: unknown[]) => {
+      sink(`${args.map(String).join(" ")}\n`);
+    };
+  return [
+    vi.spyOn(process.stdout, "write").mockImplementation(onOut),
+    vi.spyOn(process.stderr, "write").mockImplementation(onErr),
+    ...CONSOLE_STDOUT.map((m) => vi.spyOn(console, m).mockImplementation(toSink(onOut))),
+    ...CONSOLE_STDERR.map((m) => vi.spyOn(console, m).mockImplementation(toSink(onErr))),
+  ];
 }
 
 /** Test-only argument: do not add --out, so the installer's own default applies. */

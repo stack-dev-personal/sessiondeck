@@ -201,25 +201,6 @@ describe("hook mode", () => {
     expect(readdirSync(join(out, "Stop"))).toHaveLength(1);
   });
 
-  it("4 concurrent real hook processes produce 4 intact distinct files", async () => {
-    const sandbox = makeTempDir();
-    const out = join(sandbox, "out");
-    const payloads = Array.from({ length: 4 }, (_, i) => ({
-      hook_event_name: "PostToolUse",
-      session_id: "same-session",
-      i,
-    }));
-    const results = await Promise.all(
-      payloads.map((p) => captureSpawned(sandbox, out, JSON.stringify(p))),
-    );
-    expect(results.every((r) => r.code === 0 && r.stdout === "")).toBe(true);
-    const dir = join(out, "PostToolUse");
-    const seen = readdirSync(dir)
-      .map((f) => (readJson(join(dir, f)) as { i: number }).i)
-      .sort((a, b) => a - b);
-    expect(seen).toEqual(payloads.map((p) => p.i));
-  });
-
   it("50 concurrent hooks produce 50 intact distinct files", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
