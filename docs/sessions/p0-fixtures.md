@@ -11,10 +11,10 @@
 
 | Unit | Requirements | Executor | Blocked by | State |
 |------|--------------|----------|------------|-------|
-| U1 fixture inventory, scrub, select (scripts plus scrubbed set, README) | R0.7 | sd-executor-contract | none | review round 3 |
+| U1 fixture inventory, scrub, select (scripts plus scrubbed set, README) | R0.7 | sd-executor-contract | none | reviewed (round 3), verification next |
 | U2 captured-fixture walks (envelope, statusLine) and CONTRACT.md observed payloads | R0.1, R0.4, R0.7 | sd-executor-contract | U1 | pending |
 | U3 reducer TODO(fixture) finalization and golden timeline | R0.2, R0.3 | sd-executor-contract | U1 | pending |
-| U4 conductor decisions: ADR docker socket, PROMPT-BOOK section 6, entrypoint export, capture path docs, guard rule, Read deny rules | decisions 1, 3, 4, 5 | sd-executor-contract (widened scope) | none | review round 3; .claude items blocked (see below) |
+| U4 conductor decisions: ADR docker socket, PROMPT-BOOK section 6, entrypoint export, capture path docs, guard rule, Read deny rules | decisions 1, 3, 4, 5 | sd-executor-contract (widened scope) | none | reviewed (round 3); .claude items in U4b |
 | Close: rebase, full suite, VERIFY-P0 rows incl. laptop confirmations, PR | all | sd-verifier | U1-U4 | pending |
 
 ## Decisions made
@@ -32,6 +32,10 @@ Scope widening for this session (conductor): sd-executor-contract may edit .clau
 
 Laptop confirmations handed to this session (to record in docs/VERIFY-P0.md): R0.8 live smoke PASS 2026-10-15 (green 16.2 s after container start, evidence .sprint/0/gate/smoke-evidence-run2.txt); capture installer real install and uninstall from a plain terminal, backups beside the user-level settings file, exec-form hooks fire, no _capture-errors.log; project guard hook still fires with the capture hook installed.
 
+Resume 1 (conductor note <sessiondeck>/.sprint/0/answers/S0b.md, 2026-10-16T03:05Z, recorded 2026-10-16T03:25Z): the previous run stopped on the Claude session limit (HTTP 429), not on an error. Do not redo finished work; continue the review loop where it stopped (re-run any reviewer whose verdict is not recorded), then U2, U3 and the close. Rewrite the status file at every unit boundary and at least every 15 minutes; one subagent at a time where possible. State at resume: 11 commits, head 2c61aa2, worktree clean, raw copy 3807 files and gitignored.
+
+Process note (resume 1): the round-3 sd-reviewer and sd-security-reviewer calls were started in the background by mistake (foreground flag omitted). The orchestrator kept its turn active until both returned; later calls pass the foreground flag explicitly. A bounded heartbeat (60 min cap, stop file, updated_at only) runs during long units, per PROMPT-BOOK section 6.
+
 ## Units
 
 ## Deferred findings
@@ -45,6 +49,10 @@ Laptop confirmations handed to this session (to record in docs/VERIFY-P0.md): R0
 - sd-security-reviewer: iteration 1 at 3899726 "Gate: pass" (4 MEDIUM, 3 LOW on the controls, data clean); iteration 2 at a6984c2 "Gate: pass" (1 MEDIUM, 4 LOW); iteration 3 pending at f9775be.
 - sd-reviewer: iteration 1 at b6d7158 fix-then-merge (3 MAJOR); iteration 2 at a6984c2 fix-then-merge (2 MAJOR; the "no security verdict" MAJOR was a stale-log false positive, the verdicts are logged here); iteration 3 pending.
 - Observed payload notes (key names only) for CONTRACT.md: mcp_server is an object {name, source}; effort is an object {level}; SessionStart sources startup, compact, clear (no resume); SessionEnd reasons other, clear; permission_mode auto and plan only; SubagentStop agent_type empty in 256 of 269, 7 lack last_assistant_message; Notification never carries agent_id; agent_type without agent_id on main-thread events of --agent sessions; PermissionRequest has no tool_use_id and no agent_id; PreCompact {trigger, custom_instructions}, PostCompact {trigger, compact_summary}; PostToolUseFailure {error, is_interrupt, duration_ms}; tool_response shape varies (object, array, string); statusLine adds agent, session_name, prompt_cache, fast_mode, thinking, exceeds_200k_tokens, workspace.repo, workspace.git_worktree. None contradicts 01-architecture.md section 3 (envelope and state enum unchanged; these are parsing details), so no stop condition.
+- Round 3 (resume 1) at 2c61aa2: sd-security-reviewer "Gate: pass" (0 CRITICAL, 0 HIGH, 3 LOW; leak check 210 files 0 findings; all iteration-2 findings confirmed fixed; nothing under .claude/ or infra/ changed). sd-reviewer "fix-then-merge" with 1 MAJOR (.github/workflows/ci.yml:37 leak-gate step outside the logged widening) and 3 MINOR; both iteration-2 MAJORs confirmed fixed; scripts 368 pass, contract 664 pass.
+- MAJOR resolved by record, as the reviewer allowed: .github is in sd-executor-contract's own ownership (agent definition: "May edit packages/contract, scripts, .github, root config files"), so the CI leak-gate step (b0f153f) is inside the boundary, not a widening. Approved by the orchestrator here.
+- Remaining MINOR/LOW: fixture-leak-core.mjs:57 path exemption, README.md:105 PermissionDenied wording, fixture-leak-structure.mjs:121 numbers under placeholder keys are folded into U2 (executor cheap to reach); PROMPT-BOOK heartbeat items are deferred (see Deferred findings).
+- Reviewer heads-up for U3: in the golden session 9 of 10 SubagentStop events have no matching SubagentStart and an empty agent_type.
 - Note: in fix round 2 the executor briefly moved fixtures/raw to simulate CI and moved it back; file count re-checked at 3807, nothing tracked.
 
 ### U4 conductor decisions (decisions 1, 3, 4, 5)
@@ -52,3 +60,8 @@ Laptop confirmations handed to this session (to record in docs/VERIFY-P0.md): R0
 - entrypoint.sh already exported CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 before the claude call (S0c); the test now asserts the export, its value, and its position.
 - BLOCKED by Claude Code's own permission check (edits under .claude/ refused as sensitive in this non-interactive session; not circumvented): guard.mjs rule for capture-install.mjs --apply with its test, Read deny rule for the capture directory, fixture-capture SKILL.md raw path. These go to the user as a ready patch.
 - sd-security-reviewer on U4: covered in the iteration 2 and 3 reviews (PROMPT-BOOK, scripts/test); nothing under .claude/ or infra/ changed.
+- Round 3 (resume 1): security gate pass, reviewer fix-then-merge (see U1); nothing under .claude/ changed.
+
+## Deferred findings (resume 1)
+- [LOW, security] PROMPT-BOOK.md:82-86: heartbeat rules are prose only; ship a fixed heartbeat script (cap argument, stop file, exit when the parent process is gone, updated_at only) with a test. Owner: sprint tooling (S0c follow-up or Sprint 1 tooling unit).
+- [MINOR, review] PROMPT-BOOK.md:83: "unit budget (at most 60 minutes)" is not defined elsewhere; a unit longer than 60 minutes looks stale at 75. Fix with the heartbeat script: define the budget in section 2 or restart the heartbeat between foreground calls.
