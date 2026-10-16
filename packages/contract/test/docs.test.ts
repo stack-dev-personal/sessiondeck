@@ -11,7 +11,13 @@ import { observedRows, renderObservedTable } from "./observed";
 const DOC_PATH = join(import.meta.dirname, "..", "..", "..", "docs", "CONTRACT.md");
 const REGEN_HINT = "run: pnpm -F @sessiondeck/contract gen:doc";
 
-const doc = (): string => readFileSync(DOC_PATH, "utf8");
+const DOC_TEXT = readFileSync(DOC_PATH, "utf8");
+const doc = (): string => DOC_TEXT;
+
+// Computed once per file: the fixture walk is the slow part and its results are never mutated.
+const OBSERVED_ROWS = observedRows();
+const EXPECTED_OBSERVED_TABLE = renderObservedTable(OBSERVED_ROWS).split("\n");
+const DOC_BLOCKS = renderDocBlocks();
 
 describe("renderStateDiagram", () => {
   it("is deterministic and mentions every state", () => {
@@ -48,17 +54,17 @@ describe("docs/CONTRACT.md", () => {
   it.each(DOC_BLOCK_NAMES)("generated block '%s' is up to date", (name) => {
     const actual = extractBlock(doc(), name);
     expect(actual, `markers for ${name} missing`).not.toBeNull();
-    expect(actual, `block ${name} drifted; ${REGEN_HINT}`).toBe(renderDocBlocks()[name]);
+    expect(actual, `block ${name} drifted; ${REGEN_HINT}`).toBe(DOC_BLOCKS[name]);
   });
 
   it("detects an altered block", () => {
     const tampered = doc().replace("any_except_ended --> idle", "any_except_ended --> error");
-    expect(extractBlock(tampered, "state-diagram")).not.toBe(renderDocBlocks()["state-diagram"]);
+    expect(extractBlock(tampered, "state-diagram")).not.toBe(DOC_BLOCKS["state-diagram"]);
   });
 
   it("compares equal after CRLF conversion", () => {
     const crlf = doc().replace(/\r?\n/g, "\r\n");
-    expect(extractBlock(crlf, "state-diagram")).toBe(renderDocBlocks()["state-diagram"]);
+    expect(extractBlock(crlf, "state-diagram")).toBe(DOC_BLOCKS["state-diagram"]);
   });
 
   it("documents exactly the envelope fields the schema produces", () => {
@@ -92,7 +98,8 @@ describe("block helpers", () => {
 });
 
 describe("docs/CONTRACT.md observed payloads", () => {
-  const section = (): string => doc().split("## Observed payloads")[1] ?? "";
+  const SECTION = doc().split("## Observed payloads")[1] ?? "";
+  const section = (): string => SECTION;
   const tableOf = (text: string): string[] =>
     text.split("\n").filter((l) => l.startsWith("| ") || l.startsWith("| ---"));
 
@@ -104,7 +111,7 @@ describe("docs/CONTRACT.md observed payloads", () => {
     const table = section()
       .split("\n")
       .filter((l) => l.startsWith("| ") || l.startsWith("| ---"));
-    const expected = renderObservedTable(observedRows()).split("\n");
+    const expected = EXPECTED_OBSERVED_TABLE;
     expect(table, "observed table drifted from fixtures; update docs/CONTRACT.md").toEqual(
       expected,
     );
@@ -115,7 +122,7 @@ describe("docs/CONTRACT.md observed payloads", () => {
     expect(text).toContain("Not captured (synthetic, by conductor decision 7)");
     for (const e of ["TaskCreated", "TaskCompleted", "PermissionDenied", "StopFailure"]) {
       expect(text).toContain(`\`${e}\``);
-      expect(observedRows().map((r) => r.event)).not.toContain(e);
+      expect(OBSERVED_ROWS.map((r) => r.event)).not.toContain(e);
     }
   });
 
@@ -125,7 +132,7 @@ describe("docs/CONTRACT.md observed payloads", () => {
       "| PostCompact | 1 | `invented_field` `compact_summary`",
     );
     expect(drifted).not.toBe(section());
-    const expected = renderObservedTable(observedRows()).split("\n");
+    const expected = EXPECTED_OBSERVED_TABLE;
     expect(tableOf(drifted)).not.toEqual(expected);
   });
 });
