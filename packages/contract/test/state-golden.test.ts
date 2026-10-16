@@ -152,6 +152,25 @@ describe("golden session: the full timeline (R0.2)", () => {
     }
   });
 
+  it("events 217 and 229 (subagent PreToolUse over idle) change nothing but last_event_at", () => {
+    for (const i of [217, 229]) {
+      const s = steps[i] as Step;
+      expect(s.fx.dir, `event ${i}`).toBe("PreToolUse");
+      expect((s.fx.payload as { agent_id?: unknown }).agent_id, `event ${i}`).toBeDefined();
+      expect(s.before.state, `event ${i}`).toBe("idle");
+      expect(s.after, `event ${i}`).toEqual({ ...s.before, last_event_at: tsOfEvent(i) });
+    }
+  });
+
+  it("no subagent event leaves idle or waiting_input", () => {
+    for (const s of steps) {
+      const fromSubagent = (s.fx.payload as { agent_id?: unknown }).agent_id !== undefined;
+      if (fromSubagent && ["idle", "waiting_input"].includes(s.before.state)) {
+        expect(s.after.state, `event ${s.index}`).toBe(s.before.state);
+      }
+    }
+  });
+
   it("never leaves the main-thread-only states from a subagent event", () => {
     for (const s of steps) {
       const fromSubagent = (s.fx.payload as { agent_id?: unknown }).agent_id !== undefined;

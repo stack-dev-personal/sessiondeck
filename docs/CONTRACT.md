@@ -42,12 +42,12 @@ Decisions:
 - `state_since` changes only when `state` changes. `state_detail` is display text only and no logic reads it. Text copied from payloads is capped, with a visible `...[truncated]` marker: `last_prompt` and `last_assistant_message` 2000 chars; `state_detail`, tool names, `ended_reason`, model id, `agent_type` and `agent_id` 120; `tasks.last_subject` 200. `subagents` keeps 50 rows: past that the oldest ended rows go first, and a running row only when all are running.
 - `tracking` (added in S0 beyond architecture 3.3, reducer bookkeeping, confirm before S3 and S5): `last_tool` is the last tool of a main-thread `PreToolUse` (cleared by `UserPromptSubmit` and `Stop`; the `Stop` guards read it). `permission` is the open prompt, `{ tool, agent_id }` (`agent_id` null for the main thread) or `{ tool: null, requester_unknown: true }`; null unless `waiting_permission`.
 - Tool events (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`) leave `waiting_permission` only from the context that asked; from any other context they change only `last_event_at`. When the requester is unknown (see the `Notification` rule) any context's tool event leaves. `UserPromptSubmit`, main-thread `Stop`, any `StopFailure`, main-thread `SessionEnd` and a non-compact `SessionStart` leave it from any context. Open: parallel tool calls inside the requesting context (see the open cases under Observed payloads).
-- A subagent's tool event never leaves `waiting_input` (a background subagent must not hide the needs-input signal); a main-thread tool event or `UserPromptSubmit` does. `PostToolUse` and the `Notification` fallback keep `state_detail` only when the previous state is `working` or `waiting_permission`, else it becomes null.
+- A subagent's tool event (`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied` with `agent_id`) never leaves `idle` or `waiting_input` (in both the main turn is over and it is the user's move; a background subagent must not hide that signal or reopen the turn, and nothing would return the session to `idle` when it finished); a main-thread tool event or `UserPromptSubmit` does. Background work stays visible through `subagents` rows. `PostToolUse` and the `Notification` fallback keep `state_detail` only when the previous state is `working` or `waiting_permission`, else it becomes null.
 - `ended` accepts only `SessionStart` (resume) with a source other than `compact`; everything else just updates `last_event_at`, so the first `ended_reason` is kept. `ended_superseded` is the row state of an `ended` session with `ended_reason: superseded`: like `exited`, any later hook that has a row from it revives it (ccmonitor sees events continue under the old id after `--continue`). `TaskCreated`, `SubagentStart` and a subagent `Stop` have no row, so they do not revive it.
 - `exited` means the pid vanished without `SessionEnd`. A later hook proves the process is alive, so any event with a row from `exited` is applied normally. `alive: false` for a pid other than `snapshot.pid` is ignored.
 - `SessionStart` with a source other than `compact` moves any state to `starting` and resets `tracking`; source `compact` changes no state.
 - `PostCompact` moves `starting`, `working` (and revives `exited`, `ended_superseded`) to `working`; from every other state it only counts `compactions`. This narrows architecture line 99, which lists it under `working`: a manual `/compact` at an idle prompt must not show `working`.
-- A hook with `agent_id` (inside a subagent) never moves the session to `idle`, `waiting_input` or `ended`, and never writes `last_tool`; its `PreToolUse` and `PostToolUse` write no tool into `state_detail`. It may reach `waiting_permission`, and its `PermissionRequest` and `StopFailure` do write `state_detail`. A subagent's `StopFailure` still gives `error` (unconfirmed). `SubagentStart` and `SubagentStop` maintain `subagents` rows and never change `state`.
+- A hook with `agent_id` (inside a subagent) never moves the session to `idle`, `waiting_input` or `ended`, never leaves `idle` or `waiting_input` (tool events), and never writes `last_tool`; its `PreToolUse` and `PostToolUse` write no tool into `state_detail`. It may reach `waiting_permission`, and its `PermissionRequest` and `StopFailure` do write `state_detail`. A subagent's `StopFailure` still gives `error` (unconfirmed). `SubagentStart` and `SubagentStop` maintain `subagents` rows and never change `state`.
 - `PostToolUseFailure` is a tool event like `PostToolUse` (same row guards and detail rule): it moves any live state to `working`. The captured payload is `{error, is_interrupt, duration_ms}` plus the tool fields; nothing in it marks an API error (that is `StopFailure`), so it never gives `error`. Before U3 it only left `waiting_permission`. `is_interrupt` is not read (it was `false` in all 6 committed fixtures).
 - `PostToolUse` does not read `tool_response` (objects and arrays in the committed fixtures, strings in the full capture; no `interrupted: true` was committed).
 - `TaskCreated` and `TaskCompleted` change no state. They add to `tasks`: `total + 1`, respectively `completed + 1` with `total` raised to at least `completed`, and `last_subject` from `task_subject` (kept when absent). Synthetic fixtures only, so the field names follow the hooks reference. `PreCompact` writes `compact:<trigger>` into `state_detail` while the state is `working` (`PostCompact` clears it); from any other state it changes nothing but `last_event_at`.
@@ -64,11 +64,11 @@ stateDiagram-v2
     any_state --> starting : SessionStart if source is not compact
     any_except_ended --> working : UserPromptSubmit
     any_except_ended --> working : PreToolUse if no other context holds the permission prompt and not inside a subagent
-    any_except_ended --> working : PreToolUse if no other context holds the permission prompt and inside a subagent and not a subagent while the session waits for input
-    any_except_ended --> working : PostToolUse if no other context holds the permission prompt and not a subagent while the session waits for input
-    any_except_ended --> working : PostToolUseFailure if no other context holds the permission prompt and not a subagent while the session waits for input
+    any_except_ended --> working : PreToolUse if no other context holds the permission prompt and inside a subagent and not a subagent while the session is idle or waits for input
+    any_except_ended --> working : PostToolUse if no other context holds the permission prompt and not a subagent while the session is idle or waits for input
+    any_except_ended --> working : PostToolUseFailure if no other context holds the permission prompt and not a subagent while the session is idle or waits for input
     any_except_ended --> waiting_permission : PermissionRequest
-    any_except_ended --> working : PermissionDenied if no other context holds the permission prompt and not a subagent while the session waits for input
+    any_except_ended --> working : PermissionDenied if no other context holds the permission prompt and not a subagent while the session is idle or waits for input
     starting --> waiting_permission : Notification if permission_prompt or elicitation_dialog
     working --> waiting_permission : Notification if permission_prompt or elicitation_dialog
     idle --> waiting_permission : Notification if permission_prompt or elicitation_dialog
@@ -105,11 +105,11 @@ stateDiagram-v2
 | SessionStart | any state | source is not compact | starting | `source:<source>` |
 | UserPromptSubmit | any state except ended | - | working | null |
 | PreToolUse | any state except ended | no other context holds the permission prompt and not inside a subagent | working | `tool:<tool_name>` |
-| PreToolUse | any state except ended | no other context holds the permission prompt and inside a subagent and not a subagent while the session waits for input | working | unchanged if working, else null |
-| PostToolUse | any state except ended | no other context holds the permission prompt and not a subagent while the session waits for input | working | unchanged if working or waiting_permission, else null |
-| PostToolUseFailure | any state except ended | no other context holds the permission prompt and not a subagent while the session waits for input | working | unchanged if working or waiting_permission, else null |
+| PreToolUse | any state except ended | no other context holds the permission prompt and inside a subagent and not a subagent while the session is idle or waits for input | working | unchanged if working, else null |
+| PostToolUse | any state except ended | no other context holds the permission prompt and not a subagent while the session is idle or waits for input | working | unchanged if working or waiting_permission, else null |
+| PostToolUseFailure | any state except ended | no other context holds the permission prompt and not a subagent while the session is idle or waits for input | working | unchanged if working or waiting_permission, else null |
 | PermissionRequest | any state except ended | - | waiting_permission | `tool:<tool_name>` |
-| PermissionDenied | any state except ended | no other context holds the permission prompt and not a subagent while the session waits for input | working | null |
+| PermissionDenied | any state except ended | no other context holds the permission prompt and not a subagent while the session is idle or waits for input | working | null |
 | Notification | starting, working, idle, error, exited, ended_superseded | permission_prompt or elicitation_dialog | waiting_permission | unchanged if working or waiting_permission, else null |
 | Stop | any state except ended | not inside a subagent and last tool AskUserQuestion | waiting_input | needs input |
 | Stop | any state except ended | not inside a subagent and last tool ExitPlanMode | waiting_input | awaiting plan |
@@ -182,9 +182,9 @@ Unverified notes from an earlier analysis of the full raw capture (not committed
 - `tool_response` shape varies: object, array or string.
 - `statusLine` adds `agent`, `session_name`, `prompt_cache`, `fast_mode`, `thinking`, `exceeds_200k_tokens`, `workspace.repo` and `workspace.git_worktree`.
 
-Open cases (U3 checked the raw capture for these; counts only, nothing else is recorded here):
+Open cases (U3 checked the raw capture for these; counts, key names and tool names only):
 
-- Parallel tool calls inside a `PermissionRequest`'s context did not occur: of the 4 `PermissionRequest` events, 1 had a second tool call open in the same (main) context, and that call was a `Bash` `PreToolUse` 640 s old that never got a `PostToolUse`, i.e. an orphan. The reducer pins today's behavior (any `PostToolUse` from the asking context ends the prompt) in a test named "provisional: not observed in the 2026-10-15 capture".
+- Parallel tool calls inside a `PermissionRequest`'s context did not occur: of the 4 `PermissionRequest` events, 1 had a second tool call open in the same (main) context, and that call was a `Bash` `PreToolUse` that never got a `PostToolUse`, i.e. an orphan. The reducer pins today's behavior (any `PostToolUse` from the asking context ends the prompt) in a test named "provisional: not observed in the 2026-10-15 capture".
 - No sandbox or subagent permission `Notification` occurred: the 2 `permission_prompt` Notifications in the capture had no `agent_id` and no `agent_type`, and each followed a main-thread `PermissionRequest`. The unknown-requester behavior stays provisional.
 - `PostToolUseFailure` with `is_interrupt: true` and `PostToolUse` with `interrupted: true` were not committed; whether an interrupted tool leaves the session `working` until the next event is unknown.
 

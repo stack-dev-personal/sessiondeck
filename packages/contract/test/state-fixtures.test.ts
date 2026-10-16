@@ -147,8 +147,11 @@ describe("PostToolUseFailure (captured)", () => {
 
   it("is proof of tool activity like PostToolUse: idle, error and starting move to working", () => {
     for (const fx of failures) {
+      const sub = "agent_id" in (fx.payload as object);
       for (const state of ["starting", "idle", "error"] as const) {
-        expect(applyTo(fx, state).next.state, `${fx.file} from ${state}`).toBe("working");
+        // A subagent's failure does not leave idle (U3 fix round 1); every other case works.
+        const want = sub && state === "idle" ? "idle" : "working";
+        expect(applyTo(fx, state).next.state, `${fx.file} from ${state}`).toBe(want);
       }
     }
   });
@@ -177,7 +180,8 @@ describe("PostToolUse tool_response (captured)", () => {
     for (const fx of fixtures) {
       for (const state of ["working", "idle"] as const) {
         const { next } = applyTo(fx, state, { state_detail: null });
-        expect(next.state, `${fx.file} from ${state}`).toBe("working");
+        const stays = state === "idle" && "agent_id" in (fx.payload as object);
+        expect(next.state, `${fx.file} from ${state}`).toBe(stays ? "idle" : "working");
       }
     }
   });

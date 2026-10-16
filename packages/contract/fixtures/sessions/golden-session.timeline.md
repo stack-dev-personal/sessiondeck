@@ -18,13 +18,18 @@ PostToolUse, 7 PermissionRequest, 12 Stop (idle), 15 SessionEnd.
 | 91 | PermissionRequest | main | working -> waiting_permission | 7 | `tool:ExitPlanMode`; requester recorded as the top-level session |
 | 92 | PostToolUse | main | waiting_permission -> working | 5 | the requesting context finished the tool (`permission_free`); detail kept |
 | 216 | Stop | main | working -> idle | 12 | last top-level tool was Bash, so neither AskUserQuestion nor ExitPlanMode row applies |
-| 217 | PreToolUse | subagent | idle -> working | 4 | a subagent is still running tools after the Stop; allowed because the state is `idle`, not `waiting_input` |
-| 228 | Stop | main | working -> idle | 12 | as 216 |
-| 229 | PreToolUse | subagent | idle -> working | 4 | as 217 |
+| 221 | UserPromptSubmit | main | idle -> working | 2 | any live state to working on a prompt; the subagent tool events at 217 to 219 did not leave `idle` |
+| 228 | Stop | main | working -> idle | 12 | as 216 (the session was `working` again since 221) |
+| 239 | UserPromptSubmit | main | idle -> working | 2 | as 221; the subagent PreToolUse at 229 did not leave `idle` |
 | 272 | Stop | main | working -> idle | 12 | as 216 |
 | 274 | UserPromptSubmit | main | idle -> working | 2 | |
 | 291 | Stop | main | working -> idle | 12 | as 216 |
 | 294 | SessionEnd | main | idle -> ended | 15 | `ended_reason` = `clear` from the payload `reason` |
+
+Events that do nothing because of the guard `not_subagent_over_input` (a subagent tool event while
+the state is `idle` or `waiting_input`): every subagent PreToolUse, PostToolUse and PostToolUseFailure
+between a Stop and the next UserPromptSubmit, including 217 and 229, which used to turn `idle` into
+`working`. Only `last_event_at` moves.
 
 Events that fire a row without changing the state: 0 SessionStart (row 1, `starting` stays,
 detail `source:startup`), the other UserPromptSubmit, PreToolUse and PostToolUse events while
@@ -33,12 +38,11 @@ SubagentStart / SubagentStop (they only maintain `subagents` rows).
 
 ## Flagged, not baked in silently
 
-- Events 217 and 229: a subagent's tool use after the top-level Stop turns `idle` back into
-  `working`, and nothing returns it to `idle` until the next Stop (228 for the 217 run, 272 for the
-  229 run). This follows the table (row 4 is guarded only against
-  `waiting_input`) and matches "the session is still busy while a background subagent runs", but it
-  also means a Stop is not the last word when subagents outlive it. If the UI should show
-  `idle` after Stop whatever the subagents do, row 4 needs a `not idle` guard. Left as is.
+- Events 217 and 229 (resolved in U3 fix round 1): a subagent tool event no longer turns `idle` back
+  into `working`; the orchestrator decided `idle` is protected like `waiting_input`. The session
+  stays `idle` until a main-thread event (here the UserPromptSubmit at 221 and 239) moves it. Background
+  work shows in the `subagents` rows. The change count stays 11: the two subagent changes became the
+  two UserPromptSubmit changes that were previously no-ops (the session was already `working`).
 - Event 92 keeps `state_detail` `tool:ExitPlanMode` after the prompt is answered (PostToolUse keeps
   detail from `waiting_permission`); the next top-level PreToolUse replaces it. Harmless display text.
 - Nine of the ten SubagentStop events (all except 238) have no SubagentStart and an empty

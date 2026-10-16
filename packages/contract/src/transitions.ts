@@ -113,6 +113,9 @@ const ACTIVE_DETAIL_STATES: readonly SessionState[] = Object.freeze([
   "waiting_permission",
 ]);
 
+/** The main turn is over and it is the user's move; background subagents must not reopen it. */
+const TURN_OVER_STATES: readonly SessionState[] = Object.freeze(["idle", "waiting_input"]);
+
 /** Human text for each guard; also used in the generated diagram and table. */
 export const GUARD_DESCRIPTIONS: Readonly<Record<GuardId, string>> = Object.freeze({
   main_thread: "not inside a subagent",
@@ -121,7 +124,7 @@ export const GUARD_DESCRIPTIONS: Readonly<Record<GuardId, string>> = Object.free
   last_tool_exit_plan: "last tool ExitPlanMode",
   permission_notification: "permission_prompt or elicitation_dialog",
   permission_free: "no other context holds the permission prompt",
-  not_subagent_over_input: "not a subagent while the session waits for input",
+  not_subagent_over_input: "not a subagent while the session is idle or waits for input",
   source_not_compact: "source is not compact",
 });
 
@@ -140,7 +143,8 @@ const GUARDS: Readonly<Record<GuardId, (ctx: TransitionContext) => boolean>> = {
   permission_notification: (ctx) =>
     PERMISSION_NOTIFICATION_TYPES.includes(readString(ctx.payload, "notification_type") ?? ""),
   permission_free: permissionFree,
-  not_subagent_over_input: (ctx) => ctx.agentId === null || ctx.prev.state !== "waiting_input",
+  not_subagent_over_input: (ctx) =>
+    ctx.agentId === null || !TURN_OVER_STATES.includes(ctx.prev.state),
   source_not_compact: (ctx) => readString(ctx.payload, "source") !== COMPACT_SOURCE,
 };
 
@@ -192,7 +196,8 @@ function row(
  * Permission: tool events (PreToolUse, PostToolUse, PostToolUseFailure, PermissionDenied) leave
  * waiting_permission only from the context that asked (tracking.permission.agent_id); when a
  * Notification without agent_id announced the prompt the requester is unknown and any context may
- * leave. A subagent tool event never leaves waiting_input.
+ * leave. A subagent tool event (any hook with agent_id: PreToolUse, PostToolUse, PostToolUseFailure,
+ * PermissionDenied) never leaves idle or waiting_input; background work shows in `subagents`.
  *
  * Not in the table on purpose (they never change state; event-fields.ts handles their fields):
  * TaskCreated, TaskCompleted, PreCompact, SubagentStart, SubagentStop. See PROVISIONAL_BEHAVIOR
