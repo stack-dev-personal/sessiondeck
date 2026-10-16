@@ -72,12 +72,6 @@ describe("finding 1: a Notification without agent_id leaves the requester unknow
     expect(reduce(scoped, hook("PostToolUse", {}, 9_000, OTHER)).state).toBe("waiting_permission");
     expect(reduce(scoped, hook("PostToolUse", {}, 9_000, SUB)).state).toBe("working");
   });
-
-  // TODO(fixture): no captured sandbox or subagent permission Notification exists yet. A capture
-  // must confirm whether agent_id is present on it; then requester scoping can replace "unknown".
-  it.skip("a captured permission Notification states whether agent_id is present", () => {
-    expect.fail("TODO(fixture): capture a sandbox network prompt and a subagent permission prompt");
-  });
 });
 
 describe("finding 2: keep rows do not carry text that described the previous state", () => {

@@ -147,13 +147,12 @@ describe("MINOR: PostToolUseFailure and PermissionDenied rows", () => {
   });
 
   it.each(["working", "idle", "error", "waiting_input"] as const)(
-    "PostToolUseFailure from %s is unchanged (provisional)",
+    "PostToolUseFailure from %s is a tool event: working, detail kept only from working",
     (state) => {
       const prev = snap(state, { state_detail: "d" });
-      expect(reduce(prev, hook("PostToolUseFailure", {}, 9_000))).toEqual({
-        ...prev,
-        last_event_at: 9_000,
-      });
+      const next = reduce(prev, hook("PostToolUseFailure", {}, 9_000));
+      expect(next.state).toBe("working");
+      expect(next.state_detail).toBe(state === "working" ? "d" : null);
     },
   );
 

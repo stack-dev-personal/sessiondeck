@@ -90,16 +90,10 @@ describe("MAJOR: only the requesting context leaves waiting_permission", () => {
     expect(reduce(prev, hook("PostToolUse", {}, 9_000, SUB)).state).toBe("working");
   });
 
-  it("parallel tool calls inside the requesting context are an open case", () => {
+  it("provisional: not observed in the 2026-10-15 capture: parallel tool calls inside the requesting context", () => {
     // Two PreToolUse in flight from the same context: the first PostToolUse also leaves
     // waiting_permission although the second tool's prompt may still be open.
     expect(reduce(snap("waiting_permission"), hook("PostToolUse")).state).toBe("working");
-  });
-
-  // TODO(fixture): parallel tool calls in the requesting context. Intended: a PostToolUse for a
-  // tool other than the one that asked must not leave waiting_permission; needs tool_use_id fixtures.
-  it.skip("a PostToolUse of another parallel tool call keeps the prompt open", () => {
-    expect.fail("TODO(fixture): write once parallel-tool PermissionRequest fixtures exist");
   });
 });
 

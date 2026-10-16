@@ -40,7 +40,7 @@ describe("renderStateDiagram", () => {
 
   it("renders the transition and provisional tables", () => {
     expect(renderTransitionTable(TRANSITIONS)).toContain("| Stop | any state except ended |");
-    expect(renderProvisionalTable()).toContain("| TaskCreated | state unchanged |");
+    expect(renderProvisionalTable()).toContain("| TaskCreated | state unchanged; tasks.total + 1");
   });
 });
 
@@ -93,6 +93,8 @@ describe("block helpers", () => {
 
 describe("docs/CONTRACT.md observed payloads", () => {
   const section = (): string => doc().split("## Observed payloads")[1] ?? "";
+  const tableOf = (text: string): string[] =>
+    text.split("\n").filter((l) => l.startsWith("| ") || l.startsWith("| ---"));
 
   it("names the captured Claude Code version and host", () => {
     expect(doc()).toContain("## Observed payloads (Claude Code 2.1.301, Windows 11");
@@ -117,8 +119,13 @@ describe("docs/CONTRACT.md observed payloads", () => {
     }
   });
 
-  it("detects a drifted field list", () => {
-    const rows = observedRows().map((r) => ({ ...r, fields: [...r.fields, "invented_field"] }));
-    expect(renderObservedTable(rows)).not.toBe(renderObservedTable(observedRows()));
+  it("detects a drifted field list in the doc", () => {
+    const drifted = section().replace(
+      "| PostCompact | 1 | `compact_summary`",
+      "| PostCompact | 1 | `invented_field` `compact_summary`",
+    );
+    expect(drifted).not.toBe(section());
+    const expected = renderObservedTable(observedRows()).split("\n");
+    expect(tableOf(drifted)).not.toEqual(expected);
   });
 });

@@ -6,7 +6,9 @@ import {
   LAST_MESSAGE_MAX_CHARS,
   LAST_PROMPT_MAX_CHARS,
   MODEL_ID_MAX_CHARS,
+  STATE_DETAIL_MAX_CHARS,
   SUBAGENT_ROWS_MAX,
+  TASK_SUBJECT_MAX_CHARS,
   truncate,
 } from "./limits";
 import type { PayloadRecord } from "./payload";
@@ -16,6 +18,7 @@ import type { SessionSnapshot, SubagentSnapshot } from "./snapshot";
 /** Fallbacks used when a documented field is missing or of the wrong type. */
 const UNKNOWN_END_REASON = "unknown";
 const UNKNOWN_AGENT_TYPE = "unknown";
+const COMPACT_DETAIL_PREFIX = "compact:";
 
 interface FieldContext {
   readonly e: Envelope;
@@ -51,6 +54,40 @@ function onSessionEnd(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
 
 function onPostCompact(s: SessionSnapshot): SessionSnapshot {
   return { ...s, compactions: s.compactions + 1 };
+}
+
+/**
+ * PreCompact: the trigger (manual or auto) goes into state_detail, but only while working. PostCompact
+ * clears the detail only from the states it moves to working; from any other state the text would
+ * stay behind. The state itself never changes here.
+ */
+function onPreCompact(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
+  const trigger = readString(ctx.payload, "trigger");
+  if (trigger === null || s.state !== "working") return s;
+  return {
+    ...s,
+    state_detail: truncate(`${COMPACT_DETAIL_PREFIX}${trigger}`, STATE_DETAIL_MAX_CHARS),
+  };
+}
+
+/** The subject of a task event (TaskCreated, TaskCompleted), capped; the previous one when absent. */
+function taskSubject(s: SessionSnapshot, ctx: FieldContext): string | null {
+  const subject = readString(ctx.payload, "task_subject");
+  return subject === null ? s.tasks.last_subject : truncate(subject, TASK_SUBJECT_MAX_CHARS);
+}
+
+function onTaskCreated(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
+  return {
+    ...s,
+    tasks: { ...s.tasks, total: s.tasks.total + 1, last_subject: taskSubject(s, ctx) },
+  };
+}
+
+/** completed + 1; total follows when the task was created before the probe saw the session. */
+function onTaskCompleted(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
+  const completed = s.tasks.completed + 1;
+  const total = Math.max(s.tasks.total, completed);
+  return { ...s, tasks: { total, completed, last_subject: taskSubject(s, ctx) } };
 }
 
 /** The payload agent_id, capped the same way as on rows; null when absent or not a string. */
@@ -102,6 +139,9 @@ const FIELD_PATCHES: Readonly<Record<string, FieldPatch>> = {
   Stop: onStop,
   SessionEnd: onSessionEnd,
   PostCompact: onPostCompact,
+  PreCompact: onPreCompact,
+  TaskCreated: onTaskCreated,
+  TaskCompleted: onTaskCompleted,
   SubagentStart: onSubagentStart,
   SubagentStop: onSubagentStop,
 };

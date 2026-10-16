@@ -35,7 +35,6 @@ export type GuardId =
 
 /** How a row sets state_detail (display text only; no logic reads it). */
 export type DetailRule =
-  | "keep"
   | "keep_if_working"
   | "keep_if_active"
   | "clear"
@@ -146,7 +145,6 @@ const GUARDS: Readonly<Record<GuardId, (ctx: TransitionContext) => boolean>> = {
 };
 
 const DETAIL_RULES: Readonly<Record<DetailRule, (ctx: TransitionContext) => string | null>> = {
-  keep: (ctx) => ctx.prev.state_detail,
   keep_if_working: (ctx) => (ctx.prev.state === "working" ? ctx.prev.state_detail : null),
   keep_if_active: (ctx) =>
     ACTIVE_DETAIL_STATES.includes(ctx.prev.state) ? ctx.prev.state_detail : null,
@@ -196,8 +194,9 @@ function row(
  * Notification without agent_id announced the prompt the requester is unknown and any context may
  * leave. A subagent tool event never leaves waiting_input.
  *
- * Not in the table on purpose (fixtures pending, see PROVISIONAL_BEHAVIOR): TaskCreated,
- * TaskCompleted, PreCompact. SubagentStart and SubagentStop change rows, not state.
+ * Not in the table on purpose (they never change state; event-fields.ts handles their fields):
+ * TaskCreated, TaskCompleted, PreCompact, SubagentStart, SubagentStop. See PROVISIONAL_BEHAVIOR
+ * for what is still unconfirmed against a capture.
  */
 export const TRANSITIONS: readonly Transition[] = Object.freeze([
   row("SessionStart", ROW_STATES, "starting", "source", ["source_not_compact"]),
@@ -212,7 +211,10 @@ export const TRANSITIONS: readonly Transition[] = Object.freeze([
     "permission_free",
     "not_subagent_over_input",
   ]),
-  row("PostToolUseFailure", ["waiting_permission"], "working", "keep", ["permission_free"]),
+  row("PostToolUseFailure", LIVE_STATES, "working", "keep_if_active", [
+    "permission_free",
+    "not_subagent_over_input",
+  ]),
   row("PermissionRequest", LIVE_STATES, "waiting_permission", "tool"),
   row("PermissionDenied", LIVE_STATES, "working", "clear", [
     "permission_free",
@@ -251,7 +253,7 @@ export function resolveDetail(t: Transition, ctx: TransitionContext): string | n
   return detail === null ? null : truncate(detail, STATE_DETAIL_MAX_CHARS);
 }
 
-/** Events whose payload fields are unverified. Behavior is provisional until S0b adds fixtures. */
+/** Behavior no capture has confirmed (synthetic payloads or cases that did not occur). */
 export interface ProvisionalBehavior {
   readonly event: HookEventName;
   readonly current: string;
@@ -262,19 +264,10 @@ export const PROVISIONAL_BEHAVIOR: readonly ProvisionalBehavior[] = Object.freez
   (
     [
       {
-        event: "PostToolUse",
-        current: "state working, tool_response not read",
-        intended: "read tool_response to detect an interrupted or failed result",
-      },
-      {
-        event: "PostToolUseFailure",
-        current: "only leaves waiting_permission (to working); otherwise unchanged",
-        intended: "payload marks an API error: error; a plain tool failure: working",
-      },
-      {
         event: "StopFailure",
-        current: "any context, including a subagent, gives error",
-        intended: "confirm whether a subagent's StopFailure should move the session",
+        current: "any context, including a subagent, gives error (synthetic payload only)",
+        intended:
+          "confirm against a captured StopFailure, and whether a subagent's carries agent_id",
       },
       {
         event: "Notification",
@@ -284,19 +277,23 @@ export const PROVISIONAL_BEHAVIOR: readonly ProvisionalBehavior[] = Object.freez
           "a captured sandbox or subagent permission Notification must confirm whether agent_id is present, then scope to the requester",
       },
       {
+        event: "PermissionRequest",
+        current:
+          "any PostToolUse from the requesting context ends the prompt, whichever parallel tool call it belongs to",
+        intended:
+          "a capture with parallel tool calls in the asking context must show whether the prompt stays open for the other call",
+      },
+      {
         event: "TaskCreated",
-        current: "state unchanged",
-        intended: "tasks.total + 1 and tasks.last_subject from the payload subject",
+        current:
+          "state unchanged; tasks.total + 1 and tasks.last_subject from task_subject (documented payload, synthetic fixtures only)",
+        intended: "confirm the field names against a captured payload",
       },
       {
         event: "TaskCompleted",
-        current: "state unchanged",
-        intended: "tasks.completed + 1 and tasks.last_subject from the payload subject",
-      },
-      {
-        event: "PreCompact",
-        current: "state unchanged",
-        intended: "read the compaction trigger (manual or auto) into state_detail",
+        current:
+          "state unchanged; tasks.completed + 1 (total follows if lower) and tasks.last_subject from task_subject (synthetic fixtures only)",
+        intended: "confirm the field names against a captured payload",
       },
     ] satisfies ProvisionalBehavior[]
   ).map((p) => Object.freeze(p)),

@@ -14,7 +14,6 @@ const NON_HOOK_TRIGGER_LABELS: Readonly<Record<string, string>> = {
 };
 
 const DETAIL_TEXT: Readonly<Record<DetailRule, string>> = {
-  keep: "unchanged",
   clear: "null",
   keep_if_working: "unchanged if working, else null",
   keep_if_active: "unchanged if working or waiting_permission, else null",
