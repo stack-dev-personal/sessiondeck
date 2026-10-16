@@ -28,8 +28,9 @@ The failed attempt (contract 42.6 s, scripts past 60 s) is the same shape under 
 ## Tasks
 
 - [x] U1 scripts: cut per-test process spawns in the default (R0.5) run, keep one real-spawn smoke per entry script (R0.5; keeps R0.7)
-- [ ] U2 contract: cut CLI spawn tests and coverage overhead (R0.5; keeps R0.1-R0.4, coverage DoD)
-- [ ] U3 CI proof: push, record Windows R0.5 step times in .sprint/0/gate/fix-1-ci.txt
+- [x] U2 per-file worker overhead: contract threads + isolate:false, scripts maxWorkers (R0.5; keeps R0.1-R0.4, coverage DoD)
+- [x] U4 contract CLI spawn-test timeout under load (R0.5; found by sd-verifier)
+- [x] U3 CI proof: push, record Windows R0.5 step times in .sprint/0/gate/fix-1-ci.txt
 
 ## Units
 
@@ -41,8 +42,32 @@ The failed attempt (contract 42.6 s, scripts past 60 s) is the same shape under 
 - Security review: not run; leak-check and scrub scripts untouched (fixture-leak.test.ts and fixture-tools.test.ts only overlap existing spawns with Promise.all).
 - Verification: deferred to one sd-verifier pass after CI (R0.5 proof is the Windows CI step time).
 
+### CI after U1 (run 38861070251, 4399140)
+- Green 4/4, but Windows scripts Duration still 29.9-39.4 s. The CI log showed files finishing 0.6-1.5 s apart even for 10-50 ms test files: per-file worker start-up and module loading on a 4-vCPU runner, not test bodies.
+- Local stand-in found: `pnpm -r test` pinned to 4 cores (`start /affinity F`) gave 17.3 s, matching about 39 s on CI.
+
+### U2 per-file worker overhead (sd-executor-contract)
+- Commits: 1ec6e2c (contract pool threads + isolate:false; scripts maxWorkers min(12, 2 x cores)), 77b493e (review fixes: isolate-guard.test.ts fails on vi.mock/spyOn/stub/fake timers/process.env/chdir in contract tests; wider fd-write patterns in capture-silence.test.ts; both bite-checked).
+- 4-core stand-in 17.4 s -> 12.8 s; contract alone 11.9 s -> 3 s; contract 1091 tests (1048 + 43 guard), scripts 467 (464 pass, 3 skipped). Six shuffle seeds pass.
+- Tried and dropped: scripts projects split into isolated/non-isolated groups (no gain), contract maxWorkers 2 (noise), scripts maxWorkers at cores (slower).
+- Review: merge, 2 MINOR fixed in 77b493e. CI run 38864512395 (1ec6e2c): Windows R0.5 step 24 s and 32 s. CI run 38864962895 (77b493e): 26 s and 31 s.
+
+### Verification round 1 (a14be2b)
+- R0.1-R0.4, R0.7 pass; R0.5 fail: 1 of 5 local `pnpm -r test` runs timed out (5 s default) in contract state-file-cli.test.ts (4 spawnSync calls, worker thread blocked).
+
+### U4 spawn-test timeout (sd-executor-contract)
+- Commit 543aa73: async execFile with windowsHide, lifecycle test spawns init and read only (merges in process via runCli), 30 s per-test timeout on spawn tests only; same in state-file-cli-merge.test.ts.
+- 20/20 local `pnpm -r test` runs green; 4-core stand-in 13.5 s (same-session baseline) -> 13.9 s median, within noise.
+- Review: merge, 2 MINOR deferred.
+
+### Final proof
+- CI run 38867610820 at 543aa73: 4/4 success; R0.5 step windows node 24 21 s, windows node 22 28 s, ubuntu 11 s and 16 s. Recorded in .sprint/0/gate/fix-1-ci.txt.
+- sd-verifier 514e542: R0.5 (CI and 10/10 local runs, median 11.3 s), R0.1-R0.4 pass; 6 pass / 0 fail. R0.7 pass at a14be2b (scripts unchanged since).
+
 ## Decisions made
 
+- Root cause differed from the evidence file reading: the 176 fixture walks take 0.1-0.2 s; the cost was per-test node spawns (scripts) and per-file worker start-up on 4 vCPU (both packages). No suite was moved out of the R0.5 step (lever 2 not used); the 60 s budget was not changed.
+- Local stand-in targets (7 s scripts, 11 s and 13.5 s 4-core wall) were mine, not requirements; misses accepted because the CI target (40 s or less on Windows) is met with 12-19 s headroom.
 - The executor-local cap of 7 s for scripts was my stand-in, not a requirement; 7.0-7.3 s accepted (from 12.5 s) since the target is the Windows CI step at 40 s or less.
 - Contract coverage costs nothing measurable locally (Duration 4.7-5.1 s with and without); pushed U1 first to measure CI before deciding on the contract unit.
 
