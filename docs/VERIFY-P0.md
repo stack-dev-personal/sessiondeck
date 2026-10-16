@@ -340,3 +340,23 @@ Reading of the evidence: the file shows RESULT: PASS with final_state green and 
 ### Totals (S0b)
 
 Requirement rows touched by S0b: R0.1 (2), R0.2 (2), R0.3 (7), R0.4 (1), R0.7 (1), R0.8 (2): 15 rows, 15 pass / 0 fail / 0 pending. Definition of done rows touched: coverage, CONTRACT.md, sd-reviewer, sd-security-reviewer fixtures: 4 pass; U4b patch applied: open (user step). No row in this file is pending.
+
+## FIX-1 (sprint/0-bootstrap, 77b493e)
+
+Verifier run of 2026-10-16, 07:06Z to 07:13Z, worktree `C:/Users/stack/projects/wt/FIX-1`, HEAD 77b493e, 20 logical cores. Scope: R0.5 verification and R0.1 to R0.4, R0.7 re-verification after the test-runner changes in 565ab0d, 7237cd5, 1ec6e2c, 77b493e. Existing rows above are unchanged. `.sprint/0/gate/fix-1-ci.txt` was checked against `gh` output (all four step durations match).
+
+| Req | Command | Key output | Result | Timestamp |
+|-----|---------|------------|--------|-----------|
+| R0.5 (CI) | `gh run view 38864962895 --json conclusion,headSha,jobs` | run success, headSha 77b493e; all 4 jobs success. Step "test (R0.5 budget 60 s)": windows node 24 26 s, windows node 22 31 s, ubuntu node 24 15 s, ubuntu node 22 16 s (all under 60 s) | pass | 07:06Z run time |
+| R0.5 (local, 5 runs) | `time pnpm -r test` x5 | run 1: exit 1, 13.7 s, contract `state-file-cli.test.ts > init creates the layout, write-session merges...` (3 spawned processes in one test) failed with "Test timed out in 5000ms" (1090 passed / 1 failed). Runs 2 to 5: exit 0, 13.9 / 14.0 / 13.6 / 13.3 s, contract 1091 passed, scripts 464 passed / 3 skipped. The same test took 1586 ms in a later isolated contract run | fail (intermittent red on the proving command: 1 of 5 local runs; CI 4 of 4 green) | 07:10Z to 07:11Z |
+| R0.1 | `pnpm -F @sessiondeck/contract test`; `pnpm exec vitest run test/envelope-walk.test.ts test/envelope.test.ts --coverage.enabled=false` | contract 28 files, 1091 passed / 0 failed / 0 skipped, exit 0; envelope-walk + envelope 534 passed; with statusline 578 passed; envelope.ts 100 % lines | pass | 07:12Z |
+| R0.2 | `pnpm exec vitest run test/state.test.ts test/state-fixtures.test.ts test/state-golden.test.ts --coverage.enabled=false` | 106 passed, 0 failed, 0 skipped; state.ts 100 % lines and branches | pass | 07:12Z |
+| R0.3 | same command as R0.2 | 106 passed (clauses 1 to 7, same files as the R0.3 rows above) | pass | 07:12Z |
+| R0.4 | `pnpm exec vitest run test/statusline.test.ts --coverage.enabled=false` | 44 passed, 0 failed, 0 skipped; statusline.ts 100 % | pass | 07:12Z |
+| R0.1 to R0.4 coverage | `pnpm -F @sessiondeck/contract test` (exit 0, thresholds in `packages/contract/vitest.config.ts` met) | all files 98.83 % lines; envelope.ts, state.ts, statusline.ts, transitions.ts, snapshot.ts and the other thresholded files 100 %; guard `test/isolate-guard.test.ts` passes | pass | 07:11Z |
+| R0.7 leak gate | `pnpm -F @sessiondeck/scripts fixture:leak` | `files scanned: 213`, `PASS: no leaks found`, exit 0. Caveat: mode was `patterns only (no raw/)` because the gitignored `raw/` directory does not exist in this worktree; the earlier S0b run was `raw-derived literals + patterns`. The 213 tracked files are the same count | pass (patterns mode only) | 07:12Z |
+| R0.7 scripts suite | `pnpm -F @sessiondeck/scripts test` | 27 files, 464 passed / 3 skipped (platform skips) / 0 failed | pass | 07:12Z |
+| R0.7 fixture counts | `pnpm exec vitest run test/fixtures-counts.test.ts --coverage.enabled=false` in packages/contract; `git ls-files packages/contract/fixtures \| grep -c /raw/` | 7 passed (asserts at least 50 fixtures over at least 12 events, 20 statusLine samples); tracked raw/ paths: 0 | pass | 07:12Z |
+| R0.8 (count only, not re-verified) | `pnpm -F @sessiondeck/scripts test:sprint` | 13 files, 279 passed / 0 failed, 53 s | not re-verified | 07:13Z |
+
+FIX-1 result: 7 pass / 1 fail (R0.5 local flake) / 0 unverifiable, plus the R0.8 count.
