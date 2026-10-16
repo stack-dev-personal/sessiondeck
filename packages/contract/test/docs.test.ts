@@ -6,6 +6,7 @@ import { DOC_BLOCK_NAMES, extractBlock, renderDocBlocks, replaceBlock } from "..
 import { ROW_STATES, SESSION_STATES, TRANSITIONS } from "../src/state";
 import { parseEnvelope } from "../src/envelope";
 import { makeEnvelope } from "./helpers";
+import { observedRows, renderObservedTable } from "./observed";
 
 const DOC_PATH = join(import.meta.dirname, "..", "..", "..", "docs", "CONTRACT.md");
 const REGEN_HINT = "run: pnpm -F @sessiondeck/contract gen:doc";
@@ -87,5 +88,37 @@ describe("block helpers", () => {
     expect(() => replaceBlock("nothing", "provisional", "x")).toThrow(/markers/);
     const reversed = "<!-- END:provisional -->\n<!-- BEGIN:provisional -->";
     expect(extractBlock(reversed, "provisional")).toBeNull();
+  });
+});
+
+describe("docs/CONTRACT.md observed payloads", () => {
+  const section = (): string => doc().split("## Observed payloads")[1] ?? "";
+
+  it("names the captured Claude Code version and host", () => {
+    expect(doc()).toContain("## Observed payloads (Claude Code 2.1.301, Windows 11");
+  });
+
+  it("lists exactly the top-level fields of the committed fixtures, per event", () => {
+    const table = section()
+      .split("\n")
+      .filter((l) => l.startsWith("| ") || l.startsWith("| ---"));
+    const expected = renderObservedTable(observedRows()).split("\n");
+    expect(table, "observed table drifted from fixtures; update docs/CONTRACT.md").toEqual(
+      expected,
+    );
+  });
+
+  it("marks the four synthetic events as not captured", () => {
+    const text = section();
+    expect(text).toContain("Not captured (synthetic, by conductor decision 7)");
+    for (const e of ["TaskCreated", "TaskCompleted", "PermissionDenied", "StopFailure"]) {
+      expect(text).toContain(`\`${e}\``);
+      expect(observedRows().map((r) => r.event)).not.toContain(e);
+    }
+  });
+
+  it("detects a drifted field list", () => {
+    const rows = observedRows().map((r) => ({ ...r, fields: [...r.fields, "invented_field"] }));
+    expect(renderObservedTable(rows)).not.toBe(renderObservedTable(observedRows()));
   });
 });

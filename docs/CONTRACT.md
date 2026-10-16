@@ -146,6 +146,39 @@ The payload fields of these events are unverified (phase 0 blockers). Their tran
 
 `Window.resets_at` and `prompt_cache.expires_at` are epoch milliseconds in the snapshot and epoch seconds in the statusLine payload. Convert with `epochSecondsToMs` (`src/statusline.ts`).
 
-## Observed payloads
+## Observed payloads (Claude Code 2.1.301, Windows 11 Home 10.0.26200, captured 2026-10-15)
 
-(Empty. S0b fills this in from the scrubbed fixtures.)
+Captured from real sessions on the laptop (Claude Code 2.1.295, 2.1.300 and 2.1.301 appear in the statusLine `version` field). Field names only, derived from the committed scrubbed fixtures by `test/observed.ts`; a test fails when this table drifts from `packages/contract/fixtures/`. The table is the union of top-level keys over the committed files of each directory, not a guarantee that every payload of that event carries every key.
+
+| Event | Fixtures | Top-level fields |
+| --- | --- | --- |
+| Notification | 3 | `agent_type` `cwd` `hook_event_name` `message` `notification_type` `prompt_id` `scratchpad_dir` `session_id` `transcript_path` |
+| PermissionRequest | 4 | `cwd` `effort` `hook_event_name` `permission_mode` `prompt_id` `scratchpad_dir` `session_id` `tool_input` `tool_name` `transcript_path` |
+| PostCompact | 1 | `compact_summary` `cwd` `hook_event_name` `prompt_id` `scratchpad_dir` `session_id` `transcript_path` `trigger` |
+| PostToolUse | 84 | `agent_id` `agent_type` `cwd` `duration_ms` `effort` `hook_event_name` `mcp_server` `permission_mode` `prompt_id` `scratchpad_dir` `session_id` `tool_input` `tool_name` `tool_response` `tool_use_id` `transcript_path` |
+| PostToolUseFailure | 6 | `agent_id` `agent_type` `cwd` `duration_ms` `effort` `error` `hook_event_name` `is_interrupt` `mcp_server` `permission_mode` `prompt_id` `scratchpad_dir` `session_id` `tool_input` `tool_name` `tool_use_id` `transcript_path` |
+| PreCompact | 1 | `custom_instructions` `cwd` `hook_event_name` `prompt_id` `scratchpad_dir` `session_id` `transcript_path` `trigger` |
+| PreToolUse | 62 | `agent_id` `agent_type` `cwd` `effort` `hook_event_name` `mcp_server` `permission_mode` `prompt_id` `scratchpad_dir` `session_id` `tool_input` `tool_name` `tool_use_id` `transcript_path` |
+| SessionEnd | 3 | `cwd` `hook_event_name` `prompt_id` `reason` `scratchpad_dir` `session_id` `transcript_path` |
+| SessionStart | 3 | `cwd` `hook_event_name` `model` `prompt_id` `scratchpad_dir` `session_id` `source` `transcript_path` |
+| statusLine | 20 | `agent` `agent_type` `context_window` `cost` `cwd` `effort` `exceeds_200k_tokens` `fast_mode` `model` `output_style` `prompt_cache` `prompt_id` `rate_limits` `scratchpad_dir` `session_id` `session_name` `thinking` `transcript_path` `version` `workspace` |
+| Stop | 3 | `agent_type` `background_tasks` `cwd` `effort` `hook_event_name` `last_assistant_message` `permission_mode` `prompt_id` `scratchpad_dir` `session_crons` `session_id` `stop_hook_active` `transcript_path` |
+| SubagentStart | 1 | `agent_id` `agent_type` `cwd` `hook_event_name` `prompt_id` `scratchpad_dir` `session_id` `transcript_path` |
+| subagentStatusLine | 5 | `columns` `cwd` `prompt_id` `scratchpad_dir` `session_id` `tasks` `transcript_path` |
+| SubagentStop | 3 | `agent_id` `agent_transcript_path` `agent_type` `background_tasks` `cwd` `effort` `hook_event_name` `last_assistant_message` `permission_mode` `prompt_id` `scratchpad_dir` `session_crons` `session_id` `stop_hook_active` `transcript_path` |
+| UserPromptSubmit | 2 | `agent_type` `cwd` `hook_event_name` `permission_mode` `prompt` `prompt_id` `scratchpad_dir` `session_id` `transcript_path` |
+
+Notes from the full capture (key names only; counts are over all captured payloads, not just the committed selection):
+
+- `mcp_server` is an object `{name, source}`. `effort` is an object `{level}`.
+- `SessionStart` source: `startup`, `compact`, `clear` (no `resume`). `SessionEnd` reason: `other`, `clear`.
+- `permission_mode`: `auto` and `plan` only.
+- `SubagentStop`: `agent_type` is empty in 256 of 269 payloads; 7 lack `last_assistant_message`.
+- `Notification` never carries `agent_id`. `agent_type` appears without `agent_id` on main-thread events of `--agent` sessions.
+- `PermissionRequest` has no `tool_use_id` and no `agent_id`.
+- `PreCompact` is `{trigger, custom_instructions}`; `PostCompact` is `{trigger, compact_summary}`.
+- `PostToolUseFailure` adds `{error, is_interrupt, duration_ms}`.
+- `tool_response` shape varies: object, array or string.
+- `statusLine` adds `agent`, `session_name`, `prompt_cache`, `fast_mode`, `thinking`, `exceeds_200k_tokens`, `workspace.repo` and `workspace.git_worktree`.
+
+Not captured (synthetic, by conductor decision 7): `TaskCreated`, `TaskCompleted`, `PermissionDenied`, `StopFailure`. Their fixtures live under `packages/contract/fixtures/synthetic/`, follow the hooks reference rather than a real payload, and are not in the table above.
