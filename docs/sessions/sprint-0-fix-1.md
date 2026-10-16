@@ -27,12 +27,25 @@ The failed attempt (contract 42.6 s, scripts past 60 s) is the same shape under 
 
 ## Tasks
 
-- [ ] U1 scripts: cut per-test process spawns in the default (R0.5) run, keep one real-spawn smoke per entry script (R0.5; keeps R0.7)
+- [x] U1 scripts: cut per-test process spawns in the default (R0.5) run, keep one real-spawn smoke per entry script (R0.5; keeps R0.7)
 - [ ] U2 contract: cut CLI spawn tests and coverage overhead (R0.5; keeps R0.1-R0.4, coverage DoD)
 - [ ] U3 CI proof: push, record Windows R0.5 step times in .sprint/0/gate/fix-1-ci.txt
 
 ## Units
 
+### U1 scripts (sd-executor-contract)
+- Commits: 565ab0d (in-process hook/install calls, overlapped spawns, pool threads), 7237cd5 (review round 1: console spies, static no-print test, 16-way real-process concurrency, win32 junction and lowercased-path entry tests, spawned env pass-through, maxWorkers min(12, cores-1)).
+- Laptop: scripts Duration 12.3-12.7 s -> 7.0-7.3 s; tests 421 -> 445 (442 pass, 3 skipped); `pnpm -r test` wall 14.0-14.2 s -> 12.2 s. test:sprint 279 pass; fixture:leak PASS.
+- Bite check: console.error in lib/capture-paths.mjs fails 8 tests (reverted).
+- Review: round 1 fix-then-merge (1 MAJOR, 3 MINOR, all fixed); round 2 merge (1 MINOR deferred).
+- Security review: not run; leak-check and scrub scripts untouched (fixture-leak.test.ts and fixture-tools.test.ts only overlap existing spawns with Promise.all).
+- Verification: deferred to one sd-verifier pass after CI (R0.5 proof is the Windows CI step time).
+
 ## Decisions made
 
+- The executor-local cap of 7 s for scripts was my stand-in, not a requirement; 7.0-7.3 s accepted (from 12.5 s) since the target is the Windows CI step at 40 s or less.
+- Contract coverage costs nothing measurable locally (Duration 4.7-5.1 s with and without); pushed U1 first to measure CI before deciding on the contract unit.
+
 ## Deferred findings
+
+- [MINOR] scripts/test/capture-silence.test.ts:13 (and :19-21; helpers.ts:117-118): static no-print patterns miss direct fd writes (`writeSync(1|2, ...)`, `process.stdout.fd`). Add those two patterns over DEPLOY_FILES. Not a live bug; capture lib has no such calls.
