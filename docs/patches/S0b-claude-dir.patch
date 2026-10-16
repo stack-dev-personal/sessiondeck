@@ -1,14 +1,37 @@
 diff --git a/.claude/hooks/guard.mjs b/.claude/hooks/guard.mjs
-index ecc9112..d19d86e 100644
+index ecc9112..d250e98 100644
 --- a/.claude/hooks/guard.mjs
 +++ b/.claude/hooks/guard.mjs
-@@ -21,6 +21,9 @@ const RULES = [
+@@ -13,6 +13,19 @@ const read = () => new Promise((resolve) => {
+   process.stdin.on('error', () => resolve(data));
+ });
+ 
++// capture-install --apply: node, node.exe or npx at the start of a command (or after && ; | $( a
++// backtick, a quote, or cmd /c, -c, -Command), the capture-install script as its first non-option
++// argument, and a standalone --apply flag in the same command, before or after the script. The flag
++// must be followed by whitespace, a quote, a closer or the end, so --apply-later and mentions in
++// grep, git log or a commit message (no node in front) are not matched. \x5c is a backslash.
++const SEP = String.raw`(?:\s|\x5c\r?\n)+`;
++const NODE = String.raw`(?:^|[;&|\n(\`"']|\s(?:/c|-c|-command)\s)\s*(?:[^\s|;&"'()\`]*[\x5c/])?(?:node(?:\.exe)?|npx(?:\.cmd)?)`;
++const FLAG = String.raw`(?:^|[\s"'=])--apply(?=[\s"'\`);&|\x5c]|$)`;
++const SEGMENT = String.raw`(?:[^|;&\n]|\x5c\r?\n)*?`;
++const OPTION = String.raw`(?:${SEP}--?[\w.-]+(?:=[^\s|;&]+)?)`;
++const SCRIPT = String.raw`["']?(?:[^\s|;&"']*[\x5c/])?capture-install(?:\.mjs)?(?=[\s"'\`);&|\x5c]|$)`;
++const CAPTURE_APPLY = new RegExp(`${NODE}(?=${SEGMENT}${FLAG})${OPTION}*${SEP}${SCRIPT}`, 'i');
++
+ const RULES = [
+   { re: /\bgit\s+push\b[^|;&]*\s(--force|-f|--force-with-lease)\b/, why: 'force push is forbidden' },
+   { re: /\bgit\s+push\b[^|;&]*\s\+?\S+:(main|master)\b/, why: 'pushing to main is forbidden; open a PR' },
+@@ -21,6 +34,12 @@ const RULES = [
    { re: /\bgit\s+reset\s+--hard\b/, why: 'git reset --hard discards work; stash or ask the user' },
    { re: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(\/|~|\$HOME|\.\.|[A-Za-z]:[\\/])/, why: 'recursive delete outside the repo is forbidden' },
    { re: /[\\/]\.claude[\\/]settings\.json\b/, why: 'the user-level ~/.claude/settings.json is off limits; only the probe installer edits it, in its own tests with CLAUDE_CONFIG_DIR' },
-+  // Conductor decision 5: only the user, from a plain terminal, applies the capture installer.
-+  // Previews (no flag, or --dry-run) stay allowed. Matches in either order, any path or quoting form.
-+  { re: /capture-install\S*[^|;&\n]*?(?:^|[\s"'=])--apply\b|(?:^|[\s"'])--apply\b[^|;&\n]*capture-install/, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
++  // Conductor decision 5: the user, from a plain terminal, applies the capture installer.
++  // This rule prevents accidents by a well-behaved session. It is not a defence against a hostile
++  // one: renamed copies, variables, split quoting, globs and encoded commands get past it, and a
++  // compromised session already has the user's privileges. The installer's CLAUDECODE refusal is a
++  // second accident check of the same strength. Previews (no flag, or --dry-run) stay allowed.
++  { re: CAPTURE_APPLY, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
  ];
  
  function currentBranch(cwd) {
@@ -28,7 +51,7 @@ index 289a564..c179bd0 100644
    },
    "hooks": {
 diff --git a/.claude/skills/fixture-capture/SKILL.md b/.claude/skills/fixture-capture/SKILL.md
-index 068412e..da78c36 100644
+index 068412e..771427f 100644
 --- a/.claude/skills/fixture-capture/SKILL.md
 +++ b/.claude/skills/fixture-capture/SKILL.md
 @@ -9,11 +9,11 @@ Why: several hook payload fields are undocumented or version-gated. The reducer,
@@ -36,21 +59,35 @@ index 068412e..da78c36 100644
  `scripts/capture-fixtures.mjs`, run via exec form so it works on Windows:
  
 -- Hook mode: reads stdin, writes `packages/contract/fixtures/raw/<hook_event_name>/<epoch>-<short session id>.json`, exits 0, never writes stdout.
-+- Hook mode: reads stdin, writes the raw file into the capture tool's directory under local app data, `%LOCALAPPDATA%/sessiondeck/capture/raw/<hook_event_name>/<epoch-ms>-<8-char session id prefix>-<random suffix>.json`, exits 0, never writes stdout. The user's uninstall step (`scripts/UNINSTALL.txt` step 5) copies that tree to `packages/contract/fixtures/raw/` (gitignored, never committed). Sessions read only the copy; the app-data directory is denied to Read in `.claude/settings.json`.
++- Hook mode: reads stdin, writes the raw file into the capture tool's directory under local app data, `%LOCALAPPDATA%/sessiondeck/capture/raw/<hook_event_name>/<epoch-ms>-<8-char session id prefix>-<random suffix>.json`, exits 0, never writes stdout. The user's uninstall step (`scripts/UNINSTALL.txt` step 5) copies that tree to `packages/contract/fixtures/raw/` (gitignored, never committed). Sessions read only the copy; the app-data directory is denied to the Read tool in `.claude/settings.json` (best effort: Bash reads are not blocked, and a non-default `LOCALAPPDATA` or `SESSIONDECK_CAPTURE_HOME` is not covered).
  - statusLine mode (`--statusline`): same write under `raw/statusLine/`, then prints one short line so the user's status line keeps working.
  - subagentStatusLine mode (`--subagents`): same under `raw/subagentStatusLine/`, prints nothing (empty content hides the rows, which is acceptable for a day).
  - `scripts/capture-install.mjs`: merges entries for all 17 events plus `statusLine` and `subagentStatusLine` into `~/.claude/settings.json` without removing existing hooks, writes a backup next to it, and prints the diff. `--uninstall` reverses it from the backup. Test the merge against `packages/contract/fixtures/settings/with-harness-hooks.json` before touching the real file.
 -- Tell the user: run `node scripts/capture-install.mjs`, work normally for a day across at least two projects, include one long session (so `rate_limits` appears), one session with subagents, one `/compact`, one permission prompt you answer, one AskUserQuestion, one `/clear`, and one session you close by killing the terminal (for liveness fixtures later). Then run `--uninstall`.
-+- Tell the user: run `node scripts/capture-install.mjs --apply` yourself from a plain terminal (the guard blocks `--apply` inside sessions; a run without `--apply` is a preview), work normally for a day across at least two projects, include one long session (so `rate_limits` appears), one session with subagents, one `/compact`, one permission prompt you answer, one AskUserQuestion, one `/clear`, and one session you close by killing the terminal (for liveness fixtures later). Then run `--uninstall`.
++- Tell the user: run `node scripts/capture-install.mjs --apply` yourself from a plain terminal (the guard blocks the usual forms of `--apply` inside sessions, to prevent accidents; a run without `--apply` is a preview), work normally for a day across at least two projects, include one long session (so `rate_limits` appears), one session with subagents, one `/compact`, one permission prompt you answer, one AskUserQuestion, one `/clear`, and one session you close by killing the terminal (for liveness fixtures later). Then run `--uninstall`.
  
  ## S0b: scrub and commit
  1. Inventory: `node scripts/fixture-inventory.mjs` prints a table of event → count → distinct top-level key sets. Any event with zero captures is reported to the user with what to do to trigger it.
+diff --git a/scripts/lib/settings-files.mjs b/scripts/lib/settings-files.mjs
+index 082debc..cfc2ad4 100644
+--- a/scripts/lib/settings-files.mjs
++++ b/scripts/lib/settings-files.mjs
+@@ -68,7 +68,8 @@ function accountHome() {
+  * junction, a symlink, an extended-length prefix or a different spelling does not get past, and
+  * both the given home and the account's own home count (USERPROFILE and HOME can be changed).
+  * This stops accidents only: an unset CLAUDECODE or a relocated CLAUDE_CONFIG_DIR skips it, and
+- * the project guard hook has no rule for the installer yet (it matches the literal settings path).
++ * the project guard hook adds an accident-level rule against `capture-install --apply` in Bash
++ * (not a defence against a hostile session, which already has the user's privileges).
+  * @param {NodeJS.ProcessEnv} env @param {string} [home] @param {string | undefined} [realHome]
+  * @returns {Promise<boolean>}
+  */
 diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
 new file mode 100644
-index 0000000..dfaa2e3
+index 0000000..45f134f
 --- /dev/null
 +++ b/scripts/test/guard.test.ts
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,135 @@
 +import { spawnSync } from "node:child_process";
 +import { readFileSync } from "node:fs";
 +import { dirname, resolve } from "node:path";
@@ -61,6 +98,7 @@ index 0000000..dfaa2e3
 +const guardPath = resolve(repoRoot, ".claude", "hooks", "guard.mjs");
 +const BLOCKED = 2;
 +const ALLOWED = 0;
++const BS = String.fromCharCode(92);
 +
 +function runGuard(command: string): { status: number | null; stderr: string } {
 +  const input = JSON.stringify({
@@ -88,6 +126,21 @@ index 0000000..dfaa2e3
 +    "node C:\\repo\\scripts\\capture-install.mjs --out D:\\cap --apply",
 +    "cd scripts && node capture-install.mjs --apply",
 +    "node scripts/capture-install --apply",
++    'cmd /c "node scripts/capture-install.mjs --apply"',
++    'powershell -c "node scripts/capture-install.mjs --apply"',
++    "cmd /c node scripts/capture-install.mjs --apply",
++    "echo $(node scripts/capture-install.mjs --apply)",
++    "echo `node scripts/capture-install.mjs --apply`",
++    `node scripts/capture-install.mjs ${BS}
++  --apply`,
++    `node ${BS}
++  scripts/capture-install.mjs --apply`,
++    "node --apply scripts/capture-install.mjs",
++    "node --no-warnings scripts/capture-install.mjs --apply",
++    "npx scripts/capture-install.mjs --apply",
++    "git status; node scripts/capture-install.mjs --apply",
++    "node scripts/capture-install.mjs '--apply'",
++    "NODE scripts/CAPTURE-INSTALL.mjs --APPLY",
 +  ];
 +  it.each(blocked)("blocks: %s", (command) => {
 +    const { status, stderr } = runGuard(command);
@@ -103,8 +156,31 @@ index 0000000..dfaa2e3
 +    "node scripts/capture-install.mjs --out C:/tmp/x",
 +    "node scripts/capture-install.mjs --dry-run && echo applied-later",
 +    "git status",
++    'grep -rn "capture-install.mjs --apply" docs',
++    'git log --grep="capture-install --apply"',
++    "rg -- '--apply' scripts/capture-install.mjs",
++    'git commit -m "docs: run capture-install --apply from a plain terminal"',
++    "node scripts/capture-install.mjs --apply-later",
++    "node scripts/capture-install.mjs --dry-run --apply-later",
++    "node scripts/other.mjs --apply",
 +  ];
 +  it.each(allowed)("allows: %s", (command) => {
++    expect(runGuard(command).status).toBe(ALLOWED);
++  });
++
++  // Known gaps: the rule prevents accidents, not a hostile session. These forms are allowed. The
++  // installer's own CLAUDECODE refusal and conductor decision 5 (a compromised session already has
++  // the user's privileges) cover them; they are documented here, not treated as failures.
++  const knownGaps = [
++    "A=--apply; node scripts/capture-install.mjs $A",
++    'node scripts/capture-install.mjs --ap""ply',
++    'node scripts/capture-instal""l.mjs --apply',
++    "node scripts/capture-insta*.mjs --apply",
++    "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
++    "powershell -enc AAAA",
++    "node -e \"import('./scripts/lib/install-cli.mjs')\"",
++  ];
++  it.each(knownGaps)("known gap (allowed): %s", (command) => {
 +    expect(runGuard(command).status).toBe(ALLOWED);
 +  });
 +
