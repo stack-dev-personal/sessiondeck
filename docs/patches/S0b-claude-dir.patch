@@ -1,8 +1,8 @@
 diff --git a/.claude/hooks/guard.mjs b/.claude/hooks/guard.mjs
-index ecc9112..76f3083 100644
+index ecc9112..49c512a 100644
 --- a/.claude/hooks/guard.mjs
 +++ b/.claude/hooks/guard.mjs
-@@ -13,6 +13,22 @@ const read = () => new Promise((resolve) => {
+@@ -13,6 +13,25 @@ const read = () => new Promise((resolve) => {
    process.stdin.on('error', () => resolve(data));
  });
  
@@ -13,9 +13,12 @@ index ecc9112..76f3083 100644
 +// --apply flag in the same command, before or after the script. The flag must be followed by
 +// whitespace, a quote, a closer, a redirect or the end, so --apply-later is not matched. A command
 +// that merely quotes the whole node line (grep, echo, commit message) is blocked too: fail closed,
-+// listed as known false positives in the tests. \x5c is a backslash.
++// listed as known false positives in the tests. The start is a single anchor character (no repeated
++// whitespace, so matching stays linear on long runs) followed by an unquoted path prefix without
++// whitespace, or by a quote and a quoted prefix that may contain spaces. The rule runs only when the
++// command contains both capture-install and --apply (case-insensitive). \x5c is a backslash.
 +const SEP = String.raw`(?:\s|\x5c\r?\n)+`;
-+const NODE = String.raw`(?:^|[\s;&|(\`"'{])\s*(?:[^|;&"'()\`\n]*[\x5c/])?(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
++const NODE = String.raw`(?:(?:^|[\s;&|(\`{])(?:[^\s|;&"'()\`]*[\x5c/])?|["'](?:[^"'\n]*[\x5c/])?)(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
 +const FLAG = String.raw`(?:^|[\s"'=])--apply(?=[\s"'\`);&|<>\x5c]|$)`;
 +const SEGMENT = String.raw`(?:[^|;&\n]|\x5c\r?\n)*?`;
 +const OPTION = String.raw`(?:${SEP}--?[\w.-]+(?:=[^\s|;&]+)?(?:${SEP}(?!-)[^\s|;&]+)?)`;
@@ -25,7 +28,7 @@ index ecc9112..76f3083 100644
  const RULES = [
    { re: /\bgit\s+push\b[^|;&]*\s(--force|-f|--force-with-lease)\b/, why: 'force push is forbidden' },
    { re: /\bgit\s+push\b[^|;&]*\s\+?\S+:(main|master)\b/, why: 'pushing to main is forbidden; open a PR' },
-@@ -21,6 +37,12 @@ const RULES = [
+@@ -21,6 +40,12 @@ const RULES = [
    { re: /\bgit\s+reset\s+--hard\b/, why: 'git reset --hard discards work; stash or ask the user' },
    { re: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(\/|~|\$HOME|\.\.|[A-Za-z]:[\\/])/, why: 'recursive delete outside the repo is forbidden' },
    { re: /[\\/]\.claude[\\/]settings\.json\b/, why: 'the user-level ~/.claude/settings.json is off limits; only the probe installer edits it, in its own tests with CLAUDE_CONFIG_DIR' },
@@ -34,10 +37,19 @@ index ecc9112..76f3083 100644
 +  // one: renamed copies, variables, split quoting, globs and encoded commands get past it, and a
 +  // compromised session already has the user's privileges. The installer's CLAUDECODE refusal is a
 +  // second accident check of the same strength. Previews (no flag, or --dry-run) stay allowed.
-+  { re: CAPTURE_APPLY, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
++  { when: (cmd) => { const c = cmd.toLowerCase(); return c.includes('capture-install') && c.includes('--apply'); }, re: CAPTURE_APPLY, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
  ];
  
  function currentBranch(cwd) {
+@@ -38,7 +63,7 @@ try {
+   if (input.tool_name !== 'Bash') process.exit(0);
+   const cmd = String(input.tool_input?.command ?? '');
+   for (const rule of RULES) {
+-    if (rule.re.test(cmd)) {
++    if ((!rule.when || rule.when(cmd)) && rule.re.test(cmd)) {
+       process.stderr.write(`sessiondeck guard: ${rule.why}. Command: ${cmd}\n`);
+       process.exit(2);
+     }
 diff --git a/.claude/settings.json b/.claude/settings.json
 index 289a564..c179bd0 100644
 --- a/.claude/settings.json
@@ -87,10 +99,10 @@ index 082debc..cfc2ad4 100644
   */
 diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
 new file mode 100644
-index 0000000..954d7a5
+index 0000000..4abe53c
 --- /dev/null
 +++ b/scripts/test/guard.test.ts
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,198 @@
 +import { spawnSync } from "node:child_process";
 +import { readFileSync } from "node:fs";
 +import { dirname, resolve } from "node:path";
@@ -197,6 +209,7 @@ index 0000000..954d7a5
 +  // because a quote counts as an anchor. Documented, not fixed: telling a quoted mention from a
 +  // quoted command needs a shell parser, and a block is the safe side of the error.
 +  const knownFalsePositives = [
++    "echo node scripts/capture-install.mjs --apply",
 +    'grep -n "node scripts/capture-install.mjs --apply" docs',
 +    'echo "node scripts/capture-install.mjs --apply"',
 +    'git commit -m x -m "node scripts/capture-install.mjs --apply is user-only"',
@@ -220,6 +233,33 @@ index 0000000..954d7a5
 +  ];
 +  it.each(knownGaps)("known gap (allowed): %s", (command) => {
 +    expect(runGuard(command).status).toBe(ALLOWED);
++  });
++
++  // Adversarial timing (security review, round 3): the hook has a 5 s timeout and a timeout lets the
++  // command run, so every call to the whole guard must stay fast on long whitespace runs and paths.
++  const MAX_GUARD_MS = 200;
++  const RUN = 10_000;
++  const timingInputs: Record<string, string> = {
++    spaces: " ".repeat(RUN),
++    tabs: "\t".repeat(RUN),
++    newlines: "\n".repeat(RUN),
++    "node + spaces + capture-install --apply": `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
++    "node + tabs + capture-install --apply": `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
++    "node + long path": `node ${"a/".repeat(5000)}capture-install.mjs --apply`,
++    "git push + spaces": `git push${" ".repeat(RUN)}`,
++    "git push + tabs": `git push${"\t".repeat(RUN)}`,
++    quotes: `${'"'.repeat(RUN)} capture-install --apply`,
++  };
++  it.each(Object.entries(timingInputs))("finishes under 200 ms: %s", (_name, command) => {
++    const start = performance.now();
++    runGuard(command);
++    const elapsed = performance.now() - start;
++    console.info(`guard timing ${_name}: ${elapsed.toFixed(0)} ms`);
++    expect(elapsed).toBeLessThan(MAX_GUARD_MS);
++  });
++
++  it("matches capture-install --apply case-insensitively in the pre-check", () => {
++    expect(runGuard("NODE scripts/CAPTURE-INSTALL.mjs --APPLY").status).toBe(BLOCKED);
 +  });
 +
 +  it("ignores non-Bash tools and empty input", () => {
