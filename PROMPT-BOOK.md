@@ -79,7 +79,11 @@ Merging methodology
 
 Status (PROMPT-BOOK.md section 6)
 - Write /state/{SPRINT_ID}/sessions/{SESSION_ID}.json at intake, after every unit, and at exit. States: running, blocked, green, failed.
-- Heartbeat: while a foreground subagent call runs you take no turns, so you cannot rewrite the file yourself. Before any delegation expected to run longer than a few minutes, start a background shell heartbeat (a Bash command run in the background, not an Agent call) that rewrites updated_at in your status file at least every 10 minutes, writing a temporary file and renaming it over the status file. It dies with the session, so a dead session still goes stale. Stop it when the call returns.
+- Heartbeat: while a foreground subagent call runs you take no turns, so you cannot rewrite the file yourself. Before any delegation expected to run longer than a few minutes, start a background shell heartbeat (a Bash command run in the background, not an Agent call) that rewrites updated_at in your status file at least every 10 minutes, writing a temporary file and renaming it over the status file. The container sets CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 (infra/sprint/entrypoint.sh), so a headless `claude -p` waits forever on background tasks: the heartbeat does NOT die with a dead or hung session, and left running it would keep a dead session looking alive. So it must be bounded and killed on every path:
+  - Lifetime cap: the loop exits by itself after the unit budget (at most 60 minutes) even if nobody stops it.
+  - Stop file: each tick first checks for a stop file next to the status file (`{SESSION_ID}.hb-stop`) and exits when it exists.
+  - Each tick re-reads the status file and changes only `updated_at` (never state, unit or summary fields), so it cannot overwrite what you wrote after it started. It never creates the status file.
+  - Kill it on every exit path: when the delegated call returns, and in the blocked and failed paths before you write the final status and exit (write the stop file, then kill the process id). Never exit with the heartbeat running.
 - The conductor treats a status file whose updated_at is older than 15 minutes as stale (a dead or hung session).
 - green means: PR open against the sprint branch, CI green on the branch, VERIFY table has every handoff requirement at pass or "verified by CI", reviewer verdict merge, security gate pass where required.
 - Session log: docs/sessions/{SESSION_BRANCH_SLUG}.md on your branch, per /sprint-loop.
