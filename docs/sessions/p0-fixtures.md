@@ -90,6 +90,15 @@ Decision (orchestrator, 2026-10-16, headless, reversible one-row change): a suba
 Decision (orchestrator): 01-architecture.md:103 is not edited here. docs/planning is the vault copy checked by R0.6, and the line still holds as a category (error = StopFailure); the reducer narrowing is recorded in CONTRACT.md. Open question to the user: amend line 103 in the vault and the repo copy together.
 - Fix round 1: dfba834 (idle guard on rows 4, 5, 6, 8; golden still 11 changes: 217 and 229 now non-changes, main-thread UserPromptSubmit at 221 and 239 now leave idle), dc35b08 (timeline schema check in the gate, allow sets bound to the file entry, camelCase path pieces, duration removed). Contract 1048 pass, 0 skip; scripts 418 pass.
 - Iteration 2 at dc35b08: sd-reviewer merge, no findings, hand verification 11/11. sd-security-reviewer Gate: pass, 2 LOW deferred.
+
+### U5 close-out (R0.5)
+- Full suite at 21da7db: one contract test (docs.test.ts observed payloads) timed out at 5 s under pnpm -r test; fixed by computing the table once per file (21da7db), then a 1-in-6 timeout in state-fixtures.test.ts fixed by loading fixtures once per file (d0e27a1). sd-reviewer merge on both; 6 of 6 sequential pnpm -r test runs green (17 to 21 s). CI push run 38854418490 failed on format:check (state-idle-guard.test.ts); prettier fix 68ca85e, every CI step re-run locally green.
+- No rebase needed: origin/sprint/0-bootstrap still at 6baa15c.
+- sd-verifier final pass at 21da7db: 42 pass / 0 fail / 0 pending in docs/VERIFY-P0.md; no pending S0b row remains; R0.8 live smoke and laptop confirmations recorded.
+
+## Final state
+- Units: U1 (R0.7), U2 (R0.1, R0.4), U3 (R0.2, R0.3), U4 and U4b (decisions 1, 3, 4, 5, 7), U5 (R0.5 flake and format). All sd-reviewer merge; all security gates pass.
+- User step: apply docs/patches/S0b-claude-dir.patch from a plain terminal (see docs/patches/README.md).
 ## Deferred findings (resume 1)
 - [LOW, security] PROMPT-BOOK.md:82-86: heartbeat rules are prose only; ship a fixed heartbeat script (cap argument, stop file, exit when the parent process is gone, updated_at only) with a test. Owner: sprint tooling (S0c follow-up or Sprint 1 tooling unit).
 - [MINOR, review] PROMPT-BOOK.md:83: "unit budget (at most 60 minutes)" is not defined elsewhere; a unit longer than 60 minutes looks stale at 75. Fix with the heartbeat script: define the budget in section 2 or restart the heartbeat between foreground calls.
@@ -97,3 +106,4 @@ Decision (orchestrator): 01-architecture.md:103 is not edited here. docs/plannin
 - [LOW, security] scripts/lib/fixture-leak-structure.mjs:121 numbers under placeholder keys; fixture-leak-core.mjs:57 path exemption; README.md:105 wording: folded into U2.
 - [LOW, security] scripts/lib/fixture-leak-core.mjs:54-55: relaxed NAME_WORD lets a letters-only secret used as a path piece through (keys/AbCdEf...pem); real keys almost always carry a digit. Fix: long pieces need capitalised words of 3+ letters or a word cap; add the three adversarial tests. Owner: next unit touching the leak gate.
 - [LOW, security] scripts/lib/fixture-leak-timeline.mjs:33: tool:<Name> in state_detail is not checked against BUILTIN_TOOLS; source: and compact: not closed lists. Owner: same.
+- [MINOR, review] packages/contract/test/state-file-cli.test.ts:28: slowest contract test (2.3 to 3.2 s, five node spawns) against the 5 s default timeout; next flake candidate on a loaded Windows runner. Owner: state-file tests (contract).
