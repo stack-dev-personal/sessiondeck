@@ -94,6 +94,14 @@ also derives, at run time, the user name, project names, every other folder name
 and the named-field values, and searches all files for them. Without `raw/` (CI) the pattern and
 structure checks still run. It prints counts and file names, never values.
 
+The gate also scans `docs/CONTRACT.md` with the text checks (the notes about the captures live
+there, and the run with the default directory is the only one that includes it). Each
+`sessions/*.timeline.json` is checked against a schema instead of the payload structure check:
+exact key sets at the top level, in every change and in `final`; `state_detail` null or
+`tool:|source:|compact:` plus letters; `model_id`, `agent_type`, `ended_reason` and `last_tool` from
+closed lists; free-text fields null. A stray field or a free-text value is a `timeline-schema`
+finding.
+
 ## Captured and synthetic
 
 Captured (13 hook events): Notification, PermissionRequest, PostCompact, PostToolUse,

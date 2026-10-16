@@ -14,6 +14,7 @@ import { deriveLiterals } from "./fixture-leak-literals.mjs";
 import { KNOWN_KEYS } from "./fixture-keys.mjs";
 import { docAllowFor } from "./fixture-synthetic-doc.mjs";
 import { checkStructure } from "./fixture-leak-structure.mjs";
+import { checkTimeline } from "./fixture-leak-timeline.mjs";
 import { isToken } from "./fixture-scrub-core.mjs";
 
 export { deriveLiterals };
@@ -48,9 +49,10 @@ export function listFixtureFiles(dir, top = true) {
 }
 
 // A path piece that reads as a folder or file name: words joined by - _ or ., each word letters only
-// (lower, UPPER or Capitalized) with optional trailing digits, or digits with an optional letter
+// (lower, UPPER, camelCase or PascalCase as in useSessionList, SessionCard) with optional trailing digits, or digits with an optional letter
 // suffix. Random base64 ("aB3dE5gH7jK") has case switches and digits between letters, so it fails.
-const NAME_WORD = /^(?:(?:[a-z]+|[A-Z]+|[A-Z][a-z]+)[0-9]*|[0-9]+(?:[a-z]+|[A-Z]+)?)$/;
+const NAME_WORD =
+  /^(?:(?:[a-z]+(?:[A-Z][a-z]+)*|[A-Z]+|(?:[A-Z][a-z]+)+)[0-9]*|[0-9]+(?:[a-z]+|[A-Z]+)?)$/;
 
 /** @param {string} piece */
 const looksLikeName = (piece) => piece.split(/[-_.]/).every((w) => w === "" || NAME_WORD.test(w));
@@ -86,8 +88,15 @@ const segmentPathRe = (/** @type {string} */ s) => {
   return new RegExp(`(?:[\\\\/]${e}(?![A-Za-z0-9])|(?<![A-Za-z0-9])${e}[\\\\/])`, "i");
 };
 
-/** Expected-result files next to the golden session: hand-written, so text checks only. */
+/** Expected-result files next to the golden session: hand-written, so text checks plus a schema check. */
 const TIMELINE_FILE = /^sessions\/[^/]+\.timeline\.json$/;
+
+/** An expected-timeline file inside the fixtures dir (never an extra text file). */
+const isTimeline = (/** @type {string} */ file, /** @type {string} */ rel) =>
+  file.endsWith(".json") && TIMELINE_FILE.test(rel);
+
+/** Raw-derived words that are public: only the extra text files carry any (keyed by entry, not label). */
+const NO_WORDS = new Set();
 
 /** Whether the file is a captured or synthetic payload (as opposed to prose or installer input). */
 const isPayload = (/** @type {string} */ file, /** @type {string} */ rel) =>
@@ -128,12 +137,6 @@ export function leakCheck(fixturesRoot, opts = {}) {
     segments.filter((n) => !/^[a-z]{1,4}$/.test(n)),
     literalRe,
   );
-  const allowByLabel = new Map(
-    (opts.textFiles ?? []).map((f) => [
-      f.label,
-      new Set((f.allow ?? []).map((a) => a.toLowerCase())),
-    ]),
-  );
   const userRes = lit.users.map(
     (u) =>
       new RegExp(
@@ -150,14 +153,20 @@ export function leakCheck(fixturesRoot, opts = {}) {
     ...fixtureFiles.map((file) => ({
       file,
       rel: relative(fixturesRoot, file).split("\\").join("/"),
+      allowed: NO_WORDS,
+      extra: false,
     })),
     ...(opts.textFiles ?? [])
       .filter((f) => existsSync(f.path))
-      .map((f) => ({ file: f.path, rel: f.label })),
+      .map((f) => ({
+        file: f.path,
+        rel: f.label,
+        extra: true,
+        allowed: new Set((f.allow ?? []).map((a) => a.toLowerCase())),
+      })),
   ];
-  for (const { file, rel } of files) {
+  for (const { file, rel, allowed, extra } of files) {
     const text = readFileSync(file, "utf8");
-    const allowed = allowByLabel.get(rel) ?? new Set();
     /** @type {Map<string, number>} */
     const counts = new Map();
     const hit = (/** @type {string} */ c, n = 1) => counts.set(c, (counts.get(c) ?? 0) + n);
@@ -178,6 +187,7 @@ export function leakCheck(fixturesRoot, opts = {}) {
       try {
         const docs = parseDocs(file, text);
         if (isPayload(file, rel)) for (const d of docs) checkStructure(d, hit, docAllowFor(rel));
+        else if (!extra && isTimeline(file, rel)) for (const d of docs) checkTimeline(d, hit);
       } catch {
         hit("unparseable-json");
       }

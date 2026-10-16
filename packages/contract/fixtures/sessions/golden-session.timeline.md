@@ -39,8 +39,8 @@ SubagentStart / SubagentStop (they only maintain `subagents` rows).
 ## Flagged, not baked in silently
 
 - Events 217 and 229 (resolved in U3 fix round 1): a subagent tool event no longer turns `idle` back
-  into `working`; the orchestrator decided `idle` is protected like `waiting_input`. The session
-  stays `idle` until a main-thread event (here the UserPromptSubmit at 221 and 239) moves it. Background
+  into `working`; the decision recorded in the session log is that `idle` is protected like `waiting_input`. The session
+  stays `idle` until a top-level event (here the UserPromptSubmit at 221 and 239) moves it. Background
   work shows in the `subagents` rows. The change count stays 11: the two subagent changes became the
   two UserPromptSubmit changes that were previously no-ops (the session was already `working`).
 - Event 92 keeps `state_detail` `tool:ExitPlanMode` after the prompt is answered (PostToolUse keeps
