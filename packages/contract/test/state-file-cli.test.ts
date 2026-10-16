@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,48 +18,69 @@ afterEach(async () => {
   await rm(stateDir, { recursive: true, force: true });
 });
 
-function spawnCli(...args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const run = spawnSync(process.execPath, [...NODE_FLAGS, CLI_PATH, ...args], { encoding: "utf8" });
-  return { status: run.status, stdout: run.stdout, stderr: run.stderr };
+// Async, so a worker thread is not blocked while the child runs (R0.5 flake under load).
+function spawnCli(
+  ...args: string[]
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      process.execPath,
+      [...NODE_FLAGS, CLI_PATH, ...args],
+      { encoding: "utf8", windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error && typeof error.code !== "number") reject(error);
+        else resolve({ status: error ? (error.code as number) : 0, stdout, stderr });
+      },
+    );
+  });
 }
 
+// Windows process start-up is slow under load (same reasoning as scripts/vitest.config.ts); the
+// CI step's 60 s limit still enforces the time budget.
+const SPAWN_TEST_TIMEOUT_MS = 30_000;
+
 describe("state-file CLI as a process", () => {
-  // One lifecycle in one test: every process start costs about half a second on Windows.
-  it("init creates the layout, write-session merges into the file, and read prints it", async () => {
-    const dir = join(stateDir, "0");
-    const init = spawnCli("init", dir);
-    expect(init.status).toBe(EXIT_OK);
-    expect((await stat(join(dir, "gate"))).isDirectory()).toBe(true);
-    expect(JSON.parse(init.stdout)).toMatchObject({ stateDir: dir });
-    const first = spawnCli(
-      "write-session",
-      stateDir,
-      "S1",
-      "state=running",
-      "units_total=5",
-      "pr=null",
-    );
-    expect(first.status).toBe(EXIT_OK);
-    const second = spawnCli(
-      "write-session",
-      stateDir,
-      "S1",
-      "units_done=2",
-      "branch=p1/probe-hook",
-    );
-    expect(second.status).toBe(EXIT_OK);
-    const file = join(stateDir, "sessions", "S1.json");
-    const read = spawnCli("read", file);
-    expect(read.status).toBe(EXIT_OK);
-    expect(JSON.parse(read.stdout)).toMatchObject({
-      state: "running",
-      units_total: 5,
-      units_done: 2,
-      pr: null,
-      branch: "p1/probe-hook",
-    });
-    expect(JSON.parse(await readFile(file, "utf8")).updated_at).toMatch(/Z$/);
-  });
+  // One lifecycle in one test: every process start costs about half a second on Windows. Only
+  // init and read are spawned; the two merges in between run in process through runCli.
+  it(
+    "init creates the layout, write-session merges into the file, and read prints it",
+    async () => {
+      const dir = join(stateDir, "0");
+      const init = await spawnCli("init", dir);
+      expect(init.status).toBe(EXIT_OK);
+      expect((await stat(join(dir, "gate"))).isDirectory()).toBe(true);
+      expect(JSON.parse(init.stdout)).toMatchObject({ stateDir: dir });
+      const first = await runCli([
+        "write-session",
+        stateDir,
+        "S1",
+        "state=running",
+        "units_total=5",
+        "pr=null",
+      ]);
+      expect(first.code).toBe(EXIT_OK);
+      const second = await runCli([
+        "write-session",
+        stateDir,
+        "S1",
+        "units_done=2",
+        "branch=p1/probe-hook",
+      ]);
+      expect(second.code).toBe(EXIT_OK);
+      const file = join(stateDir, "sessions", "S1.json");
+      const read = await spawnCli("read", file);
+      expect(read.status).toBe(EXIT_OK);
+      expect(JSON.parse(read.stdout)).toMatchObject({
+        state: "running",
+        units_total: 5,
+        units_done: 2,
+        pr: null,
+        branch: "p1/probe-hook",
+      });
+      expect(JSON.parse(await readFile(file, "utf8")).updated_at).toMatch(/Z$/);
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
   // The process-level failure contract (exit code, one stderr line, empty stdout) is spawned once,
   // in state-file-cli-merge.test.ts ("holds for the spawned process as well"); the message itself
@@ -71,18 +92,22 @@ describe("state-file CLI as a process", () => {
     expect(run.output).toMatch(/^state-file: .*state/);
   });
 
-  it("read scrubs a credential that a plain echo planted in a text field", async () => {
-    const planted = `sk-ant-${"a1B2c3D4e5F6g7H8i9J0"}`;
-    expect((await runCli(["write-session", stateDir, "S1", "state=running"])).code).toBe(EXIT_OK);
-    const file = join(stateDir, "sessions", "S1.json");
-    const content = JSON.parse(await readFile(file, "utf8"));
-    await writeFile(file, JSON.stringify({ ...content, last_report: `see ${planted} here` }));
-    const run = spawnCli("read", file);
-    expect(run.status).toBe(EXIT_OK);
-    expect(run.stdout).not.toContain(planted);
-    expect(run.stdout).toContain("<redacted>");
-    expect(JSON.parse(run.stdout)).toMatchObject({ last_report: "see <redacted> here" });
-  });
+  it(
+    "read scrubs a credential that a plain echo planted in a text field",
+    async () => {
+      const planted = `sk-ant-${"a1B2c3D4e5F6g7H8i9J0"}`;
+      expect((await runCli(["write-session", stateDir, "S1", "state=running"])).code).toBe(EXIT_OK);
+      const file = join(stateDir, "sessions", "S1.json");
+      const content = JSON.parse(await readFile(file, "utf8"));
+      await writeFile(file, JSON.stringify({ ...content, last_report: `see ${planted} here` }));
+      const run = await spawnCli("read", file);
+      expect(run.status).toBe(EXIT_OK);
+      expect(run.stdout).not.toContain(planted);
+      expect(run.stdout).toContain("<redacted>");
+      expect(JSON.parse(run.stdout)).toMatchObject({ last_report: "see <redacted> here" });
+    },
+    SPAWN_TEST_TIMEOUT_MS,
+  );
 
   it.each([
     ["a newline", "token:\n"],

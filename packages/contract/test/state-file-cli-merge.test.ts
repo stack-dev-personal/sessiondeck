@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -214,15 +214,23 @@ describe("no credential is echoed on any error path", () => {
     expect(run.output).not.toContain(body);
   });
 
-  it("holds for the spawned process as well", () => {
+  // Async spawn with a 30 s limit: Windows process start-up is slow under load (R0.5).
+  it("holds for the spawned process as well", async () => {
     const argv = [...NODE_FLAGS, CLI_PATH, "write-session", stateDir, "S1", `state=${token}`];
-    const run = spawnSync(process.execPath, argv, { encoding: "utf8" });
+    const run = await new Promise<{ status: number; stdout: string; stderr: string }>(
+      (resolve, reject) => {
+        execFile(process.execPath, argv, { encoding: "utf8", windowsHide: true }, (e, out, err) => {
+          if (e && typeof e.code !== "number") reject(e);
+          else resolve({ status: e ? (e.code as number) : 0, stdout: out, stderr: err });
+        });
+      },
+    );
     expect(run.status).toBe(EXIT_FAILURE);
     expect(run.stderr).not.toContain(body);
     expect(run.stderr.trim().split("\n")).toHaveLength(1);
     expect(run.stderr).toMatch(/^state-file: /);
     expect(run.stdout).toBe("");
-  });
+  }, 30_000);
 });
 
 describe("two processes merging into the same files", () => {
@@ -245,7 +253,7 @@ describe("two processes merging into the same files", () => {
     `;
     return new Promise((resolve, reject) => {
       const args = [...NODE_FLAGS, "--input-type=module", "-e", script];
-      const proc = spawn(process.execPath, args, { stdio: "ignore" });
+      const proc = spawn(process.execPath, args, { stdio: "ignore", windowsHide: true });
       proc.on("error", reject);
       proc.on("close", (code) => resolve(code ?? 1));
     });
