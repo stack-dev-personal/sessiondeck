@@ -28,8 +28,12 @@ function names(dir: string): string[] {
   return readdirSync(join(FIXTURES_DIR, dir)).filter((f) => f.endsWith(".json"));
 }
 
+// Loaded once per file: each loadFixtures() walks and parses every committed fixture, and the
+// tests only read the payloads (withPayload copies before changing anything).
+const ALL_FIXTURES: readonly LoadedFixture[] = Object.freeze(loadFixtures());
+
 /** Every committed fixture of one event. */
-const all = (dir: string): LoadedFixture[] => loadFixtures().filter((f) => f.dir === dir);
+const all = (dir: string): LoadedFixture[] => ALL_FIXTURES.filter((f) => f.dir === dir);
 
 /** Applies one fixture to a snapshot of its own session in `state`, with optional overrides. */
 function applyTo(

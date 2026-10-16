@@ -15,9 +15,11 @@ const DOC_TEXT = readFileSync(DOC_PATH, "utf8");
 const doc = (): string => DOC_TEXT;
 
 // Computed once per file: the fixture walk is the slow part and its results are never mutated.
-const OBSERVED_ROWS = observedRows();
-const EXPECTED_OBSERVED_TABLE = renderObservedTable(OBSERVED_ROWS).split("\n");
-const DOC_BLOCKS = renderDocBlocks();
+const OBSERVED_ROWS = Object.freeze(observedRows());
+const EXPECTED_OBSERVED_TABLE: readonly string[] = Object.freeze(
+  renderObservedTable(OBSERVED_ROWS).split("\n"),
+);
+const DOC_BLOCKS = Object.freeze(renderDocBlocks());
 
 describe("renderStateDiagram", () => {
   it("is deterministic and mentions every state", () => {
