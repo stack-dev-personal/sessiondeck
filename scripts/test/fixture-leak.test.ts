@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { deriveLiterals, leakCheck, listFixtureFiles } from "../lib/fixture-leak-core.mjs";
 import { cleanupTempDirs, makeTempDir } from "./helpers";
-import { LEAK, SID_A, makeRaw, runNode } from "./fixture-raw-helpers";
+import { LEAK, SID_A, makeRaw, runNodeAsync } from "./fixture-raw-helpers";
 
 afterEach(cleanupTempDirs);
 
@@ -133,16 +133,20 @@ describe("leak check", () => {
     expect(leakCheck(users).byCategory["user-name"]).toBeUndefined();
   });
 
-  it("CLI exits 1 on a planted leak, 0 on clean input, and prints no values", () => {
+  it("CLI exits 1 on a planted leak, 0 on clean input, and prints no values", async () => {
     const dirty = fixturesWith({ "Stop/a.json": { x: "mail me@example.org" } });
-    const bad = runNode(LEAK, [dirty, "--raw", join(dirty, "no-raw")]);
+    const clean = fixturesWith({ "Stop/a.json": { prompt: "<TEXT 3>" } });
+    const [bad, ok, missing] = await Promise.all([
+      runNodeAsync(LEAK, [dirty, "--raw", join(dirty, "no-raw")]),
+      runNodeAsync(LEAK, [clean, "--raw", join(clean, "no-raw")]),
+      runNodeAsync(LEAK, [join(clean, "missing")]),
+    ]);
     expect(bad.status).toBe(1);
     expect(bad.stdout).toContain("FAIL");
     expect(bad.stdout).toContain("patterns only");
     expect(bad.stdout).not.toContain("example.org");
-    const clean = fixturesWith({ "Stop/a.json": { prompt: "<TEXT 3>" } });
-    expect(runNode(LEAK, [clean, "--raw", join(clean, "no-raw")]).status).toBe(0);
-    expect(runNode(LEAK, [join(clean, "missing")]).status).toBe(2);
+    expect(ok.status).toBe(0);
+    expect(missing.status).toBe(2);
   });
 
   it("listFixtureFiles returns every file, sorted, skipping raw at the top only", () => {

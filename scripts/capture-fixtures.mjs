@@ -23,6 +23,9 @@
  * line in the error log).
  */
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 /** @typedef {typeof import("./lib/capture-config.mjs")} Config */
 
 /**
@@ -60,7 +63,14 @@ async function loadLib() {
   return { config, core, paths, store };
 }
 
-async function main() {
+/**
+ * The whole hook, with its inputs passed in so a test can call it in this process. The CLI wrapper
+ * below is the only caller in production.
+ * @param {{ argv: string[], env: NodeJS.ProcessEnv, stdin: AsyncIterable<string | Buffer>,
+ *   stdout: (text: string) => void, now?: () => number }} io
+ * @returns {Promise<void>}
+ */
+export async function main({ argv, env, stdin, stdout, now = Date.now }) {
   let out = "";
   let mode = /** @type {import("./lib/capture-core.mjs").CaptureMode} */ ("hook");
   /** @type {Awaited<ReturnType<typeof loadLib>> | undefined} */
@@ -68,12 +78,12 @@ async function main() {
   let full = false;
   let failed = false;
   try {
-    mode = modeOf(process.argv.slice(2));
+    mode = modeOf(argv);
     lib = await loadLib();
-    const args = parseArgs(process.argv.slice(2));
-    out = lib.paths.resolveOutDir(args.outFlag, process.env);
-    const { text, truncated } = await lib.core.readAll(process.stdin);
-    full = (await lib.core.captureOnce({ mode, out, text, truncated, now: Date.now() })).full;
+    const args = parseArgs(argv);
+    out = lib.paths.resolveOutDir(args.outFlag, env);
+    const { text, truncated } = await lib.core.readAll(stdin);
+    full = (await lib.core.captureOnce({ mode, out, text, truncated, now: now() })).full;
   } catch (error) {
     failed = true;
     if (lib && out) await lib.store.logCaptureError(out, "capture", error);
@@ -81,13 +91,35 @@ async function main() {
   if (mode === "statusline" && lib) {
     const { STATUSLINE_TEXT, STATUSLINE_FULL_TEXT, STATUSLINE_ERROR_TEXT } = lib.config;
     const text = failed ? STATUSLINE_ERROR_TEXT : full ? STATUSLINE_FULL_TEXT : STATUSLINE_TEXT;
-    process.stdout.write(`${text}\n`);
+    stdout(`${text}\n`);
   }
 }
 
-try {
-  await main();
-} catch {
-  // Last resort: never fail the hook.
+/**
+ * True when this file is the program node was started with, or when that cannot be told (then the
+ * hook runs, as it always did). False only when another module (a test) imported this file.
+ * @returns {boolean}
+ */
+function isEntryPoint() {
+  try {
+    const started = process.argv[1];
+    if (started === undefined) return true;
+    return realpathSync.native(started) === realpathSync.native(fileURLToPath(import.meta.url));
+  } catch {
+    return true;
+  }
 }
-process.exitCode = 0;
+
+if (isEntryPoint()) {
+  try {
+    await main({
+      argv: process.argv.slice(2),
+      env: process.env,
+      stdin: process.stdin,
+      stdout: (text) => process.stdout.write(text),
+    });
+  } catch {
+    // Last resort: never fail the hook.
+  }
+  process.exitCode = 0;
+}

@@ -19,7 +19,13 @@ import {
 } from "../lib/capture-config.mjs";
 import { captureOnce, truncateUtf8 } from "../lib/capture-core.mjs";
 import { countEntries, writeInside } from "../lib/capture-store.mjs";
-import { CAPTURE_SCRIPT, cleanupTempDirs, listTree, makeTempDir, runScript } from "./helpers";
+import {
+  CAPTURE_SCRIPT,
+  cleanupTempDirs,
+  listTree,
+  makeTempDir,
+  runHookInProcess,
+} from "./helpers";
 
 afterAll(cleanupTempDirs);
 
@@ -125,7 +131,7 @@ describe("--out handling in the hook", () => {
     const sandbox = makeTempDir();
     const fallback = join(sandbox, "fallback");
     for (const args of [["--out"], ["--out", "--statusline"]]) {
-      const r = await runScript(CAPTURE_SCRIPT, args, {
+      const r = await runHookInProcess(CAPTURE_SCRIPT, args, {
         sandbox,
         input: stop(),
         env: { SESSIONDECK_CAPTURE_DIR: fallback },
@@ -138,7 +144,7 @@ describe("--out handling in the hook", () => {
 
   it("without --out or the env var nothing is written", async () => {
     const sandbox = makeTempDir();
-    const r = await runScript(CAPTURE_SCRIPT, [], { sandbox, input: stop() });
+    const r = await runHookInProcess(CAPTURE_SCRIPT, [], { sandbox, input: stop() });
     expect(r.code).toBe(0);
     expect(r.stdout + r.stderr).toBe("");
     expect(listTree(sandbox)).toEqual([]);
@@ -147,10 +153,14 @@ describe("--out handling in the hook", () => {
   it("ignores --marker", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
-    const r = await runScript(CAPTURE_SCRIPT, ["--marker", "sessiondeck-capture", "--out", out], {
-      sandbox,
-      input: stop(),
-    });
+    const r = await runHookInProcess(
+      CAPTURE_SCRIPT,
+      ["--marker", "sessiondeck-capture", "--out", out],
+      {
+        sandbox,
+        input: stop(),
+      },
+    );
     expect(r.code).toBe(0);
     expect(readFileSync(join(out, ".gitignore"), "utf8")).toBe("*\n");
     expect(readdirSync(join(out, "Stop"))).toHaveLength(1);

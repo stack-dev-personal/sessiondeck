@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { run as runInstaller } from "../lib/install-cli.mjs";
 import { checkOutDir, fixturesRoot } from "../lib/out-dir-check.mjs";
 import { isDefaultTarget } from "../lib/settings-files.mjs";
 import {
@@ -18,6 +19,7 @@ import {
   listTree,
   makeTempDir,
   REPO_ROOT,
+  runHookInProcess,
   runInstallInProcess,
   runScript,
   sandboxEnv,
@@ -25,6 +27,32 @@ import {
 } from "./helpers";
 
 afterAll(cleanupTempDirs);
+
+/**
+ * The installer with the default target (no CLAUDE_CONFIG_DIR) and a sandbox home, called in this
+ * process: the same arguments, environment and home a child process would see.
+ */
+async function runDefaultTargetInProcess(
+  sandbox: string,
+  argv: string[],
+  env: Record<string, string>,
+) {
+  const out: string[] = [];
+  const err: string[] = [];
+  const code = await runInstaller({
+    argv,
+    env: sandboxEnv(sandbox, env),
+    home: sandbox,
+    realHome: sandbox,
+    print: (t) => out.push(t),
+    printErr: (t) => err.push(t),
+  });
+  return {
+    code,
+    stdout: out.map((t) => `${t}\n`).join(""),
+    stderr: err.map((t) => `${t}\n`).join(""),
+  };
+}
 
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv) {
   return spawnSync("git", args, { cwd, env, windowsHide: true, encoding: "utf8" });
@@ -47,21 +75,20 @@ describe("interlock", () => {
     expect(listTree(env.sandbox)).toEqual(before);
   });
 
+  // The first case runs the real entry script as a child process; the rest call run() in process.
   it.each([[[]], [["--apply"]], [["--uninstall"]], [["--uninstall", "--apply"]]])(
     "CLAUDECODE with the default target refuses before reading it (%j)",
     async (flags) => {
+      const spawned = flags.length === 0;
       const sandbox = makeTempDir();
       // The default target inside the sandbox holds invalid JSON: reading it would print an error.
       mkdirSync(join(sandbox, ".claude"));
       writeFileSync(join(sandbox, ".claude", "settings.json"), "{ not json");
       const before = listTree(sandbox);
-      const r = await runScript(INSTALL_SCRIPT, flags, {
-        sandbox,
-        env: {
-          CLAUDECODE: "1",
-          SESSIONDECK_CAPTURE_HOME: join(sandbox, "deploy"),
-        },
-      });
+      const env = { CLAUDECODE: "1", SESSIONDECK_CAPTURE_HOME: join(sandbox, "deploy") };
+      const r = spawned
+        ? await runScript(INSTALL_SCRIPT, flags, { sandbox, env })
+        : await runDefaultTargetInProcess(sandbox, flags, env);
       expect(r.code).toBe(1);
       expect(r.stderr).toMatch(/plain terminal/);
       expect(r.stdout + r.stderr).not.toMatch(/Target settings file|not valid JSON/);
@@ -112,7 +139,7 @@ describe("capture directory", () => {
   it("gets a .gitignore of * when the hook creates it", async () => {
     const sandbox = makeTempDir();
     const out = join(sandbox, "hook-made");
-    await runScript(join(INSTALL_SCRIPT, "..", "capture-fixtures.mjs"), ["--out", out], {
+    await runHookInProcess(join(INSTALL_SCRIPT, "..", "capture-fixtures.mjs"), ["--out", out], {
       sandbox,
       input: '{"hook_event_name":"Stop"}',
     });

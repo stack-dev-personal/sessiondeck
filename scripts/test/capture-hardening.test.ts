@@ -21,7 +21,13 @@ import {
 } from "../lib/capture-config.mjs";
 import { captureOnce, mayUseDir } from "../lib/capture-core.mjs";
 import { DEPLOY_FILES } from "../lib/install-config.mjs";
-import { CAPTURE_SCRIPT, cleanupTempDirs, makeTempDir, runScript } from "./helpers";
+import {
+  CAPTURE_SCRIPT,
+  cleanupTempDirs,
+  makeTempDir,
+  runHookInProcess,
+  runScript,
+} from "./helpers";
 
 afterAll(cleanupTempDirs);
 
@@ -50,7 +56,7 @@ describe("the hook entry survives broken lib files (finding 6)", () => {
     return join(dir, "capture-fixtures.mjs");
   }
 
-  it.each(MODES)("entry file alone, mode %s: exit 0, no output", async (_mode, flags) => {
+  it.concurrent.each(MODES)("entry file alone, mode %s: exit 0, no output", async (_m, flags) => {
     const sandbox = makeTempDir();
     const script = entryOnly();
     const out = join(sandbox, "out");
@@ -61,7 +67,7 @@ describe("the hook entry survives broken lib files (finding 6)", () => {
     expect(existsSync(out)).toBe(false);
   });
 
-  it.each(MODES)(
+  it.concurrent.each(MODES)(
     "every lib file throws at import, mode %s: exit 0, no output",
     async (_m, flags) => {
       const sandbox = makeTempDir();
@@ -115,19 +121,19 @@ describe("the budget stop is visible and one line is logged (finding 7)", () => 
     const sandbox = makeTempDir();
     const out = join(sandbox, "out");
     const flags = ["--out", out];
-    const first = await runScript(CAPTURE_SCRIPT, ["--statusline", ...flags], {
+    const first = await runHookInProcess(CAPTURE_SCRIPT, ["--statusline", ...flags], {
       sandbox,
       input: JSON.stringify({ session_id: "s1", model: { id: "m" } }),
     });
     expect(first.stdout).toBe(`${STATUSLINE_TEXT}\n`);
     writeFileSync(join(out, USAGE_LOG_NAME), `${OUT_MAX_TOTAL_BYTES}\n`);
-    const status = await runScript(CAPTURE_SCRIPT, ["--statusline", ...flags], {
+    const status = await runHookInProcess(CAPTURE_SCRIPT, ["--statusline", ...flags], {
       sandbox,
       input: JSON.stringify({ session_id: "s2", model: { id: "m" } }),
     });
     expect(status.code).toBe(0);
     expect(status.stdout).toBe(`${STATUSLINE_FULL_TEXT}\n`);
-    const quiet = await runScript(CAPTURE_SCRIPT, flags, { sandbox, input: stop() });
+    const quiet = await runHookInProcess(CAPTURE_SCRIPT, flags, { sandbox, input: stop() });
     expect(quiet.code).toBe(0);
     expect(quiet.stdout + quiet.stderr).toBe("");
   });
@@ -142,7 +148,7 @@ describe("the budget stop is visible and one line is logged (finding 7)", () => 
       ["--statusline", "--out", join(notADir, "out")],
     ];
     for (const args of runs) {
-      const r = await runScript(CAPTURE_SCRIPT, args, { sandbox, input });
+      const r = await runHookInProcess(CAPTURE_SCRIPT, args, { sandbox, input });
       expect(r.code).toBe(0);
       expect(r.stdout).toBe(`${STATUSLINE_ERROR_TEXT}\n`);
       expect(r.stderr).toBe("");

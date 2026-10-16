@@ -10,7 +10,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { Readable } from "node:stream";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { vi } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const SCRIPTS_DIR = resolve(here, "..");
@@ -95,6 +97,57 @@ export function runScript(
     child.stdin.on("error", () => undefined);
     child.stdin.end(opts.input ?? "");
   });
+}
+
+interface HookMain {
+  main: (io: {
+    argv: string[];
+    env: NodeJS.ProcessEnv;
+    stdin: AsyncIterable<string | Buffer>;
+    stdout: (text: string) => void;
+    now?: () => number;
+  }) => Promise<void>;
+}
+
+/**
+ * Runs a hook entry file (the repo's or a copy in a temp dir) in this process through its exported
+ * `main`, with the same sandboxed environment runScript would give a child. Nothing is written to
+ * process.env or the working directory. Direct writes to process.stdout / process.stderr during the
+ * call (which the hook must never make) are collected into stdout / stderr so tests still see them.
+ * The exit code is always 0, as the entry file's wrapper sets.
+ */
+export async function runHookInProcess(
+  script: string,
+  args: string[],
+  opts: { input?: string; env?: Record<string, string>; sandbox: string; trackStray?: boolean },
+): Promise<RunResult> {
+  const mod = (await import(/* @vite-ignore */ pathToFileURL(script).href)) as HookMain;
+  const out: string[] = [];
+  const err: string[] = [];
+  const stray = (sink: string[]) => (chunk: unknown) => {
+    sink.push(String(chunk));
+    return true;
+  };
+  // Overlapping calls would share one spy, so concurrent callers pass trackStray: false.
+  const track = opts.trackStray !== false;
+  const outSpy = track
+    ? vi.spyOn(process.stdout, "write").mockImplementation(stray(out))
+    : undefined;
+  const errSpy = track
+    ? vi.spyOn(process.stderr, "write").mockImplementation(stray(err))
+    : undefined;
+  try {
+    await mod.main({
+      argv: args,
+      env: sandboxEnv(opts.sandbox, opts.env),
+      stdin: Readable.from([Buffer.from(opts.input ?? "", "utf8")]),
+      stdout: (text) => out.push(text),
+    });
+  } finally {
+    outSpy?.mockRestore();
+    errSpy?.mockRestore();
+  }
+  return { code: 0, stdout: out.join(""), stderr: err.join("") };
 }
 
 /** Test-only argument: do not add --out, so the installer's own default applies. */

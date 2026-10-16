@@ -17,7 +17,6 @@ import {
   INSTALL_SCRIPT,
   loadJson,
   makeTempDir,
-  runInstall,
   runInstallInProcess,
   runScript,
   SCRIPTS_DIR,
@@ -70,7 +69,7 @@ describe("recognition does not depend on where the script lives", () => {
     "uninstall through a case-different path to the same checkout (Windows)",
     async () => {
       const env = setupInstallEnv();
-      await runInstall(env.configDir, env.sandbox, ["--apply"]);
+      await install(env);
       const lower = INSTALL_SCRIPT.toLowerCase();
       expect(lower).not.toBe(INSTALL_SCRIPT);
       const r = await runScript(lower, ["--uninstall", "--apply"], {

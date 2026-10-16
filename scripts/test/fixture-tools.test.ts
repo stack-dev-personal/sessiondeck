@@ -14,7 +14,7 @@ import {
 } from "../lib/fixture-select.mjs";
 import { buildSynthetic } from "../lib/fixture-synthetic.mjs";
 import { cleanupTempDirs, makeTempDir } from "./helpers";
-import { INVENTORY, LEAK, SCRUB, SID_A, makeRaw, runNode } from "./fixture-raw-helpers";
+import { INVENTORY, LEAK, SCRUB, SID_A, makeRaw, runNodeAsync } from "./fixture-raw-helpers";
 
 afterEach(cleanupTempDirs);
 
@@ -90,12 +90,14 @@ describe("inventory", () => {
     ]);
   });
 
-  it("CLI prints the inventory, and exits 2 for a missing directory", () => {
+  it("CLI prints the inventory, and exits 2 for a missing directory", async () => {
     const raw = makeRaw();
-    const ok = runNode(INVENTORY, [raw]);
+    const [ok, missing] = await Promise.all([
+      runNodeAsync(INVENTORY, [raw]),
+      runNodeAsync(INVENTORY, [join(raw, "nope")]),
+    ]);
     expect(ok.status).toBe(0);
     expect(ok.stdout).toContain("TOTAL\t17");
-    const missing = runNode(INVENTORY, [join(raw, "nope")]);
     expect(missing.status).toBe(2);
   });
 });
@@ -239,13 +241,15 @@ describe("buildSynthetic", () => {
 });
 
 describe("scrub CLI end to end", () => {
-  it("writes a clean, deterministic set from a raw directory and never touches raw", () => {
+  it("writes a clean, deterministic set from a raw directory and never touches raw", async () => {
     const raw = makeRaw();
     const before = JSON.stringify(readdirSync(raw).sort());
     const outA = makeTempDir();
     const outB = makeTempDir();
-    const a = runNode(SCRUB, ["--raw", raw, "--out", outA]);
-    const b = runNode(SCRUB, ["--raw", raw, "--out", outB]);
+    const [a, b] = await Promise.all([
+      runNodeAsync(SCRUB, ["--raw", raw, "--out", outA]),
+      runNodeAsync(SCRUB, ["--raw", raw, "--out", outB]),
+    ]);
     expect(a.status).toBe(0);
     expect(b.status).toBe(0);
     const files = listFixtureFiles(outA);
@@ -263,17 +267,19 @@ describe("scrub CLI end to end", () => {
     expect(JSON.stringify(readdirSync(raw).sort())).toBe(before);
     expect(readdirSync(join(raw, "Stop")).length).toBe(1);
     // The output passes the leak check, with literals derived from the raw directory.
-    const leak = runNode(LEAK, [outA, "--raw", raw]);
+    const leak = await runNodeAsync(LEAK, [outA, "--raw", raw]);
     expect(leak.stdout).toContain("PASS");
     expect(leak.status).toBe(0);
   });
 
-  it("refuses to write inside the raw directory and fails on a missing raw directory", () => {
+  it("refuses to write inside the raw directory and fails on a missing raw directory", async () => {
     const raw = makeRaw();
-    const inside = runNode(SCRUB, ["--raw", raw, "--out", join(raw, "out")]);
+    const [inside, missing] = await Promise.all([
+      runNodeAsync(SCRUB, ["--raw", raw, "--out", join(raw, "out")]),
+      runNodeAsync(SCRUB, ["--raw", join(raw, "nope"), "--out", makeTempDir()]),
+    ]);
     expect(inside.status).toBe(1);
     expect(inside.stderr).toContain("must not be inside the raw directory");
-    const missing = runNode(SCRUB, ["--raw", join(raw, "nope"), "--out", makeTempDir()]);
     expect(missing.status).toBe(1);
   });
 });

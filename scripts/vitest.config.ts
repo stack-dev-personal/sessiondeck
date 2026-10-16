@@ -9,7 +9,11 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     exclude: ["**/node_modules/**", SPRINT_TOOLING_TESTS],
-    // Tests spawn real node processes; Windows process start-up is slow under load.
+    // Worker threads start about 1.3 s of wall time faster than forked processes on this laptop and
+    // use less CPU, which matters when contract's tests share the same 4 CI cores (R0.5). Measured:
+    // forks 7.2 to 7.9 s, threads 5.7 to 6.3 s Duration for this package.
+    pool: "threads",
+    // A few tests spawn real node processes; Windows process start-up is slow under load.
     testTimeout: 30_000,
   },
 });

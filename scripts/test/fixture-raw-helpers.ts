@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SCRIPTS_DIR, makeTempDir } from "./helpers";
@@ -109,4 +109,29 @@ export function makeRaw(): string {
 
 export function runNode(script: string, args: string[]) {
   return spawnSync(process.execPath, [script, ...args], { encoding: "utf8", windowsHide: true });
+}
+
+export interface NodeResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** Same as runNode without blocking, so independent runs in one test can overlap. */
+export function runNodeAsync(script: string, args: string[]): Promise<NodeResult> {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(process.execPath, [script, ...args], { windowsHide: true });
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (status) =>
+      resolvePromise({
+        status,
+        stdout: Buffer.concat(out).toString("utf8"),
+        stderr: Buffer.concat(err).toString("utf8"),
+      }),
+    );
+  });
 }
