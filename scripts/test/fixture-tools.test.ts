@@ -197,18 +197,44 @@ describe("buildSynthetic", () => {
       hook_event_name: "UserPromptSubmit",
     };
     const out = buildSynthetic(template);
-    expect(out.map((o) => o.event)).toEqual([
-      "TaskCreated",
-      "TaskCompleted",
-      "PermissionDenied",
-      "StopFailure",
+    expect(out.map((o) => `${o.event}/${o.file}`)).toEqual([
+      "TaskCreated/01-synthetic.json",
+      "TaskCompleted/01-synthetic.json",
+      "TaskCompleted/02-subagent.json",
+      "PermissionDenied/01-synthetic.json",
+      "StopFailure/01-synthetic.json",
     ]);
     for (const o of out) {
       expect(o.payload["hook_event_name"]).toBe(o.event);
       expect(o.payload["session_id"]).toBe("s");
       expect(o.payload["prompt"]).toBeUndefined();
     }
-    expect(out[3]?.payload["error"]).toBe("rate_limit");
+  });
+
+  it("follows the documented field lists and permission modes (hooks reference, 2026-10-15)", () => {
+    const [created, completed, subagent, denied, failure] = buildSynthetic({
+      session_id: "s",
+      permission_mode: "plan",
+    }).map((o) => o.payload);
+    expect(created).not.toHaveProperty("permission_mode");
+    expect(created).not.toHaveProperty("agent_id");
+    for (const f of ["task_id", "task_subject", "task_description", "teammate_name", "team_name"]) {
+      expect(created, f).toHaveProperty(f);
+      expect(completed, f).toHaveProperty(f);
+      expect(subagent, f).toHaveProperty(f);
+    }
+    expect(completed?.["permission_mode"]).toBe("default");
+    expect(completed).not.toHaveProperty("agent_id");
+    expect(subagent?.["agent_id"]).toEqual(expect.any(String));
+    expect(subagent?.["agent_type"]).toEqual(expect.any(String));
+    expect(denied?.["permission_mode"]).toBe("auto");
+    expect(denied?.["reason"]).toBe("[Irreversible Local Destruction]");
+    expect(denied).not.toHaveProperty("mcp_server");
+    expect(failure).not.toHaveProperty("permission_mode");
+    expect(failure).not.toHaveProperty("agent_id");
+    expect(failure?.["error"]).toBe("rate_limit");
+    expect(failure?.["error_details"]).toBe("429 Too Many Requests");
+    expect(failure?.["last_assistant_message"]).toBe("API Error: Rate limit reached");
   });
 });
 

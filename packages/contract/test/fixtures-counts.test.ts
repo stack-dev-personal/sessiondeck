@@ -57,6 +57,7 @@ describe("R0.7 fixture counts (committed set)", () => {
     expect(events.length).toBeGreaterThan(1);
     expect(new Set(events.map((e) => field(e, "session_id"))).size).toBe(1);
     expect(field(events[0], "hook_event_name")).toBe("SessionStart");
+    expect(field(events.at(-1), "hook_event_name")).toBe("SessionEnd");
   });
 });
 

@@ -70,10 +70,20 @@ describe("leak check", () => {
       "Stop/a.json": {
         session_id: SID_A,
         tool_use_id: "toolu_01ABCdefGHIjklMNOpqrstuvwxyz1234",
-        task_id: "task-synthetic-1",
+        task_id: "task001",
       },
     });
     expect(leakCheck(root).total).toBe(0);
+  });
+
+  it("does not take a long relative file path in prose for a token run", () => {
+    const root = fixturesWith({
+      "README.md": "See docs/research/2026-10-08-feasibility-and-oss.md for the note.",
+      "other.md": "See docs/research/2026-10-08-feasibility-and-oss for the note.",
+    });
+    const r = leakCheck(root);
+    expect(r.perFile.filter((f) => f.file === "README.md")).toEqual([]);
+    expect(r.perFile.find((f) => f.file === "other.md")?.category).toBe("token-run");
   });
 
   it("flags a non-placeholder value under a free-text key, at depth and in arrays", () => {
@@ -99,8 +109,9 @@ describe("leak check", () => {
 
   it("derives the user and project names from raw and flags them in any form", () => {
     const raw = makeRaw();
-    expect(deriveLiterals(raw)).toEqual({ users: ["zed"], projects: ["alpha"], names: [] });
-    expect(deriveLiterals(null)).toEqual({ users: [], projects: [], names: [] });
+    const none = { segments: [], names: [] };
+    expect(deriveLiterals(raw)).toEqual({ users: ["zed"], projects: ["alpha"], ...none });
+    expect(deriveLiterals(null)).toEqual({ users: [], projects: [], ...none });
     const root = fixturesWith({ "Stop/a.json": { x: "folder Alpha here", y: "/data/zed" } });
     const r = leakCheck(root, { rawRoot: raw });
     expect(r.byCategory["project-name"]).toBe(1);
@@ -121,7 +132,7 @@ describe("leak check", () => {
     expect(runNode(LEAK, [join(clean, "missing")]).status).toBe(2);
   });
 
-  it("listFixtureFiles returns json and jsonl files, sorted, skipping raw at the top only", () => {
+  it("listFixtureFiles returns every file, sorted, skipping raw at the top only", () => {
     const root = fixturesWith({
       "a/1.json": {},
       "a/2.txt": "x",
@@ -131,6 +142,7 @@ describe("leak check", () => {
     });
     expect(listFixtureFiles(root).map((f) => f.slice(root.length).split("\\").join("/"))).toEqual([
       "/a/1.json",
+      "/a/2.txt",
       "/a/raw/5.json",
       "/b/c/3.jsonl",
     ]);

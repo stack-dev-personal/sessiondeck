@@ -68,6 +68,7 @@ function derive(kind, value, alphabet, length) {
 }
 
 const HEX = "0123456789abcdef";
+const DIGITS = "0123456789";
 const ALNUM = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /** Remaps an id keeping its shape; returns null when the value has no id shape. */
@@ -79,7 +80,11 @@ export function mapId(/** @type {string} */ v) {
   if (/^toolu_[A-Za-z0-9]{6,60}$/.test(v))
     return `toolu_${derive("toolu", v, ALNUM, v.length - 6)}`;
   if (/^[0-9a-f]{8,40}$/.test(v)) return derive("hex", v, HEX, v.length);
-  if (/^[A-Za-z0-9_-]{6,60}$/.test(v) && /\d/.test(v)) return derive("alnum", v, ALNUM, v.length);
+  if (/^[A-Za-z0-9_-]{6,60}$/.test(v) && /\d/.test(v)) {
+    const out = derive("alnum", v, ALNUM, v.length);
+    // The gate accepts this shape only with a digit in it, so an all-letter result gets one.
+    return /\d/.test(out) ? out : `${out.slice(0, -1)}${derive("digit", v, DIGITS, 1)}`;
+  }
   return null;
 }
 

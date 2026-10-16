@@ -68,15 +68,29 @@ describe("key names are default-deny", () => {
     expect(r["unknown-key"]).toBe(3);
   });
 
-  it("accepts known keys and the scrubber's key placeholders", () => {
+  it("accepts known keys and <TEXT n> keys under user-keyed objects", () => {
     const r = categories({
       "Stop/a.json": {
         hook_event_name: "Stop",
         answers: { "<TEXT 12>": "<TEXT 3>", "<TEXT 12>#2": "<TEXT 3>" },
-        tool_input: { "<KEY_1>": "<TEXT 5>" },
       },
     });
-    expect(r["unknown-key"]).toBeUndefined();
+    expect(r).toEqual({});
+  });
+
+  it("flags a <KEY_n> key anywhere: the scrub's exit 1 review must happen before commit", () => {
+    const r = categories({
+      "Stop/a.json": { tool_input: { "<KEY_1>": "<TEXT 5>" } },
+      "Stop/b.json": { "<KEY_2>": 4815162342 },
+      "Stop/c.json": { answers: { "<KEY_1>": "<TEXT 3>" } },
+    });
+    expect(r["unknown-key"]).toBe(3);
+  });
+
+  it("flags a <TEXT n> key outside user-keyed objects", () => {
+    expect(categories({ "Stop/a.json": { tool_input: { "<TEXT 9>": "<TEXT 3>" } } })).toEqual({
+      "unknown-key": 1,
+    });
   });
 
   it("flags readable key names under user-keyed objects", () => {

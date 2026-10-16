@@ -28,7 +28,7 @@ node scripts/fixture-leak-check.mjs           # the gate: exit 0 or counts of fi
 statusLine/NN-<tag>.json          20 statusLine stdin samples
 subagentStatusLine/NN-<tag>.json  5 subagentStatusLine stdin samples
 sessions/golden-session.jsonl     one real session, hook payloads in capture order, one per line
-synthetic/<Event>/01-synthetic.json   NOT captured, see below
+synthetic/<Event>/NN-*.json           NOT captured, see below
 settings/                         installer test input, not a payload directory
 ```
 
@@ -82,11 +82,17 @@ a sha256-derived id of the same shape and length. The mapping is the same everyw
 inside `transcript_path` and `scratchpad_dir`), so a session reads consistently across files. The
 shape of `transcript_path` is kept: `<HOME>/.claude/projects/<PROJECT_x>/<session-id>.jsonl`.
 
-Gate: `node scripts/fixture-leak-check.mjs` scans this directory (not `raw/`, not `settings/`) for
-the user name or home path in any slash form, the real project directory names (both derived from
-`raw/` at run time when it exists), email shapes, token patterns, strings longer than 200 chars and
-non-placeholder values under free-text keys. Without `raw/` (CI) it runs the pattern checks only.
-It prints counts and file names, never values.
+Gate: `node scripts/fixture-leak-check.mjs` scans every file in this directory except `raw/`.
+Text checks run on all of them (`settings/` and `.md` included): the user name or a home path in
+any slash form and any alphabet, email shapes, token patterns and long token-like runs. A file that
+is not `.json`, `.jsonl` or `.md` is also reported as `unscanned-file`. The structure check runs on
+every payload (not `settings/`): key names must be in `scripts/lib/fixture-keys.mjs` (a `<KEY_n>`
+key is a finding, so a new key needs a reviewed addition there), `<TEXT n>` keys appear only under
+user-keyed objects, ids must keep their remapped shape (with a digit when they are only letters and
+digits), and every string must be a placeholder or match its allowlist rule. When `raw/` exists it
+also derives, at run time, the user name, project names, every other folder name in the raw paths
+and the named-field values, and searches all files for them. Without `raw/` (CI) the pattern and
+structure checks still run. It prints counts and file names, never values.
 
 ## Captured and synthetic
 
@@ -94,17 +100,33 @@ Captured (13 hook events): Notification, PermissionRequest, PostCompact, PostToo
 PostToolUseFailure, PreCompact, PreToolUse, SessionEnd, SessionStart, Stop, SubagentStart,
 SubagentStop, UserPromptSubmit; plus statusLine and subagentStatusLine.
 
-Not captured, so SYNTHETIC (conductor decision 7, 2026-10-15), one file each under
-`synthetic/<Event>/`: TaskCreated, TaskCompleted (task tools are disabled on this machine),
-PermissionDenied (the session ran in `auto` and `plan` modes, never the default mode, so no
-denial), StopFailure (no API failure happened). Their common fields are copied from a scrubbed
-captured `UserPromptSubmit`; the event-specific fields (`task_id`, `task_subject`,
-`task_description`; `tool_name`, `tool_input`, `tool_use_id`, `reason`; `error`, `error_details`,
-`last_assistant_message`) come from the Claude Code hooks reference. The 2026-10-08 feasibility research note
-lists these events only as "unverified at research time" and has no field list, so these four
-payloads are unverified. Do not treat them as evidence of the real payload. `synthetic/` is not a
-payload directory for `loadFixtures()`; `packages/contract/test/helpers.ts` excludes `synthetic` and
-`sessions` from both `loadFixtures()` and `findMisplacedFixtures()`.
+Not captured, so SYNTHETIC (conductor decisions 7 and 3, 2026-10-15), under
+`synthetic/<Event>/`: TaskCreated, TaskCompleted (two files: `01-synthetic.json` and
+`02-subagent.json`, a task created by a subagent), PermissionDenied (the session ran in `auto` and
+`plan` modes, never the default mode, so no denial), StopFailure (no API failure happened). Task
+tools are disabled on this machine. Their common fields are copied from a scrubbed captured
+`UserPromptSubmit`.
+
+The event-specific fields were verified against the Claude Code hooks reference,
+https://code.claude.com/docs/en/hooks, on 2026-10-15 (sd-researcher). They are still not captured
+payloads; the feasibility note `docs/research/2026-10-08-feasibility-and-oss.md` lists these events
+only as "unverified at research time". Per the documentation:
+
+| Event | Fields | `permission_mode` |
+|-------|--------|-------------------|
+| TaskCreated | `task_id`, `task_subject`, `task_description`, `teammate_name`, `team_name` (deprecated); optional `agent_id` (v2.1.290+); no matcher | absent in the doc example |
+| TaskCompleted | same fields; `02-subagent.json` adds `agent_id` and `agent_type` | `default` |
+| PermissionDenied | `tool_name`, `tool_input`, `tool_use_id`, `reason` (`mcp_server` for MCP tools only); fires in auto mode only | `auto` |
+| StopFailure | `error` (one of 12 values), `error_details`, `last_assistant_message` (the API error string, not Claude's output); whether it carries `agent_id` is undocumented, so main-session only | absent in the doc example |
+
+Three strings are the documentation's own examples and are kept verbatim: `reason`
+"[Irreversible Local Destruction]", `error_details` "429 Too Many Requests",
+`last_assistant_message` "API Error: Rate limit reached". The leak gate accepts exactly these, in
+exactly these synthetic files and key paths (`scripts/lib/fixture-synthetic-doc.mjs`); captured
+directories stay strict. Every other string is a placeholder.
+
+`synthetic/` is not a payload directory for `loadFixtures()`; `packages/contract/test/helpers.ts`
+excludes `synthetic` and `sessions` from both `loadFixtures()` and `findMisplacedFixtures()`.
 
 ## Golden session
 

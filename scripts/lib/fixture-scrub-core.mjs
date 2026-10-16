@@ -6,7 +6,7 @@
 //   3. allowlist hit (fixture-allowlist.mjs KEEP) whose pattern matches: kept verbatim
 //   4. whole value is a token: <REDACTED>; an email: <EMAIL>; account-like key: <ACCOUNT>
 //   5. anything else: "<TEXT n>", n being the original length
-// Numbers under an account-like or id-like key become 0; other numbers, booleans and null are kept.
+// Numbers under an account-like or id-like key, or under a placeholder key segment, become 0; other numbers, booleans and null are kept.
 // Object key names are default-deny too: a key survives only when listed in fixture-keys.mjs. An
 // unknown identifier-like key becomes "<KEY_n>" and is reported (Scrubber.unknownKeys) so a person
 // reviews it; a key that is user content (question text, file names with dots) becomes "<TEXT n>".
@@ -25,6 +25,8 @@ import { KNOWN_KEYS } from "./fixture-keys.mjs";
 import { Mapper, mapId } from "./fixture-scrub-paths.mjs";
 
 const ID_LIKE_KEY = /id$/i;
+/** A path segment that is a placeholder key: "<KEY_1>" or "<key>" (the stand-in for user-keyed names). */
+const PLACEHOLDER_SEGMENT = /(?:^|\.)<[^.>]*>(?:\[\])*(?:\.|$)/;
 const SAFE_KEY = /^-?[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/;
 const TOKEN_PREFIX = /^(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|AKIA|ASIA|xox[a-z]-|Bearer\s)/;
@@ -103,6 +105,8 @@ export class Scrubber {
   /** @param {number} n @param {string} path */
   #number(n, path) {
     const last = path.split(".").pop()?.replace(/\[\]$/, "") ?? "";
+    // A number under a placeholder key (<KEY_n>, or <key> for user-keyed names) cannot be classified.
+    if (PLACEHOLDER_SEGMENT.test(path)) return 0;
     return ACCOUNT_KEY.test(path) || ID_LIKE_KEY.test(last) ? 0 : n;
   }
 

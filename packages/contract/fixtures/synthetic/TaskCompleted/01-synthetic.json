@@ -4,9 +4,11 @@
   "cwd": "<HOME>/projects/<PROJECT_H>",
   "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494/scratchpad",
   "prompt_id": "24b36247-891f-4c44-8b2e-2545a3f979a3",
-  "permission_mode": "auto",
-  "hook_event_name": "TaskCompleted",
-  "task_id": "task-synthetic-1",
+  "permission_mode": "default",
+  "task_id": "task001",
   "task_subject": "<TEXT 24>",
-  "task_description": "<TEXT 80>"
+  "task_description": "<TEXT 80>",
+  "teammate_name": "<TEXT 8>",
+  "team_name": "<TEXT 8>",
+  "hook_event_name": "TaskCompleted"
 }

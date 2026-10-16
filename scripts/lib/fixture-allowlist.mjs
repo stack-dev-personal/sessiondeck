@@ -24,8 +24,8 @@ export const KEEP = {
     why: "SessionEnd reason enum (free-text reasons fall through to a placeholder)",
   },
   error: {
-    re: /^(?:rate_limit|authentication_failed|billing_error|invalid_request|server_error|max_output_tokens|unknown)$/,
-    why: "StopFailure error class (closed set); free-text errors fall through to a placeholder",
+    re: /^(?:rate_limit|overloaded|authentication_failed|oauth_org_not_allowed|account_on_hold|billing_error|invalid_request|model_not_found|server_error|max_output_tokens|cloud_credential_error|unknown)$/,
+    why: "StopFailure error class: the 12 values at https://code.claude.com/docs/en/hooks (2026-10-15); free text falls through to a placeholder",
   },
   trigger: { re: /^(manual|auto)$/, why: "compaction trigger" },
   notification_type: { re: ENUM, why: "Notification discriminator" },

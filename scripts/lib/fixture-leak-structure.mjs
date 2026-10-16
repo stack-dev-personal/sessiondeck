@@ -15,7 +15,7 @@ import {
   USER_KEYED,
   keepRule,
 } from "./fixture-allowlist.mjs";
-import { KNOWN_KEYS, PLACEHOLDER_KEY } from "./fixture-keys.mjs";
+import { KNOWN_KEYS, TEXT_KEY } from "./fixture-keys.mjs";
 import { isToken } from "./fixture-scrub-core.mjs";
 import { STRUCT } from "./fixture-scrub-paths.mjs";
 
@@ -27,7 +27,9 @@ const ID_SHAPES = [
   new RegExp(`^${UUID_SRC}$`),
   /^toolu_[A-Za-z0-9]{6,60}$/,
   /^[0-9a-f]{8,40}$/,
-  /^[A-Za-z0-9_-]{6,60}$/, // mapId output can be all letters
+  // mapId's alnum output: letters and digits only, and always at least one digit (it forces one),
+  // so a readable letters-only word under an id key is never accepted.
+  /^(?=[A-Za-z]*\d)[A-Za-z0-9]{6,60}$/,
 ];
 const escape = (/** @type {string} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const SEG = `(?:<PROJECT_[A-Z]\\d*>|<DIR_\\d+>|<FILE_\\d+>|${UUID_SRC}|agent-[0-9a-f]{8,40}|\\.{1,2}|${[...STRUCT].map(escape).join("|")})(?:\\.[A-Za-z0-9]{1,8})?`;
@@ -71,9 +73,11 @@ const lastKey = (path) => path.split(".").pop()?.replace(/\[\]$/, "") ?? "";
  * @param {string} v
  * @param {string} path normalized key path
  * @param {boolean} builtinTool payload's tool_name is a built-in tool
+ * @param {Readonly<Record<string, string>>} [allow] exact doc-example strings accepted at a key path
  * @returns {string | null} finding category, or null when the string is acceptable
  */
-export function stringFinding(v, path, builtinTool) {
+export function stringFinding(v, path, builtinTool, allow = {}) {
+  if (Object.hasOwn(allow, path) && allow[path] === v) return null;
   if (v.length > MAX_STRING) return "string-over-200";
   if (v === "") return null;
   if (path === "tool_name") {
@@ -100,31 +104,32 @@ export function stringFinding(v, path, builtinTool) {
  * Walks one parsed payload and calls hit(category) once per finding.
  * @param {unknown} doc
  * @param {(category: string) => void} hit
+ * @param {Readonly<Record<string, string>>} [allow] doc-example strings accepted in this file only
  */
-export function checkStructure(doc, hit) {
+export function checkStructure(doc, hit, allow = {}) {
   const builtinTool =
     doc !== null && typeof doc === "object" && !Array.isArray(doc)
       ? BUILTIN_TOOLS.has(String(/** @type {Record<string, unknown>} */ (doc).tool_name))
       : false;
-  visit(doc, "", builtinTool, hit);
+  visit(doc, "", builtinTool, hit, allow);
 }
 
-/** @param {unknown} v @param {string} path @param {boolean} builtin @param {(c: string) => void} hit */
-function visit(v, path, builtin, hit) {
+/** @param {unknown} v @param {string} path @param {boolean} builtin @param {(c: string) => void} hit @param {Readonly<Record<string, string>>} allow */
+function visit(v, path, builtin, hit, allow) {
   if (typeof v === "string") {
-    const category = stringFinding(v, path, builtin);
+    const category = stringFinding(v, path, builtin, allow);
     if (category !== null) hit(category);
   } else if (typeof v === "number") {
     if ((ACCOUNT_KEY.test(path) || ID_LIKE_KEY.test(lastKey(path))) && v !== 0) hit("id-number");
   } else if (Array.isArray(v)) {
-    for (const el of v) visit(el, `${path}[]`, builtin, hit);
+    for (const el of v) visit(el, `${path}[]`, builtin, hit, allow);
   } else if (v !== null && typeof v === "object") {
     const userKeyed = USER_KEYED.has(lastKey(path));
     for (const [k, child] of Object.entries(v)) {
       if (k.length > MAX_STRING) hit("string-over-200");
-      else if (!PLACEHOLDER_KEY.test(k) && (userKeyed || !KNOWN_KEYS.has(k))) hit("unknown-key");
+      else if (userKeyed ? !TEXT_KEY.test(k) : !KNOWN_KEYS.has(k)) hit("unknown-key");
       const seg = userKeyed || k.startsWith("<") ? "<key>" : k;
-      visit(child, path === "" ? k : `${path}.${seg}`, builtin, hit);
+      visit(child, path === "" ? k : `${path}.${seg}`, builtin, hit, allow);
     }
   }
 }

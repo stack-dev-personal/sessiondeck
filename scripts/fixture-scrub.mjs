@@ -9,7 +9,7 @@
  *   <Event>/NN-<slug>.json        hook payloads, one per distinct key-set/tool shape
  *   statusLine/NN-<tag>.json      20 samples;  subagentStatusLine/NN-<tag>.json  5 samples
  *   sessions/golden-session.jsonl one scrubbed hook payload per line, capture order
- *   synthetic/<Event>/01.json     uncaptured events (see lib/fixture-synthetic.mjs)
+ *   synthetic/<Event>/NN-*.json   uncaptured events (see lib/fixture-synthetic.mjs)
  * Exits 1 after writing when a key name is not in lib/fixture-keys.mjs (written as <KEY_n>); the
  * key paths are listed, never the names. Deterministic: same raw set, same output. Prints counts only, never values. The raw directory
  * is only read. Everything written passes through the default-deny Scrubber.
@@ -159,7 +159,7 @@ function main() {
   );
   for (const s of buildSynthetic(template)) {
     write(
-      join(out, "synthetic", s.event, "01-synthetic.json"),
+      join(out, "synthetic", s.event, s.file),
       `${JSON.stringify(s.payload, null, 2)}\n`,
     );
   }

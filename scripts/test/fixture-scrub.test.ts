@@ -131,6 +131,16 @@ describe("mapId", () => {
     expect(mapId("not an id")).toBeNull();
     expect(mapId("abc")).toBeNull();
   });
+
+  it("refuses all-letter ids that are not hex, and always puts a digit in alnum output", () => {
+    expect(mapId("acmesecretproject")).toBeNull();
+    for (let i = 0; i < 300; i += 1) {
+      const out = mapId(`Ab${i}xyzQrs`);
+      expect(out, String(i)).toMatch(/^[A-Za-z0-9]+$/);
+      expect(out, String(i)).toMatch(/\d/);
+      expect(out?.length).toBe(`Ab${i}xyzQrs`.length);
+    }
+  });
 });
 
 describe("isToken", () => {
@@ -183,6 +193,28 @@ describe("Scrubber", () => {
     expect(out["last_assistant_message"]).toBe("<TEXT 5000>");
     expect(out["message"]).toBe("");
     expect(JSON.stringify(out)).not.toContain("secret");
+  });
+
+  it("keeps exactly the 12 documented StopFailure error values, anchored", () => {
+    const documented = [
+      "rate_limit",
+      "overloaded",
+      "authentication_failed",
+      "oauth_org_not_allowed",
+      "account_on_hold",
+      "billing_error",
+      "invalid_request",
+      "model_not_found",
+      "server_error",
+      "max_output_tokens",
+      "cloud_credential_error",
+      "unknown",
+    ];
+    const s = new Scrubber();
+    for (const v of documented) expect(s.value({ error: v }), v).toEqual({ error: v });
+    for (const v of ["rate_limit2", "xrate_limit", "rate limit", "overloaded_error", "timeout"]) {
+      expect(s.value({ error: v }), v).toEqual({ error: `<TEXT ${v.length}>` });
+    }
   });
 
   it("denies allowlisted keys whose value fails the pattern", () => {

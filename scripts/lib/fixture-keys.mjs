@@ -208,6 +208,8 @@ export const KNOWN_KEYS = new Set([
   "task_type",
   "tasks",
   "teamId",
+  "team_name",
+  "teammate_name",
   "text",
   "thinking",
   "timedOutAfterMs",
@@ -246,5 +248,9 @@ export const KNOWN_KEYS = new Set([
   "workspace",
 ]);
 
-/** Placeholder key names the scrub itself produces. */
-export const PLACEHOLDER_KEY = /^<(?:TEXT \d+|KEY_\d+)>(?:#\d+)?$/;
+/**
+ * The only key placeholder a committed fixture may carry: "<TEXT n>" under USER_KEYED objects.
+ * "<KEY_n>" (an unreviewed key name) is deliberately not accepted: the scrub writes it and exits 1
+ * so a person adds the key to KNOWN_KEYS and re-runs, and the gate refuses it until then.
+ */
+export const TEXT_KEY = /^<TEXT \d+>(?:#\d+)?$/;

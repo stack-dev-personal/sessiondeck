@@ -40,6 +40,20 @@ describe("Scrubber key names are default-deny", () => {
     expect(out["<KEY_1>"]).toEqual({ source: "<TEXT 7>", reason: "<TEXT 5>" });
   });
 
+  it("writes 0 for any number under a placeholder key segment (unknown or user-keyed)", () => {
+    const out = new Scrubber().value({
+      org_number: 4815162342,
+      workspace: { nested: { deep_value: 99 }, current_dir: "<HOME>", width: 80 },
+      answers: { "which?": 12 },
+      duration_ms: 1234,
+    }) as Out;
+    expect(out["<KEY_1>"]).toBe(0);
+    expect(out.workspace["<KEY_1>"]).toEqual({ "<KEY_1>": 0 });
+    expect(out.answers["<TEXT 6>"]).toBe(0);
+    expect(out.duration_ms).toBe(1234);
+    expect(out.workspace.width).toBe(80);
+  });
+
   it("still maps identifier-unsafe and user-keyed names to <TEXT n> without reporting them", () => {
     const s = new Scrubber();
     const out = s.value({ answers: { "which database?": "a" }, "weird key!": 1 }) as Out;
