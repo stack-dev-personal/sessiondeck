@@ -22,6 +22,13 @@ describe("the deployed hook files never print", () => {
     },
   );
 
+  // Writing straight to file descriptor 1 or 2 bypasses both the stream and the console spies.
+  it.each(DEPLOY_FILES.map((f) => [f]))("%s does not write to fd 1 or 2 directly", (file) => {
+    const source = readFileSync(join(SCRIPTS_DIR, file), "utf8");
+    expect(source).not.toMatch(/\bwriteSync\s*\(\s*[12]\s*[,)]/);
+    expect(source).not.toMatch(/\bprocess\s*\.\s*(stdout|stderr)\s*\.\s*fd\b/);
+  });
+
   it("the entry file writes only through process.stdout in its CLI wrapper, never stderr", () => {
     const source = readFileSync(join(SCRIPTS_DIR, "capture-fixtures.mjs"), "utf8");
     expect(source).not.toMatch(/process\s*\.\s*stderr/);

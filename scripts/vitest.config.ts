@@ -6,13 +6,15 @@ import { defineConfig } from "vitest/config";
 // R0.5 one-minute budget. The sprint config includes this same glob.
 export const SPRINT_TOOLING_TESTS = "test/sprint-*.test.ts";
 
-// More workers than this only adds contention: the spawn-heavy files slow each other down. On a
-// small CI box the default (cores - 1) is already lower, so the cap does not apply there.
+// Most of these files wait on child processes and the file system, so on a small box more workers
+// than cores keep the CPU busy: 2 x cores beat cores - 1 by 1.5 s with contract running at the same
+// time on 4 cores (2 workers 16.1 s, 3 workers 14.3 s, 4 to 8 workers 13.1 s proxy wall). More than
+// this cap only adds contention on a big laptop.
 export const MAX_WORKERS = 12;
 
 export default defineConfig({
   test: {
-    maxWorkers: Math.min(MAX_WORKERS, Math.max(1, availableParallelism() - 1)),
+    maxWorkers: Math.min(MAX_WORKERS, availableParallelism() * 2),
     include: ["test/**/*.test.ts"],
     exclude: ["**/node_modules/**", SPRINT_TOOLING_TESTS],
     // Worker threads start about 1.3 s of wall time faster than forked processes on this laptop and

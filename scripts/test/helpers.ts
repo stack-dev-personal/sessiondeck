@@ -114,8 +114,10 @@ interface HookMain {
  * `main`, with the same sandboxed environment runScript would give a child. Nothing is written to
  * process.env or the working directory. Direct writes to process.stdout / process.stderr and calls to
  * console.* during the call (which the hook must never make) are collected into stdout / stderr so
- * tests see them. Writes through a captured reference to the original stream or console would
- * escape; capture-silence.test.ts statically forbids such code in the deployed files.
+ * tests see them. Writes through a captured reference to the original stream or console, or to file
+ * descriptor 1 or 2, would escape; capture-silence.test.ts statically forbids the usual spellings
+ * of these in the deployed files (console.*, process.stdout / stderr outside the entry wrapper,
+ * writeSync(1 or 2, ...), process.stdout.fd). It is a pattern check, not a proof.
  * The exit code is always 0, as the entry file's wrapper sets.
  */
 export async function runHookInProcess(
