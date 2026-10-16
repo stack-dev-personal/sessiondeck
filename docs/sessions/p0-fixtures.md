@@ -12,8 +12,8 @@
 | Unit | Requirements | Executor | Blocked by | State |
 |------|--------------|----------|------------|-------|
 | U1 fixture inventory, scrub, select (scripts plus scrubbed set, README) | R0.7 | sd-executor-contract | none | reviewed (round 3), verification next |
-| U2 captured-fixture walks (envelope, statusLine) and CONTRACT.md observed payloads | R0.1, R0.4, R0.7 | sd-executor-contract | U1 | pending |
-| U3 reducer TODO(fixture) finalization and golden timeline | R0.2, R0.3 | sd-executor-contract | U1 | pending |
+| U2 captured-fixture walks (envelope, statusLine) and CONTRACT.md observed payloads | R0.1, R0.4, R0.7 | sd-executor-contract | U1 | reviewed (merge, gate pass); verifying |
+| U3 reducer TODO(fixture) finalization and golden timeline | R0.2, R0.3 | sd-executor-contract | U1 | running |
 | U4 conductor decisions: ADR docker socket, PROMPT-BOOK section 6, entrypoint export, capture path docs, guard rule, Read deny rules | decisions 1, 3, 4, 5 | sd-executor-contract (widened scope) | none | done (U4 round 3; U4b patch merge, gate pass) |
 | Close: rebase, full suite, VERIFY-P0 rows incl. laptop confirmations, PR | all | sd-verifier | U1-U4 | pending |
 
@@ -72,6 +72,12 @@ Process note (resume 1): the round-3 sd-reviewer and sd-security-reviewer calls 
 - Residual risk (security, recorded as asked): the rule prevents accidents, not a hostile session. A compromised session already has the user's privileges and can write the user-level settings file with node fs or run the installer through node -e import(); the controls for that are decision 5 (only the user applies) and the user reviewing their settings file, not a regex.
 - Process note: the Edit tool refuses .claude/ paths even inside the throwaway temp worktree; the executor built the patch there with small node scripts. The repo worktree's .claude/ was never written (git diff 6baa15c..HEAD -- .claude is empty). Flagged to the user in the report.
 
+
+### U2 captured-fixture walks and observed payloads (R0.1, R0.4, R0.7 follow-ups)
+- Executor sd-executor-contract, commits 796fa60 (walks), 12efe21 (CONTRACT.md observed payloads, drift test), 26961d8 (leak follow-ups: per-part token check, placeholder-key numbers, README wording, scrub formatting).
+- Walks: 176 hook fixtures over 13 events (reviewer count; executor said 168 in error), 20 statusLine, 5 subagentStatusLine, golden 295 lines, 5 synthetic; empty category fails; #52326 leak derived from a captured sample (captures max 96). Contract 986 pass, 9 skip (all state TODO(fixture) placeholders for U3); scripts 370 pass.
+- sd-reviewer iteration 1 at 26961d8: merge, 3 MINOR (CONTRACT.md:171 notes label, CONTRACT.md:180 PostToolUseFailure wording, docs.test.ts:120 weak drift test). sd-security-reviewer: Gate: pass, 2 LOW (leak gate does not scan docs/CONTRACT.md; short-piece base64 with / next to an extension). All five folded into U3.
+- No captured payload contradicts 01-architecture.md section 3.
 ## Deferred findings (resume 1)
 - [LOW, security] PROMPT-BOOK.md:82-86: heartbeat rules are prose only; ship a fixed heartbeat script (cap argument, stop file, exit when the parent process is gone, updated_at only) with a test. Owner: sprint tooling (S0c follow-up or Sprint 1 tooling unit).
 - [MINOR, review] PROMPT-BOOK.md:83: "unit budget (at most 60 minutes)" is not defined elsewhere; a unit longer than 60 minutes looks stale at 75. Fix with the heartbeat script: define the budget in section 2 or restart the heartbeat between foreground calls.
