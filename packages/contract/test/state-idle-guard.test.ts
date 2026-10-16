@@ -8,7 +8,12 @@ import { reduce } from "../src/state";
 import { GUARD_DESCRIPTIONS } from "../src/transitions";
 import { T0, hook, snap } from "./state-helpers";
 
-const TOOL_EVENTS = ["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionDenied"] as const;
+const TOOL_EVENTS = [
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "PermissionDenied",
+] as const;
 const SUB = { agent_id: "agent-1" };
 
 describe("idle guard for subagent tool events", () => {
