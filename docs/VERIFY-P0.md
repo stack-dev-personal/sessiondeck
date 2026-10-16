@@ -360,3 +360,18 @@ Verifier run of 2026-10-16, 07:06Z to 07:13Z, worktree `C:/Users/stack/projects/
 | R0.8 (count only, not re-verified) | `pnpm -F @sessiondeck/scripts test:sprint` | 13 files, 279 passed / 0 failed, 53 s | not re-verified | 07:13Z |
 
 FIX-1 result: 7 pass / 1 fail (R0.5 local flake) / 0 unverifiable, plus the R0.8 count.
+
+## FIX-1 re-verify (sprint/0-bootstrap, 543aa73)
+
+Verifier run of 2026-10-16, 07:30Z to 07:40Z, worktree `C:/Users/stack/projects/wt/FIX-1`, HEAD 543aa73. Scope: R0.5 (previous local flake in `packages/contract/test/state-file-cli.test.ts`) and R0.1 to R0.4 (contract test files changed). R0.7 not re-run (scripts unchanged). Existing rows above are unchanged.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R0.5 CI | `gh run view 38867610820 --json conclusion,headSha,jobs`; cross-check `.sprint/0/gate/fix-1-ci.txt` FINAL block | conclusion success; headSha 543aa7306fbeff23981c465daa31f9683df5afdf; 4/4 jobs success. "test (R0.5 budget 60 s)" step: windows node 24 21 s (07:31:23Z to 07:31:44Z), windows node 22 28 s (07:31:30Z to 07:31:58Z), ubuntu node 24 11 s, ubuntu node 22 16 s. All match the txt file | pass | 07:31Z run, checked 07:35Z |
+| R0.5 local | `pnpm -r test` x10 in a row, timed with `date +%s%N` | 10/10 exit 0, no failed or timed-out test in any log. Wall ms: 11804, 10972, 11399, 11597, 11533, 11151, 11065, 11283, 11311, 11292; min 10.97 s, median 11.30 s, max 11.80 s (budget 60 s). Contract 1091 passed, scripts 464 passed / 3 skipped | pass | 07:35Z |
+| R0.1 | `pnpm -F @sessiondeck/contract test`; `pnpm exec vitest run test/envelope-walk.test.ts test/envelope.test.ts test/statusline.test.ts --coverage.enabled=false` | contract 28 files, 1091 passed / 0 failed, exit 0, coverage thresholds met (no threshold error), envelope.ts 100 %; per-file run 578 passed | pass | 07:36Z |
+| R0.2 | `pnpm exec vitest run test/state.test.ts test/state-fixtures.test.ts test/state-golden.test.ts --coverage.enabled=false` | 3 files, 106 passed, 0 failed; state.ts 100 % in the full run | pass | 07:36Z |
+| R0.3 | same command as R0.2 | 106 passed (clauses 1 to 7; clauses 4, 6, 7 synthetic as in the rows above) | pass | 07:36Z |
+| R0.4 | `pnpm exec vitest run test/statusline.test.ts --coverage.enabled=false` (inside the R0.1 3-file run) | statusline.ts 100 %; 578 passed in the combined run (44 statusline as before) | pass | 07:36Z |
+
+FIX-1 re-verify result: 6 pass / 0 fail / 0 unverifiable.
