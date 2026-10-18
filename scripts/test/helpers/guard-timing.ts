@@ -14,25 +14,34 @@ export interface TimedRun {
   readonly status: number | null;
   readonly matchMs: number;
   readonly calls: number;
+  /** Preload end to process exit, including execMs. */
+  readonly scriptMs: number;
+  /** Time inside child_process.execSync. */
+  readonly execMs: number;
+  readonly execCalls: number;
   readonly wallMs: number;
 }
 
-function readTotals(file: string): { matchMs: number; calls: number } {
+type Totals = Pick<TimedRun, "matchMs" | "calls" | "scriptMs" | "execMs" | "execCalls">;
+const TOTAL_KEYS = ["matchMs", "calls", "scriptMs", "execMs", "execCalls"] as const;
+
+function readTotals(file: string): Totals {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"));
   } catch (error) {
     throw new Error(`timing file missing or unparsable: ${String(error)}`);
   }
-  const totals = parsed as { matchMs?: unknown; calls?: unknown };
-  if (typeof totals.matchMs !== "number" || typeof totals.calls !== "number") {
+  const totals = parsed as Record<string, unknown>;
+  if (!TOTAL_KEYS.every((key) => typeof totals[key] === "number")) {
     throw new Error(`timing file has the wrong shape: ${JSON.stringify(parsed)}`);
   }
-  return { matchMs: totals.matchMs, calls: totals.calls };
+  return parsed as Totals;
 }
 
 interface Exit {
   readonly status: number | null;
+  readonly signal?: NodeJS.Signals | null;
   readonly error?: Error;
 }
 
@@ -45,7 +54,7 @@ function spawnWithInput(args: string[], input: string, timingFile: string): Prom
       env: { ...process.env, SD_GUARD_TIMING_FILE: timingFile },
     });
     child.on("error", (error) => resolveExit({ status: null, error }));
-    child.on("close", (status) => resolveExit({ status }));
+    child.on("close", (status, signal) => resolveExit({ status, signal }));
     child.stdin.on("error", () => undefined); // child may exit before reading all input
     child.stdin.end(input);
   });
@@ -71,13 +80,16 @@ export async function runTimed(
     if (exit.error) {
       throw new Error(`spawn failed: ${exit.error.message}`);
     }
+    if (exit.signal) {
+      throw new Error(`guard killed after ${MAX_WALL_MS} ms wall (signal ${exit.signal})`);
+    }
     return { status: exit.status, ...readTotals(timingFile), wallMs };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-/** Lowest matchMs of `repeats` sequential runs, with the calls, status and wall time of that run. */
+/** Run with the lowest script time (execSync excluded) of `repeats` sequential runs. */
 export async function runTimedBest(
   scriptPath: string,
   command: string,
@@ -88,5 +100,7 @@ export async function runTimedBest(
   for (let i = 0; i < repeats; i += 1) {
     runs.push(await runTimed(scriptPath, command, cwd));
   }
-  return runs.reduce((best, run) => (run.matchMs < best.matchMs ? run : best));
+  return runs.reduce((best, run) =>
+    run.scriptMs - run.execMs < best.scriptMs - best.execMs ? run : best,
+  );
 }

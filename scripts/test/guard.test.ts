@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,14 @@ const guardPath = resolve(repoRoot, ".claude", "hooks", "guard.mjs");
 const BLOCKED = 2;
 const ALLOWED = 0;
 const BS = String.fromCharCode(92);
-const fixturePath = resolve(repoRoot, "scripts", "test", "fixtures", "guard-timing", "regex-fixture.mjs");
+const fixturePath = resolve(
+  repoRoot,
+  "scripts",
+  "test",
+  "fixtures",
+  "guard-timing",
+  "regex-fixture.mjs",
+);
 
 function runGuard(command: string): { status: number | null; stderr: string } {
   const input = JSON.stringify({
@@ -134,63 +141,90 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
   });
 
   // Adversarial timing (security review, round 3): the hook has a 5 s timeout and a timeout lets the
-  // command run, so regex matching in the guard must stay linear on long whitespace runs and paths.
-  // The child runs with a preload that wraps RegExp.prototype.exec (see helpers/guard-timing.ts), so
-  // the bound measures matching cost only, not node start-up or runner load. toLowerCase, includes,
-  // JSON.parse and String() are linear built-ins and deliberately out of scope.
+  // command run, so matching in the guard must stay linear on long whitespace runs and paths.
+  // The child runs with a preload (see helpers/guard-timing.ts) that records regex time (matchMs)
+  // and time from preload to exit (scriptMs), so the bounds exclude node start-up and runner load.
+  // scriptMs also covers JSON.parse, `when` functions and hand-written loops, so a regex swapped
+  // for a quadratic indexOf loop still fails. The guard's execSync (git rev-parse on bare pushes)
+  // is input independent, so it is measured separately and subtracted. toLowerCase, includes and
+  // String() are linear built-ins and stay inside scriptMs, which is the point.
   const MAX_MATCH_MS = 150;
+  const MAX_SCRIPT_MS = 300;
   const RUN = 100_000;
   const REPEATS = 3;
-  // Lower bound on regex calls. A command that reaches every rule runs the 7 RULES regexes (the
+  // Exact regex call counts. A command that reaches every rule runs the 7 RULES regexes (the
   // capture-install rule's `when` pre-check uses includes, so it adds a regex only when it passes)
-  // plus the bare-push test: 8 calls minimum. A bare `git push` also runs the second push regex: 9.
-  const MIN_CALLS_ALL_RULES = 8;
-  const MIN_CALLS_BARE_PUSH = 9;
-  const timingInputs: Record<string, { command: string; minCalls: number }> = {
-    spaces: { command: " ".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
-    tabs: { command: "\t".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
-    newlines: { command: "\n".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
-    "node + spaces + capture-install --apply": {
-      command: `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
-      minCalls: MIN_CALLS_ALL_RULES,
-    },
-    "node + tabs + capture-install --apply": {
-      command: `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
-      minCalls: MIN_CALLS_ALL_RULES,
-    },
-    "node + long path": {
-      command: `node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`,
-      minCalls: MIN_CALLS_ALL_RULES,
-    },
-    "git push + spaces": {
-      command: `git push${" ".repeat(RUN)}`,
-      minCalls: MIN_CALLS_BARE_PUSH,
-    },
-    "git push + tabs": {
-      command: `git push${"\t".repeat(RUN)}`,
-      minCalls: MIN_CALLS_BARE_PUSH,
-    },
-    quotes: {
-      command: `${'"'.repeat(RUN)} capture-install --apply`,
-      minCalls: MIN_CALLS_ALL_RULES,
-    },
+  // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. The quotes
+  // row passes the pre-check, runs the capture-install regex and then the bare-push test, which
+  // makes 9 as measured. Exact counts catch a refactor that drops or skips a rule.
+  const CALLS_ALL_RULES = 8;
+  const CALLS_PLUS_ONE = 9;
+  const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim();
+  // Bare `git push` is blocked on main/master. CI pull_request runs check out a detached merge ref,
+  // where the branch reads HEAD, so it is allowed there.
+  const pushStatus = branch === "main" || branch === "master" ? BLOCKED : ALLOWED;
+  interface TimingRow {
+    readonly command: string;
+    readonly calls: number;
+    readonly status: number;
+    readonly execCalls: number;
+  }
+  const row = (
+    command: string,
+    status: number,
+    calls = CALLS_ALL_RULES,
+    execCalls = 0,
+  ): TimingRow => ({
+    command,
+    calls,
+    status,
+    execCalls,
+  });
+  // Repeated-anchor rows (repeating the push anchor many times) are quadratic in guard.mjs today;
+  // they land with the guard fix in docs/patches/FIX-2-guard.patch.
+  const timingInputs: Record<string, TimingRow> = {
+    spaces: row(" ".repeat(RUN), ALLOWED),
+    tabs: row("\t".repeat(RUN), ALLOWED),
+    newlines: row("\n".repeat(RUN), ALLOWED),
+    "node + spaces + capture-install --apply": row(
+      `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
+      BLOCKED,
+    ),
+    "node + tabs + capture-install --apply": row(
+      `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
+      BLOCKED,
+    ),
+    "node + long path": row(`node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`, BLOCKED),
+    "git push + spaces": row(`git push${" ".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
+    "git push + tabs": row(`git push${"\t".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
+    quotes: row(`${'"'.repeat(RUN)} capture-install --apply`, ALLOWED, CALLS_PLUS_ONE),
   };
+  // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
   it.concurrent.each(Object.entries(timingInputs))(
-    `regex matching stays under ${MAX_MATCH_MS} ms: %s`,
-    async (name, { command, minCalls }) => {
-      const run = await runTimedBest(guardPath, command, repoRoot, REPEATS);
+    `regex matching stays under ${MAX_MATCH_MS} ms and script under ${MAX_SCRIPT_MS} ms: %s`,
+    async (name, expected) => {
+      const run = await runTimedBest(guardPath, expected.command, repoRoot, REPEATS);
+      const scriptOnlyMs = run.scriptMs - run.execMs;
       console.info(
-        `guard timing ${name}: match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), wall ${run.wallMs.toFixed(0)} ms`,
+        `guard timing ${name}: match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
+          `scriptMs ${run.scriptMs.toFixed(1)}, execMs ${run.execMs.toFixed(1)}, ` +
+          `execCalls ${run.execCalls}, wall ${run.wallMs.toFixed(0)} ms, status ${run.status}`,
       );
       expect(run.matchMs).toBeLessThan(MAX_MATCH_MS);
-      expect(run.calls).toBeGreaterThanOrEqual(minCalls);
+      expect(scriptOnlyMs).toBeLessThan(MAX_SCRIPT_MS);
+      expect(run.calls).toBe(expected.calls);
+      expect(run.execCalls).toBe(expected.execCalls);
       expect(run.wallMs).toBeLessThan(MAX_WALL_MS);
-      expect(run.status).toBe(runGuard(command).status);
+      expect(run.status).toBe(expected.status);
     },
   );
 
-  // Self-test of the instrumentation: a known quadratic regex must trip the same bound through the
-  // same helper, preload, stdin JSON and process.exit path, and a linear control must not.
+  // Self-test of the instrumentation: a known quadratic regex and a slow hand loop must trip the
+  // same bounds through the same helper, preload, stdin JSON and process.exit path, and a linear
+  // control must not.
   it("instrumentation detects a quadratic regex and keeps the exit status", async () => {
     const quadratic = await runTimed(fixturePath, "quadratic", repoRoot);
     console.info(
@@ -208,8 +242,28 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     expect(linear.status).toBe(ALLOWED);
   });
 
+  it("instrumentation detects a slow hand-written loop through scriptMs", async () => {
+    const slow = await runTimed(fixturePath, "slow-loop", repoRoot);
+    expect(slow.matchMs).toBeLessThan(MAX_MATCH_MS);
+    expect(slow.scriptMs - slow.execMs).toBeGreaterThan(MAX_SCRIPT_MS);
+    expect(slow.status).toBe(ALLOWED);
+  });
+
+  it("counts and excludes execSync through the named ESM import", async () => {
+    const exec = await runTimed(fixturePath, "exec-sync", repoRoot);
+    expect(exec.execCalls).toBe(1);
+    expect(exec.execMs).toBeGreaterThan(0);
+    expect(exec.scriptMs).toBeGreaterThanOrEqual(exec.execMs);
+  });
+
+  it.concurrent("reports a timeout kill as a kill, not as a missing timing file", async () => {
+    await expect(runTimed(fixturePath, "hang", repoRoot)).rejects.toThrow(/guard killed after/);
+  });
+
   it("fails loudly when no timing file is written", async () => {
-    await expect(runTimed(fixturePath, "skip-exit-handlers", repoRoot)).rejects.toThrow(/timing file/);
+    await expect(runTimed(fixturePath, "skip-exit-handlers", repoRoot)).rejects.toThrow(
+      /timing file/,
+    );
   });
 
   it("matches capture-install --apply case-insensitively in the pre-check", () => {
