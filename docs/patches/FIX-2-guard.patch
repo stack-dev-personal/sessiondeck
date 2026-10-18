@@ -1,0 +1,215 @@
+diff --git a/.claude/hooks/guard.mjs b/.claude/hooks/guard.mjs
+index 49c512a..ab4783a 100644
+--- a/.claude/hooks/guard.mjs
++++ b/.claude/hooks/guard.mjs
+@@ -3,6 +3,21 @@
+ // Blocks the handful of commands the operating model forbids (docs/planning/04-session-map.md section 1)
+ // so that "allow Bash" in .claude/settings.json stays safe. Exit 2 blocks the tool and feeds the
+ // reason back to Claude; exit 0 allows. Never throws: a guard that crashes would block everything.
++//
++// Time bound. The hook has a 5 s timeout and Claude Code treats a timeout as allow, so a rule that
++// can be driven past 5 s is a bypass. Every rule here is linear in the length of the command, and
++// the tests time the whole guard at 100k characters, including inputs that repeat a rule's anchor
++// (`git push ` x N, `node ` x N, ...). The argument, rule by rule:
++// - Push rules: a start can only be the beginning of the command or a separator (| ; &), and the
++//   lookahead finds the FIRST `git push` in that segment once and captures it (a lookahead is
++//   atomic in JS, so the engine never retries a later occurrence). The tail then scans the rest of
++//   the segment once. Later occurrences are not tried: if one had the flag or main after it, the
++//   first occurrence has it after it too. Each segment is scanned by exactly one start.
++// - rm rule: the flag token is matched with one deterministic class per letter (the letters before
++//   the first r, or before the first f, exclude that letter), so no letter run is rescanned.
++// - capture-install --apply: see CAPTURE_APPLY below; the flag is checked once per candidate, not
++//   once per `node` anchor, and the options chain is capped.
++// The other rules are a fixed literal followed by a bounded token, so each anchor costs O(1).
+ import { execSync } from 'node:child_process';
+ 
+ const read = () => new Promise((resolve) => {
+@@ -21,31 +36,61 @@ const read = () => new Promise((resolve) => {
+ // whitespace, a quote, a closer, a redirect or the end, so --apply-later is not matched. A command
+ // that merely quotes the whole node line (grep, echo, commit message) is blocked too: fail closed,
+ // listed as known false positives in the tests. The start is a single anchor character (no repeated
+-// whitespace, so matching stays linear on long runs) followed by an unquoted path prefix without
+-// whitespace, or by a quote and a quoted prefix that may contain spaces. The rule runs only when the
+-// command contains both capture-install and --apply (case-insensitive). \x5c is a backslash.
++// whitespace) followed by an unquoted path prefix without whitespace or braces, or by a quote and a
++// quoted prefix that may contain spaces. The rule runs only when the command contains both
++// capture-install and --apply (case-insensitive). \x5c is a backslash.
++//
++// Linear time. CAPTURE_NODE matches a node anchor whose command line continues with at most
++// MAX_OPTIONS options and then the script (the shape is a lookahead, so the match is the node part
++// only). Each anchor therefore costs a bounded number of tokens. The --apply flag is then checked
++// ONCE for that candidate, from the end of the node part to the end of its segment (backslash-newline
++// continues a line; | ; & and a bare newline separate). If the flag is missing, every later anchor
++// in the same segment has even less text after it, so matching resumes after the segment: each
++// segment is scanned at most twice. (Before this, the flag lookahead ran at every anchor, which is
++// quadratic on `node ` x N.) More than MAX_OPTIONS options before the script is not recognised.
++const MAX_OPTIONS = 32;
+ const SEP = String.raw`(?:\s|\x5c\r?\n)+`;
+-const NODE = String.raw`(?:(?:^|[\s;&|(\`{])(?:[^\s|;&"'()\`]*[\x5c/])?|["'](?:[^"'\n]*[\x5c/])?)(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
++const NODE = String.raw`(?:(?:^|[\s;&|(\`{])(?:[^\s|;&"'(){\`]*[\x5c/])?|["'](?:[^"'\n]*[\x5c/])?)(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
+ const FLAG = String.raw`(?:^|[\s"'=])--apply(?=[\s"'\`);&|<>\x5c]|$)`;
+ const SEGMENT = String.raw`(?:[^|;&\n]|\x5c\r?\n)*?`;
+ const OPTION = String.raw`(?:${SEP}--?[\w.-]+(?:=[^\s|;&]+)?(?:${SEP}(?!-)[^\s|;&]+)?)`;
+ const SCRIPT = String.raw`["']?(?:[^\s|;&"']*[\x5c/])?capture-install(?:\.mjs)?(?=[\s"'\`);&|\x5c]|$)`;
+-const CAPTURE_APPLY = new RegExp(`${NODE}(?=${SEGMENT}${FLAG})${OPTION}*${SEP}${SCRIPT}`, 'i');
++const CAPTURE_NODE = new RegExp(`(${NODE})(?=${OPTION}{0,${MAX_OPTIONS}}${SEP}${SCRIPT})`, 'gi');
++const FLAG_AFTER = new RegExp(`${SEGMENT}${FLAG}`, 'iy');
++const SEGMENT_REST = /(?:[^|;&\n]|\x5c\r?\n)*/y;
++
++function captureApply(cmd) {
++  CAPTURE_NODE.lastIndex = 0;
++  for (let m = CAPTURE_NODE.exec(cmd); m; m = CAPTURE_NODE.exec(cmd)) {
++    FLAG_AFTER.lastIndex = CAPTURE_NODE.lastIndex;
++    if (FLAG_AFTER.test(cmd)) return true;
++    SEGMENT_REST.lastIndex = CAPTURE_NODE.lastIndex;
++    SEGMENT_REST.test(cmd);
++    CAPTURE_NODE.lastIndex = SEGMENT_REST.lastIndex;
++  }
++  return false;
++}
++
++// `git push` rules: the first `git push` in a segment, found once (see the header), then the tail.
++const FIRST_PUSH = String.raw`(?:^|[|;&])(?=([^|;&]*?\bgit\s+push\b))\1`;
++const pushRule = (tail, why) => ({ re: new RegExp(`${FIRST_PUSH}[^|;&]*${tail}`), why });
+ 
+ const RULES = [
+-  { re: /\bgit\s+push\b[^|;&]*\s(--force|-f|--force-with-lease)\b/, why: 'force push is forbidden' },
+-  { re: /\bgit\s+push\b[^|;&]*\s\+?\S+:(main|master)\b/, why: 'pushing to main is forbidden; open a PR' },
+-  { re: /\bgit\s+push\b[^|;&]*\s(main|master)\b/, why: 'pushing to main is forbidden; open a PR' },
++  pushRule(String.raw`\s(--force|-f|--force-with-lease)\b`, 'force push is forbidden'),
++  pushRule(String.raw`\s\+?\S+:(main|master)\b`, 'pushing to main is forbidden; open a PR'),
++  pushRule(String.raw`\s(main|master)\b`, 'pushing to main is forbidden; open a PR'),
+   { re: /\bgit\s+branch\s+(-D|--delete\s+--force)\b/, why: 'deleting branches is forbidden' },
+   { re: /\bgit\s+reset\s+--hard\b/, why: 'git reset --hard discards work; stash or ask the user' },
+-  { re: /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+(\/|~|\$HOME|\.\.|[A-Za-z]:[\\/])/, why: 'recursive delete outside the repo is forbidden' },
++  // The flag token is -<letters> ending in r or f with the other letter before it. The letters
++  // before the first r (or f) exclude it, so each letter is matched by one class only.
++  { re: /\brm\s+(-[a-qs-zA-Z]*r[a-zA-Z]*f|-[a-eg-zA-Z]*f[a-zA-Z]*r)\s+(\/|~|\$HOME|\.\.|[A-Za-z]:[\\/])/, why: 'recursive delete outside the repo is forbidden' },
+   { re: /[\\/]\.claude[\\/]settings\.json\b/, why: 'the user-level ~/.claude/settings.json is off limits; only the probe installer edits it, in its own tests with CLAUDE_CONFIG_DIR' },
+   // Conductor decision 5: the user, from a plain terminal, applies the capture installer.
+   // This rule prevents accidents by a well-behaved session. It is not a defence against a hostile
+   // one: renamed copies, variables, split quoting, globs and encoded commands get past it, and a
+   // compromised session already has the user's privileges. The installer's CLAUDECODE refusal is a
+   // second accident check of the same strength. Previews (no flag, or --dry-run) stay allowed.
+-  { when: (cmd) => { const c = cmd.toLowerCase(); return c.includes('capture-install') && c.includes('--apply'); }, re: CAPTURE_APPLY, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
++  { when: (cmd) => { const c = cmd.toLowerCase(); return c.includes('capture-install') && c.includes('--apply'); }, test: captureApply, why: 'capture-install --apply is for the user to run from a plain terminal; previews without --apply are allowed' },
+ ];
+ 
+ function currentBranch(cwd) {
+@@ -57,13 +102,15 @@ function currentBranch(cwd) {
+   }
+ }
+ 
++const matches = (rule, cmd) => (rule.test ? rule.test(cmd) : rule.re.test(cmd));
++
+ try {
+   const raw = await read();
+   const input = raw ? JSON.parse(raw) : {};
+   if (input.tool_name !== 'Bash') process.exit(0);
+   const cmd = String(input.tool_input?.command ?? '');
+   for (const rule of RULES) {
+-    if ((!rule.when || rule.when(cmd)) && rule.re.test(cmd)) {
++    if ((!rule.when || rule.when(cmd)) && matches(rule, cmd)) {
+       process.stderr.write(`sessiondeck guard: ${rule.why}. Command: ${cmd}\n`);
+       process.exit(2);
+     }
+diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
+index cad7532..0071c3c 100644
+--- a/scripts/test/guard.test.ts
++++ b/scripts/test/guard.test.ts
+@@ -26,13 +26,19 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+   const MAX_SCRIPT_MS = 300;
+   const RUN = 100_000;
+   const REPEATS = 3;
+-  // Exact regex call counts. A command that reaches every rule runs the 7 RULES regexes (the
+-  // capture-install rule's `when` pre-check uses includes, so it adds a regex only when it passes)
+-  // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. The quotes
+-  // row passes the pre-check, runs the capture-install regex and then the bare-push test, which
+-  // makes 9 as measured. Exact counts catch a refactor that drops or skips a rule.
++  // Exact regex call counts. A command that reaches every rule runs the 7 plain RULES regexes (the
++  // capture-install rule's `when` pre-check uses includes, so it adds regexes only when it passes)
++  // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. When the
++  // pre-check passes, the capture-install rule searches for a node candidate. No candidate (the
++  // quotes row) adds 1 and then the bare-push test runs: 9. A blocked command adds 2 (the candidate
++  // and the --apply check) and exits before the bare-push test: 9. A candidate without --apply in
++  // its segment adds 4 (candidate, flag check, segment end, final search) plus the bare-push test:
++  // 12. A command blocked by the third push rule runs 3. Exact counts catch a refactor that drops
++  // or skips a rule.
+   const CALLS_ALL_RULES = 8;
+   const CALLS_PLUS_ONE = 9;
++  const CALLS_PUSH_MAIN = 3;
++  const CALLS_CAPTURE_SKIPPED = 12;
+   const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+     cwd: repoRoot,
+     encoding: "utf8",
+@@ -57,8 +63,9 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+     status,
+     execCalls,
+   });
+-  // Repeated-anchor rows (repeating the push anchor many times) are quadratic in guard.mjs today;
+-  // they land with the guard fix in docs/patches/FIX-2-guard.patch.
++  // Repeated-anchor rows repeat a rule's anchor (`git push `, `node `, ...) up to about 100k
++  // characters. Before the FIX-2 guard patch several were quadratic (up to 12 s, past the 5 s hook
++  // timeout, which Claude Code treats as allow). They are the rows after "quotes".
+   const timingInputs: Record<string, TimingRow> = {
+     spaces: row(" ".repeat(RUN), ALLOWED),
+     tabs: row("\t".repeat(RUN), ALLOWED),
+@@ -66,15 +73,57 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+     "node + spaces + capture-install --apply": row(
+       `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
+       BLOCKED,
++      CALLS_PLUS_ONE,
+     ),
+     "node + tabs + capture-install --apply": row(
+       `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
+       BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    "node + long path": row(
++      `node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
+     ),
+-    "node + long path": row(`node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`, BLOCKED),
+     "git push + spaces": row(`git push${" ".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
+     "git push + tabs": row(`git push${"\t".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
+     quotes: row(`${'"'.repeat(RUN)} capture-install --apply`, ALLOWED, CALLS_PLUS_ONE),
++    "git push x N": row("git push ".repeat(11_000), ALLOWED, CALLS_PLUS_ONE),
++    "git push - x N": row("git push -".repeat(10_000), ALLOWED, CALLS_PLUS_ONE),
++    "git push origin x N + main": row(
++      "git push origin ".repeat(6_250) + "main",
++      BLOCKED,
++      CALLS_PUSH_MAIN,
++    ),
++    "git branch x N": row("git branch ".repeat(9_000), ALLOWED),
++    "git reset x N": row("git reset ".repeat(10_000), ALLOWED),
++    "rm -rf x N": row("rm -rf ".repeat(14_000), ALLOWED),
++    "rm - + r x N": row(`rm -${"r".repeat(RUN)}`, ALLOWED),
++    "node x N + --apply capture-install": row(
++      `${"node ".repeat(20_000)}--apply capture-install`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    "node capture-install.mjs x N + --apply": row(
++      `${"node scripts/capture-install.mjs ".repeat(3_000)}--apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    "node -x x N, flag in another segment": row(
++      `echo capture-install --apply; ${"node -x ".repeat(12_500)}`,
++      ALLOWED,
++      CALLS_PLUS_ONE,
++    ),
++    "node capture-install.mjs x N, flag in another segment": row(
++      `echo --apply; ${"node scripts/capture-install.mjs ".repeat(3_000)}`,
++      ALLOWED,
++      CALLS_CAPTURE_SKIPPED,
++    ),
++    "braces x N + capture-install --apply": row(
++      `${"{".repeat(RUN)} capture-install --apply`,
++      ALLOWED,
++      CALLS_PLUS_ONE,
++    ),
+   };
+   // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
+   it.concurrent.each(Object.entries(timingInputs))(

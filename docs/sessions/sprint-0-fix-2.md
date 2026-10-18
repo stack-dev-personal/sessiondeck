@@ -11,7 +11,7 @@
 - [x] U1 fix round 1 (FIX-2): tighten timing tests after review
 - [x] U1 fix round 2 (FIX-2): Linux self-kill, stdin wait, self-test size, file split
 - [ ] U2 CI evidence and verify
-- [ ] U3 guard patch: repeated-anchor quadratic in guard.mjs, delivered as docs/patches/FIX-2-guard.patch with its timing rows
+- [x] U3 guard patch: repeated-anchor quadratic in guard.mjs, delivered as docs/patches/FIX-2-guard.patch with its timing rows (not applied; the user applies it, see docs/patches/README.md)
 
 ## Decisions made
 
@@ -36,5 +36,14 @@
 ## Review round 3
 
 - sd-reviewer verdict merge on cc53b60; CI cc53b60 push 39163412975 and pull_request 39163417212 green on all four jobs. Minors fixed here: ELU idle subtraction (the preload records the raw stdin window as `stdinWaitMs` and the event loop idle time inside it as `stdinIdleMs`; only the idle part is subtracted, so CPU in a stdin `data` handler counts; new `cpu-in-data` self-test), stdin delay 2500 ms with the 10 s self-test timeout, and the comment now names QUADRATIC_RUN (24k kept).
+
+## U3 guard repeated-anchor patch
+
+- Built in a temporary detached worktree on cc4302a (offline install), patch generated from it, worktree removed. `.claude/` in this worktree untouched; `git apply --check` passes.
+- Same quadratic class as the HIGH finding, found while proving it and fixed in the same patch: `rm -` plus 100k `r` (6.3 s, rm rule), 100k `{` before `capture-install --apply` (the unquoted path prefix allowed `{`, which is also an anchor), and `node -x ` runs (the option chain, 1.4 s). The option chain is capped at 32 options, which is the only verdict change by design.
+- Design choice: push rules keep one regex each (first `git push` per segment found in an atomic lookahead) so the exact call counts stay 8 and 9; the capture-install rule now makes 2 regex calls when it blocks, so the three existing blocked timing rows expect 9 instead of 8.
+- Differential check: 3000 random fragment commands, old versus new guard, 0 differing exit codes.
+- Residual, not fixed: a quoted node path whose prefix contains `;` and also contains the `--apply` flag inside the quotes could be matched differently by the segment skip. Contrived, not reachable by a plain command line.
+- Not done here (no access to the user terminal): applying the patch, and a CI run on it. The user applies it to sprint/0-bootstrap, then CI must show the same four jobs green.
 
 ## Deferred findings
