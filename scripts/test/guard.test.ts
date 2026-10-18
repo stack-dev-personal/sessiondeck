@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_WALL_MS, runTimed, runTimedBest } from "./helpers/guard-timing";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const guardPath = resolve(repoRoot, ".claude", "hooks", "guard.mjs");
 const BLOCKED = 2;
 const ALLOWED = 0;
 const BS = String.fromCharCode(92);
+const fixturePath = resolve(repoRoot, "scripts", "test", "fixtures", "guard-timing", "regex-fixture.mjs");
 
 function runGuard(command: string): { status: number | null; stderr: string } {
   const input = JSON.stringify({
@@ -19,6 +21,7 @@ function runGuard(command: string): { status: number | null; stderr: string } {
   const result = spawnSync(process.execPath, [guardPath], {
     input,
     encoding: "utf8",
+    windowsHide: true,
   });
   return { status: result.status, stderr: result.stderr };
 }
@@ -131,26 +134,82 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
   });
 
   // Adversarial timing (security review, round 3): the hook has a 5 s timeout and a timeout lets the
-  // command run, so every call to the whole guard must stay fast on long whitespace runs and paths.
-  const MAX_GUARD_MS = 200;
-  const RUN = 10_000;
-  const timingInputs: Record<string, string> = {
-    spaces: " ".repeat(RUN),
-    tabs: "\t".repeat(RUN),
-    newlines: "\n".repeat(RUN),
-    "node + spaces + capture-install --apply": `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
-    "node + tabs + capture-install --apply": `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
-    "node + long path": `node ${"a/".repeat(5000)}capture-install.mjs --apply`,
-    "git push + spaces": `git push${" ".repeat(RUN)}`,
-    "git push + tabs": `git push${"\t".repeat(RUN)}`,
-    quotes: `${'"'.repeat(RUN)} capture-install --apply`,
+  // command run, so regex matching in the guard must stay linear on long whitespace runs and paths.
+  // The child runs with a preload that wraps RegExp.prototype.exec (see helpers/guard-timing.ts), so
+  // the bound measures matching cost only, not node start-up or runner load. toLowerCase, includes,
+  // JSON.parse and String() are linear built-ins and deliberately out of scope.
+  const MAX_MATCH_MS = 150;
+  const RUN = 100_000;
+  const REPEATS = 3;
+  // Lower bound on regex calls. A command that reaches every rule runs the 7 RULES regexes (the
+  // capture-install rule's `when` pre-check uses includes, so it adds a regex only when it passes)
+  // plus the bare-push test: 8 calls minimum. A bare `git push` also runs the second push regex: 9.
+  const MIN_CALLS_ALL_RULES = 8;
+  const MIN_CALLS_BARE_PUSH = 9;
+  const timingInputs: Record<string, { command: string; minCalls: number }> = {
+    spaces: { command: " ".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
+    tabs: { command: "\t".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
+    newlines: { command: "\n".repeat(RUN), minCalls: MIN_CALLS_ALL_RULES },
+    "node + spaces + capture-install --apply": {
+      command: `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
+      minCalls: MIN_CALLS_ALL_RULES,
+    },
+    "node + tabs + capture-install --apply": {
+      command: `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
+      minCalls: MIN_CALLS_ALL_RULES,
+    },
+    "node + long path": {
+      command: `node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`,
+      minCalls: MIN_CALLS_ALL_RULES,
+    },
+    "git push + spaces": {
+      command: `git push${" ".repeat(RUN)}`,
+      minCalls: MIN_CALLS_BARE_PUSH,
+    },
+    "git push + tabs": {
+      command: `git push${"\t".repeat(RUN)}`,
+      minCalls: MIN_CALLS_BARE_PUSH,
+    },
+    quotes: {
+      command: `${'"'.repeat(RUN)} capture-install --apply`,
+      minCalls: MIN_CALLS_ALL_RULES,
+    },
   };
-  it.each(Object.entries(timingInputs))("finishes under 200 ms: %s", (_name, command) => {
-    const start = performance.now();
-    runGuard(command);
-    const elapsed = performance.now() - start;
-    console.info(`guard timing ${_name}: ${elapsed.toFixed(0)} ms`);
-    expect(elapsed).toBeLessThan(MAX_GUARD_MS);
+  it.concurrent.each(Object.entries(timingInputs))(
+    `regex matching stays under ${MAX_MATCH_MS} ms: %s`,
+    async (name, { command, minCalls }) => {
+      const run = await runTimedBest(guardPath, command, repoRoot, REPEATS);
+      console.info(
+        `guard timing ${name}: match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), wall ${run.wallMs.toFixed(0)} ms`,
+      );
+      expect(run.matchMs).toBeLessThan(MAX_MATCH_MS);
+      expect(run.calls).toBeGreaterThanOrEqual(minCalls);
+      expect(run.wallMs).toBeLessThan(MAX_WALL_MS);
+      expect(run.status).toBe(runGuard(command).status);
+    },
+  );
+
+  // Self-test of the instrumentation: a known quadratic regex must trip the same bound through the
+  // same helper, preload, stdin JSON and process.exit path, and a linear control must not.
+  it("instrumentation detects a quadratic regex and keeps the exit status", async () => {
+    const quadratic = await runTimed(fixturePath, "quadratic", repoRoot);
+    console.info(
+      `guard timing self-test quadratic: match ${quadratic.matchMs.toFixed(1)} ms (calls ${quadratic.calls})`,
+    );
+    expect(quadratic.matchMs).toBeGreaterThan(MAX_MATCH_MS);
+    expect(quadratic.calls).toBeGreaterThanOrEqual(1);
+    expect(quadratic.status).toBe(BLOCKED);
+    const linear = await runTimed(fixturePath, "linear", repoRoot);
+    console.info(
+      `guard timing self-test linear: match ${linear.matchMs.toFixed(1)} ms (calls ${linear.calls})`,
+    );
+    expect(linear.matchMs).toBeLessThan(MAX_MATCH_MS);
+    expect(linear.calls).toBeGreaterThanOrEqual(1);
+    expect(linear.status).toBe(ALLOWED);
+  });
+
+  it("fails loudly when no timing file is written", async () => {
+    await expect(runTimed(fixturePath, "skip-exit-handlers", repoRoot)).rejects.toThrow(/timing file/);
   });
 
   it("matches capture-install --apply case-insensitively in the pre-check", () => {
