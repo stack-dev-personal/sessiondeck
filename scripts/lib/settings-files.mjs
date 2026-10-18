@@ -68,7 +68,8 @@ function accountHome() {
  * junction, a symlink, an extended-length prefix or a different spelling does not get past, and
  * both the given home and the account's own home count (USERPROFILE and HOME can be changed).
  * This stops accidents only: an unset CLAUDECODE or a relocated CLAUDE_CONFIG_DIR skips it, and
- * the project guard hook has no rule for the installer yet (it matches the literal settings path).
+ * the project guard hook adds an accident-level rule against `capture-install --apply` in Bash
+ * (not a defence against a hostile session, which already has the user's privileges).
  * @param {NodeJS.ProcessEnv} env @param {string} [home] @param {string | undefined} [realHome]
  * @returns {Promise<boolean>}
  */
