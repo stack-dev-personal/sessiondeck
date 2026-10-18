@@ -10,20 +10,37 @@ const preloadUrl = pathToFileURL(resolve(here, "regexp-timing-preload.mjs")).hre
 /** Spawn timeout: the real hook timeout is 5 s and a timeout lets the command run. */
 export const MAX_WALL_MS = 4000;
 
+export interface TimedOptions {
+  /** Spawn timeout. Defaults to MAX_WALL_MS. */
+  readonly timeoutMs?: number;
+  /** Delay before the stdin JSON is written, to prove the stdin wait is subtracted. */
+  readonly stdinDelayMs?: number;
+}
+
+/** Script time the guard itself spent: stdin wait (set by the test process) and execSync excluded. */
+export function workMs(run: Pick<TimedRun, "scriptMs" | "stdinWaitMs" | "execMs">): number {
+  return run.scriptMs - run.stdinWaitMs - run.execMs;
+}
+
 export interface TimedRun {
   readonly status: number | null;
   readonly matchMs: number;
   readonly calls: number;
-  /** Preload end to process exit, including execMs. */
+  /** Preload end to process exit, including stdinWaitMs and execMs. */
   readonly scriptMs: number;
+  /** Preload end to stdin end. Set by the test process (spawn load), not by the guard. */
+  readonly stdinWaitMs: number;
   /** Time inside child_process.execSync. */
   readonly execMs: number;
   readonly execCalls: number;
   readonly wallMs: number;
 }
 
-type Totals = Pick<TimedRun, "matchMs" | "calls" | "scriptMs" | "execMs" | "execCalls">;
-const TOTAL_KEYS = ["matchMs", "calls", "scriptMs", "execMs", "execCalls"] as const;
+type Totals = Pick<
+  TimedRun,
+  "matchMs" | "calls" | "scriptMs" | "stdinWaitMs" | "execMs" | "execCalls"
+>;
+const TOTAL_KEYS = ["matchMs", "calls", "scriptMs", "stdinWaitMs", "execMs", "execCalls"] as const;
 
 function readTotals(file: string): Totals {
   let parsed: unknown;
@@ -33,6 +50,9 @@ function readTotals(file: string): Totals {
     throw new Error(`timing file missing or unparsable: ${String(error)}`);
   }
   const totals = parsed as Record<string, unknown>;
+  if (totals.stdinWaitMs === null) {
+    throw new Error("stdin end was not recorded by the preload (timing file has no stdin wait)");
+  }
   if (!TOTAL_KEYS.every((key) => typeof totals[key] === "number")) {
     throw new Error(`timing file has the wrong shape: ${JSON.stringify(parsed)}`);
   }
@@ -42,21 +62,34 @@ function readTotals(file: string): Totals {
 interface Exit {
   readonly status: number | null;
   readonly signal?: NodeJS.Signals | null;
+  /** True when the helper's own timeout fired (child.killed), not when the child killed itself. */
+  readonly killedByHelper?: boolean;
   readonly error?: Error;
 }
 
-function spawnWithInput(args: string[], input: string, timingFile: string): Promise<Exit> {
+function spawnWithInput(
+  args: string[],
+  input: string,
+  timingFile: string,
+  options: TimedOptions,
+): Promise<Exit> {
   return new Promise((resolveExit) => {
     const child = spawn(process.execPath, args, {
-      timeout: MAX_WALL_MS,
+      timeout: options.timeoutMs ?? MAX_WALL_MS,
       windowsHide: true,
       stdio: ["pipe", "ignore", "ignore"],
       env: { ...process.env, SD_GUARD_TIMING_FILE: timingFile },
     });
     child.on("error", (error) => resolveExit({ status: null, error }));
-    child.on("close", (status, signal) => resolveExit({ status, signal }));
+    child.on("close", (status, signal) =>
+      resolveExit({ status, signal, killedByHelper: child.killed }),
+    );
     child.stdin.on("error", () => undefined); // child may exit before reading all input
-    child.stdin.end(input);
+    if (options.stdinDelayMs) {
+      setTimeout(() => child.stdin.end(input), options.stdinDelayMs);
+    } else {
+      child.stdin.end(input);
+    }
   });
 }
 
@@ -69,19 +102,28 @@ export async function runTimed(
   scriptPath: string,
   command: string,
   cwd: string,
+  options: TimedOptions = {},
 ): Promise<TimedRun> {
+  const timeoutMs = options.timeoutMs ?? MAX_WALL_MS;
   const dir = mkdtempSync(join(tmpdir(), "sd-guard-timing-"));
   const timingFile = join(dir, "timing.json");
   try {
     const input = JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd });
     const start = performance.now();
-    const exit = await spawnWithInput(["--import", preloadUrl, scriptPath], input, timingFile);
+    const exit = await spawnWithInput(
+      ["--import", preloadUrl, scriptPath],
+      input,
+      timingFile,
+      options,
+    );
     const wallMs = performance.now() - start;
     if (exit.error) {
       throw new Error(`spawn failed: ${exit.error.message}`);
     }
-    if (exit.signal) {
-      throw new Error(`guard killed after ${MAX_WALL_MS} ms wall (signal ${exit.signal})`);
+    // Only the helper's own timeout is a timeout. A child that kills itself (SIGKILL on Linux,
+    // an exit code on Windows) falls through to readTotals and fails on the missing timing file.
+    if (exit.signal && (exit.killedByHelper || wallMs >= timeoutMs)) {
+      throw new Error(`guard killed after ${timeoutMs} ms wall (signal ${exit.signal})`);
     }
     return { status: exit.status, ...readTotals(timingFile), wallMs };
   } finally {
@@ -89,7 +131,7 @@ export async function runTimed(
   }
 }
 
-/** Run with the lowest script time (execSync excluded) of `repeats` sequential runs. */
+/** Run with the lowest script time (stdin wait and execSync excluded) of `repeats` sequential runs. */
 export async function runTimedBest(
   scriptPath: string,
   command: string,
@@ -100,7 +142,5 @@ export async function runTimedBest(
   for (let i = 0; i < repeats; i += 1) {
     runs.push(await runTimed(scriptPath, command, cwd));
   }
-  return runs.reduce((best, run) =>
-    run.scriptMs - run.execMs < best.scriptMs - best.execMs ? run : best,
-  );
+  return runs.reduce((best, run) => (workMs(run) < workMs(best) ? run : best));
 }

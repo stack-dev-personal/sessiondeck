@@ -4,10 +4,19 @@
 // helper timeout kills it); "exec-sync" calls execSync once; anything else runs a linear control and
 // exits 0.
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 
-const QUADRATIC_RUN = 30_000;
-const input = JSON.parse(readFileSync(0, "utf8"));
+// Reads stdin through the stream like guard.mjs, so the preload sees the stdin `end` event.
+function readStdin() {
+  return new Promise((resolve) => {
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("end", () => resolve(data));
+  });
+}
+
+const QUADRATIC_RUN = 24_000;
+const input = JSON.parse(await readStdin());
 const subject = " ".repeat(QUADRATIC_RUN) + "a";
 
 if (input.tool_input.command === "skip-exit-handlers") {
@@ -26,7 +35,7 @@ if (input.tool_input.command === "hang") {
   await new Promise(() => undefined);
 }
 if (input.tool_input.command === "exec-sync") {
-  execSync("node -e 0", { stdio: "ignore" });
+  execSync("node -e 0", { stdio: "ignore", windowsHide: true });
   process.exit(0);
 }
 if (input.tool_input.command === "quadratic") {

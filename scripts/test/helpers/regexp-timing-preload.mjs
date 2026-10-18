@@ -2,7 +2,12 @@
 //  - matchMs/calls: time and count of regex matching. RegExp.prototype.test, match, replace, search
 //    and split all call RegExp.prototype.exec, so one wrapper covers every regex call once.
 //  - scriptMs: time from this preload finishing to process exit. Covers JSON.parse, `when`
-//    functions, hand-written loops and the stdin read, and leaves out node start-up.
+//    functions and hand-written loops, and leaves out node start-up.
+//  - stdinWaitMs: preload finishing to stdin `end`. How long the test process takes to write the
+//    input depends on parent load (spawn blocks its event loop), not on the guard, so tests
+//    subtract it from scriptMs. null (never 0) when `end` did not fire; the helper then throws.
+//    Only an `end` listener is attached: no `data` listener and no resume(), so stdin flow for
+//    the script is unchanged.
 //  - execMs/execCalls: time and count of child_process.execSync (the guard's `git rev-parse`),
 //    which is input independent and slow on loaded Windows. Tests subtract it from scriptMs.
 // execSync is replaced on the builtin module object and syncBuiltinESMExports() republishes it, so
@@ -19,7 +24,8 @@ if (!timingFile) {
   throw new Error("SD_GUARD_TIMING_FILE is not set");
 }
 
-const totals = { matchMs: 0, calls: 0, scriptMs: 0, execMs: 0, execCalls: 0 };
+/** @type {{ matchMs: number, calls: number, scriptMs: number, stdinWaitMs: number | null, execMs: number, execCalls: number }} */
+const totals = { matchMs: 0, calls: 0, scriptMs: 0, stdinWaitMs: null, execMs: 0, execCalls: 0 };
 
 const originalExec = RegExp.prototype.exec;
 /**
@@ -54,6 +60,9 @@ function timedExecSync(...args) {
 syncBuiltinESMExports();
 
 const scriptStart = performance.now();
+process.stdin.on("end", () => {
+  totals.stdinWaitMs = performance.now() - scriptStart;
+});
 process.on("exit", () => {
   totals.scriptMs = performance.now() - scriptStart;
   writeFileSync(timingFile, JSON.stringify(totals));
