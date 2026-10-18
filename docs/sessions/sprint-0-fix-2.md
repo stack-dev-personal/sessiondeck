@@ -11,6 +11,7 @@
 - [x] U1 fix round 1 (FIX-2): tighten timing tests after review
 - [x] U1 fix round 2 (FIX-2): Linux self-kill, stdin wait, self-test size, file split
 - [ ] U2 CI evidence and verify
+- [x] U3 fix round 1 (FIX-2): guard patch option and continuation backtracking, growth rows
 - [x] U3 guard patch: repeated-anchor quadratic in guard.mjs, delivered as docs/patches/FIX-2-guard.patch with its timing rows (not applied; the user applies it, see docs/patches/README.md)
 
 ## Decisions made
@@ -46,4 +47,17 @@
 - Residual, not fixed: a quoted node path whose prefix contains `;` and also contains the `--apply` flag inside the quotes could be matched differently by the segment skip. Contrived, not reachable by a plain command line.
 - Not done here (no access to the user terminal): applying the patch, and a CI run on it. The user applies it to sprint/0-bootstrap, then CI must show the same four jobs green.
 
+## U3 review round 1
+
+- sd-security-reviewer on the patch: 2 HIGH, 4 LOW. Both HIGH reproduced and fixed in `docs/patches/FIX-2-guard.patch` (rebuilt in a temporary detached worktree on 839604d, removed afterwards; `.claude/` here untouched).
+- HIGH 1 (option backtracking): `--?[\w.-]+` read `--a` two ways, so 33 options was 2^33 paths inside the new `OPTION{0,32}` lookahead, run at every node anchor before the `--apply` check. `node` plus `--a b` x33 then `; node scripts/capture-install.mjs --apply` was killed at 20 s with the first patch version (4000 ms in the test); the hook timeout counts as allow. Fixed with `-[\w.-]+`.
+- Found while proving it: option values had the same kind of ambiguity (`-a x\<LF>`: value takes the backslash or SEP takes the backslash-newline). 24 options 0.4 s, 32 options 82 s, in the previous patch version and in the current guard. Fixed with a value class that excludes a backslash starting a backslash-newline.
+- Honest note on the cross-segment row: on the current guard (839604d) that command is fast (the `--apply` lookahead fails first, 5 ms), so its RED is the call count only; the regression was in the first version of the patch. The one-segment shapes are the ones the current guard cannot survive.
+- HIGH 2 (continuations): `SEGMENT_REST` tried `[^|;&\n]` first and stopped at the newline after a backslash, so every candidate rescanned the logical segment. Fixed with continuation first. Rows for LF and CRLF (99k: 650 ms and 601 ms on the current guard, 3 to 4 ms patched).
+- LOW growth: header no longer claims linearity in general; each rule names the test row. New growth rows (N versus 4N, best of 3, ratio under 8, 5 ms floor) for `git push `, the continuation shape, `--x=node`, option count k=16 vs 64, backslash-value k=16 vs 64. Ratios 1.0 to 2.7. guard.test.ts 26 to 29 s, whole scripts suite 31 to 34 s on Windows (was 24 s).
+- LOW accepted, listed as known gaps (rows in `guard-rules.test.ts`): more than 32 options before the script is allowed; `node capture-install "x;)/node" capture-install --apply` is allowed (blocked by the old guard only by luck).
+- Fuzz old versus new: 6000 cases, 0 differing exit codes.
+
 ## Deferred findings
+
+- [LOW] Push rules are pattern based and bypassable: `git -C dir push -f`, `git push origin +feature`, `git push origin HEAD:refs/heads/main`. Pre-existing, not weakened by the patch. Track in a later unit.

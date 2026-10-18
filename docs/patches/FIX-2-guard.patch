@@ -1,16 +1,17 @@
 diff --git a/.claude/hooks/guard.mjs b/.claude/hooks/guard.mjs
-index 49c512a..ab4783a 100644
+index 49c512a..e2b1cb2 100644
 --- a/.claude/hooks/guard.mjs
 +++ b/.claude/hooks/guard.mjs
-@@ -3,6 +3,21 @@
+@@ -3,6 +3,25 @@
  // Blocks the handful of commands the operating model forbids (docs/planning/04-session-map.md section 1)
  // so that "allow Bash" in .claude/settings.json stays safe. Exit 2 blocks the tool and feeds the
  // reason back to Claude; exit 0 allows. Never throws: a guard that crashes would block everything.
 +//
 +// Time bound. The hook has a 5 s timeout and Claude Code treats a timeout as allow, so a rule that
-+// can be driven past 5 s is a bypass. Every rule here is linear in the length of the command, and
-+// the tests time the whole guard at 100k characters, including inputs that repeat a rule's anchor
-+// (`git push ` x N, `node ` x N, ...). The argument, rule by rule:
++// can be driven past 5 s is a bypass. The tests time the whole guard at 100k characters, including
++// inputs that repeat a rule's anchor (`git push ` x N, `node ` x N, ...), and check growth: the same
++// shape at N and 4N must stay well under the 16x of a quadratic (scripts/test/guard.test.ts, growth
++// rows). Rule by rule, with the row that tests each claim:
 +// - Push rules: a start can only be the beginning of the command or a separator (| ; &), and the
 +//   lookahead finds the FIRST `git push` in that segment once and captures it (a lookahead is
 +//   atomic in JS, so the engine never retries a later occurrence). The tail then scans the rest of
@@ -18,13 +19,16 @@ index 49c512a..ab4783a 100644
 +//   first occurrence has it after it too. Each segment is scanned by exactly one start.
 +// - rm rule: the flag token is matched with one deterministic class per letter (the letters before
 +//   the first r, or before the first f, exclude that letter), so no letter run is rescanned.
-+// - capture-install --apply: see CAPTURE_APPLY below; the flag is checked once per candidate, not
-+//   once per `node` anchor, and the options chain is capped.
-+// The other rules are a fixed literal followed by a bounded token, so each anchor costs O(1).
++// - capture-install --apply: see CAPTURE_NODE below; the flag is checked once per candidate, not
++//   once per `node` anchor, the options chain is capped, and every alternation inside it is
++//   deterministic (a dash-option token and an option value each have exactly one parse), so a failed
++//   match cannot explore 2^k paths. Growth rows: `node --x=node ` x N, the continuation shape,
++//   the option-count shape, and the exact `node --a b` x33 commands.
++// - git branch, git reset: a fixed literal then a bounded token; tested by the x N rows.
  import { execSync } from 'node:child_process';
  
  const read = () => new Promise((resolve) => {
-@@ -21,31 +36,61 @@ const read = () => new Promise((resolve) => {
+@@ -21,31 +40,65 @@ const read = () => new Promise((resolve) => {
  // whitespace, a quote, a closer, a redirect or the end, so --apply-later is not matched. A command
  // that merely quotes the whole node line (grep, echo, commit message) is blocked too: fail closed,
  // listed as known false positives in the tests. The start is a single anchor character (no repeated
@@ -43,18 +47,23 @@ index 49c512a..ab4783a 100644
 +// in the same segment has even less text after it, so matching resumes after the segment: each
 +// segment is scanned at most twice. (Before this, the flag lookahead ran at every anchor, which is
 +// quadratic on `node ` x N.) More than MAX_OPTIONS options before the script is not recognised.
++// Ambiguity is removed on purpose: an option is `-` plus one token class (so `--a` has one parse, not
++// `--`+`a` or `-`+`-a`: 2^k paths), and an option value never ends in a backslash that starts a
++// backslash-newline (SEP takes it), so `-a x\<LF>` x k has one parse too. Both were exponential.
 +const MAX_OPTIONS = 32;
  const SEP = String.raw`(?:\s|\x5c\r?\n)+`;
 -const NODE = String.raw`(?:(?:^|[\s;&|(\`{])(?:[^\s|;&"'()\`]*[\x5c/])?|["'](?:[^"'\n]*[\x5c/])?)(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
 +const NODE = String.raw`(?:(?:^|[\s;&|(\`{])(?:[^\s|;&"'(){\`]*[\x5c/])?|["'](?:[^"'\n]*[\x5c/])?)(?:node(?:\.exe)?|npx(?:\.cmd)?)["']?`;
  const FLAG = String.raw`(?:^|[\s"'=])--apply(?=[\s"'\`);&|<>\x5c]|$)`;
  const SEGMENT = String.raw`(?:[^|;&\n]|\x5c\r?\n)*?`;
- const OPTION = String.raw`(?:${SEP}--?[\w.-]+(?:=[^\s|;&]+)?(?:${SEP}(?!-)[^\s|;&]+)?)`;
+-const OPTION = String.raw`(?:${SEP}--?[\w.-]+(?:=[^\s|;&]+)?(?:${SEP}(?!-)[^\s|;&]+)?)`;
++const VALUE = String.raw`(?:[^\s|;&\x5c]|\x5c(?!\r?\n))+`;
++const OPTION = String.raw`(?:${SEP}-[\w.-]+(?:=${VALUE})?(?:${SEP}(?!-)${VALUE})?)`;
  const SCRIPT = String.raw`["']?(?:[^\s|;&"']*[\x5c/])?capture-install(?:\.mjs)?(?=[\s"'\`);&|\x5c]|$)`;
 -const CAPTURE_APPLY = new RegExp(`${NODE}(?=${SEGMENT}${FLAG})${OPTION}*${SEP}${SCRIPT}`, 'i');
 +const CAPTURE_NODE = new RegExp(`(${NODE})(?=${OPTION}{0,${MAX_OPTIONS}}${SEP}${SCRIPT})`, 'gi');
 +const FLAG_AFTER = new RegExp(`${SEGMENT}${FLAG}`, 'iy');
-+const SEGMENT_REST = /(?:[^|;&\n]|\x5c\r?\n)*/y;
++const SEGMENT_REST = /(?:\x5c\r?\n|[^|;&\n])*/y;
 +
 +function captureApply(cmd) {
 +  CAPTURE_NODE.lastIndex = 0;
@@ -96,7 +105,7 @@ index 49c512a..ab4783a 100644
  ];
  
  function currentBranch(cwd) {
-@@ -57,13 +102,15 @@ function currentBranch(cwd) {
+@@ -57,13 +110,15 @@ function currentBranch(cwd) {
    }
  }
  
@@ -113,11 +122,30 @@ index 49c512a..ab4783a 100644
        process.stderr.write(`sessiondeck guard: ${rule.why}. Command: ${cmd}\n`);
        process.exit(2);
      }
+diff --git a/scripts/test/guard-rules.test.ts b/scripts/test/guard-rules.test.ts
+index 82de888..6a9ce53 100644
+--- a/scripts/test/guard-rules.test.ts
++++ b/scripts/test/guard-rules.test.ts
+@@ -108,6 +108,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
+     "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
+     "powershell -enc AAAA",
+     "node -e \"import('./scripts/lib/install-cli.mjs')\"",
++    // FIX-2 guard patch: more than 32 options between node and the script is not recognised (the
++    // option chain is capped so matching stays bounded; the old guard blocked this).
++    `node ${"-r x ".repeat(40)}scripts/capture-install.mjs --apply`,
++    // FIX-2 guard patch: the matcher is not quote aware. A `;` inside a quoted argument ends the
++    // segment for the flag check, so the node line below is no longer matched (the old guard blocked
++    // it only by luck; `node capture-install "a;b" --apply` is allowed by both guards).
++    'node capture-install "x;)/node" capture-install --apply',
++    'node capture-install "a;b" --apply',
+   ];
+   it.each(knownGaps)("known gap (allowed): %s", (command) => {
+     expect(runGuard(command).status).toBe(ALLOWED);
 diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
-index cad7532..0071c3c 100644
+index cad7532..456f7c4 100644
 --- a/scripts/test/guard.test.ts
 +++ b/scripts/test/guard.test.ts
-@@ -26,13 +26,19 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -26,13 +26,22 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
    const MAX_SCRIPT_MS = 300;
    const RUN = 100_000;
    const REPEATS = 3;
@@ -139,10 +167,13 @@ index cad7532..0071c3c 100644
    const CALLS_PLUS_ONE = 9;
 +  const CALLS_PUSH_MAIN = 3;
 +  const CALLS_CAPTURE_SKIPPED = 12;
++  const BS = "\\";
++  const continuation = (eol: string, count: number): string =>
++    `echo --apply; ${`node capture-install ${BS}${eol}`.repeat(count)}`;
    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
      cwd: repoRoot,
      encoding: "utf8",
-@@ -57,8 +63,9 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -57,8 +66,9 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      status,
      execCalls,
    });
@@ -154,7 +185,7 @@ index cad7532..0071c3c 100644
    const timingInputs: Record<string, TimingRow> = {
      spaces: row(" ".repeat(RUN), ALLOWED),
      tabs: row("\t".repeat(RUN), ALLOWED),
-@@ -66,15 +73,57 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -66,15 +76,91 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      "node + spaces + capture-install --apply": row(
        `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
        BLOCKED,
@@ -210,6 +241,113 @@ index cad7532..0071c3c 100644
 +      ALLOWED,
 +      CALLS_PLUS_ONE,
 +    ),
++    // Security review of the first patch: `--a` could be read as `--`+`a` or `-`+`-a`, so 33 options
++    // gave 2^33 paths and the guard ran past the hook timeout (a timeout is an allow).
++    "node + --a b x33, then a capture-install --apply segment": row(
++      `node ${"--a b ".repeat(33)}; node scripts/capture-install.mjs --apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    "node + --a b x33 + node capture-install --apply, one segment": row(
++      `node ${"--a b ".repeat(33)}node scripts/capture-install.mjs --apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    // The same kind of ambiguity with an option value that ends in a backslash-newline continuation.
++    "node + -a x backslash-newline x33 + node capture-install --apply": row(
++      `node ${`-a x${BS}\n`.repeat(33)}node scripts/capture-install.mjs --apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    "node --x=node x N + capture-install --apply": row(
++      `${"node --x=node ".repeat(7_000)}capture-install --apply`,
++      BLOCKED,
++      CALLS_PLUS_ONE,
++    ),
++    // Backslash-newline continuations: the flag check must skip the whole logical segment.
++    "node capture-install backslash-LF x N, flag in another segment": row(
++      continuation("\n", 4_500),
++      ALLOWED,
++      CALLS_CAPTURE_SKIPPED,
++    ),
++    "node capture-install backslash-CRLF x N, flag in another segment": row(
++      continuation("\r\n", 4_500),
++      ALLOWED,
++      CALLS_CAPTURE_SKIPPED,
++    ),
    };
    // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
    it.concurrent.each(Object.entries(timingInputs))(
+@@ -98,6 +184,72 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+     },
+   );
+ 
++  // Growth check (security review, FIX-2 U1/U3): a bound at one size passes a slowly growing
++  // quadratic, or an exponential driven by a small count. Each shape is timed at a small and a large
++  // size (GROWTH_SCALE times the work), best of REPEATS each. Linear work gives a ratio near
++  // GROWTH_SCALE or less, quadratic gives GROWTH_SCALE squared (16), exponential far more. Values
++  // under GROWTH_FLOOR_MS are clamped to it, so process noise on a 1 ms run cannot fail the ratio.
++  const GROWTH_SCALE = 4;
++  const MAX_GROWTH_RATIO = 8;
++  const GROWTH_FLOOR_MS = 5;
++  const growthRatio = (smallMs: number, bigMs: number): number =>
++    bigMs / Math.max(smallMs, GROWTH_FLOOR_MS);
++  interface GrowthShape {
++    readonly build: (size: number) => string;
++    readonly small: number;
++    readonly status: number;
++  }
++  const growthShapes: Record<string, GrowthShape> = {
++    "git push x N": { build: (n) => "git push ".repeat(n), small: 2_500, status: ALLOWED },
++    "node capture-install backslash-LF x N, flag in another segment": {
++      build: (n) => continuation("\n", n),
++      small: 1_000,
++      status: ALLOWED,
++    },
++    "node --x=node x N + capture-install --apply": {
++      build: (n) => `${"node --x=node ".repeat(n)}capture-install --apply`,
++      small: 1_500,
++      status: BLOCKED,
++    },
++    "options: node + --a b x k + node capture-install --apply": {
++      build: (k) => `node ${"--a b ".repeat(k)}node scripts/capture-install.mjs --apply`,
++      small: 16,
++      status: BLOCKED,
++    },
++    "options: node + -a x backslash-newline x k + node capture-install --apply": {
++      build: (k) => `node ${`-a x${BS}\n`.repeat(k)}node scripts/capture-install.mjs --apply`,
++      small: 16,
++      status: BLOCKED,
++    },
++  };
++  it("growth ratio clamps small values to the floor", () => {
++    expect(growthRatio(0.5, 4)).toBeCloseTo(4 / GROWTH_FLOOR_MS);
++    expect(growthRatio(10, 160)).toBe(16);
++    expect(growthRatio(10, 160)).toBeGreaterThan(MAX_GROWTH_RATIO);
++  });
++  it.concurrent.each(Object.entries(growthShapes))(
++    `work at ${GROWTH_SCALE}x the size grows by less than ${MAX_GROWTH_RATIO}x: %s`,
++    async (name, shape) => {
++      const small = await runTimedBest(guardPath, shape.build(shape.small), repoRoot, REPEATS);
++      const big = await runTimedBest(
++        guardPath,
++        shape.build(shape.small * GROWTH_SCALE),
++        repoRoot,
++        REPEATS,
++      );
++      const ratio = growthRatio(workMs(small), workMs(big));
++      console.info(
++        `guard growth ${name}: workMs ${workMs(small).toFixed(1)} -> ${workMs(big).toFixed(1)}, ` +
++          `matchMs ${small.matchMs.toFixed(1)} -> ${big.matchMs.toFixed(1)}, ratio ${ratio.toFixed(2)}`,
++      );
++      expect(small.status).toBe(shape.status);
++      expect(big.status).toBe(shape.status);
++      expect(big.matchMs).toBeLessThan(MAX_MATCH_MS);
++      expect(workMs(big)).toBeLessThan(MAX_SCRIPT_MS);
++      expect(ratio).toBeLessThan(MAX_GROWTH_RATIO);
++    },
++  );
++
+   // Self-test timeouts: a slow runner must not turn the QUADRATIC_RUN regex into a kill. The hang case
+   // only needs the kill path, so it gets a short timeout.
+   const SELF_TEST = { timeoutMs: 10_000 };
