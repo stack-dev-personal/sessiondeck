@@ -17,9 +17,9 @@ export interface TimedOptions {
   readonly stdinDelayMs?: number;
 }
 
-/** Script time the guard itself spent: stdin wait (set by the test process) and execSync excluded. */
-export function workMs(run: Pick<TimedRun, "scriptMs" | "stdinWaitMs" | "execMs">): number {
-  return run.scriptMs - run.stdinWaitMs - run.execMs;
+/** Script time the guard itself spent: idle stdin wait (set by the test process) and execSync excluded. */
+export function workMs(run: Pick<TimedRun, "scriptMs" | "stdinIdleMs" | "execMs">): number {
+  return run.scriptMs - run.stdinIdleMs - run.execMs;
 }
 
 export interface TimedRun {
@@ -28,8 +28,10 @@ export interface TimedRun {
   readonly calls: number;
   /** Preload end to process exit, including stdinWaitMs and execMs. */
   readonly scriptMs: number;
-  /** Preload end to stdin end. Set by the test process (spawn load), not by the guard. */
+  /** Preload end to stdin end, raw. Evidence only; workMs subtracts stdinIdleMs. */
   readonly stdinWaitMs: number;
+  /** Event loop idle time inside the stdin window. Set by the test process, not by the guard. */
+  readonly stdinIdleMs: number;
   /** Time inside child_process.execSync. */
   readonly execMs: number;
   readonly execCalls: number;
@@ -38,9 +40,17 @@ export interface TimedRun {
 
 type Totals = Pick<
   TimedRun,
-  "matchMs" | "calls" | "scriptMs" | "stdinWaitMs" | "execMs" | "execCalls"
+  "matchMs" | "calls" | "scriptMs" | "stdinWaitMs" | "stdinIdleMs" | "execMs" | "execCalls"
 >;
-const TOTAL_KEYS = ["matchMs", "calls", "scriptMs", "stdinWaitMs", "execMs", "execCalls"] as const;
+const TOTAL_KEYS = [
+  "matchMs",
+  "calls",
+  "scriptMs",
+  "stdinWaitMs",
+  "stdinIdleMs",
+  "execMs",
+  "execCalls",
+] as const;
 
 function readTotals(file: string): Totals {
   let parsed: unknown;
@@ -131,7 +141,7 @@ export async function runTimed(
   }
 }
 
-/** Run with the lowest script time (stdin wait and execSync excluded) of `repeats` sequential runs. */
+/** Run with the lowest script time (idle stdin wait and execSync excluded) of `repeats` sequential runs. */
 export async function runTimedBest(
   scriptPath: string,
   command: string,

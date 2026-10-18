@@ -85,6 +85,7 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
       console.info(
         `guard timing ${name}: match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
           `scriptMs ${run.scriptMs.toFixed(1)}, stdinWaitMs ${run.stdinWaitMs.toFixed(1)}, ` +
+          `stdinIdleMs ${run.stdinIdleMs.toFixed(1)}, workMs ${scriptOnlyMs.toFixed(1)}, ` +
           `execMs ${run.execMs.toFixed(1)}, ` +
           `execCalls ${run.execCalls}, wall ${run.wallMs.toFixed(0)} ms, status ${run.status}`,
       );
@@ -97,11 +98,11 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
     },
   );
 
-  // Self-test timeouts: a slow runner must not turn the 20k-space regex into a kill. The hang case
+  // Self-test timeouts: a slow runner must not turn the QUADRATIC_RUN regex into a kill. The hang case
   // only needs the kill path, so it gets a short timeout.
   const SELF_TEST = { timeoutMs: 10_000 };
   const HANG_TIMEOUT_MS = 500;
-  const STDIN_DELAY_MS = 1200;
+  const STDIN_DELAY_MS = 2500;
 
   // Self-test of the instrumentation: a known quadratic regex and a slow hand loop must trip the
   // same bounds through the same helper, preload, stdin JSON and process.exit path, and a linear
@@ -145,11 +146,27 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
 
   it("subtracts the stdin wait set by the test process from the script time", async () => {
     const delayed = await runTimed(fixturePath, "linear", repoRoot, {
+      timeoutMs: SELF_TEST.timeoutMs,
       stdinDelayMs: STDIN_DELAY_MS,
     });
+    console.info(
+      `guard timing self-test stdin delay: workMs ${workMs(delayed).toFixed(1)}, ` +
+        `stdinWaitMs ${delayed.stdinWaitMs.toFixed(1)}, stdinIdleMs ${delayed.stdinIdleMs.toFixed(1)}`,
+    );
     expect(delayed.stdinWaitMs).toBeGreaterThan(MAX_SCRIPT_MS);
     expect(delayed.scriptMs).toBeGreaterThan(MAX_SCRIPT_MS);
     expect(workMs(delayed)).toBeLessThan(MAX_SCRIPT_MS);
+  });
+
+  it("counts CPU burned inside the stdin data handler (only idle wait is subtracted)", async () => {
+    const hidden = await runTimed(fixturePath, "cpu-in-data", repoRoot);
+    console.info(
+      `guard timing self-test cpu-in-data: workMs ${workMs(hidden).toFixed(1)}, ` +
+        `stdinWaitMs ${hidden.stdinWaitMs.toFixed(1)}, stdinIdleMs ${hidden.stdinIdleMs.toFixed(1)}`,
+    );
+    expect(hidden.matchMs).toBeLessThan(MAX_MATCH_MS);
+    expect(workMs(hidden)).toBeGreaterThan(MAX_SCRIPT_MS);
+    expect(hidden.status).toBe(ALLOWED);
   });
 
   it("fails loudly when no timing file is written", async () => {

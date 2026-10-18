@@ -3,9 +3,13 @@
 //    and split all call RegExp.prototype.exec, so one wrapper covers every regex call once.
 //  - scriptMs: time from this preload finishing to process exit. Covers JSON.parse, `when`
 //    functions and hand-written loops, and leaves out node start-up.
-//  - stdinWaitMs: preload finishing to stdin `end`. How long the test process takes to write the
-//    input depends on parent load (spawn blocks its event loop), not on the guard, so tests
-//    subtract it from scriptMs. null (never 0) when `end` did not fire; the helper then throws.
+//  - stdinWaitMs: preload finishing to stdin `end`, recorded raw as evidence. null (never 0) when
+//    `end` did not fire; the helper then throws.
+//  - stdinIdleMs: event loop idle time inside that same window (performance.eventLoopUtilization
+//    idle delta). How long the test process takes to write the input depends on parent load (spawn
+//    blocks its event loop), not on the guard, and the guard's loop is idle while it waits. Tests
+//    subtract only this idle part from scriptMs, so CPU the guard burns inside a stdin `data`
+//    handler still counts.
 //    Only an `end` listener is attached: no `data` listener and no resume(), so stdin flow for
 //    the script is unchanged.
 //  - execMs/execCalls: time and count of child_process.execSync (the guard's `git rev-parse`),
@@ -24,8 +28,16 @@ if (!timingFile) {
   throw new Error("SD_GUARD_TIMING_FILE is not set");
 }
 
-/** @type {{ matchMs: number, calls: number, scriptMs: number, stdinWaitMs: number | null, execMs: number, execCalls: number }} */
-const totals = { matchMs: 0, calls: 0, scriptMs: 0, stdinWaitMs: null, execMs: 0, execCalls: 0 };
+/** @type {{ matchMs: number, calls: number, scriptMs: number, stdinWaitMs: number | null, stdinIdleMs: number, execMs: number, execCalls: number }} */
+const totals = {
+  matchMs: 0,
+  calls: 0,
+  scriptMs: 0,
+  stdinWaitMs: null,
+  stdinIdleMs: 0,
+  execMs: 0,
+  execCalls: 0,
+};
 
 const originalExec = RegExp.prototype.exec;
 /**
@@ -60,8 +72,10 @@ function timedExecSync(...args) {
 syncBuiltinESMExports();
 
 const scriptStart = performance.now();
+const eluStart = performance.eventLoopUtilization();
 process.stdin.on("end", () => {
   totals.stdinWaitMs = performance.now() - scriptStart;
+  totals.stdinIdleMs = performance.eventLoopUtilization(eluStart).idle;
 });
 process.on("exit", () => {
   totals.scriptMs = performance.now() - scriptStart;

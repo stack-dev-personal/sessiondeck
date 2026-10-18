@@ -1,16 +1,27 @@
 // Self-test fixture for the guard timing instrumentation. Same stdin JSON and process.exit path as
 // the guard. The command picks the case: "quadratic" runs a regex that backtracks quadratically on
 // a long space run and exits 2; "slow-loop" busy-waits 600 ms with no regex; "hang" never exits (the
-// helper timeout kills it); "exec-sync" calls execSync once; anything else runs a linear control and
+// helper timeout kills it); "cpu-in-data" busy-waits 400 ms inside the stdin data handler (no
+// regex) and exits 0; "exec-sync" calls execSync once; anything else runs a linear control and
 // exits 0.
 import { execSync } from "node:child_process";
+
+const CPU_IN_DATA_MS = 400;
 
 // Reads stdin through the stream like guard.mjs, so the preload sees the stdin `end` event.
 function readStdin() {
   return new Promise((resolve) => {
     let data = "";
     process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => (data += chunk));
+    process.stdin.on("data", (chunk) => {
+      data += chunk;
+      if (chunk.includes("cpu-in-data")) {
+        const end = performance.now() + CPU_IN_DATA_MS;
+        while (performance.now() < end) {
+          // busy wait inside the data handler: CPU that must not be subtracted as stdin wait
+        }
+      }
+    });
     process.stdin.on("end", () => resolve(data));
   });
 }

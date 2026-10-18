@@ -33,4 +33,8 @@
 - MINOR: the `hang` case uses a 500 ms timeout; functional rows moved to `scripts/test/guard-rules.test.ts` (assertions unchanged) so the timing file runs in its own worker; `windowsHide` added to the fixture `execSync`.
 - Timing table is `timingInputs` in `scripts/test/guard.test.ts`; U3 adds its repeated-anchor rows there.
 
+## Review round 3
+
+- sd-reviewer verdict merge on cc53b60; CI cc53b60 push 39163412975 and pull_request 39163417212 green on all four jobs. Minors fixed here: ELU idle subtraction (the preload records the raw stdin window as `stdinWaitMs` and the event loop idle time inside it as `stdinIdleMs`; only the idle part is subtracted, so CPU in a stdin `data` handler counts; new `cpu-in-data` self-test), stdin delay 2500 ms with the 10 s self-test timeout, and the comment now names QUADRATIC_RUN (24k kept).
+
 ## Deferred findings
