@@ -28,8 +28,8 @@ Every question that was not answered before planning started, with the default t
 | # | Question | Default assumed | If you change it |
 |---|----------|-----------------|------------------|
 | A1 | Project name | `sessiondeck` (placeholder; "deck" because the layouts are the point) | Rename folder, `collection` frontmatter, package scopes |
-| A2 | Terminal and runtime on the laptop | Native Windows `claude.exe` in Windows Terminal, Git Bash installed. WSL2 treated as a stretch target in Phase 1. | Phase 1 Scope; probe install docs |
-| A3 | Two user profiles (`C:\Users\stack` vault, `C:/Users/estac` harness sessions) | Two machines; both run the probe, one box aggregates. The probe carries a `host` field from day one. | Nothing structural; the envelope already has `host` |
+| A2 | Terminal and runtime on the laptop | Native Windows `claude.exe` in Windows Terminal, Git Bash installed. WSL2 treated as a stretch target in Phase 1. Amended 2026-10-19 (decisions 17, 19): Claude sessions also run in WSL2 on the laptop. The WSL2 Linux build of the probe plus a loopback bridge to the hub on Windows moves from stretch to required in Phase 1 (R1.11, open question 2). Native Windows stays first-class. | Phase 1 Scope; probe install docs |
+| A3 | Two user profiles (`C:\Users\stack` vault, `C:/Users/estac` harness sessions) | Two machines; both run the probe, one box aggregates. The probe carries a `host` field from day one. Amended 2026-10-19 (decision 17): the user states the second machine is the MacBook (M2 Pro, macOS Sonoma), which is also the box. | Nothing structural; the envelope already has `host` |
 | A4 | Plan type | claude.ai Pro/Max. `rate_limits` (5h/7d) is only present on Pro/Max; on an API key those indicators show "n/a", nothing else breaks. | Phase 3 indicator set |
 | A5 | Claude Code version | ≥ 2.1.251 (needed for `rate_limits` and `prompt_cache` in statusLine). Phase 0 verifies with `claude --version` and captures real payloads as fixtures. | Phase 0 Inputs |
 | A6 | Metric priority for the MVP board | In order: state (working / waiting on permission / idle / error / exited), context % used, 5h and 7d usage, active subagents, task progress, cost, model + effort, branch/worktree, elapsed time, last assistant message. | Phase 3 Requirements |
@@ -53,6 +53,6 @@ Every question that was not answered before planning started, with the default t
 ## Questions still worth answering before Phase 1 starts
 
 1. Is Git Bash installed on the laptop? (Decides whether statusLine runs through Git Bash or PowerShell; the exec-form probe avoids the issue for hooks but statusLine has no exec form.)
-2. Do you run any sessions inside WSL2 today? If yes, Phase 1 gains a Linux build of the probe and a loopback bridge.
-3. Does the box exist yet, and what OS? (Phase 7 assumes Linux with Docker.) Answered 2026-10-19 (decisions 14, 15): an always-on Apple laptop, M2 Pro, staying on macOS; Phase 7 plans for a macOS host with linux/arm64 containers.
+2. Do you run any sessions inside WSL2 today? If yes, Phase 1 gains a Linux build of the probe and a loopback bridge. Answered 2026-10-19 (decisions 17, 19): yes. Phase 1 gains the WSL2 Linux build and loopback bridge (R1.11); native Windows stays first-class.
+3. Does the box exist yet, and what OS? (Phase 7 assumes Linux with Docker.) Answered 2026-10-19 (decisions 14, 15): an always-on Apple laptop, M2 Pro, staying on macOS; Phase 7 plans for a macOS host with linux/arm64 containers. Decision 17 (2026-10-19): macOS Sonoma; the box is the MacBook, also the second machine.
 4. Does agentic-harness already register hooks on `PreToolUse`/`PostToolUse`? Two hooks on the same event run in parallel, which is fine, but the per-event budget is shared on `SessionEnd` (1.5 s).
