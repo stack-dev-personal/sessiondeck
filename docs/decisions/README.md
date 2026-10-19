@@ -5,10 +5,12 @@ One file per decision, numbered, never edited after acceptance (superseding deci
 | ADR | Decision | Status |
 |-----|----------|--------|
 | 0001 | Sessions on the laptop, hub on the box | accepted 2026-10-08 |
-| 0002 | Observe-only MVP; session hosting is Phase 8 | accepted 2026-10-08 |
+| 0002 | Observe-only MVP; session hosting is Phase 8 | accepted 2026-10-08; ordering clause superseded by 0010 |
 | 0003 | Cloudflare Tunnel and Access front the box | accepted 2026-10-08 |
 | 0004 | Adopt and improve open source; cite code; AGPL as spec only | accepted 2026-10-08 |
 | 0005 | No planning framework; own section list and agents | accepted 2026-10-08 |
 | 0006 | Supabase is the database backend; SQLite stays local for Phase 2 | accepted 2026-10-08 |
 | 0007 | Bash allowed project-wide with a guard hook and deny rules | accepted 2026-10-08 |
 | 0008 | Three-level agentic workflow with containerized mini-sprints | accepted 2026-10-08 |
+| 0009 | Sprint containers mount the host Docker socket; no docker-in-docker | accepted 2026-10-15 |
+| 0010 | Harbor last: local-first development, box port and edge at the end | accepted 2026-10-19 |

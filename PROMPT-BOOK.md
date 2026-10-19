@@ -57,6 +57,7 @@ Handoff: docs/handoffs/{HANDOFF_FILE} (read it now; it names the phase doc, the 
 Branch: {SESSION_BRANCH}, created from sprint/{SPRINT_ID}-{SPRINT_SLUG}. Push only this branch.
 
 How to develop
+- Keep every subagent call in the foreground. Never start an Agent call in the background: a headless main turn that idles stops background subagents and the session exits.
 - Run /sprint-loop. Delegate with the /work-unit template. Executors own directories (.claude/agents/README.md); a unit that needs another directory becomes a task for that directory's executor.
 - Tests before or alongside code, per /work-unit. No unit is reported done without its proving test or bench.
 - Test containers: you are expected to use Docker for anything with a runtime. `docker compose -f infra/docker-compose.yml up -d` for the hub when your unit touches ingest, API, or WS; a throwaway Postgres or Supabase container when the unit touches storage; a Playwright container (`mcr.microsoft.com/playwright`) for web. Executors may start and stop containers freely; name them `sd-{SPRINT_ID}-{SESSION_ID}-*` and remove them at session end.
@@ -78,6 +79,12 @@ Merging methodology
 
 Status (PROMPT-BOOK.md section 6)
 - Write /state/{SPRINT_ID}/sessions/{SESSION_ID}.json at intake, after every unit, and at exit. States: running, blocked, green, failed.
+- Heartbeat: while a foreground subagent call runs you take no turns, so you cannot rewrite the file yourself. Before any delegation expected to run longer than a few minutes, start a background shell heartbeat (a Bash command run in the background, not an Agent call) that rewrites updated_at in your status file at least every 10 minutes, writing a temporary file and renaming it over the status file. The container sets CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 (infra/sprint/entrypoint.sh), so a headless `claude -p` waits forever on background tasks: the heartbeat does NOT die with a dead or hung session, and left running it would keep a dead session looking alive. So it must be bounded and killed on every path:
+  - Lifetime cap: the loop exits by itself after the unit budget (at most 60 minutes) even if nobody stops it.
+  - Stop file: each tick first checks for a stop file next to the status file (`{SESSION_ID}.hb-stop`) and exits when it exists.
+  - Each tick re-reads the status file and changes only `updated_at` (never state, unit or summary fields), so it cannot overwrite what you wrote after it started. It never creates the status file.
+  - Kill it on every exit path: when the delegated call returns, and in the blocked and failed paths before you write the final status and exit (write the stop file, then kill the process id). Never exit with the heartbeat running.
+- The conductor treats a status file whose updated_at is older than 15 minutes as stale (a dead or hung session).
 - green means: PR open against the sprint branch, CI green on the branch, VERIFY table has every handoff requirement at pass or "verified by CI", reviewer verdict merge, security gate pass where required.
 - Session log: docs/sessions/{SESSION_BRANCH_SLUG}.md on your branch, per /sprint-loop.
 
@@ -106,6 +113,8 @@ Template:
 {UNIVERSAL PREAMBLE}
 
 You are the mini-sprint orchestrator for sprint {SPRINT_ID} ({SPRINT_NAME}) of sessiondeck. You run until every session in this sprint is green and the joined branch is ready to merge, or until you are blocked. You write no code and resolve no conflicts yourself; you launch, monitor, relaunch, merge, and report.
+
+Keep every subagent call in the foreground. Never start an Agent call in the background: a headless main turn that idles stops background subagents and the session exits.
 
 Package (from MINI-SPRINT-ORDER.md, sprint {SPRINT_ID}):
 - Sessions and lanes: {SESSION_TABLE}
@@ -181,7 +190,7 @@ Resume session {SESSION_ID}. You were blocked. The user's answer is in /state/{S
 ```json
 {
   "sprint": "1", "name": "mvp", "branch": "sprint/1-mvp",
-  "state": "running | blocked | merging | gate | awaiting-merge-approval | merged | failed",
+  "state": "running | blocked | merging | gate | awaiting-merge-approval | merged | failed | green",
   "started_at": "2026-10-12T01:00:00Z", "updated_at": "...",
   "sessions": {
     "S1": { "state": "green", "branch": "p1/probe-hook", "pr": 4, "verify": "docs/VERIFY-P1.md", "units_done": 5, "units_total": 5, "updated_at": "..." },
@@ -193,6 +202,8 @@ Resume session {SESSION_ID}. You were blocked. The user's answer is in /state/{S
   "needs_laptop_confirmation": ["R1.1 hook p95 on Windows"]
 }
 ```
+
+Sprint state `green` means the sprint's sessions and its gate are done and no PR step is pending. The smoke sprint writes it (`/state/smoke/status.json`, prompt in `scripts/sprint/render-prompt.mjs`); `scripts/sprint/status.ps1` and `smoke-check.ps1` accept it. A sprint that goes on to open a PR uses `awaiting-merge-approval` instead.
 
 `/state/{SPRINT_ID}/sessions/{SESSION_ID}.json` is the same shape as one `sessions` entry plus `current_unit`, `last_report`, `pid`.
 

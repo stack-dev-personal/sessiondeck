@@ -1,0 +1,17 @@
+{
+  "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_H>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494/scratchpad",
+  "prompt_id": "73d82a32-0f74-4eff-8d2b-5d613eeaf6c7",
+  "permission_mode": "auto",
+  "agent_type": "<AGENT_1>",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "<TEXT 630>",
+  "background_tasks": [],
+  "session_crons": []
+}

@@ -1,0 +1,27 @@
+# Test override, used only by infra/sprint/test/check-sprint-image.sh:
+#   docker compose -p sd-0-s0c-harness -f ../docker-compose.yml -f docker-compose.test.yml ...
+# It is the only mechanism that puts the stub ahead of the real claude on PATH
+# (/usr/local/sbin precedes /usr/local/bin in the node image); the
+# production entrypoint and compose file have no test switch.
+#
+# Every HARNESS_* value is a non-secret path or name chosen by the harness.
+# Never copy this file to infra/sprint/docker-compose.override.yml: compose
+# merges that name automatically.
+services:
+  sprint:
+    # The harness also passes -p (compose project) so that its project is never
+    # sprint-<id>, the project a real sprint with the same id would use; the
+    # container name below is separate from the project name.
+    container_name: ${HARNESS_CONTAINER}
+    volumes:
+      - ${HARNESS_STUB}:/usr/local/sbin/claude:ro
+      - ${HARNESS_REMOTE}:/remote/repo.git:ro
+      # The bind-mounted bare repo is owned by another uid; trust it for this
+      # test only through the system git config (the production image trusts
+      # nothing extra). No git config variables: the entrypoint environment
+      # allow-list refuses them.
+      - ${HARNESS_SYSTEM_GITCONFIG}:/etc/gitconfig:ro
+
+volumes:
+  work:
+    name: ${HARNESS_WORK_VOLUME}

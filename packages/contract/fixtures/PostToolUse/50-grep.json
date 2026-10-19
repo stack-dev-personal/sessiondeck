@@ -1,0 +1,43 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "e69d3bd7-9417-4f61-8cf8-baa12085d95f",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "<TEXT 21>",
+    "path": "<HOME>/projects/<PROJECT_D>",
+    "glob": "<TEXT 19>",
+    "output_mode": "files_with_matches"
+  },
+  "tool_response": {
+    "mode": "files_with_matches",
+    "filenames": [
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_13>/<FILE_7>.md",
+      "<DIR_12>/<FILE_5>.md",
+      "<TEXT 9>",
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_21>.md",
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_13>/<FILE_22>.md",
+      "<DIR_18>/<DIR_16>/<FILE_23>.ts",
+      "<DIR_18>/<DIR_16>/<DIR_24>/<DIR_25>/<FILE_1>.md",
+      "<DIR_18>/<DIR_16>/<FILE_24>.ts",
+      "<DIR_18>/<DIR_14>/<FILE_25>.ts",
+      "<DIR_18>/<DIR_14>/<FILE_26>.ts",
+      "<DIR_18>/<FILE_1>.md",
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_27>.md",
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_11>/<FILE_28>.md",
+      "<DIR_8>/<DIR_9>/<DIR_10>/<DIR_13>/<FILE_29>.md",
+      "<TEXT 12>"
+    ],
+    "numFiles": 15,
+    "totalFiles": 15
+  },
+  "tool_use_id": "toolu_gc2TazoehpgTy90Yt4PMvgP0",
+  "duration_ms": 4403
+}

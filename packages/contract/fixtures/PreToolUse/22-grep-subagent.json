@@ -1,0 +1,21 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "258941d6-831a-4db4-8bd4-658cc76fc40d",
+  "permission_mode": "auto",
+  "agent_id": "3a93536134f8ba18f",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "<TEXT 165>",
+    "path": "<HOME>/projects/<PROJECT_D>/<DIR_5>/<DIR_14>/<DIR_17>/<DIR_18>",
+    "output_mode": "content"
+  },
+  "tool_use_id": "toolu_zQsa5rguUTRiLnFlwM9BDm31"
+}

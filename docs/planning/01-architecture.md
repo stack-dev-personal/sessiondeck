@@ -15,7 +15,7 @@ Four irreducible pieces. Everything else is a phase that adds to one of them.
 | Piece | Lives on | One sentence |
 |-------|----------|--------------|
 | probe | laptop | Turns Claude Code's hook and statusLine callbacks into a stream of small JSON events, and tails transcripts, without ever slowing Claude down. |
-| hub | box (laptop in MVP) | Receives events, derives session state, stores history, serves a REST API and a WebSocket fan-out. |
+| hub | box (laptop until Phase 7, the last stage) | Receives events, derives session state, stores history, serves a REST API and a WebSocket fan-out. |
 | web | box, viewed in browser | Renders the board (metrics, states, alerts), the content view, navigation, and layouts. |
 | contract | shared package | The event envelope, state machine, and wire types. Both sides import it; it is the only thing that has to be right before probe and hub can be built in parallel. |
 
@@ -31,7 +31,7 @@ flowchart LR
     TR["~/.claude/projects/**.jsonl"] --> FW
   end
   FW -->|HTTPS POST batches, bearer token| HUB
-  subgraph box["Box (Linux, Docker)"]
+  subgraph box["Box (macOS M2 Pro, Docker linux/arm64)"]
     HUB["hub: ingest, state machine, store"] --> DB[("SQLite now, Supabase Postgres in P7")]
     HUB -->|WS fan-out| WEB["web (React)"]
     HUB -->|REST| WEB
@@ -100,7 +100,7 @@ export type SessionState =
   | 'waiting_permission'  // PermissionRequest; Notification permission_prompt or elicitation_dialog as late fallback
   | 'waiting_input'       // Stop whose last tool was AskUserQuestion or ExitPlanMode (cctop's idle:needs_input / idle:awaiting_plan)
   | 'idle'                // Stop
-  | 'error'               // StopFailure, PostToolUseFailure with api error
+  | 'error'               // StopFailure (API errors arrive as StopFailure)
   | 'ended'               // SessionEnd, with reason
   | 'exited';             // pid gone without SessionEnd (crash, window closed)
 
@@ -375,6 +375,8 @@ Content renderer: port Crystal's `panels/ai/components/{ToolCallView,ToolCallGro
 MVP (LAN): hub binds to the LAN interface, probe → hub uses a static bearer token stored in the probe's config file (not in `settings.json`, which is readable by any session). Browser → hub: same token entered once, stored in localStorage. No TLS on LAN in MVP; the box phase adds it.
 
 Phase 7 (box, remote): Cloudflare Tunnel from the box (no inbound ports), Cloudflare Access in front of the web origin (your identity provider), a separate Access service token for the probe's `/ingest` path. Hub still checks its own bearer token (defense in depth). Transcripts contain source and sometimes secrets; the probe redacts lines matching `.env`-style `KEY=value` patterns and known token prefixes before shipping (Phase 4 requirement), and the hub never exposes raw payloads without auth.
+
+Order (ADR 0010): Phase 8 ships before Phase 7, so the runner is first gated with the hub on the laptop (localhost or LAN bind, see ADR 0010; hub bearer token, runner channel authentication). Phase 7 re-runs the runner security review with the hub reachable through Access before harbor merges (R7.10).
 
 Threat you should write up for yourself: the probe token in a config file on the laptop, the hub being a write path for anything that holds the token, and the fact that a compromised session (prompt injection in a repo) could run `curl` against the hub from inside a Bash tool call. Mitigation: ingest only accepts the envelope schema, rate limits per host, and nothing on the hub executes anything.
 

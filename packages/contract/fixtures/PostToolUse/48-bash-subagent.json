@@ -1,0 +1,68 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "e69d3bd7-9417-4f61-8cf8-baa12085d95f",
+  "permission_mode": "auto",
+  "agent_id": "ecbdc44c75303c77b",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "<TEXT 130>",
+    "timeout": 600000
+  },
+  "tool_response": {
+    "stdout": "<TEXT 61>",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false,
+    "bashEditDiff": {
+      "files": [
+        {
+          "filePath": "<HOME>/projects/<PROJECT_D>/<DIR_22>/<DIR_23>/<FILE_19>.sh",
+          "hunks": [
+            {
+              "oldStart": 112,
+              "oldLines": 7,
+              "newStart": 112,
+              "newLines": 17,
+              "lines": [
+                "<TEXT 1>",
+                "<TEXT 13>",
+                "<TEXT 26>",
+                "<TEXT 79>",
+                "<TEXT 82>",
+                "<TEXT 22>",
+                "<TEXT 2>",
+                "<TEXT 1>",
+                "<TEXT 104>",
+                "<TEXT 103>",
+                "<TEXT 100>",
+                "<TEXT 33>",
+                "<TEXT 22>",
+                "<TEXT 36>",
+                "<TEXT 75>",
+                "<TEXT 2>",
+                "<TEXT 1>",
+                "<TEXT 95>"
+              ]
+            }
+          ]
+        }
+      ],
+      "moreFiles": 0,
+      "changedFiles": [
+        "<HOME>/projects/<PROJECT_D>/<DIR_22>/<DIR_23>/<FILE_19>.sh"
+      ],
+      "shared": true
+    }
+  },
+  "tool_use_id": "toolu_xVJfuPdWqazHb1IuGhInEatq",
+  "duration_ms": 80789
+}

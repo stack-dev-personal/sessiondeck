@@ -1,0 +1,96 @@
+{
+  "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_H>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_H>/76451451-8f96-42b5-8de2-69a4bc28b494/scratchpad",
+  "prompt_id": "1e6f86a7-943f-4732-8bd9-654c9518c23a",
+  "agent_type": "<AGENT_1>",
+  "effort": {
+    "level": "xhigh"
+  },
+  "model": {
+    "id": "claude-fable-5-1",
+    "display_name": "Fable 5.1"
+  },
+  "workspace": {
+    "current_dir": "<HOME>/projects/<PROJECT_H>",
+    "project_dir": "<HOME>/projects/<PROJECT_H>",
+    "added_dirs": [
+      "<HOME>",
+      "<HOME>/.claude",
+      "<HOME>/<PROJECT_M>",
+      "<HOME>/<PROJECT_N>",
+      "<HOME>/<PROJECT_O>"
+    ],
+    "repo": {
+      "host": "github.com",
+      "owner": "<ACCOUNT>",
+      "name": "<TEXT 11>"
+    }
+  },
+  "version": "2.1.295",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 45.13542975,
+    "total_duration_ms": 567970359,
+    "total_api_duration_ms": 2539954,
+    "total_lines_added": 0,
+    "total_lines_removed": 0
+  },
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    },
+    "used_percentage": 0,
+    "remaining_percentage": 100
+  },
+  "exceeds_200k_tokens": false,
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1792083348,
+    "requests": 250,
+    "misses": 5,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.9698266005213746,
+    "cache_write_tokens": 1412495,
+    "miss_recache_tokens": 1103934,
+    "last_miss_at": 1792073612,
+    "last_miss_cause": {
+      "causes": [
+        "messages_rewritten"
+      ]
+    },
+    "miss_causes": {
+      "ttl_expired_1h": 3,
+      "messages_rewritten": 1
+    },
+    "recache_tokens_if_cold": null
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 12,
+      "resets_at": 1792083600
+    },
+    "seven_day": {
+      "used_percentage": 16,
+      "resets_at": 1792555200
+    }
+  },
+  "agent": {
+    "name": "<AGENT_1>"
+  }
+}

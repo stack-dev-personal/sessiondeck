@@ -1,0 +1,8 @@
+{
+  "session_id": "8cc38311-7274-400a-8426-a201e49b8e4f",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/8cc38311-7274-400a-8426-a201e49b8e4f.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_A>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/8cc38311-7274-400a-8426-a201e49b8e4f/scratchpad",
+  "hook_event_name": "SessionStart",
+  "source": "clear"
+}

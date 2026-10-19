@@ -1,0 +1,34 @@
+sessiondeck fixture capture: manual removal
+
+Use this when the installer (scripts/capture-install.mjs) is no longer on disk.
+Close or ignore running Claude Code sessions first; they reload settings live.
+
+1. Open the settings file: settings.json inside the directory named by the CLAUDE_CONFIG_DIR
+   environment variable if it is set, otherwise inside ~/.claude.
+2. Under "hooks", for each of these events, delete the hook entries whose "args" list holds the two
+   items "--marker" and "sessiondeck-capture" next to each other (a "group" with no hooks left
+   goes too; keep every other hook): SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
+   PostToolUseFailure, PermissionRequest, PermissionDenied, Notification, SubagentStart,
+   SubagentStop, TaskCreated, TaskCompleted, Stop, StopFailure, PreCompact, PostCompact,
+   SessionEnd. If "hooks" ends up empty and you did not have it before, delete the key.
+3. "statusLine" and "subagentStatusLine": if the "command" contains "--marker sessiondeck-capture",
+   replace it with your earlier value or delete the key. The earlier value is in the "previous"
+   part of settings.json.sessiondeck-capture-state.json, or in a backup (step 4). A status line
+   put back from that file runs a command: read it before you keep it.
+4. Next to settings.json, delete settings.json.sessiondeck-capture-state.json and the files named
+   settings.json.sessiondeck-backup-<timestamp>. Backups are full copies of your settings and can
+   contain tokens; read one first if you need to restore something.
+5. Keep the raw captures. Their path is the value after "--out" in the entries you removed in step 2
+   (by default the "raw" folder next to this file). If the fixture session (S0b, branch
+   p0/fixtures) has not copied them yet, copy the CONTENTS of that folder into
+   packages/contract/fixtures/raw/ of the checkout where it runs (replace <raw> and <checkout>).
+   First run this in that checkout; it must print a matching rule, otherwise stop:
+     git check-ignore -v packages/contract/fixtures/raw/x
+   PowerShell:
+     New-Item -ItemType Directory -Force '<checkout>/packages/contract/fixtures/raw'; Copy-Item -Recurse -Force '<raw>/*' '<checkout>/packages/contract/fixtures/raw'
+   bash:
+     mkdir -p '<checkout>/packages/contract/fixtures/raw' && cp -R '<raw>/.' '<checkout>/packages/contract/fixtures/raw/'
+   They hold your unscrubbed prompts and file contents: never commit or share them, and delete the
+   folder once S0b has its copy.
+6. Delete the deployed hook copy: the files in this directory (the hook, its lib folder and this
+   note), but not the "raw" folder until step 5 is done.

@@ -1,0 +1,76 @@
+{
+  "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910.jsonl",
+  "cwd": "<HOME>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910/scratchpad",
+  "prompt_id": "9a151c72-4714-4034-8e00-1f23bfeb6f8e",
+  "effort": {
+    "level": "xhigh"
+  },
+  "session_name": "<TEXT 30>",
+  "model": {
+    "id": "claude-fable-5-1",
+    "display_name": "Fable 5.1"
+  },
+  "workspace": {
+    "current_dir": "<HOME>",
+    "project_dir": "<HOME>/projects/<PROJECT_A>",
+    "added_dirs": [
+      "<HOME>",
+      "<HOME>/.claude",
+      "<HOME>/<PROJECT_M>",
+      "<HOME>/<PROJECT_N>"
+    ]
+  },
+  "version": "2.1.300",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 69.12357790000002,
+    "total_duration_ms": 74058726,
+    "total_api_duration_ms": 6957689,
+    "total_lines_added": 7336,
+    "total_lines_removed": 149
+  },
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0
+    },
+    "used_percentage": 0,
+    "remaining_percentage": 100
+  },
+  "exceeds_200k_tokens": false,
+  "prompt_cache": {
+    "warm": false,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1792021260,
+    "requests": 64,
+    "misses": 0,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.979362955706884,
+    "cache_write_tokens": 429751,
+    "miss_recache_tokens": 0,
+    "last_miss_at": null,
+    "last_miss_cause": null,
+    "miss_causes": {},
+    "recache_tokens_if_cold": null
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "seven_day": {
+      "used_percentage": 14,
+      "resets_at": 1792555200
+    }
+  }
+}

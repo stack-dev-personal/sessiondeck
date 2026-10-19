@@ -1,0 +1,28 @@
+{
+  "events": 295,
+  "changes": [
+    { "index": 1, "event": "UserPromptSubmit", "context": "main", "from": "starting", "to": "working", "state_detail": null, "row": 2 },
+    { "index": 91, "event": "PermissionRequest", "context": "main", "from": "working", "to": "waiting_permission", "state_detail": "tool:ExitPlanMode", "row": 7 },
+    { "index": 92, "event": "PostToolUse", "context": "main", "from": "waiting_permission", "to": "working", "state_detail": "tool:ExitPlanMode", "row": 5 },
+    { "index": 216, "event": "Stop", "context": "main", "from": "working", "to": "idle", "state_detail": null, "row": 12 },
+    { "index": 221, "event": "UserPromptSubmit", "context": "main", "from": "idle", "to": "working", "state_detail": null, "row": 2 },
+    { "index": 228, "event": "Stop", "context": "main", "from": "working", "to": "idle", "state_detail": null, "row": 12 },
+    { "index": 239, "event": "UserPromptSubmit", "context": "main", "from": "idle", "to": "working", "state_detail": null, "row": 2 },
+    { "index": 272, "event": "Stop", "context": "main", "from": "working", "to": "idle", "state_detail": null, "row": 12 },
+    { "index": 274, "event": "UserPromptSubmit", "context": "main", "from": "idle", "to": "working", "state_detail": null, "row": 2 },
+    { "index": 291, "event": "Stop", "context": "main", "from": "working", "to": "idle", "state_detail": null, "row": 12 },
+    { "index": 294, "event": "SessionEnd", "context": "main", "from": "idle", "to": "ended", "state_detail": null, "row": 15 }
+  ],
+  "final": {
+    "state": "ended",
+    "state_since_index": 294,
+    "state_detail": null,
+    "ended_reason": "clear",
+    "last_event_index": 294,
+    "compactions": 0,
+    "tasks": { "total": 0, "completed": 0, "last_subject": null },
+    "model_id": "claude-fable-5-1",
+    "tracking": { "last_tool": null, "permission": null },
+    "subagents": [{ "agent_type": "general-purpose", "started_index": 189, "ended_index": 238 }]
+  }
+}

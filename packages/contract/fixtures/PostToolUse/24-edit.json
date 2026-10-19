@@ -1,0 +1,64 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>/<DIR_5>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "9294e436-0327-47af-88c8-cc469bc57749",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "<HOME>/projects/<PROJECT_D>/<DIR_19>/<DIR_20>/<FILE_15>.md",
+    "old_string": "<TEXT 669>",
+    "new_string": "<TEXT 949>",
+    "replace_all": false
+  },
+  "tool_response": {
+    "filePath": "<HOME>/projects/<PROJECT_D>/<DIR_19>/<DIR_20>/<FILE_15>.md",
+    "oldString": "<TEXT 669>",
+    "newString": "<TEXT 949>",
+    "originalFile": "<TEXT 26065>",
+    "structuredPatch": [
+      {
+        "oldStart": 33,
+        "oldLines": 13,
+        "newStart": 33,
+        "newLines": 16,
+        "lines": [
+          "<TEXT 1>",
+          "<TEXT 15>",
+          "<TEXT 1>",
+          "<TEXT 98>",
+          "<TEXT 99>",
+          "<TEXT 98>",
+          "<TEXT 96>",
+          "<TEXT 96>",
+          "<TEXT 99>",
+          "<TEXT 84>",
+          "<TEXT 97>",
+          "<TEXT 98>",
+          "<TEXT 94>",
+          "<TEXT 93>",
+          "<TEXT 99>",
+          "<TEXT 96>",
+          "<TEXT 97>",
+          "<TEXT 97>",
+          "<TEXT 94>",
+          "<TEXT 85>",
+          "<TEXT 1>",
+          "<TEXT 97>",
+          "<TEXT 97>"
+        ]
+      }
+    ],
+    "userModified": false,
+    "replaceAll": false,
+    "staleRecovered": true,
+    "contentNotInModelContext": true
+  },
+  "tool_use_id": "toolu_QbKOyVjSyb6vhJDJPpinK5Pi",
+  "duration_ms": 63
+}

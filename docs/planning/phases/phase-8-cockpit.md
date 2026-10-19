@@ -5,12 +5,12 @@ collection: 'sessiondeck'
 type: phase
 phase: 8
 status: planned
-depends_on: [2, 3, 7]
+depends_on: [2, 3]
 ---
 # Phase 8: Cockpit
 
 ## MVP
-From the app: pick a project, a worktree or branch, a model, and a handoff prompt, and a new Claude Code session starts on the laptop and appears on the board like any other. Open a terminal pane to it in the browser. This is model "c" from the decision log: the box brokers, the laptop runs.
+From the app: pick a project, a worktree or branch, a model, and a handoff prompt, and a new Claude Code session starts on the laptop and appears on the board like any other. Open a terminal pane to it in the browser. This is model "c" from the decision log: the hub brokers (on the laptop until harbor, then the box), the laptop runs.
 
 ## Scope
 In:
@@ -25,6 +25,7 @@ Out:
 - Hosting sessions on the box (your repos stay on the laptop). Multi-user. Agent teams orchestration (track `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` separately).
 
 ## Blockers / constraints
+- Built before Phase 7 (ADR 0010): during this phase the hub runs on the laptop (Docker; on the laptop, localhost or LAN bind, see ADR 0010), so the runner channel stays on the laptop side and the controls are the hub bearer token and the runner's channel authentication. Phase 7 re-runs this phase's security review with the hub reachable through Cloudflare Access before harbor merges (R7.10).
 - A runner that spawns processes on request is remote code execution by design; it only accepts commands from the hub over the mutually authenticated channel, only runs `claude` (no arbitrary commands), only in allow-listed project roots, and logs every launch. The security review is the gate.
 - Windows pty is ConPTY via node-pty; Claude Code's mouse-mode and scrollback quirks apply inside xterm.js (the overlay research). Acceptable for a secondary pane; the primary terminal stays Windows Terminal.
 - SDK-launched sessions do not appear in `claude --resume` pickers unless targeted by id; the board must surface the id.
@@ -42,7 +43,7 @@ Out:
 ## Requirements
 - R8.1 Runner accepts launch only from the hub channel; unauthenticated or malformed requests are logged and dropped; executable is hard-coded to `claude`.
 - R8.2 Launch from UI to card on board < 3 s; SDK session shows context via `getContextUsage()` when statusLine is absent.
-- R8.3 Terminal pane round-trips keystrokes with < 50 ms added latency on LAN; resize propagates; closing the pane does not kill the session.
+- R8.3 Terminal pane round-trips keystrokes with < 50 ms added latency against the hub (the laptop hub in Phase 8; re-measured through the box in Phase 7); resize propagates; closing the pane does not kill the session.
 - R8.4 Worktree creation is idempotent and refuses to create outside allow-listed roots.
 - R8.5 "Open in Windows Terminal" opens a new tab resumed on the right session id.
 - R8.6 Every launch is recorded as an event with who/what/where, visible in the session's history.

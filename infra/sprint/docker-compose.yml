@@ -1,0 +1,61 @@
+# One sprint container. Start: docker compose -f infra/sprint/docker-compose.yml up -d
+# with SPRINT_ID, SPRINT_BRANCH and SPRINT_REPO_URL set in the shell (the
+# run-sprint script does this). Works unchanged from PowerShell and Git Bash on
+# Docker Desktop for Windows; relative paths resolve from this file's directory.
+#
+# Secrets: CLAUDE_CODE_OAUTH_TOKEN and GH_TOKEN reach the container ONLY through
+# env_file. They are never interpolated (no ${...} anywhere for them), so they
+# are not in this file, in the shell environment, or in build args. The one
+# place they would print is `docker compose config` against a real env file.
+name: sprint-${SPRINT_ID:?set SPRINT_ID}
+
+services:
+  sprint:
+    image: ${SPRINT_IMAGE:-sessiondeck-sprint:local}
+    build:
+      context: .
+    container_name: sprint-${SPRINT_ID}
+    # Default is the repo root's .sprint/env (mode 600, gitignored). Override
+    # with SPRINT_ENV_FILE so tests never need the real one.
+    env_file:
+      - ${SPRINT_ENV_FILE:-../../.sprint/env}
+    # Only non-secret values are interpolated. This block overrides env_file, so
+    # the literals below win over any line in .sprint/env. They pin the names
+    # that run code or choose where config and binaries come from: BASH_ENV,
+    # LD_PRELOAD, LD_AUDIT and LD_LIBRARY_PATH to empty, and the image values of
+    # the others (entrypoint-precheck.sh refuses a different value too). The
+    # loader acts on any LD_* name before the pre-stage can look, so compose pins
+    # the known code-loading ones and the pre-stage refuses the rest. This guards against configuration mistakes and
+    # accidental overrides, and is not a defense against someone who can write
+    # .sprint/env, who already holds the tokens.
+    environment:
+      SPRINT_ID: ${SPRINT_ID}
+      SPRINT_BRANCH: ${SPRINT_BRANCH:-}
+      SPRINT_REPO_URL: ${SPRINT_REPO_URL:?set SPRINT_REPO_URL}
+      BASH_ENV: ""
+      LD_PRELOAD: ""
+      LD_AUDIT: ""
+      LD_LIBRARY_PATH: ""
+      DISABLE_AUTOUPDATER: "1"
+      CLAUDE_CONFIG_DIR: /home/sprint/.claude
+      HOME: /home/sprint
+      GIT_TERMINAL_PROMPT: "0"
+      GH_PROMPT_DISABLED: "1"
+      PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      # Fresh clone and worktrees; survives container removal so -Resume works.
+      - work:/work
+      # Status, prompts, logs, reports, screens. SPRINT_STATE_ROOT defaults to
+      # the repo root's .sprint directory.
+      - ${SPRINT_STATE_ROOT:-../../.sprint}/${SPRINT_ID}:/state/${SPRINT_ID}
+      # Lets sessions start sibling test containers (sd-<sprint>-<session>-*).
+      # Holding this socket (the session user gets its group, which is group 0
+      # on Docker Desktop) is root-equivalent on the host or the Docker Desktop
+      # VM: a session can docker exec -u 0 or docker run --privileged -v /:/host.
+      # The non-root user in the image exists only because claude refuses root;
+      # it is not a security boundary and neither is this container.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  work:
+    name: sprint-${SPRINT_ID}-work

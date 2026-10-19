@@ -1,0 +1,19 @@
+{
+  "name": "@sessiondeck/contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./state-file": "./src/state-file.ts"
+  },
+  "dependencies": {
+    "zod": "^3.0.0"
+  },
+  "scripts": {
+    "test": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "gen:doc": "node scripts/gen-doc.mjs"
+  }
+}

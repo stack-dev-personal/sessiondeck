@@ -11,30 +11,33 @@ flowchart LR
   S0["Sprint 0 bootstrap (local)"] --> S1["Sprint 1 mvp"]
   S1 --> S2["Sprint 2 content"]
   S1 --> S3["Sprint 3 organize"]
-  S1 --> S4["Sprint 4 harbor (box gate)"]
-  S3 --> S5["Sprint 5 cockpit"]
-  S4 --> S5
+  S3 --> S5["Sprint 5 cockpit (laptop hub)"]
+  S2 --> S4["Sprint 4 harbor (last: box port + edge)"]
+  S3 --> S4
+  S5 --> S4
 ```
 
 | Sprint | Name | Sessions | Depends on (merged to main) | User gates before start | Can run beside | Max parallel phase managers |
 |--------|------|----------|-----------------------------|-------------------------|----------------|------------------------------|
 | 0 | bootstrap | S0, S0c, S0b | none | none; S0b needs your capture day in the middle | nothing (runs locally, not in a container) | 2 |
 | 1 | mvp | S1, S2, S3, S4, S5, S6 | 0 | `docs/ENVIRONMENT.md` filled | nothing (everything downstream needs it) | 3 |
-| 2 | content | S7, S8 | 1 | none | 3, 4 | 1 |
-| 3 | organize | S9, S10, S9b | 1 | none | 2, 4 | 2 |
-| 4 | harbor | S11, S12 | 1 | box hostname + SSH confirmed; Supabase self-hosted vs cloud decided (or S11 recommends and blocks); Cloudflare zone available | 2, 3 | 1 |
-| 5 | cockpit | S13, S14, S15 | 3, 4 | decide whether S15 (Electron) is wanted | nothing | 2 |
+| 2 | content | S7, S8 | 1 | none | 3, 5 | 1 |
+| 3 | organize | S9, S10, S9b | 1 | none | 2 | 2 |
+| 4 | harbor | S11, S12 | 2, 3, 5 | macOS box ready (decision 15): always on, macOS Docker runtime installed (OrbStack suggested); box hostname + SSH confirmed; Supabase self-hosted vs cloud decided (or S11 recommends and blocks); Cloudflare zone available | nothing (last stage, ADR 0010) | 1 |
+| 5 | cockpit | S13, S14, S15 | 3 | decide whether S15 (Electron) is wanted | 2 | 2 |
 
 ## 2. Rules the conductor applies
 
 - Start a sprint only when every `depends_on` sprint is merged to `main` and every user gate is answered.
 - Concurrency cap: 2 sprint containers at once by default (each may run up to its max parallel phase managers; every headless session counts against your 5h and 7d windows). Raise or lower the cap in `CONDUCTOR.md` settings when `/usage` headroom says so.
-- Preference when more than two are startable: 2 (content) before 3 (organize) before 4 (harbor), because 2 and 3 both touch `packages/web` and the earlier one to merge sets the base the other rebases on; 4 is gated by the box anyway.
+- Preference when more than two are startable: 2 (content) before 3 (organize) before 5 (cockpit); 2, 3 and 5 all touch `packages/web`, so the earlier one to merge sets the base the others rebase on; 4 (harbor) is always last (ADR 0010): the UI and functionality work locally against the laptop hub first, then the stack ports to the box.
 - Soak periods in a phase's Definition of Done (probe two days on the laptop, board three days of use) do not block merge approval. The PR is approved on evidence; soak findings become fix sessions in the next sprint. The conductor tracks soaks as "waiting on you" items.
 - Laptop-only verification (Windows probe bench, real settings.json install, opening the board from the phone through Access) is done by the conductor session on the laptop with you present, never from a container.
 - Secrets never enter containers except the two tokens the container needs (Claude auth, GitHub push). No SSH keys, no Cloudflare tokens, no Supabase service keys. Sprint 4 therefore produces runbooks and compose files; the box-side execution happens from the conductor session.
 
 ## 3. Packages
+
+Sprint ids are kept (they name branches and state dirs) and blocks are listed in id order; the run order is in section 1: Sprint 4 harbor runs last (ADR 0010).
 
 ### Sprint 0: bootstrap (local)
 
@@ -169,9 +172,9 @@ sprint: "4"
 name: harbor
 slug: harbor
 branch: sprint/4-harbor
-depends_on: ["1"]
+depends_on: ["2", "3", "5"]
 user_gates:
-  - "box exists; hostname and SSH key confirmed to the conductor (keys stay on the laptop)"
+  - "box exists; it is the always-on M2 Pro laptop on macOS (decision 15) with a macOS Docker runtime (OrbStack suggested); hostname and SSH key confirmed to the conductor (keys stay on the laptop)"
   - "Supabase: self-hosted on the box or cloud project (S11 may recommend, then block for approval)"
   - "Cloudflare zone and Access identity provider available"
 max_parallel: 1
@@ -185,10 +188,14 @@ integration_checks:
   - "cloudflared config validates (cloudflared tunnel ingress validate) with placeholder credentials"
   - "restore drill script restores a pg_dump into a scratch container and passes the hub smoke test"
   - "trivy and npm audit in CI with no critical findings"
+  - "port to the macOS box with linux/arm64 images; every image multi-arch or arm64"
+  - "S13 runner security re-review with the hub reachable through Access before harbor merges"
 needs_laptop:
   - "everything that touches the box: provisioning, compose up on the box, tunnel creation, Access policies, nmap from the laptop, phone test through Access (conductor session, you present)"
   - "docs/HARDENING.md evidence lines are filled from the box, not the container"
-notes: "The container has no SSH key and no Cloudflare or Supabase secrets. S11 and S12 produce runbooks, compose files, and scripts, tested locally in containers; the conductor executes the box steps with you."
+  - "integration check 5 on the box: every compose image runs as linux/arm64 on the macOS box (the container half is docker buildx imagetools inspect showing linux/arm64 for each image)"
+  - "integration check 6: runner on the Windows laptop connected to the box hub through Access (for the S13 re-review evidence)"
+notes: "The container has no SSH key and no Cloudflare or Supabase secrets. S11 and S12 produce runbooks, compose files, and scripts, tested locally in containers; the conductor executes the box steps with you. Harbor is the last sprint (ADR 0010); it starts only after Sprints 2, 3 and 5 are merged and working against the laptop hub."
 ```
 
 ### Sprint 5: cockpit
@@ -198,7 +205,7 @@ sprint: "5"
 name: cockpit
 slug: cockpit
 branch: sprint/5-cockpit
-depends_on: ["3", "4"]
+depends_on: ["3"]
 user_gates:
   - "decide whether S15 (Electron shell) is wanted after using the browser version"
 max_parallel: 2
@@ -209,15 +216,15 @@ sessions:
   - { id: S15, handoff: S13-s14-s15-cockpit.md, branch: p8/electron,   phase: 8, depends_on: [S14], security_gated: false, lane: B, goal: "S15 part only", optional: true }
 merge_order: [S13, S14, S15]
 integration_checks:
-  - "runner (Linux build) launch harness: 10 SDK sessions and 3 pty sessions start and stop in sequence against the containerized hub; each appears on the board; launches logged as events"
+  - "runner (Linux build) launch harness: 10 SDK sessions and 3 pty sessions start and stop in sequence against the laptop hub (the containerized hub from infra/docker-compose.yml on the laptop; harbor has not run yet); each appears on the board; launches logged as events"
   - "runner refuses unauthenticated and out-of-allow-list launch requests (security test suite)"
-  - "Playwright: launcher flow from project pick to card on board; terminal pane echo round trip"
+  - "Playwright: launcher flow from project pick to card on board; terminal pane echo round trip, against the laptop hub (the containerized hub from infra/docker-compose.yml on the laptop; harbor has not run yet)"
 needs_laptop:
   - "runner on Windows: ConPTY pty launch, open-in-Windows-Terminal, registration at login (conductor session, you present)"
-  - "R8.3 terminal latency measured on the LAN"
-notes: "S13 is the one session whose security gate the conductor must re-confirm with you before merge approval, because the runner executes processes on your laptop."
+  - "R8.3 terminal latency measured against the laptop hub (re-measured through the box in Sprint 4)"
+notes: "S13 is the one session whose security gate the conductor must re-confirm with you before merge approval, because the runner executes processes on your laptop. Cockpit runs before harbor (ADR 0010): the hub is on the laptop (localhost or LAN bind, see ADR 0010); S13's security gate is re-run in Sprint 4 once the hub is reachable through Access."
 ```
 
 ## 4. After the last sprint
 
-Sprint 5 merged means every phase doc's Definition of Done is either evidenced or listed under "needs laptop confirmation" with a date you did it. The conductor's final job is to produce `docs/RELEASE-1.md`: what shipped per phase, what was deferred (with the deferred findings from every session log), and the soak results.
+Sprint 4 (harbor, the last sprint) merged means every phase doc's Definition of Done is either evidenced or listed under "needs laptop confirmation" with a date you did it. The conductor's final job is to produce `docs/RELEASE-1.md`: what shipped per phase, what was deferred (with the deferred findings from every session log), and the soak results.

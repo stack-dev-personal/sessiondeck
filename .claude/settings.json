@@ -31,7 +31,9 @@
       "Bash(git reset --hard*)",
       "Read(./.env)",
       "Read(./.env.*)",
-      "Read(./**/probe.json)"
+      "Read(./**/probe.json)",
+      "Read(~/AppData/Local/sessiondeck/capture/**)",
+      "Read(//c/Users/*/AppData/Local/sessiondeck/capture/**)"
     ]
   },
   "hooks": {

@@ -1,0 +1,20 @@
+{
+  "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fdafa657-e191-4646-88ad-7ae634752456/scratchpad",
+  "prompt_id": "258941d6-831a-4db4-8bd4-658cc76fc40d",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "<TEXT 27>",
+    "prompt": "<TEXT 6214>",
+    "subagent_type": "general-purpose",
+    "model": "<TEXT 4>"
+  },
+  "tool_use_id": "toolu_KoD8lhG9jyYe2yka1Ti36eza"
+}

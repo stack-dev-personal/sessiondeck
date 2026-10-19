@@ -1,0 +1,18 @@
+{
+  "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+  "transcript_path": "<HOME>/.claude/projects/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910.jsonl",
+  "cwd": "<HOME>/projects/<PROJECT_D>",
+  "scratchpad_dir": "<HOME>/AppData/Local/Temp/claude/<PROJECT_A>/fc727a7b-bc64-4de4-8767-4a0a61457910/scratchpad",
+  "prompt_id": "3d4bcf3c-06ca-4676-8809-db15d6cb2b94",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "xhigh"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "PowerShell",
+  "tool_input": {
+    "command": "<TEXT 189>",
+    "description": "<TEXT 61>"
+  },
+  "tool_use_id": "toolu_ctumfqIizaFQct2fAIq669WU"
+}

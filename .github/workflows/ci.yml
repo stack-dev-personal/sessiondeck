@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "sprint/**", "p*/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    name: check (${{ matrix.os }}, node ${{ matrix.node }})
+    # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
+    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 = 21;
+    # 30 leaves a margin of 9 for a cold cache on a slow Windows runner. The job limit must stay
+    # above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r lint
+      - run: pnpm lint:root
+      - run: pnpm format:check
+      - name: fixture leak gate (R0.7, patterns and structure, no raw/ needed)
+        run: pnpm -F @sessiondeck/scripts fixture:leak
+      - name: test (R0.5 budget 60 s)
+        run: pnpm -r test
+        timeout-minutes: 1
+      - name: test guard timing (outside R0.5 budget, up to 3 attempts)
+        # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only
+        # when every failed test failed on a timing bound; any other failure fails the step at once.
+        # Budget: patched run is 27.8 s per attempt locally (docs/patches/README.md); 4x for a Windows
+        # runner is about 111 s; 3 attempts are about 333 s; 7 min (420 s) covers that plus the three
+        # vitest start-ups. The unpatched run (18 s per attempt) would fit in 5 min; the patch does not.
+        run: pnpm -F @sessiondeck/scripts test:guard-timing:ci
+        timeout-minutes: 7
+      - name: test sprint tooling (budget 3 min, separate from R0.5)
+        # shell: pwsh makes the step fail to start where pwsh is missing; otherwise every test
+        # skips and the step goes green with nothing tested.
+        shell: pwsh
+        run: pnpm -F @sessiondeck/scripts test:sprint
+        timeout-minutes: 3
