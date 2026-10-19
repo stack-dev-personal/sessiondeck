@@ -2,7 +2,10 @@
 // the guard. The command picks the case: "quadratic" runs a regex that backtracks quadratically on
 // a long space run and exits 2; "slow-loop" busy-waits 600 ms with no regex; "hang" never exits (the
 // helper timeout kills it); "cpu-in-data" busy-waits 400 ms inside the stdin data handler (no
-// regex) and exits 0; "exec-sync" calls execSync once; anything else runs a linear control and
+// regex) and exits 0; "exec-sync" calls execSync once with a command the guard never runs;
+// "exec-git" calls execSync once with the guard's exact `git rev-parse --abbrev-ref HEAD`;
+// "exit-listener" adds an exit listener that busy-waits 400 ms (sync work after the preload's own
+// exit listener) and exits 0; anything else runs a linear control and
 // exits 0.
 import { execSync } from "node:child_process";
 
@@ -47,6 +50,19 @@ if (input.tool_input.command === "hang") {
 }
 if (input.tool_input.command === "exec-sync") {
   execSync("node -e 0", { stdio: "ignore", windowsHide: true });
+  process.exit(0);
+}
+if (input.tool_input.command === "exec-git") {
+  execSync("git rev-parse --abbrev-ref HEAD", { stdio: "ignore", windowsHide: true });
+  process.exit(0);
+}
+if (input.tool_input.command === "exit-listener") {
+  process.on("exit", () => {
+    const end = performance.now() + CPU_IN_DATA_MS;
+    while (performance.now() < end) {
+      // sync work in an exit listener added after the preload's: outside every measured time
+    }
+  });
   process.exit(0);
 }
 if (input.tool_input.command === "quadratic") {

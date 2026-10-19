@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
 import {
+  GUARD_EXEC_COMMAND,
+  matchesDeterministic,
   MAX_RAW_SCRIPT_MS,
   rowTimeoutMs,
   runTimed,
@@ -166,6 +168,31 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
       expect(exec.execCalls).toBe(1);
       expect(exec.execMs).toBeGreaterThan(0);
       expect(exec.scriptMs).toBeGreaterThanOrEqual(exec.execMs);
+    },
+    SELF_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "pins the execSync command: a different command fails the deterministic check",
+    async () => {
+      const git = await runTimed(fixturePath, "exec-git", repoRoot);
+      expect(git.execCommands).toEqual([GUARD_EXEC_COMMAND]);
+      const wanted = { status: ALLOWED, calls: git.calls, execCalls: 1 };
+      expect(matchesDeterministic(git, wanted)).toBe(true);
+      const other = await runTimed(fixturePath, "exec-sync", repoRoot);
+      expect(other.execCalls).toBe(1);
+      expect(other.execCommands).toEqual(["node -e 0"]);
+      expect(matchesDeterministic(other, { ...wanted, calls: other.calls })).toBe(false);
+    },
+    SELF_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "catches sync work in an exit listener added after the preload's, without a retry",
+    async () => {
+      await expect(runTimed(fixturePath, "exit-listener", repoRoot)).rejects.toThrow(
+        /exit listener/,
+      );
     },
     SELF_TEST_TIMEOUT_MS,
   );

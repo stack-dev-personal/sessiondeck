@@ -108,3 +108,11 @@
 - [LOW, security] The rm rule allows `rm -Rf /`, `rm -r -f ~` and `rm --recursive --force ~`. Pre-existing, not touched by the patch. Track in a later unit.
 
 - [LOW] Push rules are pattern based and bypassable: `git -C dir push -f`, `git push origin +feature`, `git push origin HEAD:refs/heads/main`. Pre-existing, not weakened by the patch. Track in a later unit.
+
+## U3 fix round after review 5
+
+- Finding 1 (MINOR, sd-reviewer): a slow `execSync` is excluded from rawMs and workMs, and only `execCalls` was asserted, so a guard whose single bare-push exec took 4 s on crafted input passed every bound. Fix (R0.5, tests only): the preload records the command string of each execSync call (`execCommands`); `matchesDeterministic` requires exactly `execCalls` recorded commands, each equal to `GUARD_EXEC_COMMAND` (`git rev-parse --abbrev-ref HEAD`, from guard.mjs line 53). Rows with `execCalls` 0 still assert 0 and no commands. A mismatch is deterministic, so it is not retried.
+- Finding 2 (LOW, sd-security-reviewer): the preload's exit listener runs before any listener the guard adds, so sync work there was outside every bound. Fix: the preload records `process.listenerCount("exit")` inside its listener (so later listeners are counted); `readTotals` throws a plain Error when the count is not 1, which is never retried (only the helper's kill is).
+- RED (new tests before the helper change): 3 failed, 38 passed. `matchesDeterministic pins ...`: expected undefined to be 'git rev-parse --abbrev-ref HEAD'; `pins the execSync command`: expected undefined to deeply equal [ undefined ]; `catches sync work in an exit listener`: promise resolved instead of rejecting. Fixture modes added to `regex-fixture.mjs`: `exec-git` (the exact command), `exit-listener` (400 ms busy wait in an exit listener).
+- GREEN: `pnpm -F @sessiondeck/scripts test` 587 passed, 4 skipped (30 files), Duration 18.2 s; typecheck, lint and `pnpm format:check` clean. `git apply --check docs/patches/FIX-2-guard.patch` still passes. The patched growth helper was not re-run with these changes; the next unit regenerates the patch.
+- Accepted residual (security LOW): rawMs leaves out node start-up, so the guard can use up to 3000 ms plus start-up of the 5 s hook budget. Tuning is out of scope by decision 13.

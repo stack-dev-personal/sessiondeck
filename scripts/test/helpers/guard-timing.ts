@@ -102,12 +102,27 @@ export interface TimedRun {
   /** Time inside child_process.execSync. */
   readonly execMs: number;
   readonly execCalls: number;
+  /** Command string of each execSync call, in order. */
+  readonly execCommands: readonly string[];
   readonly wallMs: number;
 }
 
+/** The only command the guard runs through execSync. A slow or input dependent exec is excluded from every time bound, so the command is pinned instead. */
+export const GUARD_EXEC_COMMAND = "git rev-parse --abbrev-ref HEAD";
+
+/** Exit listeners a run may have: the preload's own. Any more is sync work outside every bound. */
+const EXPECTED_EXIT_LISTENERS = 1;
+
 type Totals = Pick<
   TimedRun,
-  "matchMs" | "calls" | "scriptMs" | "stdinWaitMs" | "stdinIdleMs" | "execMs" | "execCalls"
+  | "matchMs"
+  | "calls"
+  | "scriptMs"
+  | "stdinWaitMs"
+  | "stdinIdleMs"
+  | "execMs"
+  | "execCalls"
+  | "execCommands"
 >;
 const TOTAL_KEYS = [
   "matchMs",
@@ -132,6 +147,20 @@ function readTotals(file: string): Totals {
   }
   if (!TOTAL_KEYS.every((key) => typeof totals[key] === "number")) {
     throw new Error(`timing file has the wrong shape: ${JSON.stringify(parsed)}`);
+  }
+  if (
+    !Array.isArray(totals.execCommands) ||
+    !totals.execCommands.every((command) => typeof command === "string") ||
+    typeof totals.exitListeners !== "number"
+  ) {
+    throw new Error(`timing file has the wrong shape: ${JSON.stringify(parsed)}`);
+  }
+  // Not retried: a plain Error, like a status mismatch, never noise.
+  if (totals.exitListeners !== EXPECTED_EXIT_LISTENERS) {
+    throw new Error(
+      `${totals.exitListeners} exit listeners at exit, expected ${EXPECTED_EXIT_LISTENERS} (the preload's): ` +
+        "sync work in a listener the guard added is outside every time bound",
+    );
   }
   return parsed as Totals;
 }
@@ -276,10 +305,14 @@ export interface AttemptedRun {
 }
 
 export function matchesDeterministic(run: TimedRun, expected: DeterministicExpectation): boolean {
+  // Every recorded exec must be exactly the guard's git call, so a replaced or input dependent
+  // exec fails here (it is excluded from the time bounds).
   return (
     run.status === expected.status &&
     run.calls === expected.calls &&
-    run.execCalls === expected.execCalls
+    run.execCalls === expected.execCalls &&
+    run.execCommands.length === expected.execCalls &&
+    run.execCommands.every((command) => command === GUARD_EXEC_COMMAND)
   );
 }
 

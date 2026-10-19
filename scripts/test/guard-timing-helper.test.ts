@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   firstWithinBounds,
+  GUARD_EXEC_COMMAND,
   GuardKilledError,
   HANG_KILL_MS,
   matchesDeterministic,
@@ -30,6 +31,7 @@ function run(overrides: Partial<TimedRun> = {}): TimedRun {
     stdinIdleMs: 5,
     execMs: 0,
     execCalls: 0,
+    execCommands: [],
     wallMs: 100,
     ...overrides,
   };
@@ -84,6 +86,19 @@ describe("guard timing helper: first run within bounds", () => {
     expect(matchesDeterministic(run({ status: 2 }), EXPECTED)).toBe(false);
     expect(matchesDeterministic(run({ calls: 9 }), EXPECTED)).toBe(false);
     expect(matchesDeterministic(run({ execCalls: 1 }), EXPECTED)).toBe(false);
+  });
+
+  it("matchesDeterministic pins the recorded execSync commands to the guard's git call", () => {
+    const one = { ...EXPECTED, execCalls: 1 };
+    const git = run({ execCalls: 1, execCommands: [GUARD_EXEC_COMMAND] });
+    expect(GUARD_EXEC_COMMAND).toBe("git rev-parse --abbrev-ref HEAD");
+    expect(matchesDeterministic(git, one)).toBe(true);
+    expect(matchesDeterministic(run({ execCalls: 1, execCommands: ["sleep 4"] }), one)).toBe(false);
+    expect(
+      matchesDeterministic(run({ execCalls: 1, execCommands: [`${GUARD_EXEC_COMMAND} x`] }), one),
+    ).toBe(false);
+    // Rows that expect no exec keep asserting none.
+    expect(matchesDeterministic(run({ execCommands: [GUARD_EXEC_COMMAND] }), EXPECTED)).toBe(false);
   });
 
   it("withinBounds checks match time and script time minus waits, not wall time", () => {
