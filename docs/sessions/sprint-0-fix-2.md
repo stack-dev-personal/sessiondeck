@@ -152,3 +152,12 @@ Deferred findings:
 
 - scripts/test/guard-timing.test.ts:228 and :151: self-test time asserts are not `TimingBoundError`, so noise fails the step without a retry. Making self-tests retryable conflicts with the security rule.
 - docs/patches/FIX-2-guard.patch:13: the guard.mjs comment names `scripts/test/guard.test.ts`. Deferred to the next patch regeneration (not regenerated now).
+
+## Docs unit
+
+Requirements: R0.6 and the user's decisions 9, 10, 11 (2026-10-19).
+
+- docs/planning/01-architecture.md:103: `// StopFailure, PostToolUseFailure with api error` -> `// StopFailure (API errors arrive as StopFailure)` (decision 10). Same edit in the vault copy. Other PostToolUseFailure mentions (01-architecture.md:256, phases/phase-0-contract.md:27) are neutral and unchanged.
+- docs/ENVIRONMENT.md:8: Plan type `pending user` -> `Max (decision 11, user, 2026-10-19)`. Box and second-machine rows stay pending.
+- docs/sessions/p0-fixtures.md:111 (appended): note that the user confirmed the S0b idle rule (decision 9). No code change.
+- docs/VERIFY-P0.md is not edited. The idle rule row is line 19 (R0.2 golden, "no subagent event leaves idle or waiting_input"); the open-question bullet for line 103 is line 338.

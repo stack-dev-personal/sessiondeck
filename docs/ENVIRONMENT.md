@@ -5,7 +5,7 @@ Filled in during S0. Every value here is a fact the planning docs depend on (see
 | Fact | Value | How to get it |
 |------|-------|---------------|
 | Claude Code version | 2.1.295 | `claude --version` |
-| Plan type | pending user | `/usage` shows 5h/7d bars only on Pro/Max |
+| Plan type | Max (decision 11, user, 2026-10-19) | `/usage` shows 5h/7d bars only on Pro/Max |
 | Laptop OS and user | Windows 11 Home 10.0.26200, user `stack` | `systeminfo \| findstr /B /C:"OS Name"`, `echo %USERNAME%` |
 | Second machine (if any) | pending user | |
 | Git Bash installed | yes, `C:\Program Files\Git\usr\bin\bash.exe` | `where bash` |

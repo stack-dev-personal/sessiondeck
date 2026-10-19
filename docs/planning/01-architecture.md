@@ -100,7 +100,7 @@ export type SessionState =
   | 'waiting_permission'  // PermissionRequest; Notification permission_prompt or elicitation_dialog as late fallback
   | 'waiting_input'       // Stop whose last tool was AskUserQuestion or ExitPlanMode (cctop's idle:needs_input / idle:awaiting_plan)
   | 'idle'                // Stop
-  | 'error'               // StopFailure, PostToolUseFailure with api error
+  | 'error'               // StopFailure (API errors arrive as StopFailure)
   | 'ended'               // SessionEnd, with reason
   | 'exited';             // pid gone without SessionEnd (crash, window closed)
 
