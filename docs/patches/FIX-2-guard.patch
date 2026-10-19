@@ -122,16 +122,36 @@ index 49c512a..e2b1cb2 100644
        process.stderr.write(`sessiondeck guard: ${rule.why}. Command: ${cmd}\n`);
        process.exit(2);
      }
-diff --git a/scripts/test/guard-growth.test.ts b/scripts/test/guard-growth.test.ts
+diff --git a/scripts/test/guard-rules.test.ts b/scripts/test/guard-rules.test.ts
+index 23afd3c..ef3e4be 100644
+--- a/scripts/test/guard-rules.test.ts
++++ b/scripts/test/guard-rules.test.ts
+@@ -117,6 +117,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
+     "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
+     "powershell -enc AAAA",
+     "node -e \"import('./scripts/lib/install-cli.mjs')\"",
++    // FIX-2 guard patch: more than 32 options between node and the script is not recognised (the
++    // option chain is capped so matching stays bounded; the old guard blocked this).
++    `node ${"-r x ".repeat(40)}scripts/capture-install.mjs --apply`,
++    // FIX-2 guard patch: the matcher is not quote aware. A `;` inside a quoted argument ends the
++    // segment for the flag check, so the node line below is no longer matched (the old guard blocked
++    // it only by luck; `node capture-install "a;b" --apply` is allowed by both guards).
++    'node capture-install "x;)/node" capture-install --apply',
++    'node capture-install "a;b" --apply',
+   ];
+   it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
+     expect((await runGuard(command)).status).toBe(ALLOWED);
+diff --git a/scripts/test/guard-timing-growth.test.ts b/scripts/test/guard-timing-growth.test.ts
 new file mode 100644
-index 0000000..0ea5415
+index 0000000..8b3993c
 --- /dev/null
-+++ b/scripts/test/guard-growth.test.ts
-@@ -0,0 +1,398 @@
++++ b/scripts/test/guard-timing-growth.test.ts
+@@ -0,0 +1,418 @@
 +import { resolve } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
 +import {
++  assertGrowthWithinBounds,
 +  BIG_RUN_FACTOR,
 +  bigRunWithin,
 +  firstGrowthWithin,
@@ -144,6 +164,7 @@ index 0000000..0ea5415
 +  type GrowthPair,
 +} from "./helpers/guard-growth";
 +import {
++  GUARD_EXEC_COMMAND,
 +  GuardKilledError,
 +  HANG_KILL_MS,
 +  MAX_ATTEMPTS,
@@ -151,6 +172,7 @@ index 0000000..0ea5415
 +  rawMs,
 +  rowTimeoutMs,
 +  runTimed,
++  TimingBoundError,
 +  workMs,
 +  type TimedRun,
 +} from "./helpers/guard-timing";
@@ -179,6 +201,7 @@ index 0000000..0ea5415
 +    stdinIdleMs: 5,
 +    execMs: 0,
 +    execCalls: 0,
++    execCommands: [],
 +    wallMs: 100,
 +    ...overrides,
 +  };
@@ -264,6 +287,23 @@ index 0000000..0ea5415
 +      "big matchMs 400.0 >= 300",
 +      "big workMs 700.0 >= 600",
 +    ]);
++  });
++
++  it("assertGrowthWithinBounds throws TimingBoundError for a bound failure and nothing for a good pair", () => {
++    expect(() => assertGrowthWithinBounds(pairOf(1, 4), LIMITS)).not.toThrow();
++    let thrown: unknown;
++    try {
++      assertGrowthWithinBounds(pairOf(10, 100), LIMITS);
++    } catch (error) {
++      thrown = error;
++    }
++    expect(thrown).toBeInstanceOf(TimingBoundError);
++    expect((thrown as Error).message).toBe("timing bound violated: ratio 10.00 >= 8");
++    // The rawMs bound of the large run is retryable like the others.
++    const idle = run({ scriptMs: 6014, stdinWaitMs: 6002, stdinIdleMs: 6002 });
++    expect(() => assertGrowthWithinBounds({ small: run(), big: idle }, LIMITS)).toThrow(
++      TimingBoundError,
++    );
 +  });
 +
 +  it("rejected attempts are logged with the bound they broke", async () => {
@@ -503,53 +543,33 @@ index 0000000..0ea5415
 +          `ratio ${result.ratio.toFixed(2)}, workMs ${workMs(small).toFixed(1)} -> ${workMs(big).toFixed(1)}, ` +
 +          `wall ${small.wallMs.toFixed(0)} -> ${big.wallMs.toFixed(0)} ms (not a bound)`,
 +      );
++      // Deterministic outputs first, so a mismatch is never read as a timing failure and is never
++      // retried. execCommands is pinned because execSync time is excluded from every time bound.
++      const execCommands = Array(shape.execCalls).fill(GUARD_EXEC_COMMAND);
 +      expect(small.status).toBe(shape.status);
 +      expect(big.status).toBe(shape.status);
 +      expect(small.execCalls).toBe(shape.execCalls);
 +      expect(big.execCalls).toBe(shape.execCalls);
-+      expect(small.matchMs).toBeLessThan(MAX_MATCH_MS);
-+      expect(workMs(small)).toBeLessThan(MAX_SCRIPT_MS);
-+      // The large run is bounded on its own: the ratio cannot see slow non-regex work or a
-+      // quadratic part under half of the linear part.
-+      expect(big.matchMs).toBeLessThan(BIG_RUN_FACTOR * MAX_MATCH_MS);
-+      expect(workMs(big)).toBeLessThan(BIG_RUN_FACTOR * MAX_SCRIPT_MS);
-+      // rawMs keeps idle time in: workMs subtracts a guard that idles before it reads stdin.
-+      expect(rawMs(small)).toBeLessThan(MAX_RAW_SCRIPT_MS);
-+      expect(rawMs(big)).toBeLessThan(MAX_RAW_SCRIPT_MS);
-+      expect(result.ratio).toBeLessThan(MAX_GROWTH_RATIO);
++      expect(small.execCommands).toEqual(execCommands);
++      expect(big.execCommands).toEqual(execCommands);
 +      if (shape.calls !== undefined) {
 +        expect(small.calls).toBe(shape.calls);
 +        expect(big.calls).toBe(shape.calls);
 +      }
++      // Bounds last: ratio, the small run's limits, the large run's own bounds (the ratio cannot see
++      // slow non-regex work or a quadratic part under half of the linear part) and rawMs of both runs
++      // (idle time included). Only this error lets the CI step run the file again (see scripts/ci).
++      assertGrowthWithinBounds(result, LIMITS);
 +    },
 +    // Two spawns per attempt, each waiting for a timing slot and killed at the hang limit.
 +    rowTimeoutMs(2),
 +  );
 +});
-diff --git a/scripts/test/guard-rules.test.ts b/scripts/test/guard-rules.test.ts
-index 23afd3c..ef3e4be 100644
---- a/scripts/test/guard-rules.test.ts
-+++ b/scripts/test/guard-rules.test.ts
-@@ -117,6 +117,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
-     "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
-     "powershell -enc AAAA",
-     "node -e \"import('./scripts/lib/install-cli.mjs')\"",
-+    // FIX-2 guard patch: more than 32 options between node and the script is not recognised (the
-+    // option chain is capped so matching stays bounded; the old guard blocked this).
-+    `node ${"-r x ".repeat(40)}scripts/capture-install.mjs --apply`,
-+    // FIX-2 guard patch: the matcher is not quote aware. A `;` inside a quoted argument ends the
-+    // segment for the flag check, so the node line below is no longer matched (the old guard blocked
-+    // it only by luck; `node capture-install "a;b" --apply` is allowed by both guards).
-+    'node capture-install "x;)/node" capture-install --apply',
-+    'node capture-install "a;b" --apply',
-   ];
-   it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
-     expect((await runGuard(command)).status).toBe(ALLOWED);
-diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
-index 1c7d6af..a82dadd 100644
---- a/scripts/test/guard.test.ts
-+++ b/scripts/test/guard.test.ts
-@@ -30,13 +30,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+diff --git a/scripts/test/guard-timing.test.ts b/scripts/test/guard-timing.test.ts
+index 4850633..421ed28 100644
+--- a/scripts/test/guard-timing.test.ts
++++ b/scripts/test/guard-timing.test.ts
+@@ -33,13 +33,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
    const MAX_MATCH_MS = 150;
    const MAX_SCRIPT_MS = 300;
    const RUN = 100_000;
@@ -575,13 +595,13 @@ index 1c7d6af..a82dadd 100644
    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
      cwd: repoRoot,
      encoding: "utf8",
-@@ -61,8 +68,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -64,8 +71,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      status,
      execCalls,
    });
 -  // Repeated-anchor rows (repeating the push anchor many times) are quadratic in guard.mjs today;
 -  // they land with the guard fix in docs/patches/FIX-2-guard.patch.
-+  // Shapes that scripts/test/guard-growth.test.ts already runs at about 100k characters (the small
++  // Shapes that scripts/test/guard-timing-growth.test.ts already runs at about 100k characters (the small
 +  // run of a growth row, same bounds, same exact call counts) are not repeated here: `git push ` x N,
 +  // `node --x=node ` x N + capture-install --apply, and the backslash-LF and backslash-CRLF
 +  // continuations with the flag in another segment.
@@ -591,7 +611,7 @@ index 1c7d6af..a82dadd 100644
    const timingInputs: Record<string, TimingRow> = {
      spaces: row(" ".repeat(RUN), ALLOWED),
      tabs: row("\t".repeat(RUN), ALLOWED),
-@@ -70,15 +82,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -73,15 +85,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      "node + spaces + capture-install --apply": row(
        `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
        BLOCKED,
@@ -669,15 +689,16 @@ index 1c7d6af..a82dadd 100644
    // Each row runs until the first run is within both bounds, at most MAX_ATTEMPTS: it fails only if
 diff --git a/scripts/test/helpers/guard-growth.ts b/scripts/test/helpers/guard-growth.ts
 new file mode 100644
-index 0000000..d88fa34
+index 0000000..50f06a5
 --- /dev/null
 +++ b/scripts/test/helpers/guard-growth.ts
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,160 @@
 +import {
 +  GuardKilledError,
 +  MAX_ATTEMPTS,
 +  rawMs,
 +  settleKilled,
++  TimingBoundError,
 +  workMs,
 +  type TimedRun,
 +} from "./guard-timing";
@@ -774,6 +795,18 @@ index 0000000..d88fa34
 +    broken.push(`big rawMs ${rawMs(pair.big).toFixed(1)} >= ${limits.rawMs}`);
 +  }
 +  return broken;
++}
++
++/**
++ * Throws TimingBoundError when a pair broke a ratio or time bound, so the CI retry runner (scripts/ci)
++ * may run the file again; nothing else in a growth row throws it. Call it AFTER the deterministic
++ * asserts (status, execCalls, execCommands, calls).
++ */
++export function assertGrowthWithinBounds(pair: GrowthPair, limits: GrowthLimits): void {
++  const broken = growthViolations(pair, limits);
++  if (broken.length > 0) {
++    throw new TimingBoundError(broken);
++  }
 +}
 +
 +export function growthWithin(pair: GrowthPair, limits: GrowthLimits): boolean {
