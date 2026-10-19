@@ -36,4 +36,4 @@ Review: sd-reviewer on 1e83925..1bb0524, no blocking findings (3 MAJOR, 6 MINOR)
 
 ## Verify
 
-Verify: pending
+Verify: sd-verifier R0.6 pass at cd2f9da (vault diff empty; test:sprint 279/279; renders for sprints 4 and 5 OK), rows in docs/VERIFY-P0.md.

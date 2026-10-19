@@ -404,3 +404,9 @@ Note on the split (decision 13, user, 2026-10-19; same pattern as decision 2 in 
 | Format | `pnpm format:check` | exit 0, `All matched files use Prettier code style!` | pass | 2026-10-19 21:44Z |
 
 FIX-2 result: 15 pass (incl. 3 notes) / 0 fail / 3 unverifiable or open (R0.5 CI pending, patched run recorded not re-run, patch not applied on the branch: user step).
+
+DOCS-1 verification (2026-10-19, branch sprint/0-bootstrap, worktree `C:/Users/stack/projects/wt/FIX-1`, head cd2f9da, range 1e83925..cd2f9da, docs-only: harbor-last sprint order, ADR 0010).
+
+| Requirement | Command | Key output | Result | Timestamp (UTC) |
+|---|---|---|---|---|
+| R0.6 (DOCS-1, head cd2f9da) | `diff -rq --strip-trailing-cr C:/Users/stack/vault/projects/sessiondeck/planning C:/Users/stack/projects/wt/FIX-1/docs/planning`; supporting: `pnpm -F @sessiondeck/scripts test:sprint`; `node scripts/sprint/render-prompt.mjs --sprint 4 --contract-sha 0000000` and `--sprint 5 ...`, grepped; `pnpm format:check` | diff printed nothing, exit 0. `test:sprint`: 13 files passed, 279 tests passed, 0 failed. Render sprint 4 exit 0 (64 lines): `linux/arm64` x2 (lines 30, 40), `S13 runner security re-review` x1 (line 31), `laptop hub` x1. Render sprint 5 exit 0 (58 lines): `laptop hub` x3 (lines 27, 29, 35); `linux/arm64` and `S13 runner security re-review` x0 (they sit in sprint 4 only). `format:check`: `All matched files use Prettier code style!`, exit 0 | pass | 2026-10-19 |
