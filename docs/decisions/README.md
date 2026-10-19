@@ -13,3 +13,4 @@ One file per decision, numbered, never edited after acceptance (superseding deci
 | 0007 | Bash allowed project-wide with a guard hook and deny rules | accepted 2026-10-08 |
 | 0008 | Three-level agentic workflow with containerized mini-sprints | accepted 2026-10-08 |
 | 0009 | Sprint containers mount the host Docker socket; no docker-in-docker | accepted 2026-10-15 |
+| 0010 | Harbor last: local-first development, box port and edge at the end | accepted 2026-10-19 |

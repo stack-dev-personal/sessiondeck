@@ -33,18 +33,18 @@ How the work is cut into Claude Code sessions, the order, what can run at the sa
 | S4 | 2 | hub history: ccusage dedup/pricing port, samples, retention, replay, compose | `p2/hub-history` | sd-executor-hub | sd-reviewer | S3 | S5, S6 |
 | S5 | 3 | board on mocks: shell, tokens, card, drawer, compact, `/dev/cards` | `p3/board-mock` | sd-executor-web | sd-reviewer | S0b | S1, S2, S3 |
 | S6 | 3 | board live: WS client, alerts, sorting/filtering, Playwright, a11y pass | `p3/board-live` | sd-executor-web | sd-reviewer | S3, S5 | S4 |
-| S7 | 4 | normalizer in contract/hub, transcript API, redaction in probe | `p4/normalize` | sd-executor-hub, sd-executor-probe | sd-reviewer, sd-security-reviewer (redaction) | S2, S4 | S9, S10 |
-| S8 | 4 | content view in web, files-touched panel, split view | `p4/content-view` | sd-executor-web | sd-reviewer | S6, S7 | S9, S10 |
+| S7 | 4 | normalizer in contract/hub, transcript API, redaction in probe | `p4/normalize` | sd-executor-hub, sd-executor-probe | sd-reviewer, sd-security-reviewer (redaction) | S2, S4 | S9, S10, S13, S14 |
+| S8 | 4 | content view in web, files-touched panel, split view | `p4/content-view` | sd-executor-web | sd-reviewer | S6, S7 | S9, S10, S13, S14 |
 | S9 | 5 | projects, phases, session list, palette, FTS | `p5/atlas-core` | sd-executor-web, sd-executor-hub | sd-reviewer | S6 | S7, S8, S10 |
 | S9b | 5 | archive importer (probe side) + merge logic (hub) | `p5/archive-import` | sd-executor-probe, sd-executor-hub | sd-reviewer | S9 | S10 |
 | S10 | 6 | layout engine, presets, saved layouts, compact-all | `p6/layouts` | sd-executor-web | sd-reviewer | S6 | S7, S8, S9 |
-| S11 | 7 | box provisioning runbook, Docker on box, Postgres migration + import, backups | `p7/box` | sd-executor-infra, sd-executor-hub | sd-security-reviewer, sd-reviewer | S4 | S7-S10 |
-| S12 | 7 | Cloudflare Tunnel + Access, LAN override, hardening checklist with evidence | `p7/edge` | sd-executor-infra | sd-security-reviewer (gate) | S11 | S7-S10 |
-| S13 | 8 | runner daemon: hub channel, SDK launch, pty launch, allow-lists, launch log | `p8/runner` | sd-executor-probe | sd-security-reviewer (gate), sd-reviewer | S12 | S14 (UI on mocks) |
+| S11 | 7 | box provisioning runbook, Docker on box, Postgres migration + import, backups | `p7/box` | sd-executor-infra, sd-executor-hub | sd-security-reviewer, sd-reviewer | S8, S9b, S14 (and S15 if built); last stage, ADR 0010 | nothing |
+| S12 | 7 | Cloudflare Tunnel + Access, LAN override, hardening checklist with evidence | `p7/edge` | sd-executor-infra | sd-security-reviewer (gate) | S11 | nothing |
+| S13 | 8 | runner daemon: hub channel, SDK launch, pty launch, allow-lists, launch log | `p8/runner` | sd-executor-probe | sd-security-reviewer (gate), sd-reviewer | S4, S6 (hub history for the launch log, live board) | S14 (UI on mocks), S7, S8 |
 | S14 | 8 | launcher UI, terminal pane, handoff prompt library, open-in-WT | `p8/cockpit-ui` | sd-executor-web | sd-reviewer | S10, S13 | S13 (mocks first) |
 | S15 | 8 | Electron shell (optional) | `p8/electron` | sd-executor-web | sd-reviewer | S14 | nothing |
 
-Critical path: S0 → S0b → S3 → S6 → S8 (S0c runs beside S0b and must land before Sprint 1 starts in containers). Everything else hangs off that line. The widest parallel moment is right after S0b: four sessions (S1, S2, S3, S5) in four terminals, which is exactly the situation the tool exists for.
+Critical path: S0 → S0b → S3 → S6 → S8 (S0c runs beside S0b and must land before Sprint 1 starts in containers). Everything else hangs off that line. The widest parallel moment is right after S0b: four sessions (S1, S2, S3, S5) in four terminals, which is exactly the situation the tool exists for. Harbor (S11, S12) is the last stage (ADR 0010): everything runs on the laptop until the board, content, atlas, layouts and cockpit work with real sessions.
 
 ## 3. Handoff prompts
 
@@ -192,8 +192,8 @@ Branch p6/layouts. Delegate to sd-executor-web; use react-resizable-panels unles
 ```
 You are the project manager for Phase 7 of sessiondeck. Read docs/planning/phases/phase-7-harbor.md, docs/planning/01-architecture.md section 7, and infra/.
 
-Goal (S11): box provisioning runbook (Linux, Docker, deploy user, default-deny firewall), the compose stack on the box, Supabase Postgres (self-hosted on the box or cloud; decide and record the trade-off at the start of S11) with migrations ported from SQLite, one-shot history import with row-count verification, nightly pg_dump with an off-box copy, restore drill script. Requirements R7.3, R7.4.
-Goal (S12, after S11): cloudflared as a compose service, Cloudflare Access policies (identity for web, service token for /ingest), probe and web LAN override, WS heartbeat verified through the tunnel, hardening checklist with command-and-output evidence in docs/HARDENING.md, trivy and npm audit in CI. Requirements R7.1, R7.2, R7.5, R7.6, R7.7, R7.8.
+Goal (S11): box provisioning runbook (macOS on the always-on M2 Pro laptop, a macOS Docker runtime such as OrbStack running linux/arm64 containers, deploy user, default-deny inbound firewall), the compose stack on the box, Supabase Postgres (self-hosted on the box or cloud; decide and record the trade-off at the start of S11) with migrations ported from SQLite, one-shot history import with row-count verification, nightly pg_dump with an off-box copy, restore drill script, every image multi-arch or linux/arm64 (R7.9). Requirements R7.3, R7.4, R7.9.
+Goal (S12, after S11): cloudflared as a compose service, Cloudflare Access policies (identity for web, service token for /ingest), probe and web LAN override, WS heartbeat verified through the tunnel, hardening checklist with command-and-output evidence in docs/HARDENING.md, trivy and npm audit in CI, S13 runner security re-review with the hub reachable through Access before harbor merges (R7.10). Requirements R7.1, R7.2, R7.5, R7.6, R7.7, R7.8, R7.10.
 
 Branches p7/box and p7/edge. Delegate to sd-executor-infra (and sd-executor-hub for the Postgres port; both get the Supabase MCP tool for this phase per docs/PERMISSIONS.md). sd-security-reviewer is the gate for both sessions; sd-reviewer secondary. Verify every Cloudflare step against current docs with sd-researcher before executing; do not rely on memory. Nothing in these sessions runs against the box without me confirming the host and the SSH key first. End with PR URL and evidence.
 ```
@@ -216,5 +216,5 @@ Branches p8/runner, p8/cockpit-ui, p8/electron. Delegate runner to sd-executor-p
 - After S1+S2: install the probe for real and leave it for two days.
 - After S6: use the board for three days and fill `docs/BOARD-FEEDBACK.md`.
 - After S10: run a multi-project evening on a saved layout.
-- Before S11: tell the session the box's hostname and confirm the SSH key.
 - Before S13: decide whether you still want Electron (S15) after living in the browser version.
+- Before S11: tell the session the box's hostname, confirm the SSH key, and have the macOS Docker runtime installed on the box.
