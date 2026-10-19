@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
-import { MAX_WALL_MS, runTimed, runTimedBest, workMs } from "./helpers/guard-timing";
+import { MAX_WALL_MS, runTimed, runTimedUntilWithin, workMs } from "./helpers/guard-timing";
 
 const fixturePath = resolve(
   repoRoot,
@@ -25,7 +25,6 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
   const MAX_MATCH_MS = 150;
   const MAX_SCRIPT_MS = 300;
   const RUN = 100_000;
-  const REPEATS = 3;
   // Exact regex call counts. A command that reaches every rule runs the 7 RULES regexes (the
   // capture-install rule's `when` pre-check uses includes, so it adds a regex only when it passes)
   // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. The quotes
@@ -77,13 +76,23 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
     quotes: row(`${'"'.repeat(RUN)} capture-install --apply`, ALLOWED, CALLS_PLUS_ONE),
   };
   // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
+  // Each row runs until the first run is within both bounds, at most MAX_ATTEMPTS: it fails only if
+  // all attempts violate a bound. Status and call-count mismatches are deterministic and fail on
+  // the first attempt.
   it.concurrent.each(Object.entries(timingInputs))(
     `regex matching stays under ${MAX_MATCH_MS} ms and script under ${MAX_SCRIPT_MS} ms: %s`,
     async (name, expected) => {
-      const run = await runTimedBest(guardPath, expected.command, repoRoot, REPEATS);
+      const { run, attempts } = await runTimedUntilWithin(
+        guardPath,
+        expected.command,
+        repoRoot,
+        expected,
+        { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS },
+      );
       const scriptOnlyMs = workMs(run);
       console.info(
-        `guard timing ${name}: match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
+        `guard timing ${name}: attempts ${attempts}, ` +
+          `match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
           `scriptMs ${run.scriptMs.toFixed(1)}, stdinWaitMs ${run.stdinWaitMs.toFixed(1)}, ` +
           `stdinIdleMs ${run.stdinIdleMs.toFixed(1)}, workMs ${scriptOnlyMs.toFixed(1)}, ` +
           `execMs ${run.execMs.toFixed(1)}, ` +

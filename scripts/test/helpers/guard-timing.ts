@@ -10,6 +10,18 @@ const preloadUrl = pathToFileURL(resolve(here, "regexp-timing-preload.mjs")).hre
 /** Spawn timeout: the real hook timeout is 5 s and a timeout lets the command run. */
 export const MAX_WALL_MS = 4000;
 
+/**
+ * The helper's own wall timeout fired. It is a wall-time bound violation, so a retrying row
+ * (`firstWithinBounds`) counts it as an attempt; a guard that really hangs is killed on every
+ * attempt and the row fails with this error.
+ */
+export class GuardKilledError extends Error {
+  constructor(timeoutMs: number, signal: NodeJS.Signals) {
+    super(`guard killed after ${timeoutMs} ms wall (signal ${signal})`);
+    this.name = "GuardKilledError";
+  }
+}
+
 export interface TimedOptions {
   /** Spawn timeout. Defaults to MAX_WALL_MS. */
   readonly timeoutMs?: number;
@@ -133,7 +145,7 @@ export async function runTimed(
     // Only the helper's own timeout is a timeout. A child that kills itself (SIGKILL on Linux,
     // an exit code on Windows) falls through to readTotals and fails on the missing timing file.
     if (exit.signal && (exit.killedByHelper || wallMs >= timeoutMs)) {
-      throw new Error(`guard killed after ${timeoutMs} ms wall (signal ${exit.signal})`);
+      throw new GuardKilledError(timeoutMs, exit.signal);
     }
     return { status: exit.status, ...readTotals(timingFile), wallMs };
   } finally {
@@ -141,16 +153,95 @@ export async function runTimed(
   }
 }
 
-/** Run with the lowest script time (idle stdin wait and execSync excluded) of `repeats` sequential runs. */
-export async function runTimedBest(
+/** Attempts allowed before a timing row fails: it fails only if every attempt violates a bound. */
+export const MAX_ATTEMPTS = 3;
+
+/** Deterministic outputs of a row: they do not depend on runner load, so one mismatch is final. */
+export interface DeterministicExpectation {
+  readonly status: number;
+  readonly calls: number;
+  readonly execCalls: number;
+}
+
+/** Upper bounds (exclusive) on the load dependent numbers of a run. */
+export interface TimingBounds {
+  readonly matchMs: number;
+  readonly workMs: number;
+}
+
+export interface AttemptedRun {
+  readonly run: TimedRun;
+  /** How many runs it took, 1 to maxAttempts. Logged as evidence. */
+  readonly attempts: number;
+}
+
+export function matchesDeterministic(run: TimedRun, expected: DeterministicExpectation): boolean {
+  return (
+    run.status === expected.status &&
+    run.calls === expected.calls &&
+    run.execCalls === expected.execCalls
+  );
+}
+
+export function withinBounds(run: TimedRun, bounds: TimingBounds): boolean {
+  return run.matchMs < bounds.matchMs && workMs(run) < bounds.workMs && run.wallMs < MAX_WALL_MS;
+}
+
+/**
+ * Runs one attempt and returns a wall-timeout kill as a value, so a retry loop can count it as a
+ * bound violation. Any other error (spawn failure, missing timing file) is not noise and propagates.
+ */
+export async function settleKilled<T>(attempt: () => Promise<T>): Promise<T | GuardKilledError> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (error instanceof GuardKilledError) {
+      return error;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Calls `runOnce` until a run is within all bounds, at most `maxAttempts` times. A status or call
+ * count mismatch is deterministic, so that run is returned at once for the caller to assert on.
+ * If every attempt violates a bound, the attempt with the lowest script time is returned (its
+ * assertion fails), so noise has to hit all attempts to fail a row while a real regression, which
+ * hits every attempt, still fails.
+ */
+export async function firstWithinBounds(
+  runOnce: () => Promise<TimedRun>,
+  expected: DeterministicExpectation,
+  bounds: TimingBounds,
+  maxAttempts: number = MAX_ATTEMPTS,
+): Promise<AttemptedRun> {
+  let best: TimedRun | undefined;
+  let killed: GuardKilledError | undefined;
+  for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
+    const run = await settleKilled(runOnce);
+    if (run instanceof GuardKilledError) {
+      killed = run;
+      continue;
+    }
+    if (!matchesDeterministic(run, expected) || withinBounds(run, bounds)) {
+      return { run, attempts };
+    }
+    best = best === undefined || workMs(run) < workMs(best) ? run : best;
+  }
+  if (best === undefined) {
+    throw killed ?? new Error("firstWithinBounds needs maxAttempts of at least 1");
+  }
+  return { run: best, attempts: maxAttempts };
+}
+
+/** Runs the guard under the timing preload until a run is within bounds (see firstWithinBounds). */
+export function runTimedUntilWithin(
   scriptPath: string,
   command: string,
   cwd: string,
-  repeats: number,
-): Promise<TimedRun> {
-  const runs: TimedRun[] = [];
-  for (let i = 0; i < repeats; i += 1) {
-    runs.push(await runTimed(scriptPath, command, cwd));
-  }
-  return runs.reduce((best, run) => (workMs(run) < workMs(best) ? run : best));
+  expected: DeterministicExpectation,
+  bounds: TimingBounds,
+  maxAttempts: number = MAX_ATTEMPTS,
+): Promise<AttemptedRun> {
+  return firstWithinBounds(() => runTimed(scriptPath, command, cwd), expected, bounds, maxAttempts);
 }

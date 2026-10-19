@@ -1,8 +1,7 @@
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ALLOWED, BLOCKED, guardPath, repoRoot, runGuard } from "./helpers/guard-run";
+import { ALLOWED, BLOCKED, repoRoot, runGuard, runGuardRaw } from "./helpers/guard-run";
 
 const BS = String.fromCharCode(92);
 
@@ -57,8 +56,9 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     "node scripts/capture-install.mjs --apply>out.txt",
     "node scripts/capture-install.mjs --apply<in.txt",
   ];
-  it.each(blocked)("blocks: %s", (command) => {
-    const { status, stderr } = runGuard(command);
+  // Concurrent: each row is one independent guard process; vitest caps the fan-out (maxConcurrency).
+  it.concurrent.each(blocked)("blocks: %s", async (command) => {
+    const { status, stderr } = await runGuard(command);
     expect(status).toBe(BLOCKED);
     expect(stderr).toContain("capture-install --apply");
   });
@@ -79,8 +79,8 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     "node scripts/capture-install.mjs --dry-run --apply-later",
     "node scripts/other.mjs --apply",
   ];
-  it.each(allowed)("allows: %s", (command) => {
-    expect(runGuard(command).status).toBe(ALLOWED);
+  it.concurrent.each(allowed)("allows: %s", async (command) => {
+    expect((await runGuard(command)).status).toBe(ALLOWED);
   });
 
   // Known false positives (fail closed): a command that quotes the whole node line is blocked,
@@ -93,8 +93,8 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     'git commit -m x -m "node scripts/capture-install.mjs --apply is user-only"',
     'gh pr create --body "Run `node scripts/capture-install.mjs --apply` yourself"',
   ];
-  it.each(knownFalsePositives)("known false positive (blocked): %s", (command) => {
-    expect(runGuard(command).status).toBe(BLOCKED);
+  it.concurrent.each(knownFalsePositives)("known false positive (blocked): %s", async (command) => {
+    expect((await runGuard(command)).status).toBe(BLOCKED);
   });
 
   // Known gaps: the rule prevents accidents, not a hostile session. These forms are allowed. The
@@ -109,27 +109,23 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     "powershell -enc AAAA",
     "node -e \"import('./scripts/lib/install-cli.mjs')\"",
   ];
-  it.each(knownGaps)("known gap (allowed): %s", (command) => {
-    expect(runGuard(command).status).toBe(ALLOWED);
+  it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
+    expect((await runGuard(command)).status).toBe(ALLOWED);
   });
 
-  it("matches capture-install --apply case-insensitively in the pre-check", () => {
-    expect(runGuard("NODE scripts/CAPTURE-INSTALL.mjs --APPLY").status).toBe(BLOCKED);
+  it("matches capture-install --apply case-insensitively in the pre-check", async () => {
+    expect((await runGuard("NODE scripts/CAPTURE-INSTALL.mjs --APPLY")).status).toBe(BLOCKED);
   });
 
-  it("ignores non-Bash tools and empty input", () => {
-    const other = spawnSync(process.execPath, [guardPath], {
-      input: JSON.stringify({
+  it("ignores non-Bash tools and empty input", async () => {
+    const other = await runGuardRaw(
+      JSON.stringify({
         tool_name: "Read",
         tool_input: { command: "capture-install --apply" },
       }),
-      encoding: "utf8",
-    });
+    );
     expect(other.status).toBe(ALLOWED);
-    const empty = spawnSync(process.execPath, [guardPath], {
-      input: "",
-      encoding: "utf8",
-    });
+    const empty = await runGuardRaw("");
     expect(empty.status).toBe(ALLOWED);
   });
 });

@@ -58,6 +58,14 @@
 - LOW accepted, listed as known gaps (rows in `guard-rules.test.ts`): more than 32 options before the script is allowed; `node capture-install "x;)/node" capture-install --apply` is allowed (blocked by the old guard only by luck).
 - Fuzz old versus new: 6000 cases, 0 differing exit codes.
 
+## U3 review round 2
+
+- Commit A (test only, R0.5): the real critical path was `guard-rules.test.ts` (78 sequential `spawnSync` calls, 24.6 to 26.7 s inside the suite on the review run). `runGuard` is now an async `spawn` (`runGuardRaw` for raw stdin) and the blocked, allowed, false-positive and gap tables use `it.concurrent.each`; assertions unchanged. Measured after: guard-rules 13.6 to 15.2 s, guard.test.ts 11.8 to 13.5 s, whole scripts suite 15.0 to 18.4 s wall (3 runs).
+- Timing rows no longer use best of 3. `firstWithinBounds` runs until the first attempt is within the match, script and wall bounds, at most 3. A status or call-count mismatch ends on the first attempt. The attempt count is in the evidence line. `guard-timing-helper.test.ts` proves: one attempt when in bounds, retry on a violation, fail after 3, no retry on a mismatch, plus the existing quadratic self-test still exceeding the bound.
+- Found by running the patched suite while the laptop was loaded (70 percent CPU from Docker): a guard process killed at the 4000 ms wall limit threw out of the row on its first attempt. A wall-timeout kill (`GuardKilledError`) now counts as a bound violation and is retried; a guard that really hangs is killed on all 3 attempts and the row fails with the kill error. Other errors (spawn failure, missing timing file) are not retried.
+
 ## Deferred findings
+
+- [LOW, security] The rm rule allows `rm -Rf /`, `rm -r -f ~` and `rm --recursive --force ~`. Pre-existing, not touched by the patch. Track in a later unit.
 
 - [LOW] Push rules are pattern based and bypassable: `git -C dir push -f`, `git push origin +feature`, `git push origin HEAD:refs/heads/main`. Pre-existing, not weakened by the patch. Track in a later unit.
