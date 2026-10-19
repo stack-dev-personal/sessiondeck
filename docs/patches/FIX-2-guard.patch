@@ -124,12 +124,12 @@ index 49c512a..e2b1cb2 100644
      }
 diff --git a/scripts/test/guard-growth.test.ts b/scripts/test/guard-growth.test.ts
 new file mode 100644
-index 0000000..a37592e
+index 0000000..df98d21
 --- /dev/null
 +++ b/scripts/test/guard-growth.test.ts
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,364 @@
 +import { resolve } from "node:path";
-+import { describe, expect, it } from "vitest";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
 +import {
 +  BIG_RUN_FACTOR,
@@ -138,14 +138,16 @@ index 0000000..a37592e
 +  GROWTH_FLOOR_MS,
 +  GROWTH_SCALE,
 +  growthRatio,
++  growthViolations,
 +  growthWithin,
 +  MAX_GROWTH_RATIO,
 +  type GrowthPair,
 +} from "./helpers/guard-growth";
 +import {
 +  GuardKilledError,
++  HANG_KILL_MS,
 +  MAX_ATTEMPTS,
-+  MAX_WALL_MS,
++  rowTimeoutMs,
 +  runTimed,
 +  workMs,
 +  type TimedRun,
@@ -204,6 +206,16 @@ index 0000000..a37592e
 +}
 +
 +describe("guard growth helper", () => {
++  // firstGrowthWithin logs every rejected attempt; keep that out of the suite output, where the
++  // attempt counts of the real rows are the evidence.
++  let log: ReturnType<typeof vi.spyOn>;
++  beforeEach(() => {
++    log = vi.spyOn(console, "info").mockImplementation(() => undefined);
++  });
++  afterEach(() => {
++    vi.restoreAllMocks();
++  });
++
 +  it("clamps a small match time to the 3 ms floor", () => {
 +    expect(GROWTH_FLOOR_MS).toBe(3);
 +    expect(growthRatio(0.2, 6)).toBe(2);
@@ -218,7 +230,7 @@ index 0000000..a37592e
 +    expect(growthWithin(pairOf(1, 24), LIMITS)).toBe(false);
 +  });
 +
-+  it("growthWithin checks the ratio, the small run limits and the wall time", () => {
++  it("growthWithin checks the ratio, the small run limits and the large run bounds", () => {
 +    expect(growthWithin(pairOf(1, 4), LIMITS)).toBe(true);
 +    expect(growthWithin(pairOf(10, 100), LIMITS)).toBe(false);
 +    expect(growthWithin({ ...pairOf(1, 4), small: run({ matchMs: 200 }) }, LIMITS)).toBe(false);
@@ -228,9 +240,40 @@ index 0000000..a37592e
 +        LIMITS,
 +      ),
 +    ).toBe(false);
++    // Wall time is process start under load, not guard work: it is not a bound.
 +    expect(growthWithin({ ...pairOf(1, 4), big: run({ matchMs: 4, wallMs: 5000 }) }, LIMITS)).toBe(
-+      false,
++      true,
 +    );
++  });
++
++  it("growthViolations names every broken bound with its numbers", () => {
++    expect(growthViolations(pairOf(1, 4), LIMITS)).toEqual([]);
++    expect(growthViolations(pairOf(10, 100), LIMITS)).toEqual(["ratio 10.00 >= 8"]);
++    const worst = growthViolations(
++      {
++        small: run({ matchMs: 200, scriptMs: 900, stdinIdleMs: 0 }),
++        big: run({ matchMs: 400, scriptMs: 700, stdinIdleMs: 0 }),
++      },
++      LIMITS,
++    );
++    expect(worst).toEqual([
++      "small matchMs 200.0 >= 150",
++      "small workMs 900.0 >= 300",
++      "big matchMs 400.0 >= 300",
++      "big workMs 700.0 >= 600",
++    ]);
++  });
++
++  it("rejected attempts are logged with the bound they broke", async () => {
++    const result = await firstGrowthWithin(
++      sequence([pairOf(10, 100), pairOf(10, 20)]).runPair,
++      ALLOWED,
++      LIMITS,
++    );
++    expect(result.attempts).toBe(2);
++    expect(log.mock.calls.map((call) => String(call[0]))).toEqual([
++      "guard growth attempt 1 rejected: ratio 10.00 >= 8",
++    ]);
 +  });
 +
 +  // The ratio alone is blind to these: each pair below has a ratio under MAX_GROWTH_RATIO and a
@@ -241,7 +284,7 @@ index 0000000..a37592e
 +    expect(growthWithin(pair, LIMITS), name).toBe(false);
 +  };
 +
-+  it("bounds the large run in match, script and wall time (the ratio alone passes)", () => {
++  it("bounds the large run in match and script time (the ratio alone passes)", () => {
 +    expect(BIG_RUN_FACTOR).toBe(2);
 +    const calm = run({ matchMs: 100, scriptMs: 60, stdinIdleMs: 5 });
 +    blindToRatio("big matchMs", { small: calm, big: run({ matchMs: 2 * MAX_MATCH_MS }) });
@@ -249,7 +292,6 @@ index 0000000..a37592e
 +      small: calm,
 +      big: run({ scriptMs: 2 * MAX_SCRIPT_MS + 5, stdinIdleMs: 5, matchMs: 100 }),
 +    });
-+    blindToRatio("big wallMs", { small: calm, big: run({ matchMs: 100, wallMs: MAX_WALL_MS }) });
 +    expect(bigRunWithin(run({ matchMs: 2 * MAX_MATCH_MS - 1 }), LIMITS)).toBe(true);
 +    // Just inside every large-run bound passes.
 +    expect(
@@ -260,14 +302,16 @@ index 0000000..a37592e
 +            matchMs: 2 * MAX_MATCH_MS - 1,
 +            scriptMs: 2 * MAX_SCRIPT_MS - 1,
 +            stdinIdleMs: 0,
-+            wallMs: MAX_WALL_MS - 1,
++            wallMs: HANG_KILL_MS - 1,
 +          }),
 +        },
 +        LIMITS,
 +      ),
 +    ).toBe(true);
-+    // The small run's wall time is bounded too.
-+    expect(growthWithin({ small: run({ wallMs: MAX_WALL_MS }), big: run() }, LIMITS)).toBe(false);
++    // Guard-side time of seconds fails even when the ratio and the wall time look calm.
++    expect(
++      growthWithin({ small: run({ scriptMs: 4500, stdinIdleMs: 5 }), big: run() }, LIMITS),
++    ).toBe(false);
 +  });
 +
 +  it("retries a pair that only violates a large-run bound, and fails if all attempts do", async () => {
@@ -328,8 +372,8 @@ index 0000000..a37592e
 +    expect(result.small.status).toBe(BLOCKED);
 +  });
 +
-+  it("counts a wall-timeout kill as a bound violation and retries", async () => {
-+    const killed = new GuardKilledError(4000, "SIGTERM");
++  it("counts a kill as a failed attempt and retries", async () => {
++    const killed = new GuardKilledError(HANG_KILL_MS, "SIGTERM");
 +    const seq = sequence([killed, pairOf(1, 3)]);
 +    const result = await firstGrowthWithin(seq.runPair, ALLOWED, LIMITS);
 +    expect(result.attempts).toBe(2);
@@ -352,32 +396,42 @@ index 0000000..a37592e
 +  // computed on matchMs (regex time), not workMs: workMs at 5 to 12 ms is mostly process noise, and
 +  // it jumped to 41 to 61 ms while matchMs stayed at 0.4 to 1.5 ms. matchMs under 3 ms is clamped
 +  // to 3 ms. The 150 ms and 300 ms bounds apply to the small run; the large run gets 2 x those
-+  // (match and script time) and the wall bound, because the ratio alone passes slow non-regex work
++  // (match and script time), because the ratio alone passes slow non-regex work
 +  // and a quadratic part under half of the linear part. A row passes on the first attempt within
 +  // bounds (at most 3).
 +  interface GrowthShape {
 +    readonly build: (size: number) => string;
 +    readonly small: number;
 +    readonly status: number;
++    /** Exact regex call count of the guard for this shape (same at both sizes), when it is known. */
++    readonly calls?: number;
 +  }
 +  const chars = (unit: string): number => Math.floor(SIZE / unit.length);
 +  const PUSH = "git push ";
-+  const CONT = `node capture-install ${BS}\n`;
++  // One unit of the continuation shape has a backslash-LF and a backslash-CRLF line.
++  const CONT = `node capture-install ${BS}\nnode capture-install ${BS}\r\n`;
 +  const XNODE = "node --x=node ";
 +  // Node anchors used as option values, inside the 32-option window: the heaviest linear shapes.
 +  const NODE_VALUE_CONT = `${BS}\n -a ${BS}\n node`;
 +  const NODE_VALUE_EQ = " -a=yyyy/node";
 +  const growthShapes: Record<string, GrowthShape> = {
-+    "git push x N": { build: (n) => PUSH.repeat(n), small: chars(PUSH), status: ALLOWED },
-+    "node capture-install backslash-LF x N, flag in another segment": {
++    "git push x N": {
++      build: (n) => PUSH.repeat(n),
++      small: chars(PUSH),
++      status: ALLOWED,
++      calls: 9,
++    },
++    "node capture-install backslash-LF and backslash-CRLF x N, flag in another segment": {
 +      build: (n) => `echo --apply; ${CONT.repeat(n)}`,
 +      small: chars(CONT),
 +      status: ALLOWED,
++      calls: 12,
 +    },
 +    "node --x=node x N + capture-install --apply": {
 +      build: (n) => `${XNODE.repeat(n)}capture-install --apply`,
 +      small: chars(XNODE),
 +      status: BLOCKED,
++      calls: 9,
 +    },
 +    "node + (backslash-LF -a backslash-LF node) x N": {
 +      build: (n) => `node${NODE_VALUE_CONT.repeat(n)}`,
@@ -418,27 +472,31 @@ index 0000000..a37592e
 +        `guard growth ${name}: attempts ${result.attempts}, kills ${result.kills}, ` +
 +          `matchMs ${small.matchMs.toFixed(1)} -> ${big.matchMs.toFixed(1)}, ` +
 +          `ratio ${result.ratio.toFixed(2)}, workMs ${workMs(small).toFixed(1)} -> ${workMs(big).toFixed(1)}, ` +
-+          `wall ${small.wallMs.toFixed(0)} -> ${big.wallMs.toFixed(0)} ms`,
++          `wall ${small.wallMs.toFixed(0)} -> ${big.wallMs.toFixed(0)} ms (not a bound)`,
 +      );
 +      expect(small.status).toBe(shape.status);
 +      expect(big.status).toBe(shape.status);
 +      expect(small.matchMs).toBeLessThan(MAX_MATCH_MS);
 +      expect(workMs(small)).toBeLessThan(MAX_SCRIPT_MS);
-+      expect(small.wallMs).toBeLessThan(MAX_WALL_MS);
 +      // The large run is bounded on its own: the ratio cannot see slow non-regex work or a
 +      // quadratic part under half of the linear part.
 +      expect(big.matchMs).toBeLessThan(BIG_RUN_FACTOR * MAX_MATCH_MS);
 +      expect(workMs(big)).toBeLessThan(BIG_RUN_FACTOR * MAX_SCRIPT_MS);
-+      expect(big.wallMs).toBeLessThan(MAX_WALL_MS);
 +      expect(result.ratio).toBeLessThan(MAX_GROWTH_RATIO);
++      if (shape.calls !== undefined) {
++        expect(small.calls).toBe(shape.calls);
++        expect(big.calls).toBe(shape.calls);
++      }
 +    },
++    // Two spawns per attempt, each waiting for a timing slot and killed at the hang limit.
++    rowTimeoutMs(2),
 +  );
 +});
 diff --git a/scripts/test/guard-rules.test.ts b/scripts/test/guard-rules.test.ts
-index c32db02..3f9d2ce 100644
+index 21aaff2..095fb00 100644
 --- a/scripts/test/guard-rules.test.ts
 +++ b/scripts/test/guard-rules.test.ts
-@@ -108,6 +108,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
+@@ -117,6 +117,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
      "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
      "powershell -enc AAAA",
      "node -e \"import('./scripts/lib/install-cli.mjs')\"",
@@ -454,10 +512,10 @@ index c32db02..3f9d2ce 100644
    it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
      expect((await runGuard(command)).status).toBe(ALLOWED);
 diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
-index 2a6c45f..19ad296 100644
+index f7851c1..060ba13 100644
 --- a/scripts/test/guard.test.ts
 +++ b/scripts/test/guard.test.ts
-@@ -25,13 +25,22 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -26,13 +26,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
    const MAX_MATCH_MS = 150;
    const MAX_SCRIPT_MS = 300;
    const RUN = 100_000;
@@ -480,24 +538,26 @@ index 2a6c45f..19ad296 100644
 +  const CALLS_PUSH_MAIN = 3;
 +  const CALLS_CAPTURE_SKIPPED = 12;
 +  const BS = "\\";
-+  const continuation = (eol: string, count: number): string =>
-+    `echo --apply; ${`node capture-install ${BS}${eol}`.repeat(count)}`;
    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
      cwd: repoRoot,
      encoding: "utf8",
-@@ -56,8 +65,9 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -57,8 +64,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      status,
      execCalls,
    });
 -  // Repeated-anchor rows (repeating the push anchor many times) are quadratic in guard.mjs today;
 -  // they land with the guard fix in docs/patches/FIX-2-guard.patch.
++  // Shapes that scripts/test/guard-growth.test.ts already runs at about 100k characters (the small
++  // run of a growth row, same bounds, same exact call counts) are not repeated here: `git push ` x N,
++  // `node --x=node ` x N + capture-install --apply, and the backslash-LF and backslash-CRLF
++  // continuations with the flag in another segment.
 +  // Repeated-anchor rows repeat a rule's anchor (`git push `, `node `, ...) up to about 100k
 +  // characters. Before the FIX-2 guard patch several were quadratic (up to 12 s, past the 5 s hook
 +  // timeout, which Claude Code treats as allow). They are the rows after "quotes".
    const timingInputs: Record<string, TimingRow> = {
      spaces: row(" ".repeat(RUN), ALLOWED),
      tabs: row("\t".repeat(RUN), ALLOWED),
-@@ -65,15 +75,91 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -66,15 +78,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      "node + spaces + capture-install --apply": row(
        `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
        BLOCKED,
@@ -517,7 +577,6 @@ index 2a6c45f..19ad296 100644
      "git push + spaces": row(`git push${" ".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
      "git push + tabs": row(`git push${"\t".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
      quotes: row(`${'"'.repeat(RUN)} capture-install --apply`, ALLOWED, CALLS_PLUS_ONE),
-+    "git push x N": row("git push ".repeat(11_000), ALLOWED, CALLS_PLUS_ONE),
 +    "git push - x N": row("git push -".repeat(10_000), ALLOWED, CALLS_PLUS_ONE),
 +    "git push origin x N + main": row(
 +      "git push origin ".repeat(6_250) + "main",
@@ -571,35 +630,18 @@ index 2a6c45f..19ad296 100644
 +      BLOCKED,
 +      CALLS_PLUS_ONE,
 +    ),
-+    "node --x=node x N + capture-install --apply": row(
-+      `${"node --x=node ".repeat(7_000)}capture-install --apply`,
-+      BLOCKED,
-+      CALLS_PLUS_ONE,
-+    ),
-+    // Backslash-newline continuations: the flag check must skip the whole logical segment.
-+    "node capture-install backslash-LF x N, flag in another segment": row(
-+      continuation("\n", 4_500),
-+      ALLOWED,
-+      CALLS_CAPTURE_SKIPPED,
-+    ),
-+    "node capture-install backslash-CRLF x N, flag in another segment": row(
-+      continuation("\r\n", 4_500),
-+      ALLOWED,
-+      CALLS_CAPTURE_SKIPPED,
-+    ),
    };
    // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
    // Each row runs until the first run is within both bounds, at most MAX_ATTEMPTS: it fails only if
 diff --git a/scripts/test/helpers/guard-growth.ts b/scripts/test/helpers/guard-growth.ts
 new file mode 100644
-index 0000000..8cd44e6
+index 0000000..32c5251
 --- /dev/null
 +++ b/scripts/test/helpers/guard-growth.ts
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,133 @@
 +import {
 +  GuardKilledError,
 +  MAX_ATTEMPTS,
-+  MAX_WALL_MS,
 +  settleKilled,
 +  workMs,
 +  type TimedRun,
@@ -620,7 +662,8 @@ index 0000000..8cd44e6
 + * The large run has GROWTH_SCALE times the input, so its absolute limits are this many times the
 + * small run's, not GROWTH_SCALE: linear work that is just inside the small limit still passes, but
 + * a large run that is slow in absolute terms (non-regex work, or a quadratic part under half the
-+ * linear part, which the ratio hides) fails. The real hook timeout is 5 s and a timeout allows.
++ * linear part, which the ratio hides) fails. The real hook timeout is 5 s and a timeout allows;
++ * wall time is not bounded (process start under load), see HANG_KILL_MS in guard-timing.ts.
 + */
 +export const BIG_RUN_FACTOR = 2;
 +
@@ -644,7 +687,7 @@ index 0000000..8cd44e6
 +  readonly ratio: number;
 +  /** How many pairs it took, 1 to maxAttempts. Logged as evidence. */
 +  readonly attempts: number;
-+  /** How many of those attempts were killed at the wall timeout (a violation, retried). Evidence. */
++  /** How many of those attempts were killed at the kill limit (a failed attempt, retried). Evidence. */
 +  readonly kills: number;
 +}
 +
@@ -657,23 +700,36 @@ index 0000000..8cd44e6
 +  return pair.small.status === status && pair.big.status === status;
 +}
 +
-+/** The large run alone: absolute match and script time at BIG_RUN_FACTOR times the limits, and wall time. */
++/** The large run alone: absolute match and script time at BIG_RUN_FACTOR times the limits. Guard-side time only. */
 +export function bigRunWithin(big: TimedRun, limits: GrowthLimits): boolean {
 +  return (
-+    big.matchMs < BIG_RUN_FACTOR * limits.matchMs &&
-+    workMs(big) < BIG_RUN_FACTOR * limits.workMs &&
-+    big.wallMs < MAX_WALL_MS
++    big.matchMs < BIG_RUN_FACTOR * limits.matchMs && workMs(big) < BIG_RUN_FACTOR * limits.workMs
 +  );
 +}
 +
++/** Which bounds a pair broke, as text for the log; empty when it is within all of them. */
++export function growthViolations(pair: GrowthPair, limits: GrowthLimits): string[] {
++  const broken: string[] = [];
++  if (ratioOf(pair) >= MAX_GROWTH_RATIO) {
++    broken.push(`ratio ${ratioOf(pair).toFixed(2)} >= ${MAX_GROWTH_RATIO}`);
++  }
++  if (pair.small.matchMs >= limits.matchMs) {
++    broken.push(`small matchMs ${pair.small.matchMs.toFixed(1)} >= ${limits.matchMs}`);
++  }
++  if (workMs(pair.small) >= limits.workMs) {
++    broken.push(`small workMs ${workMs(pair.small).toFixed(1)} >= ${limits.workMs}`);
++  }
++  if (pair.big.matchMs >= BIG_RUN_FACTOR * limits.matchMs) {
++    broken.push(`big matchMs ${pair.big.matchMs.toFixed(1)} >= ${BIG_RUN_FACTOR * limits.matchMs}`);
++  }
++  if (workMs(pair.big) >= BIG_RUN_FACTOR * limits.workMs) {
++    broken.push(`big workMs ${workMs(pair.big).toFixed(1)} >= ${BIG_RUN_FACTOR * limits.workMs}`);
++  }
++  return broken;
++}
++
 +export function growthWithin(pair: GrowthPair, limits: GrowthLimits): boolean {
-+  return (
-+    ratioOf(pair) < MAX_GROWTH_RATIO &&
-+    pair.small.matchMs < limits.matchMs &&
-+    workMs(pair.small) < limits.workMs &&
-+    pair.small.wallMs < MAX_WALL_MS &&
-+    bigRunWithin(pair.big, limits)
-+  );
++  return growthViolations(pair, limits).length === 0;
 +}
 +
 +/**
@@ -700,11 +756,14 @@ index 0000000..8cd44e6
 +    if (pair instanceof GuardKilledError) {
 +      killed = pair;
 +      kills += 1;
++      console.info(`guard growth attempt ${attempts} rejected: ${pair.message}`);
 +      continue;
 +    }
-+    if (!statusMatches(pair, status) || growthWithin(pair, limits)) {
++    const broken = growthViolations(pair, limits);
++    if (!statusMatches(pair, status) || broken.length === 0) {
 +      return { ...pair, ratio: ratioOf(pair), attempts, kills };
 +    }
++    console.info(`guard growth attempt ${attempts} rejected: ${broken.join(", ")}`);
 +    worst = worst === undefined || ratioOf(pair) > ratioOf(worst) ? pair : worst;
 +  }
 +  // maxAttempts >= 1 and the loop ran, so a pair or a kill exists; the guard keeps the type honest.
