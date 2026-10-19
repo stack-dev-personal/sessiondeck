@@ -33,13 +33,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
   const MAX_MATCH_MS = 150;
   const MAX_SCRIPT_MS = 300;
   const RUN = 100_000;
-  // Exact regex call counts. A command that reaches every rule runs the 7 RULES regexes (the
-  // capture-install rule's `when` pre-check uses includes, so it adds a regex only when it passes)
-  // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. The quotes
-  // row passes the pre-check, runs the capture-install regex and then the bare-push test, which
-  // makes 9 as measured. Exact counts catch a refactor that drops or skips a rule.
+  // Exact regex call counts. A command that reaches every rule runs the 7 plain RULES regexes (the
+  // capture-install rule's `when` pre-check uses includes, so it adds regexes only when it passes)
+  // plus the bare-push test: 8. A bare `git push` also runs the second push regex: 9. When the
+  // pre-check passes, the capture-install rule searches for a node candidate. No candidate (the
+  // quotes row) adds 1 and then the bare-push test runs: 9. A blocked command adds 2 (the candidate
+  // and the --apply check) and exits before the bare-push test: 9. A candidate without --apply in
+  // its segment adds 4 (candidate, flag check, segment end, final search) plus the bare-push test:
+  // 12. A command blocked by the third push rule runs 3. Exact counts catch a refactor that drops
+  // or skips a rule.
   const CALLS_ALL_RULES = 8;
   const CALLS_PLUS_ONE = 9;
+  const CALLS_PUSH_MAIN = 3;
+  const CALLS_CAPTURE_SKIPPED = 12;
+  const BS = "\\";
   const branch = execSync("git rev-parse --abbrev-ref HEAD", {
     cwd: repoRoot,
     encoding: "utf8",
@@ -64,8 +71,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
     status,
     execCalls,
   });
-  // Repeated-anchor rows (repeating the push anchor many times) are quadratic in guard.mjs today;
-  // they land with the guard fix in docs/patches/FIX-2-guard.patch.
+  // Shapes that scripts/test/guard-timing-growth.test.ts already runs at about 100k characters (the small
+  // run of a growth row, same bounds, same exact call counts) are not repeated here: `git push ` x N,
+  // `node --x=node ` x N + capture-install --apply, and the backslash-LF and backslash-CRLF
+  // continuations with the flag in another segment.
+  // Repeated-anchor rows repeat a rule's anchor (`git push `, `node `, ...) up to about 100k
+  // characters. Before the FIX-2 guard patch several were quadratic (up to 12 s, past the 5 s hook
+  // timeout, which Claude Code treats as allow). They are the rows after "quotes".
   const timingInputs: Record<string, TimingRow> = {
     spaces: row(" ".repeat(RUN), ALLOWED),
     tabs: row("\t".repeat(RUN), ALLOWED),
@@ -73,15 +85,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
     "node + spaces + capture-install --apply": row(
       `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
       BLOCKED,
+      CALLS_PLUS_ONE,
     ),
     "node + tabs + capture-install --apply": row(
       `node${"\t".repeat(RUN)}scripts/capture-install.mjs --apply`,
       BLOCKED,
+      CALLS_PLUS_ONE,
     ),
-    "node + long path": row(`node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`, BLOCKED),
+    "node + long path": row(
+      `node ${"a/".repeat(RUN / 2)}capture-install.mjs --apply`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
     "git push + spaces": row(`git push${" ".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
     "git push + tabs": row(`git push${"\t".repeat(RUN)}`, pushStatus, CALLS_PLUS_ONE, 1),
     quotes: row(`${'"'.repeat(RUN)} capture-install --apply`, ALLOWED, CALLS_PLUS_ONE),
+    "git push - x N": row("git push -".repeat(10_000), ALLOWED, CALLS_PLUS_ONE),
+    "git push origin x N + main": row(
+      "git push origin ".repeat(6_250) + "main",
+      BLOCKED,
+      CALLS_PUSH_MAIN,
+    ),
+    "git branch x N": row("git branch ".repeat(9_000), ALLOWED),
+    "git reset x N": row("git reset ".repeat(10_000), ALLOWED),
+    "rm -rf x N": row("rm -rf ".repeat(14_000), ALLOWED),
+    "rm - + r x N": row(`rm -${"r".repeat(RUN)}`, ALLOWED),
+    "node x N + --apply capture-install": row(
+      `${"node ".repeat(20_000)}--apply capture-install`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
+    "node capture-install.mjs x N + --apply": row(
+      `${"node scripts/capture-install.mjs ".repeat(3_000)}--apply`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
+    "node -x x N, flag in another segment": row(
+      `echo capture-install --apply; ${"node -x ".repeat(12_500)}`,
+      ALLOWED,
+      CALLS_PLUS_ONE,
+    ),
+    "node capture-install.mjs x N, flag in another segment": row(
+      `echo --apply; ${"node scripts/capture-install.mjs ".repeat(3_000)}`,
+      ALLOWED,
+      CALLS_CAPTURE_SKIPPED,
+    ),
+    "braces x N + capture-install --apply": row(
+      `${"{".repeat(RUN)} capture-install --apply`,
+      ALLOWED,
+      CALLS_PLUS_ONE,
+    ),
+    // Security review of the first patch: `--a` could be read as `--`+`a` or `-`+`-a`, so 33 options
+    // gave 2^33 paths and the guard ran past the hook timeout (a timeout is an allow).
+    "node + --a b x33, then a capture-install --apply segment": row(
+      `node ${"--a b ".repeat(33)}; node scripts/capture-install.mjs --apply`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
+    "node + --a b x33 + node capture-install --apply, one segment": row(
+      `node ${"--a b ".repeat(33)}node scripts/capture-install.mjs --apply`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
+    // The same kind of ambiguity with an option value that ends in a backslash-newline continuation.
+    "node + -a x backslash-newline x33 + node capture-install --apply": row(
+      `node ${`-a x${BS}\n`.repeat(33)}node scripts/capture-install.mjs --apply`,
+      BLOCKED,
+      CALLS_PLUS_ONE,
+    ),
   };
   // Async spawns only (no spawnSync), so concurrent tests do not stall each other's timers.
   // Each row runs until the first run is within both bounds, at most MAX_ATTEMPTS: it fails only if

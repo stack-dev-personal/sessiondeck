@@ -118,6 +118,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
     "cp scripts/capture-install.mjs x.mjs && node x.mjs --apply",
     "powershell -enc AAAA",
     "node -e \"import('./scripts/lib/install-cli.mjs')\"",
+    // FIX-2 guard patch: more than 32 options between node and the script is not recognised (the
+    // option chain is capped so matching stays bounded; the old guard blocked this).
+    `node ${"-r x ".repeat(40)}scripts/capture-install.mjs --apply`,
+    // FIX-2 guard patch: the matcher is not quote aware. A `;` inside a quoted argument ends the
+    // segment for the flag check, so the node line below is no longer matched (the old guard blocked
+    // it only by luck; `node capture-install "a;b" --apply` is allowed by both guards).
+    'node capture-install "x;)/node" capture-install --apply',
+    'node capture-install "a;b" --apply',
   ];
   it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
     expect((await runGuard(command)).status).toBe(ALLOWED);
