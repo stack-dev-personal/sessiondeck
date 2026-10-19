@@ -410,3 +410,14 @@ DOCS-1 verification (2026-10-19, branch sprint/0-bootstrap, worktree `C:/Users/s
 | Requirement | Command | Key output | Result | Timestamp (UTC) |
 |---|---|---|---|---|
 | R0.6 (DOCS-1, head cd2f9da) | `diff -rq --strip-trailing-cr C:/Users/stack/vault/projects/sessiondeck/planning C:/Users/stack/projects/wt/FIX-1/docs/planning`; supporting: `pnpm -F @sessiondeck/scripts test:sprint`; `node scripts/sprint/render-prompt.mjs --sprint 4 --contract-sha 0000000` and `--sprint 5 ...`, grepped; `pnpm format:check` | diff printed nothing, exit 0. `test:sprint`: 13 files passed, 279 tests passed, 0 failed. Render sprint 4 exit 0 (64 lines): `linux/arm64` x2 (lines 30, 40), `S13 runner security re-review` x1 (line 31), `laptop hub` x1. Render sprint 5 exit 0 (58 lines): `laptop hub` x3 (lines 27, 29, 35); `linux/arm64` and `S13 runner security re-review` x0 (they sit in sprint 4 only). `format:check`: `All matched files use Prettier code style!`, exit 0 | pass | 2026-10-19 |
+
+## ENV-1 (p0/environment, 2026-10-19)
+
+ENV-1 verification (2026-10-19, branch p0/environment, worktree `C:/Users/stack/projects/wt/ENV-1`, head d7f91d5, docs-only: ENVIRONMENT.md filled, WSL2 moved into Phase 1).
+
+| Requirement | Command | Key output | Result | Timestamp (UTC) |
+|---|---|---|---|---|
+| R0.6 (ENV-1, head d7f91d5) | `diff -rq --strip-trailing-cr C:/Users/stack/vault/projects/sessiondeck/planning docs/planning`; supporting: `pnpm -F @sessiondeck/scripts test` | diff printed nothing, exit 0. Scripts suite exit 0: `Test Files 29 passed (29)`, `Tests 578 passed \| 4 skipped (582)`. No test compares the vault copy; `scripts/test/scaffold.test.ts` "R0.6 project scaffold files" covers scaffold files only, so the diff is the proof of the vault-identity clause | pass | 2026-10-19 23:15Z |
+| Sprint 1 user gate: docs/ENVIRONMENT.md filled (Claude Code version, plan type, Git Bash, WSL2, Node) | `grep -n -i -E "claude code\|plan type\|git bash\|wsl2\|node" docs/ENVIRONMENT.md`; `grep -n "pending user" docs/ENVIRONMENT.md` | Line 7 Claude Code version `2.1.295`; line 8 Plan type `Max (decision 11, user, 2026-10-19)`; line 11 Git Bash `yes, C:\Program Files\Git\usr\bin\bash.exe`; line 12 WSL2 `yes: Claude sessions run in WSL2 ...` (mix of WSL2 and native flagged as the conductor's call, not user-confirmed); line 13 Node `v24.19.0 local`. `grep "pending user"` printed nothing, exit 1 (no matches) | pass | 2026-10-19 23:15Z |
+
+ENV-1 result: 2 pass / 0 fail / 0 unverifiable.

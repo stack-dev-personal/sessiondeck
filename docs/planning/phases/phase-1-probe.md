@@ -19,7 +19,7 @@ In:
 - `probe-subagents` for `subagentStatusLine` (same pattern, kind `subagents`).
 - `probe-daemon`: spool tailer with persisted cursor, batching, retry with backoff and jitter, transcript tailer (main + subagent transcripts) by byte offset with compaction reset, pid liveness every 10 s, `~/.claude/sessions/*.json` second opinion, host heartbeat.
 - `probe install` / `probe uninstall`: idempotent edit of `~/.claude/settings.json` (merge, never clobber harness hooks), config file at `%LOCALAPPDATA%\sessiondeck\probe.json` (hub URL, token, host name), daemon registration (Task Scheduler on Windows; systemd user unit on Linux).
-- Native Windows first. Linux build for WSL2 as stretch (same code, different install path).
+- Native Windows first-class. Linux build for WSL2 in scope (amended 2026-10-19, decisions 17 and 19; was stretch): same code, Linux install path inside the distro, systemd user unit, plus a loopback bridge so the probe inside WSL2 reaches the hub on Windows (R1.11).
 Out:
 - Any interpretation of payloads (hub's job).
 - Redaction (Phase 4; the daemon ships raw transcript lines in Phase 1 to a LAN-only hub).
@@ -33,6 +33,7 @@ Out:
 - Spool writes from parallel hooks (Claude runs matching hooks in parallel): use `O_APPEND` single-write of one line; lines under 64 KB are atomic on NTFS and Linux for practical purposes, verify with a stress test.
 - Transcripts can exceed tens of MB; the tailer must never read from offset 0 on a live file except on compaction reset.
 - Windows has no inode: replacement detection uses `ctime` change plus size regression.
+- Hooks inside WSL2 fire with Linux paths (decision 17); the probe must not assume Windows paths there.
 
 ## Inputs
 - `packages/contract` at the Phase 0 SHA.
@@ -46,6 +47,7 @@ Out:
 - Latency harness: `scripts/bench-hook.mjs` spawns `node dist/hook.mjs` 200 times with a fixture on stdin and reports p50/p95 wall time. Target p95 < 80 ms on the laptop. If exceeded, build the Bun single-file `.exe` variant (A15).
 - Loss harness: start daemon, kill hub, run 500 synthetic events, restart hub, assert 500 accepted, no duplicates.
 - Transcript harness: replay a fixture transcript into a temp file in 1 KB chunks with a simulated compaction (truncate + rewrite) and assert the tailer emits every line exactly once.
+- WSL2 bridge harness: from inside a WSL2 distro the daemon forwards synthetic envelopes to the hub on the Windows side; assert every one accepted, record in docs/PROBE-BENCH.md (runs on the laptop).
 - Windows CI job runs unit tests; the latency and loss harnesses run locally and record numbers in `docs/PROBE-BENCH.md`.
 
 ## Requirements
@@ -59,6 +61,7 @@ Out:
 - R1.8 `probe install` leaves existing hooks in `settings.json` untouched (test against a settings fixture containing harness hooks) and is idempotent.
 - R1.9 statusLine command prints a usable one-liner (state, context %, 5h %) and never throws.
 - R1.10 Config and token live outside `settings.json` with user-only permissions.
+- R1.11 WSL2: the Linux build (hook, statusline, daemon) installs inside a WSL2 distro without touching existing hooks there, and its envelopes reach the hub on Windows through a loopback bridge (WSL2 bridge harness: all envelopes accepted). Native Windows behavior unchanged.
 
 ## Definition of done
 - [ ] All R1.x pass; bench numbers recorded.
