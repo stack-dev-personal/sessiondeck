@@ -124,10 +124,10 @@ index 49c512a..e2b1cb2 100644
      }
 diff --git a/scripts/test/guard-growth.test.ts b/scripts/test/guard-growth.test.ts
 new file mode 100644
-index 0000000..df98d21
+index 0000000..0ea5415
 --- /dev/null
 +++ b/scripts/test/guard-growth.test.ts
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,398 @@
 +import { resolve } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 +import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
@@ -147,6 +147,8 @@ index 0000000..df98d21
 +  GuardKilledError,
 +  HANG_KILL_MS,
 +  MAX_ATTEMPTS,
++  MAX_RAW_SCRIPT_MS,
++  rawMs,
 +  rowTimeoutMs,
 +  runTimed,
 +  workMs,
@@ -155,7 +157,7 @@ index 0000000..df98d21
 +
 +const MAX_MATCH_MS = 150;
 +const MAX_SCRIPT_MS = 300;
-+const LIMITS = { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS };
++const LIMITS = { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS, rawMs: MAX_RAW_SCRIPT_MS };
 +const BS = "\\";
 +const FIXTURE = resolve(
 +  repoRoot,
@@ -314,6 +316,23 @@ index 0000000..df98d21
 +    ).toBe(false);
 +  });
 +
++  it("bounds rawMs of both runs: a guard that idles before reading stdin fails", () => {
++    // 6 s idle before the read: workMs is 12 ms, so the work bounds and the ratio all pass.
++    const idle = run({ scriptMs: 6014, stdinWaitMs: 6002, stdinIdleMs: 6002 });
++    expect(workMs(idle)).toBeLessThan(MAX_SCRIPT_MS);
++    expect(growthViolations({ small: idle, big: run() }, LIMITS)).toEqual([
++      "small rawMs 6014.0 >= 3000",
++    ]);
++    expect(growthViolations({ small: run(), big: idle }, LIMITS)).toEqual([
++      "big rawMs 6014.0 >= 3000",
++    ]);
++    expect(bigRunWithin(idle, LIMITS)).toBe(false);
++    expect(growthWithin({ small: idle, big: idle }, LIMITS)).toBe(false);
++    // execSync is not idle: a slow git call in the large run does not fail the raw bound.
++    const slowGit = run({ scriptMs: 3500, stdinIdleMs: 1, execMs: 3400, execCalls: 1 });
++    expect(bigRunWithin(slowGit, LIMITS)).toBe(true);
++  });
++
 +  it("retries a pair that only violates a large-run bound, and fails if all attempts do", async () => {
 +    const slowBig = { small: run({ matchMs: 100 }), big: run({ matchMs: 2 * MAX_MATCH_MS }) };
 +    const retried = await firstGrowthWithin(
@@ -405,6 +424,8 @@ index 0000000..df98d21
 +    readonly status: number;
 +    /** Exact regex call count of the guard for this shape (same at both sizes), when it is known. */
 +    readonly calls?: number;
++    /** Exact execSync count (same at both sizes): the shapes never reach the bare-push git call. */
++    readonly execCalls: number;
 +  }
 +  const chars = (unit: string): number => Math.floor(SIZE / unit.length);
 +  const PUSH = "git push ";
@@ -419,39 +440,46 @@ index 0000000..df98d21
 +      build: (n) => PUSH.repeat(n),
 +      small: chars(PUSH),
 +      status: ALLOWED,
++      execCalls: 0,
 +      calls: 9,
 +    },
 +    "node capture-install backslash-LF and backslash-CRLF x N, flag in another segment": {
 +      build: (n) => `echo --apply; ${CONT.repeat(n)}`,
 +      small: chars(CONT),
 +      status: ALLOWED,
++      execCalls: 0,
 +      calls: 12,
 +    },
 +    "node --x=node x N + capture-install --apply": {
 +      build: (n) => `${XNODE.repeat(n)}capture-install --apply`,
 +      small: chars(XNODE),
 +      status: BLOCKED,
++      execCalls: 0,
 +      calls: 9,
 +    },
 +    "node + (backslash-LF -a backslash-LF node) x N": {
 +      build: (n) => `node${NODE_VALUE_CONT.repeat(n)}`,
 +      small: chars(NODE_VALUE_CONT),
 +      status: ALLOWED,
++      execCalls: 0,
 +    },
 +    "node + ( -a=yyyy/node) x N": {
 +      build: (n) => `node${NODE_VALUE_EQ.repeat(n)}`,
 +      small: chars(NODE_VALUE_EQ),
 +      status: ALLOWED,
++      execCalls: 0,
 +    },
 +    "options: node + --a b x k + node capture-install --apply": {
 +      build: (k) => `node ${"--a b ".repeat(k)}node scripts/capture-install.mjs --apply`,
 +      small: 16,
 +      status: BLOCKED,
++      execCalls: 0,
 +    },
 +    "options: node + -a x backslash-newline x k + node capture-install --apply": {
 +      build: (k) => `node ${`-a x${BS}\n`.repeat(k)}node scripts/capture-install.mjs --apply`,
 +      small: 16,
 +      status: BLOCKED,
++      execCalls: 0,
 +    },
 +  };
 +  // The option shapes are 244 characters at k=64 and are driven by the count, not the size.
@@ -471,17 +499,23 @@ index 0000000..df98d21
 +      console.info(
 +        `guard growth ${name}: attempts ${result.attempts}, kills ${result.kills}, ` +
 +          `matchMs ${small.matchMs.toFixed(1)} -> ${big.matchMs.toFixed(1)}, ` +
++          `rawMs ${rawMs(small).toFixed(1)} -> ${rawMs(big).toFixed(1)} (bound ${MAX_RAW_SCRIPT_MS}), execCalls ${small.execCalls} -> ${big.execCalls}, ` +
 +          `ratio ${result.ratio.toFixed(2)}, workMs ${workMs(small).toFixed(1)} -> ${workMs(big).toFixed(1)}, ` +
 +          `wall ${small.wallMs.toFixed(0)} -> ${big.wallMs.toFixed(0)} ms (not a bound)`,
 +      );
 +      expect(small.status).toBe(shape.status);
 +      expect(big.status).toBe(shape.status);
++      expect(small.execCalls).toBe(shape.execCalls);
++      expect(big.execCalls).toBe(shape.execCalls);
 +      expect(small.matchMs).toBeLessThan(MAX_MATCH_MS);
 +      expect(workMs(small)).toBeLessThan(MAX_SCRIPT_MS);
 +      // The large run is bounded on its own: the ratio cannot see slow non-regex work or a
 +      // quadratic part under half of the linear part.
 +      expect(big.matchMs).toBeLessThan(BIG_RUN_FACTOR * MAX_MATCH_MS);
 +      expect(workMs(big)).toBeLessThan(BIG_RUN_FACTOR * MAX_SCRIPT_MS);
++      // rawMs keeps idle time in: workMs subtracts a guard that idles before it reads stdin.
++      expect(rawMs(small)).toBeLessThan(MAX_RAW_SCRIPT_MS);
++      expect(rawMs(big)).toBeLessThan(MAX_RAW_SCRIPT_MS);
 +      expect(result.ratio).toBeLessThan(MAX_GROWTH_RATIO);
 +      if (shape.calls !== undefined) {
 +        expect(small.calls).toBe(shape.calls);
@@ -493,7 +527,7 @@ index 0000000..df98d21
 +  );
 +});
 diff --git a/scripts/test/guard-rules.test.ts b/scripts/test/guard-rules.test.ts
-index 21aaff2..095fb00 100644
+index 23afd3c..ef3e4be 100644
 --- a/scripts/test/guard-rules.test.ts
 +++ b/scripts/test/guard-rules.test.ts
 @@ -117,6 +117,14 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
@@ -512,10 +546,10 @@ index 21aaff2..095fb00 100644
    it.concurrent.each(knownGaps)("known gap (allowed): %s", async (command) => {
      expect((await runGuard(command)).status).toBe(ALLOWED);
 diff --git a/scripts/test/guard.test.ts b/scripts/test/guard.test.ts
-index f7851c1..060ba13 100644
+index 1c7d6af..a82dadd 100644
 --- a/scripts/test/guard.test.ts
 +++ b/scripts/test/guard.test.ts
-@@ -26,13 +26,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -30,13 +30,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
    const MAX_MATCH_MS = 150;
    const MAX_SCRIPT_MS = 300;
    const RUN = 100_000;
@@ -541,7 +575,7 @@ index f7851c1..060ba13 100644
    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
      cwd: repoRoot,
      encoding: "utf8",
-@@ -57,8 +64,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -61,8 +68,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      status,
      execCalls,
    });
@@ -557,7 +591,7 @@ index f7851c1..060ba13 100644
    const timingInputs: Record<string, TimingRow> = {
      spaces: row(" ".repeat(RUN), ALLOWED),
      tabs: row("\t".repeat(RUN), ALLOWED),
-@@ -66,15 +78,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
+@@ -70,15 +82,74 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
      "node + spaces + capture-install --apply": row(
        `node${" ".repeat(RUN)}scripts/capture-install.mjs --apply`,
        BLOCKED,
@@ -635,13 +669,14 @@ index f7851c1..060ba13 100644
    // Each row runs until the first run is within both bounds, at most MAX_ATTEMPTS: it fails only if
 diff --git a/scripts/test/helpers/guard-growth.ts b/scripts/test/helpers/guard-growth.ts
 new file mode 100644
-index 0000000..32c5251
+index 0000000..d88fa34
 --- /dev/null
 +++ b/scripts/test/helpers/guard-growth.ts
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,147 @@
 +import {
 +  GuardKilledError,
 +  MAX_ATTEMPTS,
++  rawMs,
 +  settleKilled,
 +  workMs,
 +  type TimedRun,
@@ -677,10 +712,15 @@ index 0000000..32c5251
 +  readonly big: TimedRun;
 +}
 +
-+/** Absolute limits of the small run; the large run gets BIG_RUN_FACTOR times the match and script limits. */
++/**
++ * Absolute limits of the small run; the large run gets BIG_RUN_FACTOR times the match and work
++ * limits. The rawMs limit (idle included, execSync excluded, see MAX_RAW_SCRIPT_MS) is not scaled:
++ * the hook timeout is absolute, so both runs stay under it.
++ */
 +export interface GrowthLimits {
 +  readonly matchMs: number;
 +  readonly workMs: number;
++  readonly rawMs: number;
 +}
 +
 +export interface GrowthResult extends GrowthPair {
@@ -700,10 +740,12 @@ index 0000000..32c5251
 +  return pair.small.status === status && pair.big.status === status;
 +}
 +
-+/** The large run alone: absolute match and script time at BIG_RUN_FACTOR times the limits. Guard-side time only. */
++/** The large run alone: absolute match and work time at BIG_RUN_FACTOR times the limits, rawMs at the limit. Guard-side time only. */
 +export function bigRunWithin(big: TimedRun, limits: GrowthLimits): boolean {
 +  return (
-+    big.matchMs < BIG_RUN_FACTOR * limits.matchMs && workMs(big) < BIG_RUN_FACTOR * limits.workMs
++    big.matchMs < BIG_RUN_FACTOR * limits.matchMs &&
++    workMs(big) < BIG_RUN_FACTOR * limits.workMs &&
++    rawMs(big) < limits.rawMs
 +  );
 +}
 +
@@ -719,11 +761,17 @@ index 0000000..32c5251
 +  if (workMs(pair.small) >= limits.workMs) {
 +    broken.push(`small workMs ${workMs(pair.small).toFixed(1)} >= ${limits.workMs}`);
 +  }
++  if (rawMs(pair.small) >= limits.rawMs) {
++    broken.push(`small rawMs ${rawMs(pair.small).toFixed(1)} >= ${limits.rawMs}`);
++  }
 +  if (pair.big.matchMs >= BIG_RUN_FACTOR * limits.matchMs) {
 +    broken.push(`big matchMs ${pair.big.matchMs.toFixed(1)} >= ${BIG_RUN_FACTOR * limits.matchMs}`);
 +  }
 +  if (workMs(pair.big) >= BIG_RUN_FACTOR * limits.workMs) {
 +    broken.push(`big workMs ${workMs(pair.big).toFixed(1)} >= ${BIG_RUN_FACTOR * limits.workMs}`);
++  }
++  if (rawMs(pair.big) >= limits.rawMs) {
++    broken.push(`big rawMs ${rawMs(pair.big).toFixed(1)} >= ${limits.rawMs}`);
 +  }
 +  return broken;
 +}
