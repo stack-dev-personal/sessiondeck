@@ -2,16 +2,20 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
-import { rowTimeoutMs, runTimed, runTimedUntilWithin, workMs } from "./helpers/guard-timing";
+import {
+  MAX_RAW_SCRIPT_MS,
+  rowTimeoutMs,
+  runTimed,
+  rawMs,
+  runTimedUntilWithin,
+  violations,
+  withinBounds,
+  workMs,
+} from "./helpers/guard-timing";
 
-const fixturePath = resolve(
-  repoRoot,
-  "scripts",
-  "test",
-  "fixtures",
-  "guard-timing",
-  "regex-fixture.mjs",
-);
+const fixtureDir = resolve(repoRoot, "scripts", "test", "fixtures", "guard-timing");
+const fixturePath = resolve(fixtureDir, "regex-fixture.mjs");
+const delayedReadPath = resolve(fixtureDir, "delayed-read-fixture.mjs");
 
 describe("guard: adversarial timing (conductor decision 5)", () => {
   // Adversarial timing (security review, round 3): the hook has a 5 s timeout and a timeout lets the
@@ -88,19 +92,20 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
         expected.command,
         repoRoot,
         expected,
-        { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS },
+        { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS, rawMs: MAX_RAW_SCRIPT_MS },
       );
       const scriptOnlyMs = workMs(run);
       console.info(
         `guard timing ${name}: attempts ${attempts}, kills ${kills}, ` +
           `match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
-          `scriptMs ${run.scriptMs.toFixed(1)}, stdinWaitMs ${run.stdinWaitMs.toFixed(1)}, ` +
+          `scriptMs ${run.scriptMs.toFixed(1)}, rawMs ${rawMs(run).toFixed(1)} (bound ${MAX_RAW_SCRIPT_MS}), stdinWaitMs ${run.stdinWaitMs.toFixed(1)}, ` +
           `stdinIdleMs ${run.stdinIdleMs.toFixed(1)}, workMs ${scriptOnlyMs.toFixed(1)}, ` +
           `execMs ${run.execMs.toFixed(1)}, ` +
           `execCalls ${run.execCalls}, wall ${run.wallMs.toFixed(0)} ms (not a bound), status ${run.status}`,
       );
       expect(run.matchMs).toBeLessThan(MAX_MATCH_MS);
       expect(scriptOnlyMs).toBeLessThan(MAX_SCRIPT_MS);
+      expect(rawMs(run)).toBeLessThan(MAX_RAW_SCRIPT_MS);
       expect(run.calls).toBe(expected.calls);
       expect(run.execCalls).toBe(expected.execCalls);
       expect(run.status).toBe(expected.status);
@@ -113,6 +118,8 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
   // only needs the kill path, so it gets a short timeout.
   const SELF_TEST = { timeoutMs: 10_000 };
   const HANG_TIMEOUT_MS = 500;
+  // The delay runs from the spawn, so the guard waits at most this long minus its start-up: under
+  // the 3000 ms raw script bound, and the parent-side delay never reaches that bound.
   const STDIN_DELAY_MS = 2500;
   // Self-tests make at most two spawns, once each, and wait for a timing slot like the rows.
   const SELF_TEST_TIMEOUT_MS = rowTimeoutMs(2, 1);
@@ -187,6 +194,40 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
       expect(delayed.stdinWaitMs).toBeGreaterThan(MAX_SCRIPT_MS);
       expect(delayed.scriptMs).toBeGreaterThan(MAX_SCRIPT_MS);
       expect(workMs(delayed)).toBeLessThan(MAX_SCRIPT_MS);
+    },
+    SELF_TEST_TIMEOUT_MS,
+  );
+
+  // A guard that idles before it reads stdin (a timer, or an async exec awaited first) has almost no
+  // workMs, because the idle part of the stdin window is subtracted, yet the real hook would run
+  // that long and a timeout at 5 s allows the command. The raw time bound (rawMs) catches it.
+  it.concurrent.each(["timer", "exec"])(
+    "rejects a guard that idles before reading stdin through the raw time: %s",
+    async (mode) => {
+      const delayed = await runTimed(delayedReadPath, "linear", repoRoot, {
+        timeoutMs: SELF_TEST.timeoutMs,
+        scriptArgs: [mode],
+      });
+      const bounds = {
+        matchMs: MAX_MATCH_MS,
+        workMs: MAX_SCRIPT_MS,
+        rawMs: MAX_RAW_SCRIPT_MS,
+      };
+      console.info(
+        `guard timing self-test delayed read (${mode}): scriptMs ${delayed.scriptMs.toFixed(1)}, ` +
+          `stdinIdleMs ${delayed.stdinIdleMs.toFixed(1)}, matchMs ${delayed.matchMs.toFixed(1)}, ` +
+          `workMs ${workMs(delayed).toFixed(1)}, wall ${delayed.wallMs.toFixed(0)} ms, status ${delayed.status}`,
+      );
+      // The bounds that existed before see almost nothing, which is the hole: nearly all of the
+      // script time is idle time that workMs subtracts.
+      expect(delayed.matchMs).toBeLessThan(MAX_MATCH_MS);
+      expect(workMs(delayed)).toBeLessThan(delayed.scriptMs / 2);
+      expect(delayed.status).toBe(ALLOWED);
+      expect(rawMs(delayed)).toBeGreaterThan(MAX_RAW_SCRIPT_MS);
+      expect(withinBounds(delayed, bounds)).toBe(false);
+      expect(violations(delayed, bounds)).toEqual([
+        `rawMs ${rawMs(delayed).toFixed(1)} >= ${MAX_RAW_SCRIPT_MS}`,
+      ]);
     },
     SELF_TEST_TIMEOUT_MS,
   );

@@ -4,6 +4,8 @@ import {
   GuardKilledError,
   HANG_KILL_MS,
   matchesDeterministic,
+  MAX_RAW_SCRIPT_MS,
+  rawMs,
   MAX_ATTEMPTS,
   rowTimeoutMs,
   SLOT_WAIT_MS,
@@ -11,10 +13,11 @@ import {
   violations,
   withinBounds,
   withSlot,
+  workMs,
   type TimedRun,
 } from "./helpers/guard-timing";
 
-const BOUNDS = { matchMs: 150, workMs: 300 };
+const BOUNDS = { matchMs: 150, workMs: 300, rawMs: MAX_RAW_SCRIPT_MS };
 const EXPECTED = { status: 0, calls: 8, execCalls: 0 };
 
 function run(overrides: Partial<TimedRun> = {}): TimedRun {
@@ -103,6 +106,39 @@ describe("guard timing helper: first run within bounds", () => {
     expect(violations(run({ matchMs: 150, scriptMs: 400, stdinIdleMs: 0 }), BOUNDS)).toHaveLength(
       2,
     );
+  });
+
+  it("raw time bounds idle too: a guard idle before it reads stdin fails", () => {
+    // 6 s idle before the read: workMs is 12 ms, the old bounds pass, the raw bound does not.
+    // Idle time is all but 12 ms of the script time, so only the raw bound can see it.
+    const idleRun = (scriptMs: number): TimedRun => run({ scriptMs, stdinIdleMs: scriptMs - 12 });
+    const idle = run({ scriptMs: 6014, stdinWaitMs: 6002, stdinIdleMs: 6002 });
+    expect(workMs(idle)).toBeLessThan(BOUNDS.workMs);
+    expect(violations(idle, BOUNDS)).toEqual(["rawMs 6014.0 >= 3000"]);
+    expect(withinBounds(idleRun(MAX_RAW_SCRIPT_MS - 1), BOUNDS)).toBe(true);
+    expect(withinBounds(idleRun(MAX_RAW_SCRIPT_MS), BOUNDS)).toBe(false);
+    // An async exec awaited before the read looks the same (execMs only counts execSync).
+    const exec = run({ scriptMs: 4500, stdinIdleMs: 4400, execMs: 50, execCalls: 0 });
+    expect(withinBounds(exec, BOUNDS)).toBe(false);
+  });
+
+  it("rawMs leaves out execSync only: a slow git rev-parse passes, the same time idle does not", () => {
+    // 3.3 s in the guard's own execSync (seen on a heavily loaded runner) is input independent.
+    const slowGit = run({ scriptMs: 3400, stdinIdleMs: 1, execMs: 3300, execCalls: 1 });
+    expect(rawMs(slowGit)).toBe(100);
+    expect(withinBounds(slowGit, BOUNDS)).toBe(true);
+    expect(withinBounds({ ...slowGit, execMs: 0, execCalls: 0 }, BOUNDS)).toBe(false);
+  });
+
+  it("retries a run that only breaks the raw bound, and fails after all attempts", async () => {
+    const idle = run({ scriptMs: 6014, stdinIdleMs: 6002 });
+    const ok = await firstWithinBounds(sequence([idle, run()]).runOnce, EXPECTED, BOUNDS);
+    expect(ok.attempts).toBe(2);
+    const seq = sequence([idle, run({ scriptMs: 4000, stdinIdleMs: 3990 }), idle]);
+    const failed = await firstWithinBounds(seq.runOnce, EXPECTED, BOUNDS);
+    expect(failed.attempts).toBe(MAX_ATTEMPTS);
+    expect(failed.run.scriptMs).toBe(4000);
+    expect(withinBounds(failed.run, BOUNDS)).toBe(false);
   });
 
   it("a guard-side time of seconds fails whatever the kill limit is", () => {

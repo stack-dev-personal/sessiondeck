@@ -10,14 +10,17 @@ const preloadUrl = pathToFileURL(resolve(here, "regexp-timing-preload.mjs")).hre
 /**
  * Kill limit of a timed spawn. It exists only to catch a hang; it is not a performance bound. The
  * real hook timeout is 5 s and a timeout lets the command run, so the property under test is that
- * the guard's OWN work stays far below 5 s. That is bounded by workMs and matchMs (the callers pass
+ * the guard's OWN time stays far below 5 s. That is bounded by workMs and matchMs (the callers pass
  * 300 ms and 150 ms, 6 and 3 percent of the hook timeout; the large run of a growth row gets twice
- * that), which exclude node start-up, the stdin wait and execSync. Wall time is not a bound: it
- * measures Windows process start under contention. On a 4-core runner a row finished at a wall
- * time of 3950 ms with 76 ms of guard work, and two rows were killed at 4000 ms with at most 231 ms
- * of guard work. So the kill is twice the hook timeout: start-up noise cannot reach it, and a guard
+ * that), which exclude node start-up, the stdin wait and execSync, and by rawMs (script time
+ * with idle included and only execSync excluded, MAX_RAW_SCRIPT_MS), which catches a guard that
+ * idles before it reads stdin. Wall time
+ * is not a bound: it measures Windows process start under contention. On a 4-core runner a row
+ * finished at a wall time of 3950 ms with 76 ms of guard work, and two rows were killed at 4000 ms
+ * with at most 231 ms of guard work. So the kill is twice the hook timeout: start-up noise cannot reach it, and a guard
  * that runs past it (a hang, or work that exceeds even 10 s) fails the row on every attempt. A
- * guard whose work takes seconds but finishes before the kill fails on workMs.
+ * guard whose work or idle time takes seconds but finishes before the kill fails on workMs or the
+ * rawMs.
  */
 export const HANG_KILL_MS = 10_000;
 
@@ -50,6 +53,35 @@ export interface TimedOptions {
   readonly timeoutMs?: number;
   /** Delay before the stdin JSON is written, to prove the stdin wait is subtracted. */
   readonly stdinDelayMs?: number;
+  /** Extra arguments after the script path (a fixture picks its mode from them). */
+  readonly scriptArgs?: readonly string[];
+}
+
+/**
+ * Upper bound (exclusive) on rawMs: preload end to exit, idle time included, execSync excluded.
+ * workMs subtracts the idle part of the stdin window, so a guard that sits idle before it reads
+ * stdin (a timer, or an async exec awaited first) measures as almost no work: 6 s of idle gave
+ * workMs 12 ms, and the real hook, which times out at 5 s and then allows the command, would have
+ * run all of it. rawMs has no such blind spot. 3000 ms is 60 percent of the hook timeout; process
+ * start-up (the flaky part, up to seconds under contention) is not in it, so the rest of the 5 s
+ * is left for it. execSync is left out because it is the guard's input independent git call,
+ * which took 1.4 s and 3.3 s on a heavily loaded runner: with it included, two rows were rejected
+ * at a raw script time of 3419 and 3398 ms. Worst rawMs of a first attempt that passed, on the
+ * four-core proxy: 648 ms in a quiet period (raw script time, 4 runs of round 4), 388 to 555 ms (3
+ * runs), and 859 and 1483 ms while other work kept the laptop busy (the unpatched suite took 43 s
+ * instead of 23 s). A row over the bound is retried, at most 3 attempts. Rows write the stdin
+ * within milliseconds; the self-test that delays it from the parent stays under this bound.
+ */
+export const MAX_RAW_SCRIPT_MS = 3000;
+
+/**
+ * Script time with idle time INCLUDED and only execSync excluded. Unlike workMs it sees a guard
+ * that idles before it reads stdin (a timer, or an async exec awaited first). execSync stays out
+ * for the same reason as in workMs: it is the guard's input independent `git rev-parse`, which took
+ * 1.4 s and 3.3 s on a heavily loaded runner.
+ */
+export function rawMs(run: Pick<TimedRun, "scriptMs" | "execMs">): number {
+  return run.scriptMs - run.execMs;
 }
 
 /** Script time the guard itself spent: idle stdin wait (set by the test process) and execSync excluded. */
@@ -197,7 +229,7 @@ async function runTimedNow(
     const input = JSON.stringify({ tool_name: "Bash", tool_input: { command }, cwd });
     const start = performance.now();
     const exit = await spawnWithInput(
-      ["--import", preloadUrl, scriptPath],
+      ["--import", preloadUrl, scriptPath, ...(options.scriptArgs ?? [])],
       input,
       timingFile,
       options,
@@ -231,6 +263,8 @@ export interface DeterministicExpectation {
 export interface TimingBounds {
   readonly matchMs: number;
   readonly workMs: number;
+  /** Script time with idle included, execSync excluded (see rawMs and MAX_RAW_SCRIPT_MS). */
+  readonly rawMs: number;
 }
 
 export interface AttemptedRun {
@@ -258,6 +292,9 @@ export function violations(run: TimedRun, bounds: TimingBounds): string[] {
   if (workMs(run) >= bounds.workMs) {
     broken.push(`workMs ${workMs(run).toFixed(1)} >= ${bounds.workMs}`);
   }
+  if (rawMs(run) >= bounds.rawMs) {
+    broken.push(`rawMs ${rawMs(run).toFixed(1)} >= ${bounds.rawMs}`);
+  }
   return broken;
 }
 
@@ -283,7 +320,7 @@ export async function settleKilled<T>(attempt: () => Promise<T>): Promise<T | Gu
 /**
  * Calls `runOnce` until a run is within all bounds, at most `maxAttempts` times. A status or call
  * count mismatch is deterministic, so that run is returned at once for the caller to assert on.
- * If every attempt violates a bound, the attempt with the lowest script time is returned (its
+ * If every attempt violates a bound, the attempt with the lowest rawMs is returned (its
  * assertion fails), so noise has to hit all attempts to fail a row while a real regression, which
  * hits every attempt, still fails.
  */
@@ -309,7 +346,7 @@ export async function firstWithinBounds(
       return { run, attempts, kills };
     }
     console.info(`guard timing attempt ${attempts} rejected: ${broken.join(", ")}`);
-    best = best === undefined || workMs(run) < workMs(best) ? run : best;
+    best = best === undefined || rawMs(run) < rawMs(best) ? run : best;
   }
   if (best === undefined) {
     throw killed ?? new Error("firstWithinBounds needs maxAttempts of at least 1");

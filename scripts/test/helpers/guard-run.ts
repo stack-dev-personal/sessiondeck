@@ -19,7 +19,7 @@ export interface GuardResult {
  * ends with process.exit, which in a worker ends only that worker; its only import is
  * node:child_process. Every worker loads a fresh module instance, so the file runs unchanged. This
  * costs a few ms where a node process costs 0.5 to 2 s on a loaded 4-core runner, which is what
- * makes the 75 table rows of guard-rules.test.ts cheap. `runGuardProcessRaw` is the real-process
+ * makes the table rows of guard-rules.test.ts cheap. `runGuardProcessRaw` is the real-process
  * reference; guard-rules.test.ts proves the two agree (exit status and stderr).
  */
 export function runGuardRaw(input: string): Promise<GuardResult> {

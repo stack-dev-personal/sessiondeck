@@ -157,7 +157,7 @@ describe("guard: capture-install --apply (conductor decision 5)", () => {
   const sample = [
     pick(blocked, 0),
     pick(blocked, 16), // backslash-newline continuation
-    pick(blocked, 21), // cmd /c with quotes
+    pick(blocked, 11), // cmd /c with quotes
     pick(allowed, 10),
     pick(knownFalsePositives, 4), // backticks and quotes in the command
     pick(knownGaps, 5),
