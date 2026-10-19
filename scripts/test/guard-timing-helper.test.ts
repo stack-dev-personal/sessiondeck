@@ -5,7 +5,9 @@ import {
   matchesDeterministic,
   MAX_ATTEMPTS,
   MAX_WALL_MS,
+  TIMING_SLOTS,
   withinBounds,
+  withSlot,
   type TimedRun,
 } from "./helpers/guard-timing";
 
@@ -67,6 +69,7 @@ describe("guard timing helper: first run within bounds", () => {
     const seq = sequence([run()]);
     const result = await firstWithinBounds(seq.runOnce, EXPECTED, BOUNDS);
     expect(result.attempts).toBe(1);
+    expect(result.kills).toBe(0);
     expect(seq.count()).toBe(1);
   });
 
@@ -106,7 +109,17 @@ describe("guard timing helper: first run within bounds", () => {
     const seq = sequence([killed(), run()]);
     const result = await firstWithinBounds(seq.runOnce, EXPECTED, BOUNDS);
     expect(result.attempts).toBe(2);
+    expect(result.kills).toBe(1);
     expect(seq.count()).toBe(2);
+  });
+
+  it("counts every kill among the attempts, also when a slow run follows them", async () => {
+    const slow = run({ matchMs: 400 });
+    const seq = sequence([killed(), slow, killed()]);
+    const result = await firstWithinBounds(seq.runOnce, EXPECTED, BOUNDS);
+    expect(result.attempts).toBe(MAX_ATTEMPTS);
+    expect(result.kills).toBe(2);
+    expect(result.run).toBe(slow);
   });
 
   it("rethrows the kill when every attempt is killed", async () => {
@@ -127,5 +140,28 @@ describe("guard timing helper: first run within bounds", () => {
     await expect(firstWithinBounds(sequence([run()]).runOnce, EXPECTED, BOUNDS, 0)).rejects.toThrow(
       /at least 1/,
     );
+  });
+});
+
+describe("guard timing helper: spawn slots", () => {
+  it("never runs more than TIMING_SLOTS tasks at once and runs them all", async () => {
+    let active = 0;
+    let peak = 0;
+    const task = async (id: number): Promise<number> => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((done) => setTimeout(done, 20));
+      active -= 1;
+      return id;
+    };
+    const ids = Array.from({ length: TIMING_SLOTS * 4 }, (_, id) => id);
+    const done = await Promise.all(ids.map((id) => withSlot(() => task(id))));
+    expect(done).toEqual(ids);
+    expect(peak).toBe(TIMING_SLOTS);
+  });
+
+  it("frees the slot when a task throws", async () => {
+    await expect(withSlot(() => Promise.reject(new Error("boom")))).rejects.toThrow(/boom/);
+    await expect(withSlot(() => Promise.resolve("ok"))).resolves.toBe("ok");
   });
 });

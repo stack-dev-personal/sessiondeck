@@ -116,15 +116,55 @@ function spawnWithInput(
 }
 
 /**
+ * Timed spawns allowed at once inside one test worker. The timing rows run concurrently so the
+ * file stays short, but every extra concurrent guard process competes for the same cores as the
+ * other workers of `pnpm -r test`, and a passing first attempt then lands near its bound (227 ms
+ * against 300 ms was seen). Two slots measured: worst first-attempt script time 140 to 160 ms in
+ * `pnpm -r test` (unlimited: 226 to 266 ms), for 1 to 2 s more suite time. The slot wait is outside
+ * the measured wall time.
+ */
+export const TIMING_SLOTS = 2;
+
+let activeSlots = 0;
+const slotQueue: Array<() => void> = [];
+
+export async function withSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activeSlots >= TIMING_SLOTS) {
+    await new Promise<void>((resolveSlot) => slotQueue.push(resolveSlot));
+  } else {
+    activeSlots += 1;
+  }
+  try {
+    return await task();
+  } finally {
+    const next = slotQueue.shift();
+    if (next) {
+      next(); // the slot passes to the next waiter, so activeSlots stays the same
+    } else {
+      activeSlots -= 1;
+    }
+  }
+}
+
+/**
  * Runs a node script with the regex timing preload. The stdin JSON has the shape the guard hook
  * receives. A missing or unparsable timing file throws, so it can never read as 0 ms. Async so
  * tests can run concurrently inside one worker instead of blocking it on each spawn.
  */
-export async function runTimed(
+export function runTimed(
   scriptPath: string,
   command: string,
   cwd: string,
   options: TimedOptions = {},
+): Promise<TimedRun> {
+  return withSlot(() => runTimedNow(scriptPath, command, cwd, options));
+}
+
+async function runTimedNow(
+  scriptPath: string,
+  command: string,
+  cwd: string,
+  options: TimedOptions,
 ): Promise<TimedRun> {
   const timeoutMs = options.timeoutMs ?? MAX_WALL_MS;
   const dir = mkdtempSync(join(tmpdir(), "sd-guard-timing-"));
@@ -173,6 +213,8 @@ export interface AttemptedRun {
   readonly run: TimedRun;
   /** How many runs it took, 1 to maxAttempts. Logged as evidence. */
   readonly attempts: number;
+  /** How many of those attempts were killed at the wall timeout (a violation, retried). Evidence. */
+  readonly kills: number;
 }
 
 export function matchesDeterministic(run: TimedRun, expected: DeterministicExpectation): boolean {
@@ -217,21 +259,23 @@ export async function firstWithinBounds(
 ): Promise<AttemptedRun> {
   let best: TimedRun | undefined;
   let killed: GuardKilledError | undefined;
+  let kills = 0;
   for (let attempts = 1; attempts <= maxAttempts; attempts += 1) {
     const run = await settleKilled(runOnce);
     if (run instanceof GuardKilledError) {
       killed = run;
+      kills += 1;
       continue;
     }
     if (!matchesDeterministic(run, expected) || withinBounds(run, bounds)) {
-      return { run, attempts };
+      return { run, attempts, kills };
     }
     best = best === undefined || workMs(run) < workMs(best) ? run : best;
   }
   if (best === undefined) {
     throw killed ?? new Error("firstWithinBounds needs maxAttempts of at least 1");
   }
-  return { run: best, attempts: maxAttempts };
+  return { run: best, attempts: maxAttempts, kills };
 }
 
 /** Runs the guard under the timing preload until a run is within bounds (see firstWithinBounds). */

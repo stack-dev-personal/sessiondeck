@@ -82,7 +82,7 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
   it.concurrent.each(Object.entries(timingInputs))(
     `regex matching stays under ${MAX_MATCH_MS} ms and script under ${MAX_SCRIPT_MS} ms: %s`,
     async (name, expected) => {
-      const { run, attempts } = await runTimedUntilWithin(
+      const { run, attempts, kills } = await runTimedUntilWithin(
         guardPath,
         expected.command,
         repoRoot,
@@ -91,7 +91,7 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
       );
       const scriptOnlyMs = workMs(run);
       console.info(
-        `guard timing ${name}: attempts ${attempts}, ` +
+        `guard timing ${name}: attempts ${attempts}, kills ${kills}, ` +
           `match ${run.matchMs.toFixed(1)} ms (calls ${run.calls}), ` +
           `scriptMs ${run.scriptMs.toFixed(1)}, stdinWaitMs ${run.stdinWaitMs.toFixed(1)}, ` +
           `stdinIdleMs ${run.stdinIdleMs.toFixed(1)}, workMs ${scriptOnlyMs.toFixed(1)}, ` +
