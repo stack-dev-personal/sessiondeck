@@ -7,13 +7,36 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const preloadUrl = pathToFileURL(resolve(here, "regexp-timing-preload.mjs")).href;
 
-/** Spawn timeout: the real hook timeout is 5 s and a timeout lets the command run. */
-export const MAX_WALL_MS = 4000;
+/**
+ * Kill limit of a timed spawn. It exists only to catch a hang; it is not a performance bound. The
+ * real hook timeout is 5 s and a timeout lets the command run, so the property under test is that
+ * the guard's OWN work stays far below 5 s. That is bounded by workMs and matchMs (the callers pass
+ * 300 ms and 150 ms, 6 and 3 percent of the hook timeout; the large run of a growth row gets twice
+ * that), which exclude node start-up, the stdin wait and execSync. Wall time is not a bound: it
+ * measures Windows process start under contention. On a 4-core runner a row finished at a wall
+ * time of 3950 ms with 76 ms of guard work, and two rows were killed at 4000 ms with at most 231 ms
+ * of guard work. So the kill is twice the hook timeout: start-up noise cannot reach it, and a guard
+ * that runs past it (a hang, or work that exceeds even 10 s) fails the row on every attempt. A
+ * guard whose work takes seconds but finishes before the kill fails on workMs.
+ */
+export const HANG_KILL_MS = 10_000;
 
 /**
- * The helper's own wall timeout fired. It is a wall-time bound violation, so a retrying row
- * (`firstWithinBounds`) counts it as an attempt; a guard that really hangs is killed on every
- * attempt and the row fails with this error.
+ * Upper bound for the vitest timeout of a row that makes `spawns` timed spawns per attempt, for
+ * `maxAttempts` attempts. Each spawn may wait for a timing slot (SLOT_WAIT_MS) and may run until
+ * the kill limit. A passing row takes about a second; this is only reached when a guard hangs. The
+ * slot wait counts against the test timeout, so a row with several spawns (a growth row has two)
+ * needs more than the 30 s default.
+ */
+export const SLOT_WAIT_MS = 10_000;
+export function rowTimeoutMs(spawns: number, maxAttempts: number = MAX_ATTEMPTS): number {
+  return maxAttempts * spawns * (HANG_KILL_MS + SLOT_WAIT_MS);
+}
+
+/**
+ * The helper's own kill limit (HANG_KILL_MS) fired. A retrying row (`firstWithinBounds`) counts it
+ * as a failed attempt; a guard that really hangs is killed on every attempt and the row fails with
+ * this error.
  */
 export class GuardKilledError extends Error {
   constructor(timeoutMs: number, signal: NodeJS.Signals) {
@@ -23,7 +46,7 @@ export class GuardKilledError extends Error {
 }
 
 export interface TimedOptions {
-  /** Spawn timeout. Defaults to MAX_WALL_MS. */
+  /** Kill limit. Defaults to HANG_KILL_MS. */
   readonly timeoutMs?: number;
   /** Delay before the stdin JSON is written, to prove the stdin wait is subtracted. */
   readonly stdinDelayMs?: number;
@@ -97,7 +120,7 @@ function spawnWithInput(
 ): Promise<Exit> {
   return new Promise((resolveExit) => {
     const child = spawn(process.execPath, args, {
-      timeout: options.timeoutMs ?? MAX_WALL_MS,
+      timeout: options.timeoutMs ?? HANG_KILL_MS,
       windowsHide: true,
       stdio: ["pipe", "ignore", "ignore"],
       env: { ...process.env, SD_GUARD_TIMING_FILE: timingFile },
@@ -116,12 +139,13 @@ function spawnWithInput(
 }
 
 /**
- * Timed spawns allowed at once inside one test worker. The timing rows run concurrently so the
- * file stays short, but every extra concurrent guard process competes for the same cores as the
- * other workers of `pnpm -r test`, and a passing first attempt then lands near its bound (227 ms
- * against 300 ms was seen). Two slots measured: worst first-attempt script time 140 to 160 ms in
- * `pnpm -r test` (unlimited: 226 to 266 ms), for 1 to 2 s more suite time. The slot wait is outside
- * the measured wall time.
+ * Timed spawns allowed at once per test file (the module, and so the counter, is loaded once per
+ * file: vitest isolates modules per file). The timing rows run concurrently so the file stays
+ * short, but every extra concurrent guard process competes for the same cores as the other workers
+ * of `pnpm -r test`, and a passing first attempt then lands near its bound (227 ms against 300 ms
+ * was seen). Two slots measured: worst first-attempt script time 140 to 160 ms in `pnpm -r test`
+ * (unlimited: 226 to 266 ms), for 1 to 2 s more suite time. The slot wait is outside the measured
+ * times but inside the vitest test timeout (see rowTimeoutMs).
  */
 export const TIMING_SLOTS = 2;
 
@@ -166,7 +190,7 @@ async function runTimedNow(
   cwd: string,
   options: TimedOptions,
 ): Promise<TimedRun> {
-  const timeoutMs = options.timeoutMs ?? MAX_WALL_MS;
+  const timeoutMs = options.timeoutMs ?? HANG_KILL_MS;
   const dir = mkdtempSync(join(tmpdir(), "sd-guard-timing-"));
   const timingFile = join(dir, "timing.json");
   try {
@@ -213,7 +237,7 @@ export interface AttemptedRun {
   readonly run: TimedRun;
   /** How many runs it took, 1 to maxAttempts. Logged as evidence. */
   readonly attempts: number;
-  /** How many of those attempts were killed at the wall timeout (a violation, retried). Evidence. */
+  /** How many of those attempts were killed at the kill limit (a failed attempt, retried). Evidence. */
   readonly kills: number;
 }
 
@@ -225,8 +249,20 @@ export function matchesDeterministic(run: TimedRun, expected: DeterministicExpec
   );
 }
 
+/** Which bounds a run broke, as text for the log; empty when it is within both. Guard-side time only. */
+export function violations(run: TimedRun, bounds: TimingBounds): string[] {
+  const broken: string[] = [];
+  if (run.matchMs >= bounds.matchMs) {
+    broken.push(`matchMs ${run.matchMs.toFixed(1)} >= ${bounds.matchMs}`);
+  }
+  if (workMs(run) >= bounds.workMs) {
+    broken.push(`workMs ${workMs(run).toFixed(1)} >= ${bounds.workMs}`);
+  }
+  return broken;
+}
+
 export function withinBounds(run: TimedRun, bounds: TimingBounds): boolean {
-  return run.matchMs < bounds.matchMs && workMs(run) < bounds.workMs && run.wallMs < MAX_WALL_MS;
+  return violations(run, bounds).length === 0;
 }
 
 /**
@@ -265,11 +301,14 @@ export async function firstWithinBounds(
     if (run instanceof GuardKilledError) {
       killed = run;
       kills += 1;
+      console.info(`guard timing attempt ${attempts} rejected: ${run.message}`);
       continue;
     }
-    if (!matchesDeterministic(run, expected) || withinBounds(run, bounds)) {
+    const broken = violations(run, bounds);
+    if (!matchesDeterministic(run, expected) || broken.length === 0) {
       return { run, attempts, kills };
     }
+    console.info(`guard timing attempt ${attempts} rejected: ${broken.join(", ")}`);
     best = best === undefined || workMs(run) < workMs(best) ? run : best;
   }
   if (best === undefined) {

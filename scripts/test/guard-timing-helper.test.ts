@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   firstWithinBounds,
   GuardKilledError,
+  HANG_KILL_MS,
   matchesDeterministic,
   MAX_ATTEMPTS,
-  MAX_WALL_MS,
+  rowTimeoutMs,
+  SLOT_WAIT_MS,
   TIMING_SLOTS,
+  violations,
   withinBounds,
   withSlot,
   type TimedRun,
@@ -48,7 +51,31 @@ function sequence(runs: readonly (TimedRun | Error)[]): {
   };
 }
 
+// firstWithinBounds logs every rejected attempt; keep that out of the suite output, where the
+// attempt counts of the real rows are the evidence.
+let log: ReturnType<typeof vi.spyOn>;
+beforeEach(() => {
+  log = vi.spyOn(console, "info").mockImplementation(() => undefined);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("guard timing helper: first run within bounds", () => {
+  it("logs each rejected attempt with the bound it broke", async () => {
+    const seq = sequence([
+      run({ matchMs: 400 }),
+      new GuardKilledError(HANG_KILL_MS, "SIGTERM"),
+      run(),
+    ]);
+    const result = await firstWithinBounds(seq.runOnce, EXPECTED, BOUNDS);
+    expect(result.attempts).toBe(3);
+    expect(log.mock.calls.map((call) => String(call[0]))).toEqual([
+      "guard timing attempt 1 rejected: matchMs 400.0 >= 150",
+      "guard timing attempt 2 rejected: guard killed after 10000 ms wall (signal SIGTERM)",
+    ]);
+  });
+
   it("matchesDeterministic compares status, calls and execCalls", () => {
     expect(matchesDeterministic(run(), EXPECTED)).toBe(true);
     expect(matchesDeterministic(run({ status: 2 }), EXPECTED)).toBe(false);
@@ -56,13 +83,39 @@ describe("guard timing helper: first run within bounds", () => {
     expect(matchesDeterministic(run({ execCalls: 1 }), EXPECTED)).toBe(false);
   });
 
-  it("withinBounds checks match time, script time minus waits, and wall time", () => {
+  it("withinBounds checks match time and script time minus waits, not wall time", () => {
     expect(withinBounds(run(), BOUNDS)).toBe(true);
     expect(withinBounds(run({ matchMs: 150 }), BOUNDS)).toBe(false);
     expect(withinBounds(run({ scriptMs: 400, stdinIdleMs: 0 }), BOUNDS)).toBe(false);
     // Idle stdin wait and execSync are subtracted before the script bound applies.
     expect(withinBounds(run({ scriptMs: 400, stdinIdleMs: 150, execMs: 100 }), BOUNDS)).toBe(true);
-    expect(withinBounds(run({ wallMs: MAX_WALL_MS }), BOUNDS)).toBe(false);
+    // Wall time is process start under load, not guard work: a 3950 ms wall with 76 ms of work passes.
+    expect(withinBounds(run({ wallMs: 3950, scriptMs: 80, stdinIdleMs: 5 }), BOUNDS)).toBe(true);
+    expect(withinBounds(run({ wallMs: HANG_KILL_MS - 1 }), BOUNDS)).toBe(true);
+  });
+
+  it("violations names each broken bound with its numbers", () => {
+    expect(violations(run(), BOUNDS)).toEqual([]);
+    expect(violations(run({ matchMs: 200 }), BOUNDS)).toEqual(["matchMs 200.0 >= 150"]);
+    expect(violations(run({ scriptMs: 400, stdinIdleMs: 0 }), BOUNDS)).toEqual([
+      "workMs 400.0 >= 300",
+    ]);
+    expect(violations(run({ matchMs: 150, scriptMs: 400, stdinIdleMs: 0 }), BOUNDS)).toHaveLength(
+      2,
+    );
+  });
+
+  it("a guard-side time of seconds fails whatever the kill limit is", () => {
+    // 4.5 s of guard work (inside the 5 s hook timeout, so a real bypass window) is far over 300 ms.
+    expect(withinBounds(run({ scriptMs: 4500, stdinIdleMs: 5 }), BOUNDS)).toBe(false);
+    expect(HANG_KILL_MS).toBeGreaterThan(2 * 2500);
+  });
+
+  it("rowTimeoutMs covers attempts x spawns x (kill limit + slot wait)", () => {
+    expect(rowTimeoutMs(1)).toBe(MAX_ATTEMPTS * (HANG_KILL_MS + SLOT_WAIT_MS));
+    expect(rowTimeoutMs(2)).toBe(2 * rowTimeoutMs(1));
+    expect(rowTimeoutMs(2, 1)).toBe(2 * (HANG_KILL_MS + SLOT_WAIT_MS));
+    expect(rowTimeoutMs(6)).toBeGreaterThan(30_000); // the vitest default that a 6 spawn row hit
   });
 
   it("stops after one attempt when the first run is within bounds", async () => {
