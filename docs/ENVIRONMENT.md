@@ -13,6 +13,6 @@ Filled in during S0. Every value here is a fact the planning docs depend on (see
 | Node version | v24.19.0 local (CI and `.nvmrc` use 22; `engines.node` is `>=22`) | `node -v` |
 | pnpm version | 12.10.1 (pinned in root `packageManager`); npm 11.17.0 | `pnpm -v` |
 | Windows Terminal version | 1.24.12741.0 (`wt -v` printed nothing in Git Bash; read from the installed package via `Get-AppxPackage Microsoft.WindowsTerminal`) | `wt -v` |
-| Box (Phase 7) OS, Docker version | Box: MacBook (M2 Pro, arm64), macOS Sonoma, stays on macOS; Docker runtime chosen at harbor, OrbStack suggested; containers linux/arm64. Box Docker version: pending, set at harbor. Laptop Docker 29.8.1, gh 2.101.0 | user answer, decisions 14a, 15, 17 (2026-10-19) |
+| Box (Phase 7) OS, Docker version | Box: MacBook (M2 Pro, arm64), macOS Sonoma, stays on macOS; Docker runtime chosen at harbor, OrbStack suggested; containers linux/arm64. Box Docker version: pending, set at harbor. Laptop Docker 29.8.1, gh 2.101.0 | user answer, decisions 14a, 15, 16, 17 (2026-10-19) |
 | agentic-harness hooks registered | SessionStart, SubagentStop, SessionEnd at user level. The probe install adds its own entries beside them and never disturbs them | user's PowerShell listing, event names only, decision 18 (2026-10-19) |
-| Hook payload fields observed per event | S0b done; see `packages/contract/fixtures/` and the "Observed payloads" section of `docs/CONTRACT.md` | `packages/contract/fixtures/`, `docs/CONTRACT.md` |
+| Hook payload fields observed per event | S0b done; see `packages/contract/fixtures/` and the "Observed payloads" section of `docs/CONTRACT.md` | S0b merged to main in c8f6513 (PR #4); `packages/contract/fixtures/`, `docs/CONTRACT.md` Observed payloads |
