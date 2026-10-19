@@ -27,6 +27,7 @@ Out:
 
 ## Blockers / constraints
 - Must stay stateless apart from the DB so Phase 7 is a copy, not a port.
+- Phase 7 (last, ADR 0010) runs the stack on a macOS M2 Pro box with linux/arm64 containers (R7.9): keep Dockerfiles free of amd64-only assumptions (base images with arm64 builds, no amd64-only native binaries) so the move stays a copy.
 - Ingest must be cheap: a busy session emits 5-20 envelopes/s during tool bursts; two machines, several sessions each. Target 1k envelopes/s sustained on the laptop.
 - Snapshot materialization means the reducer runs on ingest; a reducer bug corrupts snapshots, hence the replay command and the Phase 0 fixtures as regression tests.
 - Transcript lines are stored raw; normalization is computed on read or lazily cached, so a normalizer fix never requires re-ingest.

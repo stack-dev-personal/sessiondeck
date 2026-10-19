@@ -376,7 +376,7 @@ MVP (LAN): hub binds to the LAN interface, probe → hub uses a static bearer to
 
 Phase 7 (box, remote): Cloudflare Tunnel from the box (no inbound ports), Cloudflare Access in front of the web origin (your identity provider), a separate Access service token for the probe's `/ingest` path. Hub still checks its own bearer token (defense in depth). Transcripts contain source and sometimes secrets; the probe redacts lines matching `.env`-style `KEY=value` patterns and known token prefixes before shipping (Phase 4 requirement), and the hub never exposes raw payloads without auth.
 
-Order (ADR 0010): Phase 8 ships before Phase 7, so the runner is first gated with the hub on the laptop (localhost bind, hub bearer token, runner channel authentication). Phase 7 re-runs the runner security review with the hub reachable through Access before harbor merges (R7.10).
+Order (ADR 0010): Phase 8 ships before Phase 7, so the runner is first gated with the hub on the laptop (localhost or LAN bind, see ADR 0010; hub bearer token, runner channel authentication). Phase 7 re-runs the runner security review with the hub reachable through Access before harbor merges (R7.10).
 
 Threat you should write up for yourself: the probe token in a config file on the laptop, the hub being a write path for anything that holds the token, and the fact that a compromised session (prompt injection in a repo) could run `curl` against the hub from inside a Bash tool call. Mitigation: ingest only accepts the envelope schema, rate limits per host, and nothing on the hub executes anything.
 

@@ -193,7 +193,8 @@ integration_checks:
 needs_laptop:
   - "everything that touches the box: provisioning, compose up on the box, tunnel creation, Access policies, nmap from the laptop, phone test through Access (conductor session, you present)"
   - "docs/HARDENING.md evidence lines are filled from the box, not the container"
-  - "runner on the Windows laptop connected to the box hub through Access (for the S13 re-review evidence)"
+  - "integration check 5 on the box: every compose image runs as linux/arm64 on the macOS box (the container half is docker buildx imagetools inspect showing linux/arm64 for each image)"
+  - "integration check 6: runner on the Windows laptop connected to the box hub through Access (for the S13 re-review evidence)"
 notes: "The container has no SSH key and no Cloudflare or Supabase secrets. S11 and S12 produce runbooks, compose files, and scripts, tested locally in containers; the conductor executes the box steps with you. Harbor is the last sprint (ADR 0010); it starts only after Sprints 2, 3 and 5 are merged and working against the laptop hub."
 ```
 
@@ -221,7 +222,7 @@ integration_checks:
 needs_laptop:
   - "runner on Windows: ConPTY pty launch, open-in-Windows-Terminal, registration at login (conductor session, you present)"
   - "R8.3 terminal latency measured against the laptop hub (re-measured through the box in Sprint 4)"
-notes: "S13 is the one session whose security gate the conductor must re-confirm with you before merge approval, because the runner executes processes on your laptop. Cockpit runs before harbor (ADR 0010): the hub is on the laptop, bound to localhost; S13's security gate is re-run in Sprint 4 once the hub is reachable through Access."
+notes: "S13 is the one session whose security gate the conductor must re-confirm with you before merge approval, because the runner executes processes on your laptop. Cockpit runs before harbor (ADR 0010): the hub is on the laptop (localhost or LAN bind, see ADR 0010); S13's security gate is re-run in Sprint 4 once the hub is reachable through Access."
 ```
 
 ## 4. After the last sprint

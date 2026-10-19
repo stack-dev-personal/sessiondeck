@@ -17,8 +17,8 @@ Nine phases. Each has a doc in `phases/` with MVP, Scope, Blockers/Constraints, 
 | 2 | Hub | Ingest, store, reducer, REST, WS, Docker on laptop | 0 | 1, 3 |
 | 3 | Board | Web MVP: live session cards with the indicator set, detail drawer, alerts, compact mode | 0 (mocks), 2 (live) | 1, 2 |
 | 4 | Content | Session view: normalized conversation, tool calls, diffs, files touched, subagent threads | 1 (tailer), 2, 3 | 5, 6, 8 |
-| 5 | Atlas | Projects, phases, grouping, search, archive importer for vault session captures | 3 | 4, 6, 8 |
-| 6 | Layouts | Preset grids by session count and project split, saved layouts, compact board | 3 | 4, 5, 8 |
+| 5 | Atlas | Projects, phases, grouping, search, archive importer for vault session captures | 3 | 4, 6 |
+| 6 | Layouts | Preset grids by session count and project split, saved layouts, compact board | 3 | 4, 5 |
 | 7 | Harbor | Move hub+web to the box: Docker, Supabase Postgres, Cloudflare Tunnel + Access, backups, hardening | 2, 4, 5, 6, 8 | nothing (last) |
 | 8 | Cockpit | Launch and host sessions from the app: laptop runner (SDK + node-pty), terminal pane, handoff-prompt launcher; optional Electron shell | 2, 3 | 4 |
 
@@ -49,8 +49,8 @@ gantt
 - Phase 0 exists so that probe, hub, and board can be built by three sessions at once without inventing three different envelopes. The contract package plus real captured fixtures is the whole gate. It is small; do not let it grow.
 - Phases 1, 2, 3 are the MVP and are independent once the contract is fixed. Board starts on fixture-driven mocks and flips to the live hub when Phase 2 lands.
 - Phase 4 is the first thing that needs the transcript tailer, which is why the tailer is in Phase 1 but its consumer is not.
-- Phases 5 and 6 are UI-only and can run in parallel with Phase 4 and with Phase 8.
-- Phase 8 runs before Phase 7 (decision 16, 2026-10-19, ADR 0010): cockpit is built and used against the hub on the laptop, bound to localhost; its security gate covers that local setup.
+- Phases 5 and 6 are UI-only and run in parallel with Phase 4; Phase 8 follows them.
+- Phase 8 runs before Phase 7 (decision 16, 2026-10-19, ADR 0010): cockpit is built and used against the hub on the laptop (localhost or LAN bind, see ADR 0010); its security gate covers that local setup.
 - Phase 7 is last on purpose: the UI and functionality work locally with real sessions first, then the whole stack ports to the macOS box (linux/arm64 containers) and gains Cloudflare Tunnel + Access, Supabase Postgres, and backups. Because the runner was gated with a local hub, Phase 7 re-runs the runner security review with the hub reachable through Access (R7.10). Until 2026-10-19 the plan ran Phase 7 beside Phases 4 to 6 and put Phase 8 last.
 
 ## MVP line

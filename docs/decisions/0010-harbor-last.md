@@ -15,14 +15,14 @@ Everything runs locally on the Windows laptop until the UI and functionality wor
 - Harbor gains the port to macOS with linux/arm64 images (R7.9) and the runner security re-review (R7.10).
 
 ## Consequences
-- Phase 8 is built and used against the hub on the laptop (Docker, bound to localhost). Its terminal latency (R8.3) is measured there first and re-measured through the box in harbor.
+- Phase 8 is built and used against the hub on the laptop (Docker; localhost or LAN bind, see the security note). Its terminal latency (R8.3) is measured there first and re-measured through the box in harbor.
 - Harbor gains two requirements. R7.9: every image in the box compose stack is multi-arch or linux/arm64, and the hub smoke test passes on the box. R7.10: the S13 runner security review is re-run with the hub reachable through Cloudflare Access.
 - Roadmap milestones swap: M4 is "I can drive them" (P8), M5 is "It lives on the box" (P7).
 - Amends the roadmap order and assumptions A18 and A19 in `docs/planning/00-open-decisions.md` by dated amendment (2026-10-19).
-- Supersedes no earlier ADR. ADR 0001 (laptop and box split) and ADR 0003 (Cloudflare edge) still hold; only their timing moves.
+- Supersedes the ordering clause of ADR 0002 (line 9: Phase 8 last, after hosting and auth). The rest of 0002 (observe-only MVP, Phase 8 gated by the security reviewer) still holds. ADR 0001 (laptop and box split) and ADR 0003 (Cloudflare edge) still hold; only their timing moves.
 
 ## Security note
-The runner executes processes on the laptop on request, which is remote code execution by design. S13's security gate is earned with the hub on localhost only: the controls are the hub bearer token and the runner's channel authentication, with no Cloudflare Access in front. While the hub is on the laptop it must stay bound to localhost whenever the runner is enabled.
+The runner executes processes on the laptop on request, which is remote code execution by design. While the hub is on the laptop, S13's security gate covers the hub's actual bind with the runner enabled: localhost, or the LAN interface if the second machine from A3 must reach it. The controls are the hub bearer token and the runner's channel authentication, with no Cloudflare Access in front. A localhost bind does not exclude local processes (`01-architecture.md` section 7 names a prompt-injected session running curl against the hub as the threat), so S13 must also review local token exposure and Host/Origin checks on the launch path (DNS rebinding).
 
 Exposing the hub through the tunnel changes who can reach the launch path. So before harbor merges, sd-security-reviewer re-reviews the runner with the hub reachable through Access (R7.10), and the conductor re-confirms that gate with the user, as it does for S13.
 

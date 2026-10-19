@@ -5,7 +5,7 @@ One file per decision, numbered, never edited after acceptance (superseding deci
 | ADR | Decision | Status |
 |-----|----------|--------|
 | 0001 | Sessions on the laptop, hub on the box | accepted 2026-10-08 |
-| 0002 | Observe-only MVP; session hosting is Phase 8 | accepted 2026-10-08 |
+| 0002 | Observe-only MVP; session hosting is Phase 8 | accepted 2026-10-08; ordering clause superseded by 0010 |
 | 0003 | Cloudflare Tunnel and Access front the box | accepted 2026-10-08 |
 | 0004 | Adopt and improve open source; cite code; AGPL as spec only | accepted 2026-10-08 |
 | 0005 | No planning framework; own section list and agents | accepted 2026-10-08 |

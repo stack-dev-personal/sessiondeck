@@ -26,12 +26,13 @@ Correction: Sprint 4/5 blocks kept in id order (the sprint tooling tests assert 
 
 ## Out-of-scope follow-ups
 
-- `docs/handoffs/S11-s12-harbor.md` line 11 still says "(Linux, Docker, deploy user, default-deny firewall)" and lacks R7.9 and R7.10.
-- `docs/ENVIRONMENT.md` box row still says OS pending; decision 15 settled macOS.
+- `docs/handoffs/S11-s12-harbor.md:11-12` still says Linux and lacks R7.9/R7.10 (mirror `04-session-map.md` S11/S12 prompt).
+- `CONDUCTOR.md:75` merge checklist checks the S13 gate only for Sprint 5; it should also require the R7.10 runner re-review pass, confirmed with the user, for Sprint 4.
+- `docs/ENVIRONMENT.md:16` box row should read "Apple M2 Pro laptop, macOS, OrbStack (suggested), linux/arm64 containers" (decision 15).
 
 ## Review
 
-Review: pending
+Review: sd-reviewer on 1e83925..1bb0524, no blocking findings (3 MAJOR, 6 MINOR); one fix round
 
 ## Verify
 
