@@ -15,7 +15,11 @@ concurrency:
 jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
-    timeout-minutes: 10
+    # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
+    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 = 21;
+    # 30 leaves a margin of 9 for a cold cache on a slow Windows runner. The job limit must stay
+    # above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,10 +46,11 @@ jobs:
       - name: test guard timing (outside R0.5 budget, up to 3 attempts)
         # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only
         # when every failed test failed on a timing bound; any other failure fails the step at once.
-        # Budget: one attempt takes about 18 s locally (54 s for 3 attempts, 73 s measured with
-        # three vitest start-ups); 4x for a Windows runner is about 4 min, so 5 min.
+        # Budget: patched run is 27.8 s per attempt locally (docs/patches/README.md); 4x for a Windows
+        # runner is about 111 s; 3 attempts are about 333 s; 7 min (420 s) covers that plus the three
+        # vitest start-ups. The unpatched run (18 s per attempt) would fit in 5 min; the patch does not.
         run: pnpm -F @sessiondeck/scripts test:guard-timing:ci
-        timeout-minutes: 5
+        timeout-minutes: 7
       - name: test sprint tooling (budget 3 min, separate from R0.5)
         # shell: pwsh makes the step fail to start where pwsh is missing; otherwise every test
         # skips and the step goes green with nothing tested.

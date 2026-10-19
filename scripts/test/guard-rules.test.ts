@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -228,5 +229,44 @@ describe(".claude/settings.json deny rules (conductor decision 5)", () => {
     expect(settings.permissions.deny).toEqual(
       expect.arrayContaining(["Read(./.env)", "Read(./.env.*)", "Read(./**/probe.json)"]),
     );
+  });
+});
+
+// Functional push rows (R0.5, decision 13): status and message only, no timing. They stay in the
+// default run so a regression in a push rule fails `pnpm -r test`; the timing rows live in the
+// guard timing run.
+describe("guard: git push rules (functional, no timing)", () => {
+  const FORCE_MESSAGE = "force push is forbidden";
+  const MAIN_MESSAGE = "pushing to main is forbidden";
+
+  const blockedPushes: ReadonlyArray<readonly [string, string]> = [
+    ["git push --force", FORCE_MESSAGE],
+    ["git push -f", FORCE_MESSAGE],
+    ["git push origin feature-x --force-with-lease", FORCE_MESSAGE],
+    ["git push origin main", MAIN_MESSAGE],
+    ["git push origin HEAD:main", MAIN_MESSAGE],
+    ["git status; git push origin main", MAIN_MESSAGE],
+  ];
+  it.concurrent.each(blockedPushes)("blocks: %s", async (command, message) => {
+    const { status, stderr } = await runGuard(command);
+    expect(status).toBe(BLOCKED);
+    expect(stderr).toContain(message);
+  });
+
+  it.concurrent("allows a push of a feature branch", async () => {
+    expect((await runGuard("git push origin feature-x")).status).toBe(ALLOWED);
+  });
+
+  // A bare push sends the current branch: blocked on main or master, allowed on any other branch
+  // and on a detached checkout (CI prints HEAD). The expectation is derived the way the guard
+  // derives it, so the row holds on main, on a branch and on a detached CI checkout.
+  it("bare push: blocked only when the checkout is on main or master", async () => {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { cwd: repoRoot }).toString().trim();
+    const onMain = branch === "main" || branch === "master";
+    const { status, stderr } = await runGuard("git push");
+    expect(status).toBe(onMain ? BLOCKED : ALLOWED);
+    if (onMain) {
+      expect(stderr).toContain(`you are on ${branch}`);
+    }
   });
 });

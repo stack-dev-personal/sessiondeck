@@ -137,3 +137,18 @@
 - Measurements (one run each, laptop, no proxy), patch applied: `pnpm -r test` wall 16.7 s, scripts 570 passed and 4 skipped (29 files), contract 1091, no guard-timing file ran. `test:guard-timing:ci` passed on attempt 1, 3 files, 81 tests (34 + 23 + 24), vitest 26.3 s, runner 27.8 s (22.1 s in the walk-through). `pnpm -r typecheck`, `pnpm -r lint`, `pnpm lint:root --ignore-pattern ".sprint/**"` and `pnpm format:check` clean.
 - README walk-through (fresh detached worktree on 9a46ce9 with the new patch and README committed there, offline install, no push): branch empty (detached), status empty, hash equal, `git apply --check` silent, apply, default test run 570 passed and 4 skipped, `test:guard-timing:ci` 81 passed on attempt 1, explicit `git add` of the five files, status 3 `M` and 2 `A`, commit made in the temporary worktree. Worktrees removed and pruned, `.sprint/tmp` empty.
 - Housekeeping: deleted the ignored `.sprint/tmp${LABEL}.out`, an old 49 KB vitest output log from 14:08 (a `pnpm -r test` run of the old `guard.test.ts` era, written by a shell where `$LABEL` was unset).
+
+## U3 step 2 fix round
+
+Fixes (R0.5, decision 13):
+
+- ci.yml sizing (MAJOR): the guard timing step is now `timeout-minutes: 7`, sized from the patched run: 27.8 s x 4 (Windows) = 111 s per attempt, 3 attempts = 333 s, plus vitest start-ups, 420 s. The job limit is 30 (was 10): setup and install 5 + typecheck, lint, lint:root, format:check, fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 = 21, margin 9. The arithmetic is a yaml comment on both. docs/patches/README.md no longer says 5 minutes. Not changed: bound values, MAX_ATTEMPTS, slots, input sizes.
+- Push rows (MINOR): `scripts/test/guard-rules.test.ts` gains a "git push rules (functional, no timing)" describe at the end of the file (no overlap with the patch hunk). 8 tests, observed on sprint/0-bootstrap: force push forms (`--force`, `-f`, `origin feature-x --force-with-lease`) BLOCKED (2) with "force push is forbidden"; `origin main`, `origin HEAD:main`, and `git status; git push origin main` BLOCKED with "pushing to main is forbidden"; `origin feature-x` ALLOWED (0); bare push ALLOWED here, the expectation derived from `git rev-parse --abbrev-ref HEAD` (blocked with "you are on <branch>" on main or master, allowed on a branch or detached HEAD). The known bypasses (`git -C dir push -f`, `+feature`, `HEAD:refs/heads/main`) are not asserted.
+- Patch: `git apply --check` still passes, so the patch is byte-identical (hash f561a484f3b7759fccad3736d0c29253d70946ae). Measured with the patch applied in a temporary detached worktree (removed, pruned, .sprint/tmp empty): default run scripts 578 passed and 4 skipped (29 files), contract 1091, wall 19.0 s; `test:guard-timing:ci` passed on attempt 1, 81 tests, 3 files, 22.4 s. README counts 570 to 578 (two places) and the timing note updated. Unpatched default run: scripts 575 passed and 4 skipped, wall 16.4 s.
+
+Accepted: stacked retries (per-row 3 x step 3, up to 9 runs). sd-security-reviewer's analysis of the review of round 5: a row passes if its best run out of up to 9 is under the bound; only a regression sitting right at the 150/300/3000 ms bounds gains from it, and those are far below the 5 s hook timeout, so it is not a bypass.
+
+Deferred findings:
+
+- scripts/test/guard-timing.test.ts:228 and :151: self-test time asserts are not `TimingBoundError`, so noise fails the step without a retry. Making self-tests retryable conflicts with the security rule.
+- docs/patches/FIX-2-guard.patch:13: the guard.mjs comment names `scripts/test/guard.test.ts`. Deferred to the next patch regeneration (not regenerated now).
