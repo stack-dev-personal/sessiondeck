@@ -39,6 +39,13 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
+      - name: test guard timing (outside R0.5 budget, up to 3 attempts)
+        # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only
+        # when every failed test failed on a timing bound; any other failure fails the step at once.
+        # Budget: one attempt takes about 18 s locally (54 s for 3 attempts, 73 s measured with
+        # three vitest start-ups); 4x for a Windows runner is about 4 min, so 5 min.
+        run: pnpm -F @sessiondeck/scripts test:guard-timing:ci
+        timeout-minutes: 5
       - name: test sprint tooling (budget 3 min, separate from R0.5)
         # shell: pwsh makes the step fail to start where pwsh is missing; otherwise every test
         # skips and the step goes green with nothing tested.

@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { TIMING_BOUND_PREFIX } from "../../lib/guard-timing-retry.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const preloadUrl = pathToFileURL(resolve(here, "regexp-timing-preload.mjs")).href;
@@ -329,6 +330,26 @@ export function violations(run: TimedRun, bounds: TimingBounds): string[] {
     broken.push(`rawMs ${rawMs(run).toFixed(1)} >= ${bounds.rawMs}`);
   }
   return broken;
+}
+
+/**
+ * A run broke a timing bound (matchMs, workMs or rawMs). The CI retry runner (scripts/ci) reruns
+ * the guard timing step only when every failed test failed with this error; its message starts
+ * with TIMING_BOUND_PREFIX and the classifier matches that text. Nothing else uses it.
+ */
+export class TimingBoundError extends Error {
+  constructor(broken: readonly string[]) {
+    super(`${TIMING_BOUND_PREFIX} ${broken.join(", ")}`);
+    this.name = "TimingBoundError";
+  }
+}
+
+/** Throws TimingBoundError when the run broke a bound. Call it AFTER the deterministic asserts. */
+export function assertWithinBounds(run: TimedRun, bounds: TimingBounds): void {
+  const broken = violations(run, bounds);
+  if (broken.length > 0) {
+    throw new TimingBoundError(broken);
+  }
 }
 
 export function withinBounds(run: TimedRun, bounds: TimingBounds): boolean {

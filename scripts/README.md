@@ -232,8 +232,17 @@ Close or ignore running Claude Code sessions first; they reload settings live.
 ### Tests
 
 ```
-pnpm -F @sessiondeck/scripts test
+pnpm -F @sessiondeck/scripts test                   # default run, inside the R0.5 60 s step
+pnpm -F @sessiondeck/scripts test:sprint             # test/sprint-*.test.ts, own CI step
+pnpm -F @sessiondeck/scripts test:guard-timing       # test/guard-timing*.test.ts, one run
+pnpm -F @sessiondeck/scripts test:guard-timing:ci    # the same with bounded retries, own CI step
 ```
+
+Three runs, and every file in `test/` is in exactly one (`test/test-split.test.ts` fails otherwise):
+
+- default: everything except the two globs below. Includes the functional guard tests (`guard-rules.test.ts`) and the retry classifier tests (`guard-retry-classify.test.ts`).
+- sprint tooling: `test/sprint-*.test.ts`.
+- guard timing: `test/guard-timing*.test.ts` (conductor decision 13). These rows bound the guard hook's own run time (`matchMs`, `workMs`, `rawMs`, growth ratios) and are outside the R0.5 budget. `test:guard-timing:ci` runs the whole run again, at most 3 attempts, only when every failed test failed with a `TimingBoundError`; any other failure ends it at once and a missing report is a failure. Bounds, inputs and slot counts are the same in every attempt. The report is written to `scripts/.vite/` (ignored) and removed afterwards. New timing test files must be named `guard-timing*.test.ts`.
 
 ## Sprint prompt renderer
 
@@ -283,5 +292,5 @@ and `stop-sprint` is skipped with `-KeepContainer` and after `run-sprint` exit 1
 digits and underscore only. The container can plant symbolic links in `.sprint/<id>/`; `run-sprint.ps1`, `smoke-check.ps1` and `status.ps1` refuse any path that is, or sits under, a link below the state root (`lib/sprint-links.ps1`; see the Links bullet in `infra/sprint/README.md`). Tests: every
 `test/sprint-*.test.ts` file (renderer, image static checks, PowerShell scripts) runs with
 `pnpm -F @sessiondeck/scripts test:sprint`, a separate CI step; `pnpm test` runs the rest, and
-`test/test-split.test.ts` guards that each test file is in exactly one of the two runs.
+`test/test-split.test.ts` guards that each test file is in exactly one of the three runs (see Tests above).
 (`test:sprint-ps` is kept as an alias.)

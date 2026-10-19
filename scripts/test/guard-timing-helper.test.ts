@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TIMING_BOUND_PREFIX } from "../lib/guard-timing-retry.mjs";
 import {
+  assertWithinBounds,
   firstWithinBounds,
   GUARD_EXEC_COMMAND,
   GuardKilledError,
@@ -11,6 +13,7 @@ import {
   rowTimeoutMs,
   SLOT_WAIT_MS,
   TIMING_SLOTS,
+  TimingBoundError,
   violations,
   withinBounds,
   withSlot,
@@ -267,5 +270,36 @@ describe("guard timing helper: spawn slots", () => {
   it("frees the slot when a task throws", async () => {
     await expect(withSlot(() => Promise.reject(new Error("boom")))).rejects.toThrow(/boom/);
     await expect(withSlot(() => Promise.resolve("ok"))).resolves.toBe("ok");
+  });
+});
+
+describe("guard timing helper: bound assertion for the CI retry runner", () => {
+  it("passes a run within every bound", () => {
+    expect(() => assertWithinBounds(run(), BOUNDS)).not.toThrow();
+  });
+
+  it("throws a TimingBoundError that starts with the classifier prefix and lists each bound", () => {
+    const slow = run({ matchMs: 400, scriptMs: 4000 });
+    let thrown: unknown;
+    try {
+      assertWithinBounds(slow, BOUNDS);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(TimingBoundError);
+    const error = thrown as TimingBoundError;
+    expect(error.name).toBe("TimingBoundError");
+    expect(error.message.startsWith(TIMING_BOUND_PREFIX)).toBe(true);
+    expect(error.message).toContain("matchMs 400.0 >= 150");
+    expect(error.message).toContain("rawMs 4000.0 >= 3000");
+  });
+
+  it("does not turn a deterministic mismatch into a timing error", () => {
+    const wrongExec = run({
+      execCalls: 1,
+      execCommands: ["git rev-parse --abbrev-ref HEAD && sleep 3"],
+    });
+    expect(matchesDeterministic(wrongExec, { ...EXPECTED, execCalls: 1 })).toBe(false);
+    expect(() => assertWithinBounds(wrongExec, BOUNDS)).not.toThrow();
   });
 });

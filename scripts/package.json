@@ -6,6 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "test:sprint": "vitest run --config vitest.sprint.config.ts",
+    "test:guard-timing": "vitest run --config vitest.guard-timing.config.ts",
+    "test:guard-timing:ci": "node ci/guard-timing-retry.mjs",
     "test:sprint-ps": "pnpm run test:sprint",
     "fixture:leak": "node fixture-leak-check.mjs",
     "typecheck": "tsc --noEmit",

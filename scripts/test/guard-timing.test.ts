@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ALLOWED, BLOCKED, guardPath, repoRoot } from "./helpers/guard-run";
 import {
+  assertWithinBounds,
   GUARD_EXEC_COMMAND,
   matchesDeterministic,
   MAX_RAW_SCRIPT_MS,
@@ -89,12 +90,13 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
   it.concurrent.each(Object.entries(timingInputs))(
     `regex matching stays under ${MAX_MATCH_MS} ms and script under ${MAX_SCRIPT_MS} ms: %s`,
     async (name, expected) => {
+      const bounds = { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS, rawMs: MAX_RAW_SCRIPT_MS };
       const { run, attempts, kills } = await runTimedUntilWithin(
         guardPath,
         expected.command,
         repoRoot,
         expected,
-        { matchMs: MAX_MATCH_MS, workMs: MAX_SCRIPT_MS, rawMs: MAX_RAW_SCRIPT_MS },
+        bounds,
       );
       const scriptOnlyMs = workMs(run);
       console.info(
@@ -105,12 +107,15 @@ describe("guard: adversarial timing (conductor decision 5)", () => {
           `execMs ${run.execMs.toFixed(1)}, ` +
           `execCalls ${run.execCalls}, wall ${run.wallMs.toFixed(0)} ms (not a bound), status ${run.status}`,
       );
-      expect(run.matchMs).toBeLessThan(MAX_MATCH_MS);
-      expect(scriptOnlyMs).toBeLessThan(MAX_SCRIPT_MS);
-      expect(rawMs(run)).toBeLessThan(MAX_RAW_SCRIPT_MS);
+      // Deterministic outputs first, so a mismatch is never read as a timing failure. execCommands
+      // is pinned because execSync time is excluded from every bound: a slower exec must fail here.
+      expect(run.status).toBe(expected.status);
       expect(run.calls).toBe(expected.calls);
       expect(run.execCalls).toBe(expected.execCalls);
-      expect(run.status).toBe(expected.status);
+      expect(run.execCommands).toEqual(Array(expected.execCalls).fill(GUARD_EXEC_COMMAND));
+      expect(matchesDeterministic(run, expected)).toBe(true);
+      // Bounds last: only this error lets the CI step run the file again (see scripts/ci).
+      assertWithinBounds(run, bounds);
     },
     // A row makes one spawn per attempt, each waiting for a timing slot and killed at the hang limit.
     rowTimeoutMs(1),
