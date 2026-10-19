@@ -37,4 +37,4 @@ sd-reviewer on c8f6513..4265454: verdict merge, 0 blocking, 4 MINOR; one fix rou
 
 ## Verify
 
-pending
+Verify: sd-verifier R0.6 pass at d7f91d5 (vault diff empty, exit 0; scripts suite 578 passed, 4 skipped); Sprint 1 gate row pass (no 'pending user' rows). Rows in docs/VERIFY-P0.md under ENV-1 (commit 92ea94d). Verifier notes: the WSL2 mix is the conductor's call (decision 19), unconfirmed by the user; the R0.6 line in phase-0-contract.md says nine agents while .claude/agents has 12 sd-* agents (not counted against R0.6, same as DOCS-1).
