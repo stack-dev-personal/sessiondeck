@@ -24,6 +24,7 @@ vi.mock("node:fs", async (orig) => {
     },
   };
 });
+import { stat as statP } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
@@ -38,6 +39,7 @@ import {
   PRUNED_KEEP_MS,
   highMark,
   isUnder,
+  realpathLoose,
   shouldReset,
   splitLines,
   subagentTranscriptPath,
@@ -384,10 +386,14 @@ describe("transcript tailer", () => {
     await t.poll();
     const es = t.entries();
     expect(es).toHaveLength(2);
-    expect(es[0]!.path).toBe(start.transcript_path);
+    // The tailer reports the resolved path (long names, native separators on Windows), while the
+    // fixture path may use the tmpdir's 8.3 short form and forward slashes: compare resolved forms.
+    expect(es[0]!.path).toBe(await realpathLoose(start.transcript_path!));
     expect(es[1]!.agent_id).toBe(sub.agent_id);
     expect(es[1]!.path).toBe(
-      `${sub.transcript_path!.replace(/\/[^/]+$/, "")}/${sub.session_id}/subagents/agent-${sub.agent_id}.jsonl`,
+      await realpathLoose(
+        `${sub.transcript_path!.replace(/\/[^/]+$/, "")}/${sub.session_id}/subagents/agent-${sub.agent_id}.jsonl`,
+      ),
     );
     t.onSpoolLine(env({ session_id: start.session_id }, "SessionEnd"));
     await t.poll();
@@ -396,11 +402,11 @@ describe("transcript tailer", () => {
     ).toBe(true);
   });
 
-  it("derives subagent paths in the style of the transcript path", () => {
-    expect(subagentTranscriptPath("C:\\Users\\a\\.claude\\projects\\p\\s1.jsonl", "s1", "z")).toBe(
-      "C:\\Users\\a\\.claude\\projects\\p\\s1\\subagents\\agent-z.jsonl",
-    );
-    expect(subagentTranscriptPath("/h/.claude/projects/p/s1.jsonl", "s1", "z")).toBe(
+  it("derives subagent paths in the style of the platform", () => {
+    expect(
+      subagentTranscriptPath("C:\\Users\\a\\.claude\\projects\\p\\s1.jsonl", "s1", "z", "win32"),
+    ).toBe("C:\\Users\\a\\.claude\\projects\\p\\s1\\subagents\\agent-z.jsonl");
+    expect(subagentTranscriptPath("/h/.claude/projects/p/s1.jsonl", "s1", "z", "linux")).toBe(
       "/h/.claude/projects/p/s1/subagents/agent-z.jsonl",
     );
   });
@@ -691,7 +697,22 @@ describe("transcript tailer review fixes", () => {
     const good = join(dir, "good.jsonl");
     writeFileSync(good, nl(gen(0, 2)));
     const logs: string[] = [];
-    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    // An empty directory reports size 0 on NTFS, which looks unchanged and is never opened; the stat
+    // seam makes the bad file look grown so the open fails on every platform.
+    const t = mk({
+      log: (lv, m) => logs.push(`${lv} ${m}`),
+      stat: async (p) => {
+        const s = await statP(p);
+        const size = p.endsWith("bad.jsonl") ? 10 : s.size;
+        return {
+          size,
+          ino: Number(s.ino),
+          birthtimeMs: s.birthtimeMs,
+          ctimeMs: s.ctimeMs,
+          mtimeMs: s.mtimeMs,
+        };
+      },
+    });
     await t.onSessionStart("bad", bad);
     await t.onSessionStart("good", good);
     await t.poll();
@@ -722,16 +743,16 @@ describe("transcript tailer review fixes", () => {
 
 describe("isUnder", () => {
   it("table", () => {
-    expect(isUnder("/a/b/c.jsonl", "/a/b")).toBe(true);
-    expect(isUnder("/a/b/s/subagents/x.jsonl", "/a/b/")).toBe(true);
-    expect(isUnder("/a/bc/x.jsonl", "/a/b")).toBe(false); // sibling prefix
-    expect(isUnder("/a/b", "/a/b")).toBe(false);
-    expect(isUnder("/a/b/../c/x.jsonl", "/a/b")).toBe(false);
-    expect(isUnder("/a/b/..x/y.jsonl", "/a/b")).toBe(true); // a name starting with two dots
-    expect(isUnder("C:\\Users\\X\\p\\a.jsonl", "c:/users/x/p")).toBe(true); // win32 case
-    expect(isUnder("C:\\Users\\X\\p2\\a.jsonl", "C:\\Users\\X\\p")).toBe(false);
-    expect(isUnder("C:\\p\\..\\q\\a.jsonl", "C:\\p")).toBe(false);
-    expect(isUnder("D:\\p\\a.jsonl", "C:\\p")).toBe(false);
+    expect(isUnder("/a/b/c.jsonl", "/a/b", "linux")).toBe(true);
+    expect(isUnder("/a/b/s/subagents/x.jsonl", "/a/b/", "linux")).toBe(true);
+    expect(isUnder("/a/bc/x.jsonl", "/a/b", "linux")).toBe(false); // sibling prefix
+    expect(isUnder("/a/b", "/a/b", "linux")).toBe(false);
+    expect(isUnder("/a/b/../c/x.jsonl", "/a/b", "linux")).toBe(false);
+    expect(isUnder("/a/b/..x/y.jsonl", "/a/b", "linux")).toBe(true); // a name starting with two dots
+    expect(isUnder("C:\\Users\\X\\p\\a.jsonl", "c:/users/x/p", "win32")).toBe(true); // win32 case
+    expect(isUnder("C:\\Users\\X\\p2\\a.jsonl", "C:\\Users\\X\\p", "win32")).toBe(false);
+    expect(isUnder("C:\\p\\..\\q\\a.jsonl", "C:\\p", "win32")).toBe(false);
+    expect(isUnder("D:\\p\\a.jsonl", "C:\\p", "win32")).toBe(false);
   });
 });
 
@@ -811,6 +832,66 @@ describe("transcript containment (D-S2-10)", () => {
       seq: 0,
       payload: p,
     }) as Envelope;
+
+  const posixOnly = process.platform === "win32" ? it.skip : it;
+
+  posixOnly(
+    "backslash exploit: a link named a\\b under projects pointing outside is refused",
+    async () => {
+      const secret = join(outside, "id_rsa");
+      writeFileSync(secret, nl(gen(0, 2)));
+      symlinkSync(outside, join(proj, "a\\b"));
+      const t = tail();
+      await t.start();
+      t.onSpoolLine(hookEnv("SessionStart", "evil", { transcript_path: `${proj}/a\\b/id_rsa` }));
+      await t.poll();
+      expect(out).toHaveLength(0);
+      expect(t.entries()).toHaveLength(0);
+      expect(logs.some((l) => l.startsWith("warn"))).toBe(true);
+      // SubagentStop path with the same shape
+      t.onSpoolLine(
+        hookEnv("SubagentStop", "evil", {
+          agent_id: "x",
+          agent_transcript_path: `${proj}/a\\b/id_rsa`,
+        }),
+      );
+      await t.poll();
+      expect(out).toHaveLength(0);
+    },
+  );
+
+  posixOnly("a drive-letter path is refused on a posix platform", async () => {
+    const t = tail();
+    await t.start();
+    await t.onSessionStart("d1", "C:/Users/x/.claude/projects/p/s.jsonl");
+    await t.onSessionStart("d2", "C:\\Users\\x\\s.jsonl");
+    await t.poll();
+    expect(t.entries()).toHaveLength(0);
+    expect(out).toHaveLength(0);
+  });
+
+  it("a path in the platform's own style is still tailed", async () => {
+    const f = join(proj, "ok.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const t = tail();
+    await t.start();
+    t.onSpoolLine(hookEnv("SessionStart", "ok", { transcript_path: f }));
+    await t.poll();
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("platform comes from the option, not the path shape", async () => {
+    const f = join(proj, "ok.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    // pretending to be win32 on a posix host, a posix path is not refused for its shape
+    expect(isUnder("C:\\P\\a.jsonl", "c:\\p", "win32")).toBe(true);
+    expect(isUnder("C:\\P\\a.jsonl", "c:\\p", "linux")).toBe(false);
+    expect(isUnder("/a/B/x", "/a/b", "linux")).toBe(false); // no case folding on linux
+    expect(isUnder("/a/B/x", "/a/b", "win32")).toBe(true);
+    const t = tail({ platform: process.platform });
+    await t.onSessionStart("ok2", f);
+    expect(t.entries()).toHaveLength(1);
+  });
 
   it("S1: a SessionStart transcript_path outside projects is refused and logged once", async () => {
     const secret = join(outside, "id_ed25519");

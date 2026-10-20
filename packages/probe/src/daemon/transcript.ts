@@ -76,8 +76,12 @@ interface TailState {
   lost_until?: number;
 }
 
-export function isUnder(p: string, dir: string): boolean {
-  const w = looksWindows(dir) || looksWindows(p);
+export function isUnder(
+  p: string,
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const w = platform === "win32";
   const m = w ? path.win32 : path.posix;
   const norm = (x: string): string => (w ? m.resolve(x).toLowerCase() : m.resolve(x));
   const rel = m.relative(norm(dir), norm(p));
@@ -88,8 +92,11 @@ export function isUnder(p: string, dir: string): boolean {
  * realpath of p, or of its deepest existing ancestor with the rest appended (the file may not exist
  * yet). Paths in the other platform's style (table tests) are returned unchanged.
  */
-export async function realpathLoose(p: string): Promise<string> {
-  if (looksWindows(p) !== (process.platform === "win32")) return p;
+export async function realpathLoose(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  if ((platform === "win32") !== (process.platform === "win32")) return p;
   const rest: string[] = [];
   let cur = path.resolve(p);
   for (;;) {
@@ -145,6 +152,8 @@ export interface TranscriptTailerOptions {
   projectsDir?: string;
   /** Flushes the outbox to disk; defaults to `enqueue.sync` when the outbox provides one. */
   syncOutbox?: () => void;
+  /** Path style and case folding come from this, never from a path's shape. Test seam. */
+  platform?: NodeJS.Platform;
   pollMs?: number;
   maxEnvelopeBytes?: number;
   maxLineJsonBytes?: number;
@@ -170,8 +179,9 @@ const refusedFile = (): Error =>
 
 const key = (session: string, agent?: string): string => `${session}|${agent ?? ""}`;
 
-function looksWindows(p: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(p) || p.includes("\\");
+/** On non-win32 a backslash or drive prefix is never a legitimate spool path: refuse, don't reinterpret. */
+function foreignStyle(p: string, platform: NodeJS.Platform): boolean {
+  return platform !== "win32" && (p.includes("\\") || /^[A-Za-z]:/.test(p));
 }
 
 /**
@@ -182,8 +192,9 @@ export function subagentTranscriptPath(
   transcriptPath: string,
   sessionId: string,
   agentId: string,
+  platform: NodeJS.Platform = process.platform,
 ): string {
-  const p = looksWindows(transcriptPath) ? path.win32 : path.posix;
+  const p = platform === "win32" ? path.win32 : path.posix;
   return p.join(p.dirname(transcriptPath), sessionId, "subagents", `agent-${agentId}.jsonl`);
 }
 
@@ -233,6 +244,7 @@ export class TranscriptTailer implements DaemonComponent {
   private host: string;
   private log: Logger;
   private readonly now: () => number;
+  private readonly platform: NodeJS.Platform;
   private readonly strategy: ReplaceStrategy;
   private readonly statFn: (p: string) => Promise<StatLike>;
   private dirty = false;
@@ -257,6 +269,7 @@ export class TranscriptTailer implements DaemonComponent {
     this.host = o.host ?? "unknown";
     this.log = o.log ?? ((): void => undefined);
     this.now = o.now ?? Date.now;
+    this.platform = o.platform ?? process.platform;
     this.strategy = o.strategy ?? (process.platform === "win32" ? "win32" : "posix");
     this.statFn =
       o.stat ??
@@ -368,7 +381,9 @@ export class TranscriptTailer implements DaemonComponent {
         this.refuse(sessionId, "SubagentStart with an invalid session id");
         return;
       }
-      const real = await this.trusted(subagentTranscriptPath(base, sessionId, agentId));
+      const real = await this.trusted(
+        subagentTranscriptPath(base, sessionId, agentId, this.platform),
+      );
       if (!real) {
         this.refuse(`${sessionId}|${agentId}`, "SubagentStart path outside the projects dir");
         return;
@@ -423,10 +438,17 @@ export class TranscriptTailer implements DaemonComponent {
    * Refuses when no projects dir is configured, and files with more than one hard link.
    */
   private async trusted(p: string): Promise<string | undefined> {
+    if (foreignStyle(p, this.platform)) {
+      this.log(
+        "warn",
+        "transcript: refusing a path with a backslash or drive prefix on this platform",
+      );
+      return undefined;
+    }
     const root = await this.pinRoot();
     if (!root) return undefined;
-    const rp = await realpathLoose(p);
-    if (!isUnder(rp, root)) return undefined;
+    const rp = await realpathLoose(p, this.platform);
+    if (!isUnder(rp, root, this.platform)) return undefined;
     try {
       const st = await lstat(rp);
       if (st.isFile() && st.nlink > 1) return undefined;
@@ -440,8 +462,8 @@ export class TranscriptTailer implements DaemonComponent {
   private async stillTrusted(rp: string): Promise<string | undefined> {
     const root = await this.pinRoot();
     if (!root) return undefined;
-    const now = await realpathLoose(rp);
-    return isUnder(now, root) ? now : undefined;
+    const now = await realpathLoose(rp, this.platform);
+    return isUnder(now, root, this.platform) ? now : undefined;
   }
 
   /**
