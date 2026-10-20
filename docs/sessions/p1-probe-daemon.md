@@ -32,6 +32,8 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - D-S2-9 (user, via conductor 2026-10-20T17:36Z, answer "A"): one more (fourth and last) fix iteration for U3 on the five listed findings only (MAJOR proc-info.ts ancestry() snapshot age; four MINORs), then review, verify R1.7, continue with U4-U6. If a MAJOR remains after it, write a new question instead of iterating again.
 - D-S2-10 Transcript containment (U4a security iteration 1): the daemon tails only files whose realpath is under the trusted root `<CLAUDE_CONFIG_DIR or ~/.claude>/projects` as seen by the daemon. SessionStart, SubagentStart-derived and SubagentStop paths are all checked against that root (never against a path taken from the spool). A session started with a different CLAUDE_CONFIG_DIR than the daemon's is refused and logged, not tailed; multi-config-dir support is an open question for a later phase.
 
+- D-S2-11 (user, via conductor 2026-10-20T19:16Z, answer "B"): one fix iteration for U4a on the security HIGH only (transcript.ts: on non-win32 refuse spool paths containing a backslash or a drive letter; pick the comparison style from process.platform; add a test). Both MEDIUMs (root pin accepts a linked root and is memory-only; intermediate directory swap not tied to the handle) are deferred to S7 (redaction) as same-user race and restart-time issues. The Windows CI failures in transcript.test.ts are fixed in the same probe executor call. Then U4b, U5, U6.
+
 ## Units
 
 ### U1 daemon core (R1.4, R1.5)
@@ -43,6 +45,10 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - The sprint container restarted and killed the run in the middle of U1-fix-lock (not a session failure). Resumed at 14:21Z. Uncommitted diff: lock.ts (+286/-), daemon-review1.test.ts, daemon-review2.test.ts, lock-race.proc.test.ts. Decision: the generation design is sound in principle (exactly one creator per generation through link EEXIST), so sd-executor-probe finishes it rather than discarding it. Review loop restarts at iteration 1 for the fix.
 
 ## Deferred findings
+- [MEDIUM, deferred to S7 per D-S2-11] transcript.ts root pin: lives only in memory and accepts a root that is itself a link, so replacing projects/ with a link to ~ takes effect on the next daemon start. Planned fix: refuse a root equal to or an ancestor of home; POSIX owner check; persist pinned realpath and dev/ino in the state file and log loudly on change.
+- [MEDIUM, deferred to S7 per D-S2-11] transcript.ts: an intermediate directory swapped between stillTrusted and open is not bound to the handle. Planned fix: realpath again after open, require equality with the checked path and containment, and dev/ino match with the handle.
+- [MINOR, U4a iter 3 reviewer] a SessionStart before projects/ exists is refused for good; the pin does not heal after a legitimate delete and recreate.
+- [LOW, U4a iter 3 security] Windows O_NOFOLLOW/O_NONBLOCK are 0 and FAT/exFAT ino may be 0.
 - [MINOR] transcript.ts:485,521-531 (U2): after the 30-day pruned memory expires, a returning key numbers from 0; collides with old hub rows only if the old stream had a compaction reset and the resume is more than about 37 days later. Fix: restart above max_issued for unknown keys whose transcript birthtime predates the daemon's first run.
 - [MINOR] transcript.ts:78-84 (U2): isUnder compares path text, not realpath; a symlink under projectsDir pointing outside passes. Fix with realpath when U4 wires projectsDir.
 - [MINOR] packages/probe/src/daemon/lock.ts:313-323: the check() ENOENT recreate ignores a live lower generation created after an external delete. Short two-holder window, closed at the next verify(). Fix: fail when scan shows any other live generation.
@@ -96,3 +102,7 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - Review loop limit (3 iterations) reached with security HIGH open. Branch pushed for windows-latest CI evidence. Session stopped blocked; question in /state/1/questions/S2.md.
 - Task list change: U4 split into U4a (wiring, daemon run, e2e harness; packages/probe/**) and U4b (Task Scheduler/systemd registration, install/uninstall integration, docs/PROBE.md daemon section). Both sd-executor-probe, sequential (shared cli.ts). units_total now 7.
 - windows-latest CI on 25b5c90 (run 39466032240) failed test/transcript.test.ts:662 "one unreadable file does not stop the others from draining" on node 22 and 24 (U2 test; likely chmod not effective on NTFS). Must be fixed in the next probe executor call. Run 39480440487 on a583f4b in progress at exit.
+
+### Resume 2026-10-20 after 19:16Z
+- Answer B recorded as D-S2-11. Both MEDIUMs and the iteration-3 MINOR/LOW recorded under Deferred findings (for S7).
+- windows-latest CI on e7b6660 (run 39480584779) fails 2 tests in test/transcript.test.ts: line 387 "dispatches contract fixtures through onSpoolLine" (expected 8.3 short path C:/Users/RUNNER~1/..., received long backslash realpath C:\Users\runneradmin\...) and line 699 "one unreadable file does not stop the others from draining" (chmod not effective on NTFS). Both go into the U4a iteration-4 call.
