@@ -90,13 +90,16 @@ export function isUnder(
 
 /**
  * realpath of p, or of its deepest existing ancestor with the rest appended (the file may not exist
- * yet). Paths in the other platform's style (table tests) are returned unchanged.
+ * yet). Throws when `platform` differs from the host's: the filesystem cannot resolve paths of
+ * another platform's style, so callers must refuse rather than trust an unresolved path.
  */
 export async function realpathLoose(
   p: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  if ((platform === "win32") !== (process.platform === "win32")) return p;
+  if ((platform === "win32") !== (process.platform === "win32")) {
+    throw new Error(`cannot resolve ${platform} paths on ${process.platform}`);
+  }
   const rest: string[] = [];
   let cur = path.resolve(p);
   for (;;) {
@@ -447,7 +450,13 @@ export class TranscriptTailer implements DaemonComponent {
     }
     const root = await this.pinRoot();
     if (!root) return undefined;
-    const rp = await realpathLoose(p, this.platform);
+    let rp: string;
+    try {
+      rp = await realpathLoose(p, this.platform);
+    } catch {
+      this.log("warn", `transcript: refusing a path: cannot resolve ${this.platform} paths here`);
+      return undefined;
+    }
     if (!isUnder(rp, root, this.platform)) return undefined;
     try {
       const st = await lstat(rp);
@@ -462,7 +471,12 @@ export class TranscriptTailer implements DaemonComponent {
   private async stillTrusted(rp: string): Promise<string | undefined> {
     const root = await this.pinRoot();
     if (!root) return undefined;
-    const now = await realpathLoose(rp, this.platform);
+    let now: string;
+    try {
+      now = await realpathLoose(rp, this.platform);
+    } catch {
+      return undefined;
+    }
     return isUnder(now, root, this.platform) ? now : undefined;
   }
 

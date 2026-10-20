@@ -847,7 +847,9 @@ describe("transcript containment (D-S2-10)", () => {
       await t.poll();
       expect(out).toHaveLength(0);
       expect(t.entries()).toHaveLength(0);
-      expect(logs.some((l) => l.startsWith("warn"))).toBe(true);
+      expect(logs).toContain(
+        "warn transcript: refusing a path with a backslash or drive prefix on this platform",
+      );
       // SubagentStop path with the same shape
       t.onSpoolLine(
         hookEnv("SubagentStop", "evil", {
@@ -880,7 +882,7 @@ describe("transcript containment (D-S2-10)", () => {
     expect(out.length).toBeGreaterThan(0);
   });
 
-  it("platform comes from the option, not the path shape", async () => {
+  it("isUnder takes the platform from its argument, not the path shape; a foreign tailer platform refuses", async () => {
     const f = join(proj, "ok.jsonl");
     writeFileSync(f, nl(gen(0, 2)));
     // pretending to be win32 on a posix host, a posix path is not refused for its shape
@@ -891,6 +893,17 @@ describe("transcript containment (D-S2-10)", () => {
     const t = tail({ platform: process.platform });
     await t.onSessionStart("ok2", f);
     expect(t.entries()).toHaveLength(1);
+    // a tailer whose platform differs from the host cannot resolve the real path: it refuses
+    await expect(
+      realpathLoose(f, process.platform === "win32" ? "linux" : "win32"),
+    ).rejects.toThrow();
+    const foreign = tail({ platform: process.platform === "win32" ? "linux" : "win32" });
+    await foreign.start();
+    // the shape check passes for this path on both hosts, so realpathLoose is what refuses
+    await foreign.onSessionStart("ok3", process.platform === "win32" ? "/x/ok.jsonl" : f);
+    await foreign.poll();
+    expect(foreign.entries()).toHaveLength(0);
+    expect(out).toHaveLength(0);
   });
 
   it("S1: a SessionStart transcript_path outside projects is refused and logged once", async () => {
