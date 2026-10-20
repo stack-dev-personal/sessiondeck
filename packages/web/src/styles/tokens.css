@@ -1,0 +1,38 @@
+/* prettier-ignore */
+:root {
+  /* surfaces */
+  --bg: #0e1116;            --surface-1: #151a21;   --surface-2: #1c232c;   --surface-3: #242d38;
+  --border: #2a3441;        --border-strong: #3b4858;
+  /* text */
+  --fg: #e6edf3;            --fg-muted: #9aa7b4;    --fg-faint: #6b7784;
+  /* states (the state machine, in color) */
+  --state-starting: #8b949e;    /* gray    ◌ */
+  --state-working:  #58a6ff;    /* blue    ● */
+  --state-waiting:  #f0b429;    /* amber   ▲  waiting_permission and waiting_input */
+  --state-idle:     #3fb950;    /* green   ○ */
+  --state-error:    #f85149;    /* red     ✖ */
+  --state-ended:    #6e7681;    /* slate   ■ */
+  --state-exited:   #a371f7;    /* violet  ◆  (unexpected exit, distinct from ended) */
+  /* meters */
+  --meter-ok:   #3fb950;  --meter-warn: #f0b429;  --meter-high: #f85149;  --meter-track: #2a3441;
+  /* accents */
+  --accent: #58a6ff;  --accent-attention: #f0b429;
+  /* type */
+  --font-ui: Inter, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  --text-xs: 11px; --text-sm: 12.5px; --text-md: 14px; --text-lg: 16px; --text-xl: 20px;
+  /* space (4px grid) */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-6: 24px; --s-8: 32px;
+  --radius: 6px; --radius-lg: 10px;
+  /* motion */
+  --t-fast: 120ms; --t-base: 200ms; --ease: cubic-bezier(.2,.7,.2,1);
+}
+/* prettier-ignore */
+[data-theme="light"] {
+  --bg: #f6f8fa; --surface-1: #ffffff; --surface-2: #f0f3f6; --surface-3: #e6eaef;
+  --border: #d0d7de; --border-strong: #afb8c1;
+  --fg: #1f2328; --fg-muted: #59636e; --fg-faint: #8c959f;
+  --state-working: #0969da; --state-waiting: #9a6700; --state-idle: #1a7f37; --state-error: #cf222e; --state-ended: #6e7781; --state-exited: #8250df; --state-starting: #8c959f;
+  --meter-ok: #1a7f37; --meter-warn: #9a6700; --meter-high: #cf222e; --meter-track: #d0d7de;
+  --accent: #0969da; --accent-attention: #9a6700;
+}
