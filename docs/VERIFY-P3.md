@@ -161,3 +161,29 @@ Everything else passes: all other state and meter tokens, fg and fg-muted, meter
 - Latest completed run: 39361475112, SHA d934448, cancelled (superseded by a later push). Its e2e-web job: success. Its check jobs: all four cancelled.
 - Earlier run 39361096443, SHA 17b16dd: e2e-web success; check ubuntu node 22 and 24 success; windows checks cancelled.
 - No completed CI run on HEAD exists yet.
+
+## Addendum: U8 Windows CI budget (4ab2297)
+
+Scope: U8 changed only packages/web test configuration (vite.config.ts dom/node projects, isolate:false for dom, src/test-setup.ts resets, 8 node-env docblocks, App.test beforeEach). No app code changed. Verified 2026-10-20 from /work/wt/S6 at HEAD 4ab2297.
+
+CI run 39514323713 on 4ab2297: conclusion success, all 6 jobs success. R0.5 step ("test (R0.5 budget 60 s)") timings from step startedAt/completedAt:
+
+| Job | Start | End | Duration |
+|-----|-------|-----|----------|
+| ubuntu node 24 | 23:21:07 | 23:21:39 | 32 s |
+| ubuntu node 22 | 23:21:27 | 23:22:14 | 47 s |
+| windows node 24 | 23:21:49 | 23:22:44 | 55 s |
+| windows node 22 | 23:22:06 | 23:23:05 | 59 s |
+
+Windows margin against the 60 s budget is 1 s (node 22) to 5 s (node 24). This is thin: a slower runner can fail it. Timing is at step granularity (1 s resolution).
+
+Local (Linux, one foreground process, no vitest running beforehand): `pnpm -r test` exit 0. web 214 passed (20 files), hub 177 passed (15 files), contract 1090 passed + 1 skipped (28 files), scripts 575 passed + 7 skipped (28 files + 1 skipped). `pnpm -r typecheck` exit 0, `pnpm -r lint` exit 0.
+
+| ID | Command | Output | Result |
+|----|---------|--------|--------|
+| R0.5 (CI green both OSes) | `gh run view 39514323713 --json conclusion,jobs` | conclusion success; 4 check jobs (ubuntu/windows x node 22/24) and both e2e jobs success | pass |
+| R0.5 (`pnpm -r test` under 60 s) | same, step timings | windows 55 s (node 24), 59 s (node 22); ubuntu 32 s, 47 s; all under 60 s, Windows margin 1 to 5 s | pass |
+| R0.5 local suite | `pnpm -r test`, `pnpm -r typecheck`, `pnpm -r lint` | counts above, all exit 0 | pass |
+| R3.1, R3.2, R3.3, R3.4, R3.5, R3.6, R3.7, R3.8, R3.9 (web unit regression) | `pnpm -r test` (packages/web) | 20 files, 214 tests passed, 0 failed; same count as expected | pass |
+
+Limits: the regression rows rest on the whole web unit suite passing at the expected count; per-ID test selection was not run separately. Playwright evidence for these IDs was not rerun (U8 touched no app code or e2e). The R3.7 contrast failures recorded above are unchanged and not part of this addendum.
