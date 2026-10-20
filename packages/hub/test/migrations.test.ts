@@ -11,7 +11,7 @@ afterEach(() => cleanup?.());
 
 describe("migrations", () => {
   it("creates all tables and indexes, is idempotent, records versions 1 and 2", () => {
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     expect(t.store.migrate()).toEqual([1, 2]);
     const names = (type: string) =>
@@ -41,14 +41,14 @@ describe("migrations", () => {
   });
 
   it("sets WAL and foreign keys", () => {
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     expect(t.store.db.pragma("journal_mode", { simple: true })).toBe("wal");
     expect(t.store.db.pragma("foreign_keys", { simple: true })).toBe(1);
   });
 
   it("enforces UNIQUE(host, seq)", () => {
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     t.store.migrate();
     const ins = t.store.db.prepare(
@@ -59,7 +59,7 @@ describe("migrations", () => {
   });
 
   it("round-trips hosts and sessions", () => {
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     t.store.migrate();
     t.store.upsertHost({ host: "h", os: "linux", last_seen: 1, last_seq: 2 });
@@ -81,7 +81,7 @@ describe("migrations", () => {
   });
 
   it("main-session transcript lines dedup on ('' agent_id); NULL agent_id is rejected", () => {
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     t.store.migrate();
     const ins = t.store.db.prepare(
@@ -109,7 +109,7 @@ describe("migrations", () => {
     }
     expect(ddl).toMatch(/ts BIGINT NOT NULL/);
     expect(ddl).not.toMatch(/\b(ts|last_seen|started_at|ended_at|last_event_at) INTEGER/);
-    const t = tempStore();
+    const t = tempStore({ file: true });
     cleanup = t.cleanup;
     t.store.migrate();
     t.store.upsertHost({ host: "h", os: null, last_seen: 1_760_000_000_000, last_seq: 1 });
