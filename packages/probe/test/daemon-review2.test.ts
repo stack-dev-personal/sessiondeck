@@ -14,7 +14,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Envelope } from "@sessiondeck/contract";
 import { type DaemonHandle, startDaemon } from "../src/daemon/index.ts";
-import { acquireLock } from "../src/daemon/lock.ts";
 import { buildEnvelope } from "../src/envelope.ts";
 import { spoolDir } from "../src/paths.ts";
 import type { SpoolLine } from "../src/spool-format.ts";
@@ -66,7 +65,6 @@ const fast = { pollMs: 5, batchMs: 20, heartbeatMs: 0, rng: () => 0 };
 const lockPath = (): string => join(home, "daemon", "daemon.lock");
 const logText = (): string => readFileSync(join(home, "daemon", "daemon.log"), "utf8");
 const bootNow = Date.now() - 3_600_000;
-const deps = { bootMs: () => bootNow };
 
 function writeLock(path: string, text: string, ageMs = 0): void {
   mkdirSync(join(path, ".."), { recursive: true });
@@ -77,80 +75,6 @@ function writeLock(path: string, text: string, ageMs = 0): void {
   }
 }
 const otherLock = JSON.stringify({ pid: process.ppid, boot: bootNow, token: "other" });
-
-describe("R1.4 lock: no half-written state, tolerant touch, safe removal", () => {
-  it("leaves no temp or aside files behind, and the content is complete JSON", () => {
-    const l = acquireLock(lockPath(), deps)!;
-    expect(JSON.parse(readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
-    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock"]);
-    l.release();
-    expect(readdirSync(join(home, "daemon"))).toEqual([]);
-  });
-
-  it("an empty or unparseable lock is live while young and stale once old", () => {
-    writeLock(lockPath(), "", 0);
-    expect(acquireLock(lockPath(), deps)).toBeUndefined();
-    expect(readFileSync(lockPath(), "utf8")).toBe("");
-    writeLock(lockPath(), "{not json", 60_000);
-    expect(acquireLock(lockPath(), deps)).toBeDefined();
-  });
-
-  it("touch survives a read error and recreates a vanished lock with the same token", () => {
-    const l = acquireLock(lockPath(), deps)!;
-    const token = JSON.parse(readFileSync(lockPath(), "utf8")).token;
-    rmSync(lockPath());
-    expect(l.touch()).toBe(true);
-    expect(JSON.parse(readFileSync(lockPath(), "utf8")).token).toBe(token);
-    rmSync(lockPath());
-    mkdirSync(lockPath()); // reading it fails with EISDIR: a transient, not a takeover
-    expect(l.touch()).toBe(true);
-    expect(l.verify()).toBe(true);
-    rmSync(lockPath(), { recursive: true });
-    l.release();
-  });
-
-  it("verify and touch are false only for a parsed foreign token", () => {
-    const l = acquireLock(lockPath(), deps)!;
-    writeLock(lockPath(), otherLock);
-    expect(l.verify()).toBe(false);
-    expect(l.touch()).toBe(false);
-    expect(readFileSync(lockPath(), "utf8")).toBe(otherLock);
-  });
-
-  it("a lock replaced by a live one during the takeover is put back, not deleted", () => {
-    writeLock(lockPath(), JSON.stringify({ pid: 2147483000, boot: bootNow, token: "x" }));
-    const l = acquireLock(lockPath(), {
-      ...deps,
-      duringTakeover: () => writeLock(lockPath(), otherLock),
-    });
-    expect(l).toBeUndefined(); // a live daemon holds it
-    expect(readFileSync(lockPath(), "utf8")).toBe(otherLock);
-    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock"]);
-  });
-
-  it("a takeover mutex left by a crash: an old one is cleared at once", () => {
-    writeLock(lockPath(), JSON.stringify({ pid: 2147483000, boot: bootNow, token: "x" }));
-    writeLock(`${lockPath()}.takeover`, "dead", 60_000);
-    expect(acquireLock(lockPath(), deps)).toBeDefined();
-    expect(readdirSync(join(home, "daemon")).sort()).toEqual(["daemon.lock"]);
-  });
-
-  it("a fresh mutex is waited out (restart within 10 s of a crash), not reported as running", () => {
-    writeLock(lockPath(), JSON.stringify({ pid: 2147483000, boot: bootNow, token: "x" }));
-    writeLock(`${lockPath()}.takeover`, "dead", 9_300); // goes stale in ~0.7 s
-    const t0 = Date.now();
-    expect(acquireLock(lockPath(), deps)).toBeDefined();
-    expect(Date.now() - t0).toBeGreaterThan(300);
-  });
-
-  it("a mutex that never clears ends in a distinct error, not 'already running'", () => {
-    writeLock(lockPath(), JSON.stringify({ pid: 2147483000, boot: bootNow, token: "x" }));
-    writeLock(`${lockPath()}.takeover`, "dead", 0);
-    expect(() => acquireLock(lockPath(), { ...deps, takeoverWaitMs: 200 })).toThrow(
-      /takeover in progress/,
-    );
-  });
-});
 
 describe("R1.4 fencing: a daemon that lost the lock stops writing and sending", () => {
   it("the lock timer notices a foreign token: onLockLost fires, the lock is unchanged", async () => {
@@ -166,7 +90,7 @@ describe("R1.4 fencing: a daemon that lost the lock stops writing and sending", 
     }))!;
     open.push(d);
     await waitFor(() => d.pending() === 0 && fx.reqs.length >= 1);
-    writeLock(lockPath(), otherLock);
+    writeLock(`${lockPath()}.99`, otherLock);
     await waitFor(() => lost === 1);
     const reqs = fx.reqs.length;
     const state = readFileSync(join(home, "daemon", "state.json"), "utf8");
@@ -174,7 +98,7 @@ describe("R1.4 fencing: a daemon that lost the lock stops writing and sending", 
     await sleep(200);
     expect(fx.reqs.length).toBe(reqs);
     expect(readFileSync(join(home, "daemon", "state.json"), "utf8")).toBe(state);
-    expect(readFileSync(lockPath(), "utf8")).toBe(otherLock);
+    expect(readFileSync(`${lockPath()}.99`, "utf8")).toBe(otherLock);
     expect(lost).toBe(1);
   });
 
@@ -190,7 +114,7 @@ describe("R1.4 fencing: a daemon that lost the lock stops writing and sending", 
     }))!; // the 10 s touch never runs in this test
     open.push(d);
     await waitFor(() => d.pending() === 0 && fx.reqs.length >= 1);
-    writeLock(lockPath(), otherLock);
+    writeLock(`${lockPath()}.99`, otherLock);
     const reqs = fx.reqs.length;
     const state = readFileSync(join(home, "daemon", "state.json"), "utf8");
     appendSpoolLines(spoolDir(home), [line(1)]);
@@ -198,7 +122,44 @@ describe("R1.4 fencing: a daemon that lost the lock stops writing and sending", 
     await sleep(150);
     expect(fx.reqs.length).toBe(reqs);
     expect(readFileSync(join(home, "daemon", "state.json"), "utf8")).toBe(state);
-    expect(readFileSync(lockPath(), "utf8")).toBe(otherLock);
+    expect(readFileSync(`${lockPath()}.99`, "utf8")).toBe(otherLock);
+    expect(logText()).toContain("fenced");
+  });
+});
+
+describe("R1.4 fence checks around the POST and the commit", () => {
+  it("a higher generation that appears while the POST is in flight keeps the journal and stops sending", async () => {
+    let swapped = false;
+    const reqs: number[] = [];
+    const f = (async (_u: URL | string, init?: RequestInit) => {
+      reqs.push(1);
+      if (!swapped) {
+        swapped = true;
+        writeLock(`${lockPath()}.99`, otherLock);
+      }
+      void init;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    let lost = 0;
+    appendSpoolLines(spoolDir(home), [line(0), line(1)]);
+    const d = (await startDaemon({
+      home,
+      config: cfg,
+      fetch: f,
+      ...fast,
+      onLockLost: () => (lost += 1),
+    }))!;
+    open.push(d);
+    await waitFor(() => lost === 1);
+    const n = reqs.length;
+    appendSpoolLines(spoolDir(home), [line(2)]);
+    await sleep(200);
+    expect(reqs.length).toBe(n); // no further POST
+    const state = JSON.parse(readFileSync(join(home, "daemon", "state.json"), "utf8")) as {
+      pending?: unknown;
+    };
+    expect(JSON.stringify(state)).toContain("pending");
+    expect(state.pending).toBeTruthy(); // the journal survived: the 200 was not committed
     expect(logText()).toContain("fenced");
   });
 });

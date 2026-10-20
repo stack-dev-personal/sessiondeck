@@ -1,6 +1,7 @@
 import {
   appendFileSync,
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -237,7 +238,7 @@ describe("R1.4 single-instance lock", () => {
     writeLock(lockPath(), { pid: process.ppid, boot: bootNow - 86_400_000, token: "x" });
     const l = acquireLock(lockPath(), deps);
     expect(l).toBeDefined();
-    expect(JSON.parse(readFileSync(lockPath(), "utf8")).pid).toBe(process.pid);
+    expect(JSON.parse(readFileSync(`${lockPath()}.1`, "utf8")).pid).toBe(process.pid);
   });
 
   it("pid reuse without a reboot: a live pid, lock not touched for 11 minutes, is taken over", () => {
@@ -262,26 +263,96 @@ describe("R1.4 single-instance lock", () => {
     a.release();
   });
 
-  it("touch reports a lost lock and release leaves someone else's lock alone", () => {
+  it("touch reports a lost lock (higher generation) and release leaves everything alone", () => {
     const a = acquireLock(lockPath(), deps)!;
-    writeLock(lockPath(), { pid: process.ppid, boot: bootNow, token: "other" });
+    writeLock(`${lockPath()}.2`, { pid: process.ppid, boot: bootNow, token: "other" });
     expect(a.touch()).toBe(false);
     a.release();
-    expect(JSON.parse(readFileSync(lockPath(), "utf8")).token).toBe("other");
+    expect(JSON.parse(readFileSync(`${lockPath()}.2`, "utf8")).token).toBe("other");
+    expect(existsSync(`${lockPath()}.1`)).toBe(true); // skipped: we were fenced
   });
 
-  it("the takeover mutex is held while the stale lock is replaced", () => {
-    writeLock(lockPath(), { pid: 2147483000, boot: bootNow, token: "x" });
-    let mutexSeen = false;
-    const l = acquireLock(lockPath(), {
-      ...deps,
-      duringTakeover: () => {
-        mutexSeen = readdirSync(join(home, "daemon")).includes("daemon.lock.takeover");
-      },
-    });
+  it("taking over increments the generation and the new owner removes the old files", () => {
+    writeLock(`${lockPath()}.3`, { pid: 2147483000, boot: bootNow, token: "x" });
+    writeLock(`${lockPath()}.2`, { pid: 2147483000, boot: bootNow, token: "y" });
+    writeLock(lockPath(), "2147483000"); // legacy generation 0
+    const l = acquireLock(lockPath(), deps)!;
     expect(l).toBeDefined();
-    expect(mutexSeen).toBe(true);
-    expect(readdirSync(join(home, "daemon"))).not.toContain("daemon.lock.takeover");
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.4"]);
+    l.release();
+    // tombstone (pid 0) keeps the generation number from being reused
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.4"]);
+    expect(JSON.parse(readFileSync(`${lockPath()}.4`, "utf8")).pid).toBe(0);
+    expect(acquireLock(lockPath(), deps)).toBeDefined();
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.5"]);
+  });
+
+  it("no lock: generation 1; an existing generation that appears first wins (EEXIST)", () => {
+    const l = acquireLock(lockPath(), deps)!;
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.1"]);
+    const link = (_a: string, t: string): void => {
+      throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      void t;
+    };
+    expect(acquireLock(join(home, "d2", "daemon.lock"), { ...deps, link })).toBeUndefined();
+    l.release();
+  });
+
+  it("a legacy daemon.lock from an older build is generation 0: live blocks, stale is replaced", () => {
+    writeLock(lockPath(), { pid: process.ppid, boot: bootNow, token: "old" });
+    expect(acquireLock(lockPath(), deps)).toBeUndefined();
+    writeLock(lockPath(), { pid: 2147483000, boot: bootNow, token: "old" });
+    const l = acquireLock(lockPath(), deps)!;
+    expect(l).toBeDefined();
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.1"]);
+    l.release();
+  });
+
+  it("verify is false once a higher generation appears, even with our file intact", () => {
+    const l = acquireLock(lockPath(), deps)!;
+    expect(l.verify()).toBe(true);
+    writeLock(`${lockPath()}.2`, "{}");
+    expect(l.verify()).toBe(false);
+    expect(l.touch()).toBe(false);
+  });
+
+  it("touch tolerates a read error on our file and recreates a vanished one", () => {
+    const l = acquireLock(lockPath(), deps)!;
+    const mine = `${lockPath()}.1`;
+    const token = JSON.parse(readFileSync(mine, "utf8")).token;
+    rmSync(mine);
+    expect(l.touch()).toBe(true);
+    expect(JSON.parse(readFileSync(mine, "utf8")).token).toBe(token);
+    rmSync(mine);
+    mkdirSync(mine); // reading it fails with EISDIR: a transient, not a takeover
+    expect(l.touch()).toBe(true);
+    rmSync(mine, { recursive: true });
+    l.release();
+  });
+
+  it("without hard links the O_EXCL fallback creates the lock; a young empty file is live", () => {
+    const link = (): void => {
+      throw Object.assign(new Error("no links"), { code: "EISDIR" });
+    };
+    const l = acquireLock(lockPath(), { ...deps, link })!;
+    expect(l).toBeDefined();
+    expect(JSON.parse(readFileSync(`${lockPath()}.1`, "utf8")).pid).toBe(process.pid);
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.1"]);
+    l.release();
+    writeLock(`${lockPath()}.1`, "", 0);
+    expect(acquireLock(lockPath(), { ...deps, link })).toBeUndefined();
+    writeLock(`${lockPath()}.1`, "", 60_000);
+    expect(acquireLock(lockPath(), { ...deps, link })).toBeDefined();
+  });
+
+  it("old temp files are removed by the new owner", () => {
+    writeLock(`${lockPath()}.tmp-old`, "x", 120_000);
+    writeLock(`${lockPath()}.tmp-new`, "x", 0);
+    acquireLock(lockPath(), deps)!;
+    expect(readdirSync(join(home, "daemon")).sort()).toEqual([
+      "daemon.lock.1",
+      "daemon.lock.tmp-new",
+    ]);
   });
 });
 

@@ -346,8 +346,10 @@ describe("R1.4 single instance and heartbeat", () => {
     expect(names).toContain("state.json");
     expect(names).toContain("daemon.log");
     expect(
-      names.every((n) =>
-        ["state.json", "daemon.log", "outbox", "rejected", "daemon.lock"].includes(n),
+      names.every(
+        (n) =>
+          ["state.json", "daemon.log", "outbox", "rejected"].includes(n) ||
+          /^daemon\.lock\.\d+$/.test(n),
       ),
     ).toBe(true);
   });
