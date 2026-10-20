@@ -26,19 +26,22 @@ docker run -d --name sd-hub -p 127.0.0.1:8787:8787 \
   sd-hub:dev
 ```
 
-Export `HUB_TOKEN` in the shell first (`-e HUB_TOKEN` without a value passes it through without putting it on the command line). Notes:
+Export `HUB_TOKEN` in the shell first (`-e HUB_TOKEN` without a value passes it through without putting it on the command line). The value is still visible through `docker inspect` (and `/proc/<pid>/environ`) to anyone with access to the Docker socket, which is root-equivalent on the host. Phase 7 should move to a Docker secret or a `_FILE` variant (not implemented yet). Notes:
 
-- Multi-stage build on `node:22-bookworm-slim` (a multi-arch tag that includes `linux/arm64`). Digest pinning is a follow-up for the release process.
+- Multi-stage build on `node:22-bookworm-slim` (a multi-arch tag that includes `linux/arm64`). Digest pinning is a deferred follow-up for the release process (pin the multi-arch index digest, `node:22-bookworm-slim@sha256:...`); it is also noted in the Dockerfile.
 - pnpm comes from corepack at the version in the root `packageManager` field; dependencies install with `--frozen-lockfile`.
 - `better-sqlite3` is compiled from source in the build stage (`npm_config_build_from_source=true`; python3, make and g++ exist in that stage only). No prebuilt binary is downloaded.
-- The runtime stage holds the bundle and the production `node_modules` only (`better-sqlite3`, `fastify`, `ws`, and their dependencies). The contract package and zod are bundled.
-- The process runs as uid 10001 (`hub`), not root. `/data` is a `VOLUME` owned by that user; `HUB_DB_PATH` defaults to `/data/hub.sqlite` in the image. The database file is created with mode 0600.
+- The runtime stage holds the bundle and the production `node_modules` only (`better-sqlite3`, `fastify`, `ws`, and their dependencies). The contract package and zod are bundled, and the deployed contract package is removed from the runtime image.
+- The Dockerfile copies explicit files only (never whole package directories) so the image is clean even with the legacy builder, which ignores `Dockerfile.dockerignore`: untracked `fixtures/raw`, `.env`, `probe.json` and a local `data/hub.sqlite` cannot reach it. `container:smoke` proves this with canary files.
+- The process runs as uid 10001 (`hub`), not root. `/data` is a `VOLUME` owned by that user with mode 0700; `HUB_DB_PATH` defaults to `/data/hub.sqlite` in the image. The database file is created with mode 0600.
 - `HUB_BIND` must be `0.0.0.0` inside a container, otherwise nothing outside can reach it. Publish the port on `127.0.0.1` only unless a reverse proxy or tunnel fronts it.
 - `HEALTHCHECK` runs `node -e fetch(...)` against `http://127.0.0.1:8787/health` inside the container (loopback, not an outbound call).
 - No secret is baked into the image. `HUB_TOKEN` is supplied at run time.
 - `docker compose` wiring is owned by the S4 session (`infra/docker-compose.yml`).
 
-Proof harness: `pnpm -F @sessiondeck/hub container:smoke` builds the image, runs it on a docker network with a volume, and prints evidence (health, 401s, fixture ingest, dedup, restart persistence, uid, file mode, WS harness). It only creates and removes objects named `sd-1-S3-*` (override with `SMOKE_PREFIX`, `SMOKE_NETWORK`, `SMOKE_IMAGE`). It stages a scratch build context, so it also works where BuildKit is not installed.
+Proof harness: `pnpm -F @sessiondeck/hub container:smoke` builds the image, runs it on a docker network with a volume, and prints evidence (health, 401s, fixture ingest, dedup, restart persistence, uid, file mode, WS harness). It only creates and removes objects named `sd-1-S3-*` (override with `SMOKE_PREFIX`, `SMOKE_NETWORK`, `SMOKE_IMAGE`). It stages a scratch build context (plus canary files) and builds with `DOCKER_BUILDKIT=0`, so it works where BuildKit is not installed and fails if a canary reaches the runtime image.
+
+By default the harness reaches the hub by container name (`http://sd-1-S3-hub:8787`), which only resolves from a container attached to the sprint network (`SMOKE_NETWORK`, default `sprint-1_default`), for example inside the sprint container. To run it from the host instead, set `SMOKE_HOST_PORT=<port>`: the hub is then published on `127.0.0.1:<port>` and the harness uses localhost.
 
 ### arm64
 
@@ -187,4 +190,4 @@ R2.5 gate: `pnpm -F @sessiondeck/hub ws:harness` (in-process hub) or `HUB_URL=..
 
 ## Replay and retention
 
-Not implemented yet. `hub replay` (rebuild snapshots from stored events, R2.9) and event retention land in S4. Until then snapshots are materialized on ingest only, and no data is deleted by the hub.
+Scope: S3 delivers the ingest path, the environment variables and the migrations. `hub replay` (rebuild snapshots from stored events, R2.9) and event retention are owned by S4 and are not implemented here. Until then snapshots are materialized on ingest only, and no data is deleted by the hub.

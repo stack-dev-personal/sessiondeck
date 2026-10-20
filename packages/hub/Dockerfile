@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1
 # sessiondeck hub image. Build context is the repository root:
 #   docker build -f packages/hub/Dockerfile -t sd-hub:dev .
-# Base is pinned by tag (multi-arch, includes linux/arm64). Follow-up: pin by digest
-# (node:22-bookworm-slim@sha256:...) once a release process can resolve digests online.
+# Base is pinned by tag (multi-arch, includes linux/arm64). DEFERRED follow-up: pin by the
+# multi-arch index digest (node:22-bookworm-slim@sha256:...) once a release process can resolve
+# it online. The local RepoDigest is not usable for this: it is not verified as the index digest.
 ARG NODE_IMAGE=node:22-bookworm-slim
 
 FROM ${NODE_IMAGE} AS build
@@ -17,20 +18,27 @@ WORKDIR /repo
 COPY package.json ./
 RUN corepack enable \
  && corepack prepare "$(node -p "require('./package.json').packageManager")" --activate
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/contract/package.json packages/contract/package.json
 COPY packages/hub/package.json packages/hub/package.json
 # "." is the workspace root (esbuild is its devDependency); the hub filter brings in its workspace deps.
 RUN pnpm install --frozen-lockfile --filter . --filter "@sessiondeck/hub..."
-COPY packages/contract packages/contract
-COPY packages/hub packages/hub
+# Explicit file list, never whole directories: the legacy builder ignores Dockerfile.dockerignore,
+# so untracked files (fixtures/raw, .env, data/*.sqlite) must not be reachable by COPY.
+COPY packages/contract/tsconfig.json packages/contract/tsconfig.json
+COPY packages/contract/src packages/contract/src
+COPY packages/hub/tsconfig.json packages/hub/tsconfig.json
+COPY packages/hub/src packages/hub/src
+COPY packages/hub/scripts/bundle.mjs packages/hub/scripts/bundle.mjs
 WORKDIR /repo/packages/hub
 RUN node scripts/bundle.mjs src/main.ts dist/main.mjs
 # Production dependencies only (the packages the bundle leaves external), compiled in place.
 WORKDIR /repo
+# The bundle already contains the contract, so the deployed contract package is dropped.
 RUN pnpm --filter @sessiondeck/hub deploy --prod --legacy /out \
+ && rm -r /out/node_modules/@sessiondeck /out/node_modules/.pnpm/@sessiondeck+contract* \
  && cp packages/hub/dist/main.mjs /out/main.mjs \
- && node -e "require('/out/node_modules/better-sqlite3')"
+ && node -e "new (require('/out/node_modules/better-sqlite3'))(':memory:').close()"
 
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
@@ -39,7 +47,8 @@ ENV NODE_ENV=production \
 RUN groupadd --gid 10001 hub \
  && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin hub \
  && mkdir /data /app \
- && chown 10001:10001 /data
+ && chown 10001:10001 /data \
+ && chmod 700 /data
 WORKDIR /app
 COPY --from=build /out/node_modules ./node_modules
 COPY --from=build /out/main.mjs ./dist/main.mjs

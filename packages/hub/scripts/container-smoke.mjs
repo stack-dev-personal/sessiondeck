@@ -8,11 +8,17 @@
 // The token is random per run, passed through the environment (never argv) and never printed.
 //
 // Env overrides: SMOKE_PREFIX (default sd-1-S3-), SMOKE_NETWORK (default sprint-1_default),
-// SMOKE_IMAGE (default sd-1-s3-hub:dev), SMOKE_SKIP_ARM64=1 to skip the arm64 build attempt.
+// SMOKE_IMAGE (default sd-1-s3-hub:dev), SMOKE_SKIP_ARM64=1 to skip the arm64 build attempt,
+// SMOKE_HOST_PORT=<port> to publish 127.0.0.1:<port> and talk to the hub via localhost (use this
+// when the harness runs outside the docker network; otherwise the container name is used and only
+// resolves from a container attached to SMOKE_NETWORK).
+//
+// The image is built with the LEGACY builder (DOCKER_BUILDKIT=0, which ignores Dockerfile.dockerignore)
+// from a context that also holds canary files; the run fails if any canary reaches the image.
 import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -25,7 +31,9 @@ const NETWORK = process.env.SMOKE_NETWORK ?? "sprint-1_default";
 const IMAGE = process.env.SMOKE_IMAGE ?? "sd-1-s3-hub:dev";
 const NAME = `${PREFIX}hub`;
 const VOLUME = `${PREFIX}hubdata`;
-const URL_BASE = `http://${NAME}:8787`;
+const HOST_PORT = process.env.SMOKE_HOST_PORT;
+const URL_BASE = HOST_PORT ? `http://127.0.0.1:${HOST_PORT}` : `http://${NAME}:8787`;
+const CANARY = "SD-CANARY-must-not-ship";
 const TOKEN = randomBytes(24).toString("base64url");
 const AUTH = { authorization: `Bearer ${TOKEN}` };
 
@@ -56,7 +64,7 @@ function cleanup() {
 }
 
 /** Copies the files the Dockerfile needs into a scratch context (works without BuildKit). */
-function stageContext() {
+function stageContext(canaries = false) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "sd-hub-ctx-"));
   const rel = [
     "package.json",
@@ -77,6 +85,18 @@ function stageContext() {
     if (!existsSync(from)) throw new Error(`missing build input ${r}`);
     mkdirSync(path.dirname(path.join(dir, r)), { recursive: true });
     cpSync(from, path.join(dir, r), { recursive: true });
+  }
+  if (canaries) {
+    for (const r of [
+      "packages/contract/fixtures/raw/canary",
+      "packages/contract/.env",
+      "probe.json",
+      "packages/hub/data/hub.sqlite",
+      "packages/hub/.env",
+    ]) {
+      mkdirSync(path.dirname(path.join(dir, r)), { recursive: true });
+      writeFileSync(path.join(dir, r), CANARY);
+    }
   }
   return dir;
 }
@@ -187,18 +207,40 @@ async function main() {
   cleanup();
 
   // ---------- build ----------
-  const ctx = stageContext();
+  const ctx = stageContext(true);
   try {
     const t0 = Date.now();
-    const b = docker(["build", "-f", path.join(ctx, "packages/hub/Dockerfile"), "-t", IMAGE, ctx]);
-    say(`# docker build ok in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
-    void b;
+    docker(["build", "-f", path.join(ctx, "packages/hub/Dockerfile"), "-t", IMAGE, ctx], {
+      env: { DOCKER_BUILDKIT: "0" },
+    });
+    say(
+      `# docker build (legacy builder, canary context) ok in ${((Date.now() - t0) / 1000).toFixed(0)} s`,
+    );
   } finally {
     rmSync(ctx, { recursive: true, force: true });
   }
   const size = Number(docker(["image", "inspect", "--format", "{{.Size}}", IMAGE]).out);
   const arch = docker(["image", "inspect", "--format", "{{.Architecture}}", IMAGE]).out;
   say(`image ${IMAGE}  size=${(size / 1024 / 1024).toFixed(1)} MiB  architecture=${arch}`);
+  const scan = docker(
+    [
+      "run",
+      "--rm",
+      "--name",
+      `${PREFIX}scan`,
+      "--entrypoint",
+      "sh",
+      IMAGE,
+      "-c",
+      `find / -xdev \\( -name canary -o -name .env -o -name probe.json -o -name '*.sqlite' -o -path '*sessiondeck*contract*' \\) -not -path '/proc/*' 2>/dev/null; grep -rl '${CANARY}' / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev 2>/dev/null; true`,
+    ],
+    { allowFail: true },
+  );
+  check(
+    "no canary or contract package files in the runtime image (legacy builder)",
+    scan.code === 0 && scan.out === "",
+    scan.out ? `found: ${scan.out.replaceAll("\n", ", ").slice(0, 300)}` : "clean",
+  );
   const hc = docker(["image", "inspect", "--format", "{{json .Config.Healthcheck.Test}}", IMAGE]);
   check("image declares a HEALTHCHECK", hc.out.includes("/health"), hc.out.slice(0, 60));
   const imgUser = docker(["image", "inspect", "--format", "{{.Config.User}}", IMAGE]).out;
@@ -214,6 +256,7 @@ async function main() {
       NAME,
       "--network",
       NETWORK,
+      ...(HOST_PORT ? ["-p", `127.0.0.1:${HOST_PORT}:8787`] : []),
       "-v",
       `${VOLUME}:/data`,
       "-e",
