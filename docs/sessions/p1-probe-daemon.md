@@ -29,6 +29,7 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - D-S2-6 Research (sd-researcher 2026-10-20): cctop @ 6ec6256 MIT (c) 2025 Dean Langsam, read_new_jsonl_lines; ccmonitor @ 88f7d1a MIT (c) 2026 Martin Wickman (LICENSE confirmed), findParentPID/cleanupSamePID/isShellProcess. ~/.claude/sessions/<pid>.json is undocumented beyond "one small file per running session"; fields per anthropics/claude-code#100824: pid, sessionId, cwd, startedAt, procStart, status (busy/idle/shell/waiting), updatedAt. No fixture exists; built against that shape and listed as open question.
 - D-S2-7 Autostart: Windows task registered per-user (`-AtLogOn -User <DOMAIN\user>`, RunLevel Limited, Interactive logon), no admin by design; hidden console via a launcher file inside %LOCALAPPDATA%\sessiondeck. The task itself lives in the Task Scheduler store, which the handoff asks for explicitly. Non-admin registration is unverifiable in CI (runner is admin): needs laptop confirmation. If registration needs admin on the laptop, that is the handoff's stop condition and goes to the user.
 - D-S2-8 Windows transcript reset rule: architecture 4.2 and the handoff say ctime+size, but NTFS updates ctime (change time) on every append, so ctime would reset on every write and redeliver lines. The tailer resets on size regression (size < offset), birthtime change, or a mismatch of the first 256 consumed bytes (head fingerprint; also covers NTFS tunneling that keeps birthtime across rename-replace). POSIX uses inode change, size regression, and the same fingerprint. Intent of the architecture rule (detect compaction and rotation) is preserved; this is an implementation refinement, not a change to 00-open-decisions.
+- D-S2-9 (user, via conductor 2026-10-20T17:36Z, answer "A"): one more (fourth and last) fix iteration for U3 on the five listed findings only (MAJOR proc-info.ts ancestry() snapshot age; four MINORs), then review, verify R1.7, continue with U4-U6. If a MAJOR remains after it, write a new question instead of iterating again.
 
 ## Units
 
@@ -75,3 +76,6 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - Review loop limit (3 iterations) reached with a MAJOR open. Session stopped blocked; question in /state/1/questions/S2.md. U3 not verified; U4, U5, U6 not started.
 - Deferred LOWs from U3 security iteration 3: eviction ranking uses attacker-controllable name and sessions file (same-user DoS only); info/warn lines without rate limit (eviction, not confirmed, younger than hook, probation death); SessionEnd and discovery tasks unbounded on the run chain.
 - Hub follow-up for S3/S4 (not this branch): contract reduceLiveness does not call supersedeSamePid; the hub must call it on every alive:true.
+
+### Resume 2026-10-20 after 17:36Z
+- Answer A recorded as D-S2-9. U3 iteration 4 (final) sent to sd-executor-probe with the five findings verbatim.
