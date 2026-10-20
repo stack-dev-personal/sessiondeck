@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("R1.7 real process", () => {
-  it("detects a killed pid and queues alive:false within 15 s", { timeout: 60_000 }, async () => {
+  it("detects a killed pid and queues alive:false within 15 s", { timeout: 90_000 }, async () => {
     tmp = mkdtempSync(join(tmpdir(), "sd-liveness-proc-"));
     child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       windowsHide: true,
@@ -47,10 +47,16 @@ describe("R1.7 real process", () => {
     // A cold PowerShell on a loaded runner can time out the first process snapshot (8 s, seen in
     // CI run 39513044395). The registration is then retried on the next 10 s tick, so tracking may
     // begin one tick late; the 15 s death bound below is measured from the kill, not from here.
-    const trackBy = Date.now() + 30_000;
+    const trackStart = Date.now();
+    const trackBy = trackStart + 30_000;
     while (m.snapshot()[0]?.state !== "tracking" && Date.now() < trackBy) {
       await new Promise((r) => setTimeout(r, 100));
     }
+    // Evidence for CI: whether tracking needed the retry tick (the first snapshot failed).
+    console.log(
+      `R1.7 proc: tracking after ${Date.now() - trackStart} ms ` +
+        `(${Date.now() - trackStart >= 9_000 ? "needed the retry tick" : "first snapshot succeeded"})`,
+    );
     expect(m.snapshot()[0]).toMatchObject({ pid, state: "tracking" });
     // A node process is not named "claude", so it is on probation until the first tick finds it alive.
     const regAt = Date.now();

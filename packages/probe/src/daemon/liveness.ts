@@ -611,6 +611,7 @@ export class LivenessMonitor implements DaemonComponent {
         ts,
         at: now,
       };
+      this.unreadable.delete(sid); // a new entry starts its retries from zero
       await this.resolve(e, ts);
       this.entries.set(sid, e);
       this.afterTracked(e);
@@ -829,6 +830,7 @@ export class LivenessMonitor implements DaemonComponent {
     const e = this.entries.get(sid);
     if (!e || ts < e.ts) return;
     if (e.state === "ended") return;
+    this.unreadable.delete(sid);
     e.state = "ended";
     e.ts = ts;
     e.at = this.now();
@@ -999,14 +1001,16 @@ export class LivenessMonitor implements DaemonComponent {
     const now = this.now();
     let changed = false;
     let retries = 0;
+    let unreadableHit = false; // one unreadable snapshot per pass: the rest wait for the next tick
     for (const [sid, at] of this.discovered) {
       if (now - at > DISCOVERED_KEEP_MS) this.discovered.delete(sid);
     }
     for (const e of [...this.entries.values()]) {
       if (e.state === "unconfirmed") {
-        if (e.retry === true && retries < RESOLVE_RETRIES_PER_TICK) {
+        if (e.retry === true && retries < RESOLVE_RETRIES_PER_TICK && !unreadableHit) {
           retries += 1;
           await this.resolve(e, e.ts);
+          if (e.retry === true && this.unreadable.has(e.session_id)) unreadableHit = true;
           if ((e.state as EntryState) === "tracking") {
             e.at = now;
             this.afterTracked(e);
@@ -1038,6 +1042,7 @@ export class LivenessMonitor implements DaemonComponent {
       } else if (e.state !== "tracking" && now - e.at > FINISHED_KEEP_MS) {
         this.entries.delete(e.session_id);
         this.lastLookup.delete(e.session_id);
+        this.unreadable.delete(e.session_id);
         changed = true;
       }
     }

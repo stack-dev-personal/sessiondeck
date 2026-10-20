@@ -124,6 +124,23 @@ probe daemon uninstall [--home <dir>]
 background process at every logon is a separate decision from adding hooks. Run
 `probe daemon install` once when you want it.
 
+### Liveness: known gaps and accepted degraded modes
+
+- **Unreadable process table on Windows (accepted degraded mode).** If the registration-time
+  process snapshot (PowerShell, 8 s timeout) fails, the pid is kept as a candidate and retried, one
+  snapshot per 10 s tick, up to 6 times. Until a retry succeeds the session is not tracked, so a
+  death in that window produces no `alive: false` envelope. Bound: after one failed first snapshot,
+  tracking starts up to about 26 s after `SessionStart` (8 s timeout, up to 10 s to the tick, up to
+  8 s for the retry snapshot), and up to about 70 s if all 6 retries are used. Once tracked, a death
+  is caught within 11.5 s (10 s tick plus 1.5 s grace) by `kill(pid, 0)`, which does not use
+  PowerShell, so the 15 s bound holds even on a loaded laptop. A table that stays unreadable for all
+  retries leaves the session unconfirmed.
+- **The retry only helps when the reported pid is claude itself** (exec-form hook install). With a
+  shell-wrapped hook the shell has usually exited by the time of the retry, so the pid cannot be
+  walked to claude.
+- **A snapshot that overflows `maxBuffer` is not retried**; it recurs on every read.
+- **macOS:** a `ps` timeout at registration is final (no retry). macOS is not a first-class target.
+
 ### Autostart
 
 - **Windows**: a per-user Task Scheduler task named `SessionDeckProbeDaemon`. Trigger: at logon of the

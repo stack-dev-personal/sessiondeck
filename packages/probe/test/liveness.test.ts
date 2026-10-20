@@ -1438,6 +1438,65 @@ describe("R1.7 unreadable process table (Windows CI flake, run 39513044395)", ()
     await m.stop();
   });
 
+  it("one maintain pass starts at most one retry snapshot after an unreadable result", async () => {
+    let calls = 0;
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: () => Promise.resolve(undefined),
+      ancestry: () => {
+        calls += 1;
+        return Promise.reject(new ProcTableUnreadable());
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: () => true });
+    await m.start();
+    await m.registerSession(SID_A, 100, 4242);
+    await m.registerSession(SID_B, 200, 4243);
+    expect(calls).toBe(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(3); // one of the two retried, the other left for the next tick
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(calls).toBe(4);
+    await m.stop();
+  });
+
+  it("a SessionEnd clears the unreadable count so a new registration gets its full retries", async () => {
+    let calls = 0;
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: () => Promise.resolve(undefined),
+      ancestry: () => {
+        calls += 1;
+        return Promise.reject(new ProcTableUnreadable());
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: () => true });
+    await m.start();
+    await m.registerSession(SID_A, 100, 4242);
+    await vi.advanceTimersByTimeAsync(30_000); // 3 retries counted
+    await m.endSession(SID_A, 5000);
+    const before = calls;
+    await m.registerSession(SID_A, 100, 6000);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(calls - before).toBe(7); // the registration plus six retries, not four
+    await m.stop();
+  });
+
+  it("a snapshot that overflows maxBuffer is a definitive empty answer, not an unreadable table", async () => {
+    const w = windowsLookup(
+      8000,
+      undefined,
+      () => undefined,
+      () => 9_000_000,
+    );
+    execFail.err = { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" };
+    try {
+      expect(await w.ancestry!(50, 1)).toEqual([]);
+    } finally {
+      execFail.err = undefined;
+    }
+  });
+
   it("the Windows lookup rejects ancestry when the snapshot fails, instead of answering empty", async () => {
     const w = windowsLookup(
       8000,

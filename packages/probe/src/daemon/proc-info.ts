@@ -32,7 +32,7 @@ export interface ProcInfo {
 }
 
 /**
- * Thrown by `ancestry` when the process table could not be read (timeout, overflow, spawn error).
+ * Thrown by `ancestry` when the process table could not be read (timeout, spawn error; a maxBuffer overflow recurs and answers empty).
  * That is "unknown", not "no such process": a caller must not conclude anything about the pid.
  */
 export class ProcTableUnreadable extends Error {
@@ -372,6 +372,8 @@ export function windowsLookup(
     `Get-CimInstance Win32_Process | ForEach-Object { ` +
     `[Console]::Out.WriteLine(${WIN_FIELDS}) }`;
   let cache: { at: number; p: Promise<Map<number, ProcInfo> | undefined> } | undefined;
+  /** The last failed snapshot overflowed maxBuffer: that recurs, so it is not worth a retry. */
+  let lastOverflow = false;
   /** One process-table read; maxAge < 0 forces a new one. Concurrent callers share the same read. */
   const snap = (maxAge: number): Promise<Map<number, ProcInfo> | undefined> => {
     const t = nowFn();
@@ -379,6 +381,7 @@ export function windowsLookup(
     const p = (async (): Promise<Map<number, ProcInfo> | undefined> => {
       const out = await run(ps, args(snapScript), timeoutMs, SNAPSHOT_MAX_BUFFER, (err) => {
         const over = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        lastOverflow = over;
         log?.(
           over
             ? `process snapshot exceeded ${SNAPSHOT_MAX_BUFFER} bytes; start checks are skipped`
@@ -410,12 +413,18 @@ export function windowsLookup(
       const stale = cache !== undefined && notBefore !== undefined && cache.at < notBefore;
       const age = cache === undefined ? 0 : nowFn() - cache.at;
       let s = await snap(stale ? -1 : SNAPSHOT_TTL_MS);
-      if (s === undefined) throw new ProcTableUnreadable();
+      if (s === undefined) {
+        if (lastOverflow) return []; // recurs on every read: a definitive "cannot tell", not a retry
+        throw new ProcTableUnreadable();
+      }
       let chain = chainFromSnapshot(s, pid);
       // A shared snapshot older than the process being walked cannot contain it: read a new one.
       if (chain.length === 0 && s !== undefined && age > SNAPSHOT_REFRESH_MIN_MS) {
         s = await snap(-1);
-        if (s === undefined) throw new ProcTableUnreadable();
+        if (s === undefined) {
+          if (lastOverflow) return [];
+          throw new ProcTableUnreadable();
+        }
         chain = chainFromSnapshot(s, pid);
       }
       return chain;
