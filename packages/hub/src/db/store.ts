@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { migrations } from "./migrations.ts";
 
@@ -44,15 +44,22 @@ export class Store {
 
   static open(dbPath: string): Store {
     const file = dbPath !== ":memory:";
-    if (file) mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true, mode: 0o700 });
+    const dir = path.dirname(path.resolve(dbPath));
+    // mkdirSync returns the first directory it created (undefined if it already existed).
+    const created = file ? mkdirSync(dir, { recursive: true, mode: 0o700 }) : undefined;
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     if (file && process.platform !== "win32") {
       // Payloads and raw transcript lines may hold secrets: owner-only.
-      try {
-        chmodSync(path.dirname(path.resolve(dbPath)), 0o700);
-      } catch {
-        // directory not owned by us (e.g. a shared mount); leave it
+      // Only tighten a directory this process created; never touch a pre-existing one.
+      if (created !== undefined) {
+        try {
+          chmodSync(created, 0o700);
+        } catch {
+          // best effort
+        }
+      } else if ((statSync(dir).mode & 0o077) !== 0) {
+        process.emitWarning(`hub data directory ${dir} is group/world accessible`);
       }
       for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
         if (existsSync(f)) chmodSync(f, 0o600);

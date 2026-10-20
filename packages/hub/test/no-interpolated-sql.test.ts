@@ -8,8 +8,7 @@ function walk(dir: string): string[] {
   );
 }
 
-const CALL =
-  /(?:\b[dD]b|database|\bthis)\.(?:stmt|prepare|exec|pragma)\(\s*|(?<![.\w])(?:stmt)\(\s*/g;
+const CALL = /\.(?:stmt|prepare|exec|pragma)\(\s*|(?<![.\w])stmt\(\s*/g;
 const PLAIN_LITERAL = /^(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`$\\]*`)\s*[,)]/;
 
 /** Returns offending call sites: first argument must be a single plain string literal. */
@@ -23,16 +22,51 @@ export function findViolations(text: string): string[] {
   return out;
 }
 
+/**
+ * Blanks the two vetted dynamic call sites, each only inside its own function body:
+ * the cached prepare in stmt() (callers pass literals) and the migration constant in migrate().
+ */
+export function withoutVetted(text: string): string {
+  const vetted: [string, string][] = [
+    ["private stmt(sql: string)", "s = this.db.prepare(sql);"],
+    ["migrate(): number[] {", "this.db.exec(m.sql);"],
+  ];
+  let out = text;
+  for (const [sig, line] of vetted) {
+    const start = out.indexOf(sig);
+    const end = out.indexOf("\n  }\n", start);
+    if (start < 0 || end < 0) continue;
+    out = out.slice(0, start) + out.slice(start, end).replace(line, "") + out.slice(end);
+  }
+  return out;
+}
+
 describe("sql hygiene", () => {
   it("every stmt/prepare/exec/pragma first argument in src is a plain string literal", () => {
     const src = path.join(import.meta.dirname, "..", "src");
     for (const f of walk(src).filter((p) => p.endsWith(".ts"))) {
-      const bad = findViolations(readFileSync(f, "utf8")).filter(
-        // migrations are executed as a vetted constant, not built from input
-        (v) => !(f.endsWith("store.ts") && /exec\(m\.sql\)|prepare\(sql\)/.test(v)),
-      );
+      const text = readFileSync(f, "utf8");
+      const bad = findViolations(f.endsWith("store.ts") ? withoutVetted(text) : text);
       expect(bad, f).toEqual([]);
     }
+  });
+
+  it("vetted exemption is location-bound: prepare(sql) in a new store.ts function is flagged", () => {
+    const real = readFileSync(
+      path.join(import.meta.dirname, "..", "src", "db", "store.ts"),
+      "utf8",
+    );
+    expect(findViolations(withoutVetted(real))).toEqual([]);
+    const evil = real.replace(
+      "  close(): void {",
+      "  evil(x: string) {\n    const sql = `SELECT * FROM t WHERE a='${x}'`;\n    return this.db.prepare(sql);\n  }\n\n  close(): void {",
+    );
+    expect(findViolations(withoutVetted(evil))).toHaveLength(1);
+    const evil2 = real.replace(
+      "  close(): void {",
+      "  evil2(id: string) {\n    const conn = this.db;\n    conn.exec(`DELETE FROM t WHERE id=${id}`);\n  }\n\n  close(): void {",
+    );
+    expect(findViolations(withoutVetted(evil2))).toHaveLength(1);
   });
 
   it("guard catches interpolation and concatenation", () => {
@@ -40,6 +74,10 @@ describe("sql hygiene", () => {
     expect(findViolations('this.stmt("SELECT " + col)')).toHaveLength(1);
     expect(findViolations('db.prepare("SELECT " + col + " FROM t")')).toHaveLength(1);
     expect(findViolations("db.exec(sqlVar)")).toHaveLength(1);
+    expect(
+      findViolations("const conn = this.db; conn.exec(`DELETE FROM t WHERE id=${id}`)"),
+    ).toHaveLength(1);
+    expect(findViolations("this.db.prepare(sql)")).toHaveLength(1);
     expect(findViolations('this.stmt("SELECT 1")')).toEqual([]);
     expect(findViolations("this.stmt(`SELECT 1\n FROM t`)")).toEqual([]);
   });

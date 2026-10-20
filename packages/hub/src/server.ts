@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { HubConfig } from "./config.ts";
 import type { Store } from "./db/store.ts";
@@ -15,7 +15,7 @@ export function buildServer(opts: {
   const expected = digest(opts.config.token);
 
   const isAuthed = (header: string | string[] | undefined): boolean => {
-    const m = typeof header === "string" ? /^bearer (.+)$/i.exec(header) : null;
+    const m = typeof header === "string" ? header.match(/^bearer (.+)$/i) : null;
     return m?.[1] !== undefined && timingSafeEqual(digest(m[1]), expected);
   };
   const deny = (reply: FastifyReply) => reply.code(401).header("content-length", "0").send();
@@ -45,6 +45,16 @@ export function buildServer(opts: {
       if (!isAuthed(req.headers.authorization)) return deny(reply);
       return reply.code(400).header("content-length", "0").send();
     },
+  });
+
+  // Sanitize thrown errors only; replies a route sends itself (e.g. 4xx with a reason) bypass this.
+  app.setErrorHandler((err: FastifyError, req, reply) => {
+    const status =
+      typeof err.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500
+        ? err.statusCode
+        : 500;
+    req.log.error({ code: err.code, status, reqId: req.id }, "request error");
+    return reply.code(status).send({ error: status === 500 ? "internal" : "bad_request" });
   });
 
   app.decorate("store", opts.store);
