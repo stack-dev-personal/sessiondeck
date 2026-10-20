@@ -14,13 +14,6 @@ const rows: Row[] = lib.report();
 const tokens: Record<"dark" | "light", Record<string, string>> = lib.parseTokens();
 const key = (r: Row) => `${r.theme} ${r.token} ${r.value}`;
 
-/** Known text-contrast failures pending a user decision. Fixing one (or adding one) flips a test. */
-const KNOWN_TEXT_FAILURES = [
-  "dark state-ended #6e7681",
-  "light state-starting #8c959f",
-  "dark fg-faint #6b7784",
-  "light fg-faint #8c959f",
-];
 // Ended and exited cards dim surface-only (.sd-dim: border and meter bars, never text opacity), so
 // the surface-1 ratios below hold unchanged for those cards. SessionCard.test.tsx enforces it.
 // Measured on --surface-1 only (design system rule). State-colored or faint TEXT must therefore
@@ -35,21 +28,14 @@ describe("token contrast (R3.7)", () => {
     expect(rows.filter((r) => !r.icon).map(key)).toEqual([]);
   });
 
-  it("text failures (< 4.5:1) are exactly the four known ones", () => {
+  it("every state, meter and fg text token passes 4.5:1 on surface-1, no exceptions", () => {
     const textTokenFails = (["dark", "light"] as const).flatMap((theme) =>
       (lib.TEXT_TOKENS as string[])
         .filter((n) => lib.contrast(tokens[theme][n], tokens[theme]["surface-1"]) < 4.5)
         .map((n) => `${theme} ${n} ${tokens[theme][n]}`),
     );
     const stateFails = rows.filter((r) => !r.text).map(key);
-    expect([...stateFails, ...textTokenFails].sort()).toEqual([...KNOWN_TEXT_FAILURES].sort());
-  });
-
-  it("known failures are near their documented ratios", () => {
-    const get = (theme: string, token: string) =>
-      rows.find((r) => r.theme === theme && r.token === token)!;
-    expect(get("dark", "state-ended").ratio).toBeCloseTo(3.8, 1);
-    expect(get("light", "state-starting").ratio).toBeCloseTo(3.04, 1);
+    expect([...stateFails, ...textTokenFails]).toEqual([]);
   });
 
   it.each(["dark", "light"] as const)("%s: fg and fg-muted pass 4.5:1 on surface-1", (theme) => {

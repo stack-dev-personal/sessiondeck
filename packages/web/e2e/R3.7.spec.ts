@@ -1,16 +1,7 @@
 import { writeFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { fullShot, gotoDevCards, openSettledBoard, setTheme, shot, type Theme } from "./helpers";
-
-/**
- * Pending-decision tokens (docs/planning/00-open-decisions.md, contrast): they fail 4.5:1 by
- * design until the user decides. This test pins the failure set so it flips when they decide.
- */
-const PINNED: Record<Theme, string[]> = {
-  dark: ["text-fg-faint", "text-state-ended"],
-  light: ["text-fg-faint", "text-state-starting"],
-};
+import { fullShot, gotoDevCards, openSettledBoard, setTheme, shot } from "./helpers";
 
 interface Rec {
   specimen: string;
@@ -23,7 +14,7 @@ interface Rec {
 }
 
 /** In-page measurement: resolved colors, background composited up to the first opaque ancestor. */
-async function measure(page: Page): Promise<{ recs: Rec[]; pinnedHex: Record<string, string> }> {
+async function measure(page: Page): Promise<{ recs: Rec[] }> {
   return page.evaluate(() => {
     type RGBA = [number, number, number, number];
     const parse = (c: string): RGBA => {
@@ -79,14 +70,6 @@ async function measure(page: Page): Promise<{ recs: Rec[]; pinnedHex: Record<str
     };
     const hasOwnText = (el: Element) =>
       Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent!.trim() !== "");
-    const probe = (v: string) => {
-      const d = document.createElement("span");
-      d.style.color = `var(${v})`;
-      document.body.appendChild(d);
-      const c = parse(getComputedStyle(d).color);
-      d.remove();
-      return hex(c);
-    };
     const groups: [string, string][] = [
       [
         "state",
@@ -122,14 +105,7 @@ async function measure(page: Page): Promise<{ recs: Rec[]; pinnedHex: Record<str
         });
       }
     }
-    return {
-      recs,
-      pinnedHex: {
-        "text-fg-faint": probe("--fg-faint"),
-        "text-state-ended": probe("--state-ended"),
-        "text-state-starting": probe("--state-starting"),
-      },
-    };
+    return { recs };
   });
 }
 
@@ -154,15 +130,13 @@ for (const theme of ["dark", "light"] as const) {
           })
           .join("; "),
     );
-    // The set of failing tokens is exactly the pinned pending-decision ones.
-    expect(failingTokens).toEqual(PINNED[theme]);
+    expect(failing, `text elements below 4.5:1 (${failingTokens.join(", ")})`).toEqual([]);
     writeFileSync(shot(`R3.7-contrast-${theme}.json`), JSON.stringify({ recs, failing }, null, 2));
     await fullShot(page, `R3.7-${theme}.png`, { baseline: theme === "light" });
   });
 
   test(`R3.7 ${theme}: axe on /board and /dev/cards`, async ({ page }) => {
     await setTheme(page, theme);
-    const pinnedHex = new Set<string>();
     const out: Record<string, unknown> = {};
     for (const path of ["/board", "/dev/cards"]) {
       if (path === "/board") {
@@ -170,24 +144,6 @@ for (const theme of ["dark", "light"] as const) {
       } else {
         await gotoDevCards(page);
       }
-      const hex = await page.evaluate(
-        (names) => {
-          const res: string[] = [];
-          for (const v of names) {
-            const d = document.createElement("span");
-            d.style.color = `var(${v})`;
-            document.body.appendChild(d);
-            const m = /rgba?\((\d+), (\d+), (\d+)/.exec(getComputedStyle(d).color)!;
-            res.push(
-              "#" + [m[1], m[2], m[3]].map((x) => Number(x).toString(16).padStart(2, "0")).join(""),
-            );
-            d.remove();
-          }
-          return res;
-        },
-        theme === "dark" ? ["--fg-faint", "--state-ended"] : ["--fg-faint", "--state-starting"],
-      );
-      hex.forEach((h) => pinnedHex.add(h));
       const results = await new AxeBuilder({ page }).analyze();
       out[path] = {
         violations: results.violations,
@@ -201,10 +157,8 @@ for (const theme of ["dark", "light"] as const) {
       for (const v of results.violations) {
         if (v.id === "color-contrast") {
           for (const n of v.nodes) {
-            const fg = String(
-              (n.any[0]?.data as { fgColor?: string } | undefined)?.fgColor ?? "",
-            ).toLowerCase();
-            if (!pinnedHex.has(fg)) bad.push(`color-contrast ${fg} ${n.target.join(" ")}`);
+            const fg = String((n.any[0]?.data as { fgColor?: string } | undefined)?.fgColor ?? "");
+            bad.push(`color-contrast ${fg} ${n.target.join(" ")}`);
           }
         } else if (v.impact === "serious" || v.impact === "critical") {
           bad.push(`${v.id} (${v.impact}) x${v.nodes.length}`);
