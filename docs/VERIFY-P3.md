@@ -10,6 +10,18 @@ Re-verified 2026-10-20T14:33:16Z by sd-verifier after U6 (four tokens raised to 
 | R3.7 WCAG AA contrast light and dark; no color-only information | `pnpm -F @sessiondeck/web contrast`; e2e/R3.7.spec.ts (5 tests) | contrast report "Text failures (0)"; e2e: 0 of 280 measured elements fail in dark and in light; axe none on /board and /dev/cards both themes; no-color-only test pass. R3.7-dark.png, R3.7-light.png | PASS | 2026-10-20T14:33:16Z |
 | R3.8 Mock mode runs the full UI with no hub | e2e/R3.8.spec.ts; `vite build --outDir /tmp/sd-s5-nomock` then `node scripts/check-bundle.mjs /tmp/sd-s5-nomock nomock` | e2e pass (8 states, no network beyond preview server); "nomock: 1 js files, 262977 bytes, fixture marker absent". R3.8.png | PASS | 2026-10-20T14:33:16Z |
 
+## Live board verification (branch p3/board-live, HEAD 8b20955)
+
+Verified 2026-10-20T17:23:18Z by sd-verifier. Nothing was fixed. Partial is fail. The S5 rows above (branch p3/board-mock, e816b7c) are unchanged.
+
+| Requirement | Command | Key output | Result | Timestamp | Commit |
+|---|---|---|---|---|---|
+| R3.1 Every live session appears on the board within 1 s of its SessionStart reaching the hub | `SD_E2E_WORK_VOLUME=sprint-1-work bash packages/web/scripts/e2e-live.sh` (real hub container from packages/hub/Dockerfile; e2e/R3.1.spec.ts); unit `pnpm -F @sessiondeck/web test -- --maxWorkers=2` (stream-client.test.ts) | "R3.1 latency ms (POST sent to card visible), 5 samples: 62, 18, 21, 16, 17"; max 62 ms vs 1000 ms threshold; spec passed. Unit: 16 files, 173/173 pass. R3.1.png | PASS | 2026-10-20T17:23:18Z | 8b20955 |
+| R3.9 WS disconnect shows a banner and auto-reconnects with resync; no stale working card after reconnect | same live script (e2e/R3.9.spec.ts); unit stream-client.test.ts (resync, backoff, liveness) and App.test.tsx banner | Spec passed (2.8s): banner on gate down, card geometry unchanged, card stays working while cut off, after gate up connected, banner cleared, session a idle, b ended, 0 working cards. 173/173 unit pass. R3.9-banner.png, R3.9.png | PASS | 2026-10-20T17:23:18Z | 8b20955 |
+| R3.8 Mock mode runs the full UI with no hub (no regression) | `docker run --rm --name sd-1-S6-verify-pw --volumes-from sprint-1 -w /work/wt/S6/packages/web --ipc=host -e HOME=/root -e SCREENS_DIR=/state/1/screens/S6 -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble node node_modules/@playwright/test/cli.js test` (same as CI job e2e-web, re-run, not recorded) | 12 passed (29.7s), incl. R3.8 "mock build runs the full board with no network beyond the preview server" (8 states). Mock baselines (toHaveScreenshot) pass. Bundle check (check-bundle.mjs nomock) not re-run | PASS | 2026-10-20T17:23:18Z | 8b20955 |
+
+Also run in the same live script: R3.3 (attention sort, filters) passed, reorder latency 9.4 ms; not graded here. Live script total: 3 passed (13.6s). Screenshots in /state/1/screens/S6/: R3.1.png, R3.3.png, R3.3-filters.png, R3.9-banner.png, R3.9.png, summary.json. Test containers: the live script cleaned up its own; sd-1-S6-verify-pw ran with --rm; none remain. Not verified: infra/docker-compose.yml path (absent on this base; the script is the substitute).
+
 ## Evidence at e816b7c
 
 - Unit: `pnpm --filter web test`: Test Files 9 passed (9), Tests 115 passed (115). The earlier run counted 116; the count differs by one, consistent with the contrast test rewrite in U6 (not investigated further).
