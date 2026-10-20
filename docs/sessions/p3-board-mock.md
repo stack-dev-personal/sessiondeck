@@ -11,7 +11,7 @@
 | # | Unit | Requirements | Executor | Blocked by | Status |
 |---|------|--------------|----------|------------|--------|
 | U1 | tokens and shell (scaffold, tokens.css, Tailwind, Zustand store, VITE_MOCK fixture replay through reduce(), theme toggle, contrast test) | R3.7, R3.8 | sd-executor-web | none | reviewed: merge; verification after U4 (IDs span units) |
-| U2 | session card (6-row and compact 1-row, attention accent, n/a without layout shift, subagent +n, compact `c` with localStorage) | R3.2, R3.4, R3.7 | sd-executor-web | U1 | pending |
+| U2 | session card (6-row and compact 1-row, attention accent, n/a without layout shift, subagent +n, compact `c` with localStorage) | R3.2, R3.4, R3.7 | sd-executor-web | U1 | reviewed: merge; verification after U4 |
 | U3 | detail drawer (Enter/click open, Esc close, focus return, sections per design system 5.2) | R3.5 | sd-executor-web | U2 | pending |
 | U4 | /dev/cards route, Playwright suite in container, screenshots to /state/1/screens/S5 | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-web | U3 | pending |
 
@@ -31,4 +31,16 @@
 - Decision: react-router-dom v6 (route params for later /session/:id); vite 7 (matches vitest 3).
 - Decision: fg-faint stays on host and footer text per the design system and joins the pending contrast question; state-colored and faint text only on bg-surface-1 (the surface the design system's contrast rule names).
 
+### U2 session card
+- Commits: 3c9d7b0, d028fba, fix 460edc1. Files: packages/web/src/components/{SessionCard,Meter}.tsx, lib/format.ts, hooks/useNow.ts, routes/Board.tsx, store/board.ts, statusline-adapter.ts, styles/index.css, tests.
+- Review iteration 1 (9a07104..d028fba): fix-then-merge. 1 MAJOR (opacity 0.6 on ended/exited dimmed text below AA), 7 MINOR. Fixed in 460edc1.
+- Review iteration 2 (d028fba..460edc1): merge. 1 MINOR deferred (below).
+- Tests: 78/78 pass.
+- Decision: "card dims" (design system section 3) implemented as border and meter bars faded, text at full contrast. Not a token or threshold, so not the stop condition; it keeps R3.7. Mentioned to the user in the question.
+- Decision: contract is frozen for S5; `exceeds_200k_tokens` is carried web-side from the statusLine payload (store map), no heuristic; unknown shows no tag.
+- Decision: compact board is a dense single-column list of 36 px rows; the scrolling strip (section 5.4) is left to Phase 6 layouts.
+- Decision: footer reads "in state <duration>" because the snapshot has no prompt timestamp; reset countdown in the meter title, visible in the drawer.
+
 ## Deferred findings
+- [contract, for S6 / contract owner] Add `context.exceeds_200k` (from statusLine `exceeds_200k_tokens`) to SessionSnapshot; the web-side map in packages/web/src/store/board.ts does not survive once the hub owns snapshots. Also a prompt timestamp would allow "since prompt" in the footer.
+- [MINOR, S6] packages/web/src/store/board.ts:47-50: replaceAll (reconnect resync) clears the exceeds200k map, so an idle session above 200k loses its tag until its next statusLine tick; no store tests for set / replaceAll / compaction flip. S6 owns reconnect.
