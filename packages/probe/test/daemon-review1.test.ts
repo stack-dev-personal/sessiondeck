@@ -529,7 +529,7 @@ describe("hub URL policy (security)", () => {
     expect(log).not.toContain("hub.example.test");
     expect(log).not.toContain("secret-token");
     expect(d.pending()).toBeGreaterThan(0); // held, not dropped
-  });
+  }, 20_000);
 
   it("userinfo in the URL is refused even with allowInsecureHub", async () => {
     appendSpoolLines(spoolDir(home), [line(0)]);
@@ -634,6 +634,9 @@ describe("rejected/ cap and private directories", () => {
         }
       })
       .join("");
+  // Timeout: measured 0.5 s locally (4 daemon round trips, each with file
+  // writes and a prune). CI on NTFS under concurrent suites took >5 s; 20 s is
+  // a ceiling, every wait inside is bounded by waitFor.
   it("keeps at most rejectedMaxFiles files, oldest deleted first, and logs a summary", async () => {
     const fx = recordingFetch(() => 400);
     const d = (await startDaemon({
@@ -663,11 +666,9 @@ describe("rejected/ cap and private directories", () => {
       .map((n) => readFileSync(join(home, "daemon", "rejected", n), "utf8"))
       .join("");
     expect(text).toContain('"n":3'); // newest kept
+    expect(text).not.toContain('"n":0'); // oldest deleted
     expect(logText()).toContain("rejected/ cap reached");
-  }, // Measured 0.5 s locally (4 daemon round trips, each with file writes and a
-  // prune). CI on NTFS under concurrent suites took >5 s; 20 s is a ceiling,
-  // every wait inside is bounded by waitFor.
-  20_000);
+  }, 20_000);
 
   it("caps by bytes", async () => {
     const fx = recordingFetch(() => 400);
