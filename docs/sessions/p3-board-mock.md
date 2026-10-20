@@ -74,3 +74,8 @@
 - [contract, for S6 / contract owner] SessionSnapshot has no per-task list; the drawer's "tasks list" (design system 5.2) shows counts and last subject until it does.
 - [contract, for S6 / contract owner] Add `context.exceeds_200k` (from statusLine `exceeds_200k_tokens`) to SessionSnapshot; the web-side map in packages/web/src/store/board.ts does not survive once the hub owns snapshots. Also a prompt timestamp would allow "since prompt" in the footer.
 - [MINOR, S6] packages/web/src/store/board.ts:47-50: replaceAll (reconnect resync) clears the exceeds200k map, so an idle session above 200k loses its tag until its next statusLine tick; no store tests for set / replaceAll / compaction flip. S6 owns reconnect.
+
+## Resume 2026-10-20T04:46Z (after the usage-limit stop)
+
+- Decision: the previous run stopped at about 03:00Z on the subscription usage limit (429). That is not a failure. At the stop the branch was clean and pushed at 72e7a63 (VERIFY-P3 written, PR #8 open, CI green on 72e7a63), but the blocked exit was never completed: /state/1/questions/S5.md was missing and the status file still said running on U4. No uncommitted work was left, no unit was redone. Sprint branch still at 5b76608, so no rebase was needed. No answer file exists for S5.
+- Action: wrote /state/1/questions/S5.md (four contrast tokens, options A/B/C with computed replacement values), set status blocked. On resume with an answer: one web unit (tokens.css, contrast test pinned list, design-system doc, Playwright baselines), then sd-reviewer, sd-verifier on R3.7 and a full re-verify, then update PR #8.
