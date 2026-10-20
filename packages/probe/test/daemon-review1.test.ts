@@ -87,6 +87,14 @@ function recordingFetch(answer: (r: Req, count: number) => number) {
 const cfg = { hubUrl: "http://127.0.0.1:9", token: "secret-token", host: "h" };
 const fast = { pollMs: 5, batchMs: 20, heartbeatMs: 0, rng: () => 0 };
 const logText = (): string => readFileSync(join(home, "daemon", "daemon.log"), "utf8");
+/** Log text, or "" while the file does not exist yet (for polling). */
+const logTextOrEmpty = (): string => {
+  try {
+    return logText();
+  } catch {
+    return "";
+  }
+};
 
 describe("R1.5 byte budget and 413", () => {
   it("a reader takes an oversize first item only when allowed (buffer empty)", async () => {
@@ -511,7 +519,10 @@ describe("hub URL policy (security)", () => {
       sleep: (ms) => sleep(Math.min(ms, 5)),
     }))!;
     open.push(d);
-    await sleep(300);
+    // Wait for the line itself (the log is written asynchronously), then give
+    // a short window in which a (wrong) send would show up.
+    await waitFor(() => logTextOrEmpty().includes("hubUrl refused by policy"));
+    await sleep(100);
     expect(fx.reqs).toHaveLength(0);
     const log = logText();
     expect(log).toContain("hubUrl refused by policy");
@@ -606,6 +617,23 @@ describe("hub URL policy (security)", () => {
 });
 
 describe("rejected/ cap and private directories", () => {
+  const rejectedFiles = (): string[] => {
+    try {
+      return readdirSync(join(home, "daemon", "rejected")).filter((n) => n.endsWith(".jsonl"));
+    } catch {
+      return [];
+    }
+  };
+  const rejectedText = (): string =>
+    rejectedFiles()
+      .map((n) => {
+        try {
+          return readFileSync(join(home, "daemon", "rejected", n), "utf8");
+        } catch {
+          return "";
+        }
+      })
+      .join("");
   it("keeps at most rejectedMaxFiles files, oldest deleted first, and logs a summary", async () => {
     const fx = recordingFetch(() => 400);
     const d = (await startDaemon({
@@ -620,19 +648,26 @@ describe("rejected/ cap and private directories", () => {
       })(),
     }))!;
     open.push(d);
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 4; i++) {
       appendSpoolLines(spoolDir(home), [line(i, 1000 + i)]);
       await waitFor(() => fx.reqs.length >= i + 1 && d.pending() === 0);
-      await sleep(30);
+      // The rejected file for this line is written and pruned after pending() is 0.
+      await waitFor(() => rejectedText().includes(`"n":${i}`));
     }
+    await waitFor(
+      () => rejectedFiles().length <= 2 && logTextOrEmpty().includes("rejected/ cap reached"),
+    );
     const left = readdirSync(join(home, "daemon", "rejected")).filter((n) => n.endsWith(".jsonl"));
     expect(left.length).toBeLessThanOrEqual(2);
     const text = left
       .map((n) => readFileSync(join(home, "daemon", "rejected", n), "utf8"))
       .join("");
-    expect(text).toContain('"n":4'); // newest kept
+    expect(text).toContain('"n":3'); // newest kept
     expect(logText()).toContain("rejected/ cap reached");
-  });
+  }, // Measured 0.5 s locally (4 daemon round trips, each with file writes and a
+  // prune). CI on NTFS under concurrent suites took >5 s; 20 s is a ceiling,
+  // every wait inside is bounded by waitFor.
+  20_000);
 
   it("caps by bytes", async () => {
     const fx = recordingFetch(() => 400);

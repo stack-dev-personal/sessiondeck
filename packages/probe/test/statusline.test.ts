@@ -175,23 +175,27 @@ describe("state derivation", () => {
     }
   });
   it("mirrors reduce() over every sequence of three events", () => {
-    for (const a of variants) {
-      for (const b of variants) {
-        let snap = fresh();
-        let t = freshTrack;
-        const prefix = [a, b];
-        // Walk the first two, then try every third.
-        prefix.forEach((v, i) => {
-          snap = reduce(snap, envOf(v, 2 + i) as never);
-          t = stepState(t, v.ev, envOf(v, 2 + i).payload, v.agent);
-        });
-        for (const c of variants) {
-          const s3 = reduce(snap, envOf(c, 9) as never);
-          const t3 = stepState(t, c.ev, envOf(c, 9).payload, c.agent);
-          expect(t3.state, `${a.ev} ${b.ev} ${c.ev}`).toBe(s3.state);
+    // Plain comparisons with mismatches collected: a per-case expect() with a
+    // formatted label costs far more than reduce() itself over ~N^3 cases.
+    const envs = variants.map((v) => ({ v, e2: envOf(v, 2), e9: envOf(v, 9) }));
+    const bad: string[] = [];
+    for (const a of envs) {
+      for (const b of envs) {
+        const snap = reduce(reduce(fresh(), a.e2 as never), envOf(b.v, 3) as never);
+        const t = stepState(
+          stepState(freshTrack, a.v.ev, a.e2.payload, a.v.agent),
+          b.v.ev,
+          b.e2.payload,
+          b.v.agent,
+        );
+        for (const c of envs) {
+          const s3 = reduce(snap, c.e9 as never);
+          const t3 = stepState(t, c.v.ev, c.e9.payload, c.v.agent);
+          if (t3.state !== s3.state) bad.push(`${a.v.ev} ${b.v.ev} ${c.v.ev}`);
         }
       }
     }
+    expect(bad).toEqual([]);
   });
   it("after Stop following AskUserQuestion or ExitPlanMode the bar says waiting_input", () => {
     for (const tool of ["AskUserQuestion", "ExitPlanMode"]) {
