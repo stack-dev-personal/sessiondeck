@@ -69,3 +69,7 @@
 - Iteration 2 fix 205ffe0: compact state slot w-36 truncate, tasks slot w-16, sweep 320-480 px null to longest. sd-reviewer: fix-then-merge (MAJOR: compact rows silently clip at 481 to ~586 px, fixed items ~528 px but wrap only at <=30rem).
 - Iteration 3 fix 15bb2f8: compact wrap breakpoint 40rem, sweep 320..1280 px with content-box and name>0 assertions, 12 subagents. sd-reviewer: merge (vitest 214, Playwright R3.2 + R3.7-live 19/19).
 - Deferred: MINOR packages/web/e2e/R3.2.spec.ts:220 name slot asserted only > 0 px; a floor (>= 32 px) would catch future squeeze.
+### U7 close
+- Final sd-verifier at d4c845f (65aaec5): R3.1, R3.3, R3.6, R3.9, R3.7, R3.2, R3.4, R3.5, R3.8 all PASS. Suites: contract 1090 (+1 skipped), hub 177, web 214, scripts 575 (+7 skipped); typecheck and lint clean; mock Playwright 28/28; live 4/4 (R3.6 busy 7.23%, p99 16.8 ms, 0 dropped).
+- origin/sprint/1-mvp (78b3ba8) is already an ancestor; no merge needed. Pushed p3/board-live; PR #10 against sprint/1-mvp.
+- CI: every job fails in 2 to 5 s with 0 steps and no runner, repo-wide since about 22:15Z (p1/probe-daemon too). Account-level, not code. Rerun refused (token 403). Blocked: /state/1/questions/S6.md.
