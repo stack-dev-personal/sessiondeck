@@ -58,7 +58,7 @@ export function tokenFromProtocols(header: string | string[] | undefined): strin
  * half-open, so a refused socket must be destroyed by us: once the refusal is flushed, or after a
  * short deadline when the peer never reads.
  */
-function refuseSocket(socket: Duplex, status: string, fallbackMs = 2000): void {
+export function refuseSocket(socket: Duplex, status: string, fallbackMs = 2000): void {
   const t = setTimeout(() => socket.destroy(), fallbackMs);
   t.unref();
   socket.once("close", () => clearTimeout(t));

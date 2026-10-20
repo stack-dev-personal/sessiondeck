@@ -283,3 +283,23 @@ describe("transaction and notification", () => {
     expect(row).toMatchObject({ host: "h1", state: "starting", ended_at: null });
   });
 });
+
+describe("ended_at (verifier note U3)", () => {
+  // The contract SessionSnapshot has no top-level ended_at (only subagent rows do). The end time
+  // is the sessions-row column, derived from state_since when the state is ended; R2.6 reads it.
+  it("SessionEnd sets the sessions.ended_at column to the end envelope ts; the snapshot has no such field", async () => {
+    const start = mkEnv({
+      hook_event_name: "SessionStart",
+      payload: { ...readJson("SessionStart/01-startup.json"), session_id: "s1" },
+    });
+    const end = mkEnv({
+      hook_event_name: "SessionEnd",
+      payload: { ...readJson("SessionEnd/03-clear.json"), session_id: "s1" },
+    });
+    expect((await h.post(batch([start, end]))).statusCode).toBe(200);
+    const row = h.store.getSession("s1") as { state: string; ended_at: number | null };
+    expect(row.state).toBe("ended");
+    expect(row.ended_at).toBe(end.ts);
+    expect("ended_at" in snap()).toBe(false);
+  });
+});

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { connect as netConnect } from "node:net";
 import { request } from "node:http";
+import { Duplex } from "node:stream";
+import { refuseSocket } from "../src/stream.ts";
 import { AUTH, TOKEN, batch, makeHub, mkEnv, type TestHub } from "./support/hub.ts";
 
 let h: TestHub;
@@ -105,33 +107,33 @@ describe("D-S3-14 limiter key is the credential that authenticated", () => {
 });
 
 describe("refused upgrades release the socket", () => {
-  it("destroys the socket after the fallback delay when 'finish' never fires", async () => {
-    h = await makeHub({}, undefined, { refuseFallbackMs: 50 });
-    const u = await h.listen();
-    const port = Number(new URL(u.http).port);
-    // Stall the write side so 'finish' cannot fire: the server socket's writes never flush.
-    const destroyed = new Promise<boolean>((resolve) => {
-      h.app.server.once("upgrade", (_req, socket) => {
-        socket.write = (() => true) as typeof socket.write;
-        // end() with a pending, never-flushed write keeps 'finish' from firing
-        const end = socket.end.bind(socket);
-        socket.end = ((...a: unknown[]) => {
-          socket.cork();
-          return (end as (...x: unknown[]) => unknown)(...a);
-        }) as typeof socket.end;
-        const t0 = Date.now();
-        socket.once("close", () => resolve(Date.now() - t0 < 1500));
-      });
+  it("refuseSocket destroys a socket whose 'finish' never fires, only after the fallback delay", async () => {
+    // _write never calls back, so the Writable can never emit 'finish'; only the timer can destroy.
+    const socket = new Duplex({
+      read() {},
+      write() {
+        // never calls back: 'finish' cannot fire
+      },
     });
-    const s = netConnect({ port, host: "127.0.0.1", allowHalfOpen: true }, () => {
-      s.write(
-        "GET /stream HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==\r\n\r\n",
-      );
+    socket.on("error", () => undefined);
+    refuseSocket(socket, "401 Unauthorized", 60);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(socket.destroyed).toBe(false);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(socket.destroyed).toBe(true);
+  });
+
+  it("refuseSocket destroys at once when 'finish' fires, and the timer does not outlive the socket", async () => {
+    const socket = new Duplex({
+      read() {},
+      write(_chunk, _enc, cb) {
+        cb();
+      },
     });
-    s.on("error", () => undefined);
-    expect(await destroyed).toBe(true);
-    s.destroy();
+    socket.on("error", () => undefined);
+    refuseSocket(socket, "401 Unauthorized", 10_000);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(socket.destroyed).toBe(true);
   });
 
   it("the server closes a refused upgrade socket while the client keeps its side open", async () => {
