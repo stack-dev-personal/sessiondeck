@@ -79,3 +79,8 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 
 ### Resume 2026-10-20 after 17:36Z
 - Answer A recorded as D-S2-9. U3 iteration 4 (final) sent to sd-executor-probe with the five findings verbatim.
+- 6de4041 fixes iteration-3 findings 1-5 (ancestry notBefore refetch, pendingEnd for queued SessionEnd, failed snapshot not a re-check, abandoned flag after stop() cap, recheck cleared without proc_start). 235 probe tests pass, 1 skipped; harness RESULT pass (11465 ms).
+- Iteration 4 (final, D-S2-9): sd-reviewer merge (2 MINOR), sd-security-reviewer gate pass (2 LOW). Deferred below.
+- Deferred from U3 iteration 4:
+  - [MINOR] proc-info.ts:399-403: after a forced (stale) read, an empty result for an exited pid triggers a second read on the same rate-limit token. Fix: skip the second read when the first was forced.
+  - [MINOR/LOW] liveness.ts:245-253,282: start() never resets `abandoned` (and stop() does not clear pendingEnd); a restarted instance after an abandoned stop would go silent. Not reachable today (daemon stops components only at exit). Fix: reset abandoned and pendingEnd in start(). Candidate for U4 if U4 touches the lifecycle.
