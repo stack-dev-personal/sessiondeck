@@ -7,10 +7,7 @@ import { readStdin } from "./stdin.ts";
 import { deriveState } from "./statusline/state.ts";
 import { FALLBACK_LINE, renderStatusLine } from "./statusline/render.ts";
 import { recordPayload } from "./statusline/record.ts";
-import { setWindowsUtf8 } from "./win-utf8.ts";
-
-// eslint-disable-next-line no-control-regex
-const NON_ASCII = /[^\x00-\x7f]/;
+import { maybeUtf8 } from "./win-utf8.ts";
 
 function exit0(): never {
   process.exit(0);
@@ -52,7 +49,7 @@ async function main(): Promise<void> {
   } catch {
     line = FALLBACK_LINE;
   }
-  if (NON_ASCII.test(line)) setWindowsUtf8();
+  maybeUtf8(line);
   print(line);
 }
 

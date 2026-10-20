@@ -34,8 +34,13 @@ export interface HookContext {
 export function logHookError(reason: string, logPath: string): void {
   try {
     const line = `${new Date().toISOString()} ${reason}\n`;
+    // O_NONBLOCK: a FIFO planted at the log name fails to open (ENXIO) instead of blocking the hook.
     const flags =
-      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0);
+      constants.O_WRONLY |
+      constants.O_APPEND |
+      constants.O_CREAT |
+      (constants.O_NOFOLLOW ?? 0) |
+      (constants.O_NONBLOCK ?? 0);
     const open = (): number => {
       if (constants.O_NOFOLLOW === undefined) {
         try {

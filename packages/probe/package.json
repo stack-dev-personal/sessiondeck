@@ -9,6 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "vitest run",
+    "test:proc": "vitest run -c vitest.proc.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "bench:hook": "node scripts/bench-hook.mjs",

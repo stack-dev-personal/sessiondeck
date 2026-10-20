@@ -17,6 +17,17 @@ This produces `dist/probe.mjs` (CLI), `dist/hook.mjs`, `dist/statusline.mjs`, `d
 `probe install` registers the absolute path of the `dist/` it runs from, so install from the
 checkout you intend to keep; rerun `install` after moving it (it replaces its own entries).
 
+## Tests
+
+```
+pnpm -F @sessiondeck/probe test        # fast in-process unit tests: no child processes, no build
+pnpm -F @sessiondeck/probe test:proc   # every suite that spawns the built entries (*.proc.test.ts)
+```
+
+`test:proc` uses `vitest.proc.config.ts`, which builds `dist/` first (global setup) and has long
+timeouts for Windows CI: hook robustness (R1.2), the 50-process stress run (R1.3), statusline and
+subagents processes (R1.9), and CLI install, uninstall and config (R1.8, R1.10).
+
 ## Install
 
 ```
@@ -29,7 +40,7 @@ node packages/probe/dist/probe.mjs install --hub http://192.168.1.20:8787 --toke
   PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDenied, Notification, SubagentStart,
   SubagentStop, TaskCreated, TaskCompleted, Stop, StopFailure, PreCompact, PostCompact, SessionEnd),
   `"command": "node"`, `"args": ["<abs forward-slash path>/dist/hook.mjs", "--home", "<probe home>",
-  "--host", "<host>", "--sessiondeck-probe"]`, `"timeout": 5`. The probe home and host are
+"--host", "<host>", "--sessiondeck-probe"]`, `"timeout": 5`. The probe home and host are
   resolved at install time and passed as arguments: the hook never reads `SESSIONDECK_HOME`,
   `XDG_STATE_HOME` or any other env var for its location, so an env block in a repo's
   `.claude/settings.local.json` cannot redirect where it writes. Without `--home` the hook uses
@@ -92,22 +103,22 @@ one in the backup taken at install; otherwise the key is removed and the backup 
 
 ## Where files live
 
-Probe home: Windows `<user profile>\AppData\Local\sessiondeck` (the CLI does not read `LOCALAPPDATA`); Linux and WSL2 `~/.local/state/sessiondeck`.
+Probe home: Windows `<user profile>\AppData\Local\sessiondeck` (neither the CLI nor the hook reads `LOCALAPPDATA`); Linux and WSL2 `~/.local/state/sessiondeck`.
 `probe install` records the resolved path in the hook arguments (`--home`). Only an explicit `--home <dir>`
 moves it; no environment variable does (a repo's `.claude/settings.json` can set env). Install
 prints the resolved home, refuses a default home inside a git work tree (pass `--home` to
-override), and refuses to run (install, uninstall, config show) when `CLAUDECODE` is set unless `--allow-inside-claude`. Without `--home`, uninstall takes the home from the `--home` argument of the installed hook entries (it must be absolute) and warns when our entries exist but no install record is found. Paths unsafe in a shell command (non-ASCII, quotes, `%`, `$`) skip only `statusLine`/`subagentStatusLine` with a notice; the hooks, which are argv, still install. Backups named in `install-state.json` are trusted only as `settings.backup-*.json` regular files directly in the probe home. On Windows `whoami.exe` and `icacls.exe` are run from `<SystemRoot>\System32` and the SID must be a per-user `S-1-5-21-...` SID. WSL2 has its own home inside the
+override), and refuses to run (install, uninstall, config show) when `CLAUDECODE` is set unless `--allow-inside-claude`. Without `--home`, uninstall takes the home from the `--home` argument of the installed hook entries (it must be absolute). That inferred home is trusted for `--purge` only when an install record for this settings file exists there, and when it is inside a git work tree (and is not the default home) without such a record, uninstall refuses (pass `--home`). Uninstall also warns when our entries exist but no install record is found. Paths unsafe in a shell command (non-ASCII, quotes, `%`, `$`) skip only `statusLine`/`subagentStatusLine` with a notice; the hooks, which are argv, still install. If our `statusLine` from an earlier install is present, the skip removes it (it points at the previous dist path) and keeps the recorded previous value for a later install or uninstall. Paths are written as `realpath.native` spellings with forward slashes (Windows 8.3 short names such as `C:\Users\RUNNER~1` and symlinks are expanded; a not-yet-created home is resolved through its deepest existing ancestor). A `~` is allowed in the middle of a path word (shells expand it only at the start of a word, and an absolute path starts with a drive letter or `/`); a word that starts with `~` is refused. Backups named in `install-state.json` are trusted only as `settings.backup-*.json` regular files directly in the probe home. On Windows `whoami.exe` and `icacls.exe` are run from `<SystemRoot>\System32` and the SID must be a per-user `S-1-5-21-...` (local or domain) or `S-1-12-1-...` (Entra ID) SID; well-known group SIDs are refused. Accepted residual: `SystemRoot` from the environment selects which `System32` those executables (and `chcp.com`) run from; it must be an absolute drive path, and it gives someone who can already set the probe's environment nothing beyond running code as the same user. WSL2 has its own home inside the
 distro; install there separately. Directories are created `0700` and files `0600` on POSIX (the
 spool holds raw prompts and tool inputs); the hook opens day files with `O_NOFOLLOW` (lstat on
 Windows) and refuses anything that is not a regular file.
 
-| File | Purpose |
-|------|---------|
-| `probe.json` | hub URL, token, host (user-only) |
-| `install-state.json` | what install changed, per settings file, for exact uninstall |
+| File                        | Purpose                                                                |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `probe.json`                | hub URL, token, host (user-only)                                       |
+| `install-state.json`        | what install changed, per settings file, for exact uninstall           |
 | `settings.backup-<ts>.json` | copy of settings.json taken before a write (0600, created exclusively) |
-| `spool/<yyyy-mm-dd>.jsonl` | one spool line per hook call, day file by UTC date |
-| `hook-errors.log` | hook failures (the hook itself never prints or fails) |
+| `spool/<yyyy-mm-dd>.jsonl`  | one spool line per hook call, day file by UTC date                     |
+| `hook-errors.log`           | hook failures (the hook itself never prints or fails)                  |
 
 ## The spool format
 
@@ -158,12 +169,17 @@ Format: `<state> | <model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`
   Effort level and `cost.total_cost_usd` are shown when present. Model text is cut by code point;
   escape sequences, control, bidi and zero-width characters are removed.
 - `<state>` is not in the payload. The entry reads at most the last 64 KB of today's spool day file
-  (UTC; yesterday's if today's has no line for the session), finds the last `hook` line with the
-  payload's `session_id`, and maps its event to a contract state (`working`, `waiting_permission`,
-  `idle`, `error`, `ended`, `starting`). Subagent events and events that do not change state are
-  skipped. No line, or any read error (the file is opened without following symlinks and must be a
-  regular file): `n/a`. The hub remains the authority; this is a local hint (it cannot see
-  `waiting_input` after AskUserQuestion or ExitPlanMode, which need the last tool).
+  (UTC) and replays the `hook` lines whose `session_id` equals the payload's, in order, through
+  `stepState()` in `src/statusline/state.ts`, a port of the contract's `reduce()` for the state field
+  (it tracks the last main-thread tool, so Stop after AskUserQuestion or ExitPlanMode gives
+  `waiting_input`, and the open permission holder; PostCompact only reopens a starting or working
+  session). `test/statusline.test.ts` replays every sequence of up to three event variants (main
+  thread and subagent) through the contract's `reduce()` and compares. When today's lines leave the
+  state undecided, yesterday's file is read, but only if today's file is absent or was read whole
+  (a file larger than the tail has earlier lines we did not see). No line, or any read error: `n/a`.
+  The day file is never followed through a symlink, must be a regular file, and is opened with
+  `O_NONBLOCK` (a FIFO planted at that name cannot block `open()`; on Windows the file is `lstat`ed
+  first). The hub remains the authority; this is a local hint.
 - `ctx` is `context_window.used_percentage` when it is 0..100, else computed from `current_usage`
   tokens over `context_window_size`, else `n/a`.
 - `5h` and `7d` come from `rate_limits`. A window is `n/a` when the percentage is outside 0..100

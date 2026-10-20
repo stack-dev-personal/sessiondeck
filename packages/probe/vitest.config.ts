@@ -1,12 +1,10 @@
 import { defineConfig } from "vitest/config";
 
+// Fast in-process unit tests only: nothing here spawns a child process or needs dist/.
+// Process-spawning suites (*.proc.test.ts) run through vitest.proc.config.ts (`pnpm test:proc`).
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
-    // Builds dist/*.mjs once before any test file runs, so a clean checkout works.
-    globalSetup: ["test/global-setup.ts"],
-    // Process-spawning tests are slow on Windows CI.
-    testTimeout: 60_000,
-    hookTimeout: 120_000,
+    exclude: ["test/**/*.proc.test.ts", "node_modules/**"],
   },
 });

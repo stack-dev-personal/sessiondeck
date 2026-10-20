@@ -1,47 +1,13 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { createSnapshot, reduce, HOOK_EVENTS } from "@sessiondeck/contract";
 import { dayFileName } from "../src/paths.ts";
-import { deriveState, stateForHook } from "../src/statusline/state.ts";
-import { parseSpoolLine } from "../src/spool.ts";
+import { deriveState, readTail, stepState, type Track } from "../src/statusline/state.ts";
 import { oneLine, renderStatusLine } from "../src/statusline/render.ts";
-import { setWindowsUtf8, system32Dir } from "../src/win-utf8.ts";
-import { fixturesDir, probeRoot, readSpoolLines, runHook } from "./helpers.ts";
+import { maybeUtf8, setWindowsUtf8, system32Dir } from "../src/win-utf8.ts";
 
-const statuslinePath = join(probeRoot, "dist", "statusline.mjs");
-const subagentsPath = join(probeRoot, "dist", "subagents.mjs");
-const run = (stdin: Buffer | string | null, home: string, script = statuslinePath) =>
-  runHook(stdin, { home, host: "testhost" }, script);
-
-const FIX = join(fixturesDir, "statusLine");
-const fixtureFiles = readdirSync(FIX)
-  .filter((f) => f.endsWith(".json"))
-  .sort();
-const load = (
-  f: string,
-): Record<
-  string,
-  any // eslint-disable-line @typescript-eslint/no-explicit-any
-> => JSON.parse(readFileSync(join(FIX, f), "utf8"));
-
-let home: string;
-beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), "sd-sl-"));
-});
-afterAll(() => rmSync(home, { recursive: true, force: true }));
-
-const lines = (b: Buffer): string[] => b.toString("utf8").split("\n").filter(Boolean);
 function seedHook(h: string, sid: string, event: string, extra: object = {}, ts = Date.now()) {
   const dir = join(h, "spool");
   mkdirSync(dir, { recursive: true });
@@ -59,64 +25,6 @@ function seedHook(h: string, sid: string, event: string, extra: object = {}, ts 
   };
   writeFileSync(join(dir, dayFileName(ts)), JSON.stringify(line) + "\n", { flag: "a" });
 }
-const future = Math.floor(Date.now() / 1000) + 3600;
-const past = Math.floor(Date.now() / 1000) - 3600;
-
-describe("R1.9 statusline fixtures", () => {
-  it("has fixtures", () => expect(fixtureFiles.length).toBe(20));
-  for (const f of fixtureFiles) {
-    it(`${f}: exit 0, one line with state, ctx and 5h, spool line appended`, async () => {
-      const h = mkdtempSync(join(tmpdir(), "sd-sl-f-"));
-      try {
-        const raw = readFileSync(join(FIX, f));
-        const sid = JSON.parse(raw.toString("utf8")).session_id as string;
-        // Without a hook line for the session: n/a.
-        const r = await run(raw, h);
-        expect(r.code).toBe(0);
-        const out = lines(r.stdout);
-        expect(out).toHaveLength(1);
-        expect(out[0]).toMatch(/^n\/a \| /);
-        // With a preceding PermissionRequest hook line: waiting_permission.
-        seedHook(h, sid, "PermissionRequest");
-        const r2 = await run(raw, h);
-        expect(lines(r2.stdout)[0]).toMatch(/^waiting_permission \| /);
-        expect(out[0]).toContain("ctx");
-        expect(out[0]).toContain("5h");
-        expect(r.stderr.length).toBe(0);
-        const sp = readSpoolLines(join(h, "spool"));
-        const r0 = parseSpoolLine(sp[0] as string);
-        const parsed = r0.ok ? r0.line : null;
-        expect(parsed?.kind).toBe("statusline");
-        expect(parsed?.host).toBe("testhost");
-      } finally {
-        rmSync(h, { recursive: true, force: true });
-      }
-    });
-  }
-
-  it("rate_limits with a future reset shows numbers", async () => {
-    const p = load("16-max-five-hour.json");
-    p.rate_limits.five_hour = { used_percentage: 78, resets_at: future };
-    p.rate_limits.seven_day = { used_percentage: 35, resets_at: future };
-    const r = await run(JSON.stringify(p), home);
-    expect(lines(r.stdout)[0]).toMatch(/^n\/a \| .*\| ctx 38% \| 5h 78% \| 7d 35%/);
-    expect(lines(r.stdout)[0]).toContain("Fable 5.1");
-  });
-
-  it("stale resets_at shows n/a", async () => {
-    const p = load("16-max-five-hour.json");
-    p.rate_limits.five_hour = { used_percentage: 78, resets_at: past };
-    const r = await run(JSON.stringify(p), home);
-    expect(lines(r.stdout)[0]).toContain("5h n/a");
-  });
-
-  it("absent rate_limits shows 5h n/a", async () => {
-    const p = load("16-max-five-hour.json");
-    delete p.rate_limits;
-    const r = await run(JSON.stringify(p), home);
-    expect(lines(r.stdout)[0]).toContain("5h n/a");
-  });
-});
 
 describe("renderStatusLine", () => {
   const now = 1_000_000_000_000;
@@ -209,120 +117,6 @@ describe("win-utf8", () => {
     setWindowsUtf8("win32", spy(calls), { MSYSTEM: "MINGW64" }, () => true);
     expect(calls).toEqual([]);
   });
-  it.skipIf(process.platform !== "win32")("non-ASCII model name survives", async () => {
-    const r = await run(JSON.stringify({ session_id: "s", model: "Modèle 日本語" }), home);
-    expect(r.stdout.toString("utf8")).toContain("Modèle 日本語");
-  });
-});
-
-const FALLBACK = "sessiondeck\n";
-
-describe("robustness (both entries)", () => {
-  const bad: [string, Buffer | string | null][] = [
-    ["empty", ""],
-    ["closed stdin", null],
-    ["malformed", "{not json"],
-    ["array", "[]"],
-    ["invalid utf-8", Buffer.from([0x7b, 0xff, 0xfe, 0x7d])],
-    ["1 MB junk", Buffer.alloc(1024 * 1024, "x")],
-    ["1 MB valid object", JSON.stringify({ session_id: "s", pad: "x".repeat(1024 * 1024) })],
-  ];
-  for (const [name, input] of bad) {
-    it(`statusline: ${name} -> fallback line, exit 0`, async () => {
-      const h = mkdtempSync(join(tmpdir(), "sd-sl-b-"));
-      try {
-        const r = await run(input, h);
-        expect(r.code).toBe(0);
-        if (name === "1 MB valid object") expect(lines(r.stdout)[0]).toContain("ctx");
-        else expect(r.stdout.toString()).toBe(FALLBACK);
-        expect(r.stderr.length).toBe(0);
-      } finally {
-        rmSync(h, { recursive: true, force: true });
-      }
-    });
-    it(`subagents: ${name} -> nothing, exit 0`, async () => {
-      const h = mkdtempSync(join(tmpdir(), "sd-sa-b-"));
-      try {
-        const r = await run(input, h, subagentsPath);
-        expect(r.code).toBe(0);
-        expect(r.stdout.length).toBe(0);
-        expect(r.stderr.length).toBe(0);
-      } finally {
-        rmSync(h, { recursive: true, force: true });
-      }
-    });
-  }
-
-  it("unwritable home (a file) -> still prints, exit 0", async () => {
-    const h = mkdtempSync(join(tmpdir(), "sd-sl-u-"));
-    const file = join(h, "notadir");
-    writeFileSync(file, "x");
-    try {
-      const p = JSON.stringify({ session_id: "s", model: "M" });
-      const a = await run(p, file);
-      expect(a.code).toBe(0);
-      expect(lines(a.stdout)[0]).toContain("ctx");
-      const b = await run(p, file, subagentsPath);
-      expect(b.code).toBe(0);
-      expect(b.stdout.length).toBe(0);
-    } finally {
-      rmSync(h, { recursive: true, force: true });
-    }
-  });
-
-  for (const [label, script, expectOut] of [
-    ["statusline", statuslinePath, FALLBACK],
-    ["subagents", subagentsPath, ""],
-  ] as const) {
-    it(`${label}: never-closing stdin is bounded`, async () => {
-      const h = mkdtempSync(join(tmpdir(), "sd-sl-h-"));
-      try {
-        const t0 = Date.now();
-        const child = spawn(process.execPath, [script, "--home", h, "--host", "t"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          windowsHide: true,
-        });
-        const out: Buffer[] = [];
-        child.stdout.on("data", (c: Buffer) => out.push(c));
-        child.stdin.write("{");
-        const code = await new Promise((res) => child.on("close", res));
-        expect(code).toBe(0);
-        expect(Date.now() - t0).toBeLessThan(8000);
-        expect(Buffer.concat(out).toString()).toBe(expectOut);
-      } finally {
-        rmSync(h, { recursive: true, force: true });
-      }
-    });
-  }
-});
-
-describe("subagents spool", () => {
-  it("appends one subagents line per call and prints nothing", async () => {
-    const h = mkdtempSync(join(tmpdir(), "sd-sa-"));
-    try {
-      const raw = readFileSync(
-        join(
-          fixturesDir,
-          "subagentStatusLine",
-          readdirSync(join(fixturesDir, "subagentStatusLine")).sort()[0] as string,
-        ),
-      );
-      for (let i = 0; i < 2; i += 1) {
-        const r = await run(raw, h, subagentsPath);
-        expect(r.code).toBe(0);
-        expect(r.stdout.length).toBe(0);
-      }
-      const sp = readSpoolLines(join(h, "spool"));
-      expect(sp).toHaveLength(2);
-      const r0 = parseSpoolLine(sp[0] as string);
-      const p = r0.ok ? r0.line : null;
-      expect(p?.kind).toBe("subagents");
-      expect(p?.session_id).toBe("fdafa657-e191-4646-88ad-7ae634752456");
-      expect((p?.payload as { tasks: unknown[] }).tasks.length).toBeGreaterThan(0);
-    } finally {
-      rmSync(h, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("state derivation", () => {
@@ -335,29 +129,97 @@ describe("state derivation", () => {
   };
   afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-  it("mirrors the contract reduce() for a single event, per event", () => {
-    const base = { session_id: sid, host: "t", cwd: "/x", ts: 1 };
-    for (const ev of HOOK_EVENTS) {
-      const payload = {
-        session_id: sid,
-        hook_event_name: ev,
-        notification_type: "permission_prompt",
-      };
-      const env = {
-        v: 1 as const,
-        id: "i",
-        kind: "hook" as const,
-        host: "t",
-        os: "linux" as const,
-        session_id: sid,
-        ts: 2,
-        hook_event_name: ev,
-        payload,
-      };
-      const after = reduce(createSnapshot(base), env as never);
-      const mine = stateForHook(ev, payload, false);
-      expect(mine ?? "starting", ev).toBe(after.state);
+  // Event variants whose transitions depend on payload, agent or prior state.
+  const variants: { ev: string; payload: Record<string, unknown>; agent: string | null }[] = [];
+  for (const ev of HOOK_EVENTS) {
+    for (const agent of [null, "agent-1"]) {
+      variants.push({ ev, payload: {}, agent });
     }
+  }
+  for (const agent of [null, "agent-1"]) {
+    for (const tool of ["AskUserQuestion", "ExitPlanMode", "Bash"]) {
+      variants.push({ ev: "PreToolUse", payload: { tool_name: tool }, agent });
+    }
+    for (const t of ["permission_prompt", "elicitation_dialog", "idle_prompt"]) {
+      variants.push({ ev: "Notification", payload: { notification_type: t }, agent });
+    }
+  }
+  variants.push({ ev: "SessionStart", payload: { source: "compact" }, agent: null });
+  variants.push({ ev: "SessionStart", payload: { source: "resume" }, agent: null });
+  const envOf = (v: (typeof variants)[number], ts: number) => ({
+    v: 1 as const,
+    id: "i",
+    kind: "hook" as const,
+    host: "t",
+    os: "linux" as const,
+    session_id: sid,
+    ts,
+    hook_event_name: v.ev,
+    ...(v.agent === null ? {} : { agent_id: v.agent }),
+    payload: { session_id: sid, hook_event_name: v.ev, ...v.payload },
+  });
+  const fresh = () => createSnapshot({ session_id: sid, host: "t", cwd: "/x", ts: 1 });
+  const freshTrack: Track = { state: "starting", lastTool: null, permission: null };
+
+  it("mirrors the contract reduce() for every pair of events (state after each step)", () => {
+    for (const a of variants) {
+      for (const b of variants) {
+        const s1 = reduce(fresh(), envOf(a, 2) as never);
+        const s2 = reduce(s1, envOf(b, 3) as never);
+        const t1 = stepState(freshTrack, a.ev, envOf(a, 2).payload, a.agent);
+        const t2 = stepState(t1, b.ev, envOf(b, 3).payload, b.agent);
+        const label = `${a.ev}${a.agent ? "(sub)" : ""} -> ${b.ev}${b.agent ? "(sub)" : ""}`;
+        expect(t1.state, label).toBe(s1.state);
+        expect(t2.state, label).toBe(s2.state);
+      }
+    }
+  });
+  it("mirrors reduce() over every sequence of three events", () => {
+    for (const a of variants) {
+      for (const b of variants) {
+        let snap = fresh();
+        let t = freshTrack;
+        const prefix = [a, b];
+        // Walk the first two, then try every third.
+        prefix.forEach((v, i) => {
+          snap = reduce(snap, envOf(v, 2 + i) as never);
+          t = stepState(t, v.ev, envOf(v, 2 + i).payload, v.agent);
+        });
+        for (const c of variants) {
+          const s3 = reduce(snap, envOf(c, 9) as never);
+          const t3 = stepState(t, c.ev, envOf(c, 9).payload, c.agent);
+          expect(t3.state, `${a.ev} ${b.ev} ${c.ev}`).toBe(s3.state);
+        }
+      }
+    }
+  });
+  it("after Stop following AskUserQuestion or ExitPlanMode the bar says waiting_input", () => {
+    for (const tool of ["AskUserQuestion", "ExitPlanMode"]) {
+      const h = mk();
+      seedHook(h, sid, "UserPromptSubmit");
+      seedHook(h, sid, "PreToolUse", { payload: { tool_name: tool } });
+      seedHook(h, sid, "Stop");
+      expect(deriveState(join(h, "spool"), sid), tool).toBe("waiting_input");
+    }
+    const h = mk();
+    seedHook(h, sid, "PreToolUse", { payload: { tool_name: "AskUserQuestion" } });
+    seedHook(h, sid, "UserPromptSubmit");
+    seedHook(h, sid, "PreToolUse", { payload: { tool_name: "Bash" } });
+    seedHook(h, sid, "Stop");
+    expect(deriveState(join(h, "spool"), sid)).toBe("idle");
+  });
+  it("PostCompact from idle keeps idle; from working it stays working; alone it is unknown", () => {
+    const h = mk();
+    seedHook(h, sid, "Stop");
+    seedHook(h, sid, "PostCompact");
+    expect(deriveState(join(h, "spool"), sid)).toBe("idle");
+    const w = mk();
+    seedHook(w, sid, "UserPromptSubmit");
+    seedHook(w, sid, "PostCompact");
+    expect(deriveState(join(w, "spool"), sid)).toBe("working");
+    const u = mk();
+    seedHook(u, sid, "PostCompact");
+    expect(deriveState(join(u, "spool"), sid)).toBe("n/a");
   });
   it("uses the last hook line of the session, ignores other sessions and non-hook lines", () => {
     const h = mk();
@@ -393,5 +255,106 @@ describe("state derivation", () => {
     );
     symlinkSync(real, join(h, "spool", dayFileName(Date.now())));
     expect(deriveState(join(h, "spool"), sid)).toBe("n/a");
+  });
+});
+
+describe("day file handling (review round 2)", () => {
+  const sid = "sess-1";
+  const dirs: string[] = [];
+  const mk = () => {
+    const h = mkdtempSync(join(tmpdir(), "sd-st2-"));
+    dirs.push(h);
+    mkdirSync(join(h, "spool"));
+    return h;
+  };
+  afterAll(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+  const hookLine = (id: string, event: string): string =>
+    JSON.stringify({ kind: "hook", session_id: id, hook_event_name: event, payload: {} }) + "\n";
+  const today = (h: string): string => join(h, "spool", dayFileName(Date.now()));
+
+  it("a symlinked day file is n/a, and fast", () => {
+    const h = mk();
+    const real = join(h, "real.jsonl");
+    writeFileSync(real, hookLine(sid, "Stop"));
+    try {
+      symlinkSync(real, today(h));
+    } catch {
+      return; // symlinks need a privilege on some Windows setups
+    }
+    const t0 = Date.now();
+    expect(deriveState(join(h, "spool"), sid)).toBe("n/a");
+    expect(readTail(today(h))).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+  });
+  it("a directory named as the day file is n/a", () => {
+    const h = mk();
+    mkdirSync(today(h));
+    expect(deriveState(join(h, "spool"), sid)).toBe("n/a");
+  });
+  it("a session id that is a substring of other ids matches only its own lines", () => {
+    const h = mk();
+    writeFileSync(today(h), hookLine("sess-12", "Stop") + hookLine("xsess-1", "StopFailure"));
+    expect(deriveState(join(h, "spool"), "sess-1")).toBe("n/a");
+    writeFileSync(today(h), hookLine("sess-12", "Stop") + hookLine("sess-1", "UserPromptSubmit"), {
+      flag: "a",
+    });
+    expect(deriveState(join(h, "spool"), "sess-1")).toBe("working");
+    expect(deriveState(join(h, "spool"), "sess-12")).toBe("idle");
+  });
+  it("yesterday is read when today's file is absent or whole, not when it is larger than the tail", () => {
+    const now = Date.now();
+    const yesterday = (h: string): string => join(h, "spool", dayFileName(now - 86_400_000));
+    const a = mk();
+    writeFileSync(yesterday(a), hookLine(sid, "UserPromptSubmit"));
+    expect(deriveState(join(a, "spool"), sid, now)).toBe("working"); // today absent
+    writeFileSync(today(a), hookLine("other", "Stop"));
+    expect(deriveState(join(a, "spool"), sid, now)).toBe("working"); // today whole, no line for us
+    const b = mk();
+    writeFileSync(yesterday(b), hookLine(sid, "UserPromptSubmit"));
+    writeFileSync(today(b), hookLine("other", "Stop").repeat(2000)); // > 64 KB, no line for us
+    expect(deriveState(join(b, "spool"), sid, now)).toBe("n/a");
+    const c = mk();
+    writeFileSync(yesterday(c), hookLine(sid, "UserPromptSubmit"));
+    writeFileSync(today(c), "x".repeat(70 * 1024) + "\n"); // one line longer than the tail
+    expect(readTail(today(c))).toBe("");
+    expect(deriveState(join(c, "spool"), sid, now)).toBe("n/a");
+  });
+  it("indeterminate lines today continue from yesterday's state", () => {
+    const now = Date.now();
+    const h = mk();
+    writeFileSync(join(h, "spool", dayFileName(now - 86_400_000)), hookLine(sid, "Stop"));
+    writeFileSync(today(h), hookLine(sid, "PostCompact"));
+    expect(deriveState(join(h, "spool"), sid, now)).toBe("idle");
+  });
+});
+
+describe("maybeUtf8 (review round 2)", () => {
+  it("does not call the code page setter for an ASCII line", () => {
+    let calls = 0;
+    expect(maybeUtf8("idle | Opus | ctx 38%", () => (calls += 1))).toBe(false);
+    expect(calls).toBe(0);
+  });
+  it("calls it once for a non-ASCII line", () => {
+    let calls = 0;
+    expect(maybeUtf8("idle | Modèle 日本語", () => (calls += 1))).toBe(true);
+    expect(calls).toBe(1);
+  });
+});
+
+describe("escape stripping (review round 2)", () => {
+  it("strips CSI with private parameter bytes, 8-bit CSI, DCS/APC strings and OSC", () => {
+    const cases: [string, string][] = [
+      ["a\u001b[<1;2mb", "ab"],
+      ["a\u001b[=3;4hb", "ab"],
+      ["a\u001b[>5cb", "ab"],
+      ["a\u001b[?25lb", "ab"],
+      ["a\u009b31;1mb", "ab"],
+      ["a\u009b<1mb", "ab"],
+      ["a\u001bPq#0;2;0;0;0\u001b\\b", "ab"],
+      ["a\u001b_Gf=24;AAAA\u001b\\b", "ab"],
+      ["a\u001bXsos text\u001b\\b", "ab"],
+      ["a\u001b]0;title\u0007b", "ab"],
+    ];
+    for (const [input, want] of cases) expect(oneLine(input), JSON.stringify(input)).toBe(want);
   });
 });

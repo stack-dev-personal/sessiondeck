@@ -36,6 +36,19 @@ export const isFile = (p: string): boolean => {
   }
 };
 
+// eslint-disable-next-line no-control-regex
+const NON_ASCII = /[^\x00-\x7f]/;
+
+/**
+ * Calls the code page setter only when the line has non-ASCII text; an ASCII line never spawns
+ * chcp (the common case stays fast).
+ */
+export function maybeUtf8(line: string, setter: () => void = setWindowsUtf8): boolean {
+  if (!NON_ASCII.test(line)) return false;
+  setter();
+  return true;
+}
+
 /**
  * Switches the console code page to UTF-8 (65001) so non-ASCII output survives in PowerShell/cmd.
  * No-op off Windows and under Git Bash (MSYSTEM set: bytes pass through). Failures are ignored.

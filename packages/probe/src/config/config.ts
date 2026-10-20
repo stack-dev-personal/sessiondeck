@@ -100,10 +100,13 @@ export function resolveSystemExe(
   return { exe, dir };
 }
 
-/** A real per-user SID. Well-known group SIDs (Everyone, Authenticated Users, ...) are refused. */
+/**
+ * A real per-user SID: local or domain accounts (S-1-5-21-...) and Entra ID accounts (S-1-12-1-...).
+ * Well-known group SIDs (Everyone, Authenticated Users, BUILTIN groups) are refused.
+ */
 export function validateUserSid(sid: string): string {
   if (
-    !/^S-1-5-21-[0-9-]+$/.test(sid) ||
+    !/^S-1-(?:5-21|12-1)-\d+(?:-\d+)+$/.test(sid) ||
     sid === "S-1-1-0" ||
     sid === "S-1-5-11" ||
     sid.startsWith("S-1-5-32-")

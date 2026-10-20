@@ -15,9 +15,13 @@ function num(v: unknown): number | null {
   return null;
 }
 
-// Whole escape sequences first (CSI, then OSC ended by BEL or ST), so no tail text is left behind.
+// Whole escape sequences first (CSI with its full parameter range, 8-bit CSI, string sequences
+// DCS/SOS/PM/APC, then OSC ended by BEL or ST), so no tail text is left behind.
 // eslint-disable-next-line no-control-regex
-const CSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const CSI8 = /\u009b[0-?]*[ -/]*[@-~]/g;
+// eslint-disable-next-line no-control-regex
+const STRING_SEQ = /\u001b[PX^_][^\u001b]*(?:\u001b\\)?/g;
 // eslint-disable-next-line no-control-regex
 const OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g;
 // C0, DEL, C1 controls, line/paragraph separators, zero-width and bidi controls, BOM.
@@ -29,7 +33,13 @@ const CONTROL = new RegExp(
 
 /** Single-line, printable text: escape sequences dropped, control characters become spaces. */
 export function oneLine(s: string, max = 40): string {
-  const t = s.replace(CSI, "").replace(OSC, "").replace(CONTROL, " ").trim();
+  const t = s
+    .replace(CSI, "")
+    .replace(CSI8, "")
+    .replace(STRING_SEQ, "")
+    .replace(OSC, "")
+    .replace(CONTROL, " ")
+    .trim();
   const cps = Array.from(t);
   return cps.length > max ? cps.slice(0, max).join("") : t;
 }

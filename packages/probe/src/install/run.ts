@@ -40,6 +40,7 @@ import {
   removeBackups,
   serialize,
 } from "./settings-io.ts";
+import { realSlash } from "./real-path.ts";
 import { getEntry, isInHome, putEntry } from "./state.ts";
 import { isDeepStrictEqual } from "node:util";
 
@@ -115,17 +116,25 @@ function str(flags: Args["flags"], name: string): string | undefined {
   return typeof v === "string" ? v : undefined;
 }
 
-const toSlash = (p: string): string => p.replace(/\\/g, "/");
-
 /**
  * The statusLine command runs through whichever shell Claude Code uses (Git Bash, PowerShell,
  * cmd), so every word is limited to characters that mean the same in all of them. Anything else
  * (curly quotes, %, $, `, ',', '@', non-ASCII) is refused rather than quoted.
+ *
+ * `~` is allowed in the middle of a word only. Shells expand it at the START of a word (home
+ * directory); an absolute path starts with a drive letter or `/`, and `~` after that (Windows 8.3
+ * short names such as C:/Users/RUNNER~1, a folder called a~b) is literal in Git Bash, PowerShell and
+ * cmd. A word that starts with `~` is refused. Paths are also expanded with realpath.native first,
+ * which turns 8.3 short names into long names.
  */
-const SHELL_SAFE = /^[A-Za-z0-9 _./:=+-]+$/;
+const SHELL_SAFE = /^[A-Za-z0-9 _./:=+~-]+$/;
+
+export function isShellSafe(word: string): boolean {
+  return SHELL_SAFE.test(word) && !word.startsWith("~");
+}
 
 function shellWord(word: string): string | undefined {
-  if (!SHELL_SAFE.test(word)) return undefined;
+  if (!isShellSafe(word)) return undefined;
   return word.includes(" ") ? `"${word}"` : word;
 }
 
@@ -146,8 +155,8 @@ function shellCommand(script: string, home: string, host: string): string | unde
 }
 
 export function buildCtx(distDir: string, homeDir: string, host: string): Ctx {
-  const dir = toSlash(resolve(distDir));
-  const home = toSlash(resolve(homeDir));
+  const dir = realSlash(distDir);
+  const home = realSlash(homeDir);
   const ctx: Ctx = { hookPath: `${dir}/hook.mjs`, home, host };
   const statusline = shellCommand(`${dir}/statusline.mjs`, home, host);
   const subagents = shellCommand(`${dir}/subagents.mjs`, home, host);
@@ -155,8 +164,8 @@ export function buildCtx(distDir: string, homeDir: string, host: string): Ctx {
   if (subagents !== undefined) ctx.subagentsCommand = subagents;
   if (statusline === undefined || subagents === undefined) {
     // Hooks are argv and never reach a shell; only the shell-run status commands need safe paths.
-    const bad = [dir, home].filter((p) => !SHELL_SAFE.test(p));
-    ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(dir)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + -); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
+    const bad = [dir, home].filter((p) => !isShellSafe(p));
+    ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(dir)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + ~ -, no ~ at the start); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
   }
   return ctx;
 }
@@ -327,6 +336,17 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
   io.out(`probe home: ${home}${inferred ? " (from the installed hook entries)" : ""}`);
   const stateFile = installStatePath(e, homeFlag);
   const entry = await getEntry(stateFile, loaded.path);
+  if (inferred && !entry) {
+    // The inferred home comes from a hook entry anyone could have written. Without an install
+    // record there it is only trusted when it is the default home or outside any git work tree
+    // (backups of settings.json, which may hold env secrets, are copied into the home).
+    const repo = gitWorkTreeAbove(home);
+    if (repo && home !== probeHome(e)) {
+      throw new UsageError(
+        `refusing to use ${home} (from the installed hook entries) as the probe home: it is inside the git work tree ${repo} and has no install record for ${loaded.path}. Pass --home <dir> to choose it explicitly`,
+      );
+    }
+  }
   if (!entry && hasProbeEntries(loaded.settings)) {
     io.err(
       `warning: probe entries are installed in ${loaded.path} but no install record was found in ${stateFile}; any statusLine you replaced is not restored. Pass --home <dir> if the install used another home`,
@@ -346,8 +366,13 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
   } else {
     io.out(`no settings file at ${loaded.path}; nothing to remove`);
   }
-  await putEntry(stateFile, loaded.path, undefined);
-  if (args.flags.has("--purge")) {
+  if (entry || !inferred) await putEntry(stateFile, loaded.path, undefined);
+  if (args.flags.has("--purge") && inferred && !entry) {
+    io.err(
+      `warning: not purging ${home}: it was inferred from the installed hook entries and holds no install record for ${loaded.path}. Pass --home <dir> with --purge to delete its probe.json and backups`,
+    );
+    io.out(`left ${probeConfigPath(e, homeFlag)} and the settings backups in place`);
+  } else if (args.flags.has("--purge")) {
     await rm(probeConfigPath(e, homeFlag), { force: true });
     const n = await removeBackups(home);
     io.out(`removed probe.json and ${n} settings backup${n === 1 ? "" : "s"}`);

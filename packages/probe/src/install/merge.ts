@@ -142,7 +142,7 @@ export function applyInstall(
     if (existing === undefined) created.add(event);
     hooks[event] = upsertGroup(existing ?? [], buildGroup(ctx));
   }
-  const out: Json = { ...settings, hooks };
+  let out: Json = { ...settings, hooks };
   const previous: Record<StatusKey, Previous> = {
     statusLine: { present: false },
     subagentStatusLine: { present: false },
@@ -152,9 +152,19 @@ export function applyInstall(
     const command = key === "statusLine" ? ctx.statuslineCommand : ctx.subagentsCommand;
     if (command === undefined) {
       notices.push(`${key}: not installed; ${ctx.statusSkipReason ?? "unsafe path"}`);
-      if (isOurStatus(cur)) previous[key] = prior?.previous[key] ?? { present: false };
+      if (isOurStatus(cur)) {
+        // Our entry from an earlier install points at the previous dist path, which this install
+        // no longer vouches for: remove it. What the user had before is still recorded (and
+        // restored, verified against its backup, once a later install or uninstall sees ours).
+        out = omit(out, key);
+        notices.push(
+          `${key}: removed the entry from the earlier install (it pointed at another path)`,
+        );
+      }
+      if (prior?.previous[key]?.present) previous[key] = prior.previous[key];
     } else if (cur === undefined) {
       out[key] = buildStatus(ctx, key);
+      if (prior?.previous[key]?.present) previous[key] = prior.previous[key];
     } else if (isOurStatus(cur)) {
       out[key] = buildStatus(ctx, key);
       previous[key] = prior?.previous[key] ?? { present: false };

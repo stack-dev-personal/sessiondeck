@@ -1,4 +1,5 @@
 // Ported from simple10/agents-observe hooks/scripts/hook.sh @ b3a7238 (MIT)
+// Copyright (c) 2025 Joe Johnston
 // Changes: rewritten in TypeScript for node (exec form, no shell); instead of an HTTP POST the one
 // unit of work is a single-write append to the local spool; adds bounded stdin, an error log, and
 // ULID envelope building (seq is assigned later by the daemon). Kept: do the minimum, never print, always exit 0.

@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveHostName } from "../src/host.ts";
+import { realResolve, realSlash } from "../src/install/real-path.ts";
 import { probeRoot } from "./helpers.ts";
 import {
   type Doc,
@@ -43,7 +44,8 @@ const EVENTS = [
   "PostCompact",
   "SessionEnd",
 ];
-const distDir = join(probeRoot, "dist").replace(/\\/g, "/");
+// The install writes realpath spellings (8.3 short names and symlinks expanded), forward slashes.
+const distDir = realSlash(join(probeRoot, "dist"));
 
 const isOurs = (h: Doc): boolean =>
   Array.isArray(h?.args) && h.args.includes("--sessiondeck-probe");
@@ -85,7 +87,7 @@ describe("probe install (R1.8)", () => {
         args: [
           `${distDir}/hook.mjs`,
           "--home",
-          sb.home.replace(/\\/g, "/"),
+          realSlash(sb.home),
           "--host",
           resolveHostName(),
           "--sessiondeck-probe",
@@ -182,7 +184,7 @@ describe("probe install (R1.8)", () => {
     expect(r.code, r.stderr).toBe(0);
     const sl = readJson(sb.settings).statusLine;
     expect(sl.command).toBe(
-      `node ${distDir}/statusline.mjs --home ${sb.home.replace(/\\/g, "/")} --host ${resolveHostName()} --sessiondeck-probe`,
+      `node ${distDir}/statusline.mjs --home ${realSlash(sb.home)} --host ${resolveHostName()} --sessiondeck-probe`,
     );
     expect(sl.command).not.toContain("\\");
     // Re-running install must not record our own entry as the "previous" one.
@@ -256,11 +258,13 @@ describe("probe install (R1.8)", () => {
 
   it("statusLine path with spaces is quoted", async () => {
     const { buildCtx } = await import("../src/install/run.ts");
+    const dist = realSlash("/tmp/with space/dist");
+    const home = realSlash("/tmp/my home/sd");
     const c = buildCtx("/tmp/with space/dist", "/tmp/my home/sd", "box-wsl");
     expect(c.statuslineCommand).toBe(
-      'node "/tmp/with space/dist/statusline.mjs" --home "/tmp/my home/sd" --host box-wsl --sessiondeck-probe',
+      `node "${dist}/statusline.mjs" --home "${home}" --host box-wsl --sessiondeck-probe`,
     );
-    expect(c.home).toBe("/tmp/my home/sd");
+    expect(c.home).toBe(home);
     for (const [d, h] of [
       ['/tmp/we"ird', "/tmp/h"],
       ["/tmp/d", "/tmp/$HOME"],
@@ -270,7 +274,7 @@ describe("probe install (R1.8)", () => {
       const bad = buildCtx(d, h, "h");
       expect(bad.statuslineCommand).toBeUndefined();
       expect(bad.subagentsCommand).toBeUndefined();
-      expect(bad.hookPath).toBe(`${d}/hook.mjs`);
+      expect(bad.hookPath).toBe(`${realSlash(d)}/hook.mjs`);
       expect(bad.statusSkipReason).toMatch(/unsafe/);
     }
   });
@@ -351,7 +355,7 @@ describe("R1.10 probe home and statusLine restore are not steerable", () => {
     const decoy = join(sb.root, "decoy");
     const r = await runCli(["install", "--home", sb.home], { ...sb.env, SESSIONDECK_HOME: decoy });
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`probe home: ${sb.home}`);
+    expect(r.stdout).toContain(`probe home: ${realResolve(sb.home)}`);
     expect(existsSync(decoy)).toBe(false);
     expect(existsSync(join(sb.home, "probe.json"))).toBe(true);
   });
@@ -488,7 +492,7 @@ describe("R1.8 R1.10 review round 3", () => {
     delete plain["SD_TEST_HOME"]; // no --home: the default home is elsewhere
     const r = await runCli(["uninstall", "--purge"], plain);
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain(`probe home: ${sb.home}`);
+    expect(r.stdout).toContain(`probe home: ${realResolve(sb.home)}`);
     expect(r.stdout).toContain("restoring your previous statusLine");
     expect(readJson(sb.settings).statusLine).toEqual({
       type: "command",
@@ -547,5 +551,136 @@ describe("R1.8 R1.10 review round 3", () => {
     expect(Object.keys(readJson(sb.settings).hooks)).toHaveLength(17);
     const yes = await runCli(["uninstall", "--allow-inside-claude"], inside);
     expect(yes.code, yes.stderr).toBe(0);
+  });
+});
+
+describe("R1.8 R1.10 review round 2 (U2) and windows CI", () => {
+  /** Runs a copy of the CLI from `dist` (so its hook and statusLine paths differ). */
+  function installFrom(dist: string, sb: ReturnType<typeof sandbox>, extra: string[] = []) {
+    mkdirSync(dist, { recursive: true });
+    copyFileSync(join(probeRoot, "dist", "probe.mjs"), join(dist, "probe.mjs"));
+    return spawnSync(
+      process.execPath,
+      [join(dist, "probe.mjs"), "install", "--home", sb.home, ...extra],
+      { env: { ...process.env, ...sb.env }, encoding: "utf8", windowsHide: true },
+    );
+  }
+
+  it("installing from a safe path and then from an unsafe one removes the stale statusLine", () => {
+    const sb = sandbox();
+    const a = installFrom(join(sb.root, "safe", "dist"), sb);
+    expect(a.status, a.stderr).toBe(0);
+    expect(readJson(sb.settings).statusLine.command).toContain("safe/dist/statusline.mjs");
+    const b = installFrom(join(sb.root, "José", "dist"), sb);
+    expect(b.status, b.stderr).toBe(0);
+    const doc = readJson(sb.settings);
+    expect(doc.statusLine).toBeUndefined();
+    expect(doc.subagentStatusLine).toBeUndefined();
+    expect(readText(sb.settings)).not.toContain("safe/dist/statusline.mjs");
+    expect(b.stdout).toMatch(/statusLine: removed the entry from the earlier install/);
+    expect(Object.keys(doc.hooks)).toHaveLength(17);
+  });
+
+  it("a path with ~ inside a word (a Windows 8.3 short name) keeps the status commands", () => {
+    const sb = sandbox();
+    const r = installFrom(join(sb.root, "RUNNER~1", "dist"), sb);
+    expect(r.status, r.stderr).toBe(0);
+    const doc = readJson(sb.settings);
+    expect(doc.statusLine.command).toContain("RUNNER~1/dist/statusline.mjs");
+    expect(r.stdout).not.toContain("not installed");
+  });
+
+  it("uninstall --purge with a home inferred from a planted hook, and no install record there, deletes nothing", async () => {
+    const sb = sandbox();
+    const victim = join(sb.root, "other-app");
+    mkdirSync(victim, { recursive: true });
+    writeText(join(victim, "probe.json"), '{"host":"keep"}');
+    writeText(join(victim, "settings.backup-1.json"), "{}");
+    writeText(
+      sb.settings,
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "node",
+                  args: ["x.mjs", "--home", victim, "--sessiondeck-probe"],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const env = { ...sb.env };
+    delete env["SD_TEST_HOME"];
+    const r = await runCli(["uninstall", "--purge"], env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toMatch(/not purging/);
+    expect(readText(join(victim, "probe.json"))).toBe('{"host":"keep"}');
+    expect(existsSync(join(victim, "settings.backup-1.json"))).toBe(true);
+    expect(existsSync(join(victim, "install-state.json"))).toBe(false);
+    // The planted hook itself is still removed from settings.json.
+    expect(readText(sb.settings)).not.toContain("--sessiondeck-probe");
+  });
+
+  it("uninstall --purge with an explicit --home still purges", async () => {
+    const sb = sandbox();
+    mkdirSync(sb.home, { recursive: true });
+    writeText(join(sb.home, "probe.json"), '{"host":"x"}');
+    const r = await runCli(["uninstall", "--purge"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(existsSync(join(sb.home, "probe.json"))).toBe(false);
+  });
+
+  it("an inferred home inside a git work tree with no install record is refused, nothing copied", async () => {
+    const sb = sandbox();
+    const repo = join(sb.root, "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const inRepo = join(repo, "probe-home");
+    mkdirSync(inRepo);
+    const settings = JSON.stringify({
+      env: { SECRET: "s3cr3t" },
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "node",
+                args: ["x.mjs", "--home", inRepo, "--sessiondeck-probe"],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    writeText(sb.settings, settings);
+    const env = { ...sb.env };
+    delete env["SD_TEST_HOME"];
+    const r = await runCli(["uninstall"], env);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/git work tree/);
+    expect(readText(sb.settings)).toBe(settings);
+    expect(readdirSync(inRepo)).toEqual([]);
+    // An explicit --home is the user's choice and is allowed.
+    const ok = await runCli(["uninstall", "--home", inRepo], env);
+    expect(ok.code, ok.stderr).toBe(0);
+  });
+
+  it("config show refuses inside a Claude Code session: exit 2, nothing on stdout", async () => {
+    const sb = sandbox();
+    await runCli(["install"], sb.env);
+    const r = await runCli(["config", "show"], { ...sb.env, CLAUDECODE: "1" });
+    expect(r.code).toBe(2);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("CLAUDECODE");
+    const ok = await runCli(["config", "show", "--allow-inside-claude"], {
+      ...sb.env,
+      CLAUDECODE: "1",
+    });
+    expect(ok.code, ok.stderr).toBe(0);
   });
 });

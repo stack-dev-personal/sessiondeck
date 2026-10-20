@@ -1,7 +1,8 @@
 // CLI-only paths (install, uninstall, config). Not imported by the hook bundle. The probe home comes
 // from an explicit `--home <dir>` flag or the platform default; no environment variable moves it
 // (a repo-controlled "env" in .claude/settings.json must not be able to).
-import { join, resolve, win32 } from "node:path";
+import { join, win32 } from "node:path";
+import { realResolve } from "./install/real-path.ts";
 import { type PathEnv, currentPathEnv, defaultProbeHome } from "./paths.ts";
 
 export type { PathEnv };
@@ -17,9 +18,12 @@ export function cliDefaultHome(e: PathEnv): string {
   return defaultProbeHome(e);
 }
 
-/** Probe home for the CLI: the explicit --home flag, else the CLI default. */
+/**
+ * Probe home for the CLI: the explicit --home flag (symlinks and Windows 8.3 short names expanded,
+ * so the spelling matches the one written into the hooks), else the CLI default.
+ */
 export function probeHome(e: PathEnv = currentPathEnv(), homeFlag?: string): string {
-  return homeFlag ? resolve(homeFlag) : cliDefaultHome(e);
+  return homeFlag ? realResolve(homeFlag) : cliDefaultHome(e);
 }
 
 /** Probe config file (hub URL, token, host). Never inside the Claude settings directory. */

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -273,6 +274,21 @@ describe.skipIf(win32)("spool hardening (POSIX)", () => {
       const r = await runHook(STOP, { home: h });
       expect(r.code).toBe(0);
       expect(r.stdout.length).toBe(0);
+    } finally {
+      rmSync(h, { recursive: true, force: true });
+    }
+  });
+  it("a FIFO as the day file or the error log does not block the hook: exit 0 within a bound", async () => {
+    const h = tmp();
+    try {
+      mkdirSync(join(h, "spool"), { recursive: true });
+      execFileSync("mkfifo", [join(h, "spool", dayFileName(Date.now()))]);
+      execFileSync("mkfifo", [join(h, "hook-errors.log")]);
+      const t0 = Date.now();
+      const r = await runHook(STOP, { home: h });
+      expect(r.code).toBe(0);
+      expect(r.stdout.length).toBe(0);
+      expect(Date.now() - t0).toBeLessThan(5000);
     } finally {
       rmSync(h, { recursive: true, force: true });
     }

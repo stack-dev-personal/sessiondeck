@@ -58,8 +58,13 @@ export function notRegular(): Error {
  * regular file. The caller closes the descriptor. Creates missing parent directories (0700).
  */
 export function openAppendPrivate(path: string): number {
+  // O_NONBLOCK: a FIFO named as a day file fails to open (ENXIO) instead of blocking the hook.
   const flags =
-    constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0);
+    constants.O_WRONLY |
+    constants.O_APPEND |
+    constants.O_CREAT |
+    (constants.O_NOFOLLOW ?? 0) |
+    (constants.O_NONBLOCK ?? 0);
   const open = (): number => {
     if (constants.O_NOFOLLOW === undefined) {
       // Windows: no O_NOFOLLOW; refuse an existing non-regular file or a link.

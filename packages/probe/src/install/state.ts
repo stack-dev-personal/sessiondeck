@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { ensurePrivateDir, writeFileAtomic } from "./atomic.ts";
 import { basename, dirname, resolve } from "node:path";
+import { realResolve } from "./real-path.ts";
 import { BACKUP_RE } from "./settings-io.ts";
 import { type InstallEntry, STATUS_KEYS, type StatusKey, isRecord } from "./merge.ts";
 
@@ -30,7 +31,8 @@ const norm = (p: string): string => (process.platform === "win32" ? p.toLowerCas
 /** A backup is accepted only as settings.backup-*.json directly inside the probe home. */
 export function isInHome(file: string, home: string): boolean {
   const f = resolve(file);
-  return norm(dirname(f)) === norm(resolve(home)) && BACKUP_RE.test(basename(f));
+  // Real paths on both sides: 8.3 short and long spellings of one directory are the same home.
+  return norm(realResolve(dirname(f))) === norm(realResolve(home)) && BACKUP_RE.test(basename(f));
 }
 
 /** Schema check for one entry read from disk; undefined when it does not fit. */

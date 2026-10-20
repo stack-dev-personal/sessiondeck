@@ -16,14 +16,13 @@ export function currentPathEnv(): PathEnv {
 }
 
 /**
- * Platform default probe home. Windows: %LOCALAPPDATA%\sessiondeck (fallback
- * <home>\AppData\Local). Elsewhere, including WSL2 (which sees Linux paths):
- * ~/.local/state/sessiondeck.
+ * Platform default probe home. Windows: <homedir>\AppData\Local\sessiondeck (LOCALAPPDATA is
+ * deliberately not read: an env var must not move where the hook writes, and it matches the CLI
+ * default). Elsewhere, including WSL2 (which sees Linux paths): ~/.local/state/sessiondeck.
  */
 export function defaultProbeHome(e: PathEnv = currentPathEnv()): string {
   if (e.platform === "win32") {
-    const base = e.env["LOCALAPPDATA"] || win32.join(e.home, "AppData", "Local");
-    return win32.join(base, "sessiondeck");
+    return win32.join(e.home, "AppData", "Local", "sessiondeck");
   }
   return posix.join(e.home, ".local", "state", "sessiondeck");
 }

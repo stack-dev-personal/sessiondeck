@@ -128,7 +128,7 @@ describe("args", () => {
 });
 
 describe("paths", () => {
-  it("windows: LOCALAPPDATA", () => {
+  it("windows: <homedir>\\AppData\\Local\\sessiondeck", () => {
     const e = {
       platform: "win32" as const,
       env: { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" },
@@ -142,7 +142,7 @@ describe("paths", () => {
       "C:\\Users\\u\\AppData\\Local\\sessiondeck\\hook-errors.log",
     );
   });
-  it("windows without LOCALAPPDATA falls back under the home dir", () => {
+  it("windows with no LOCALAPPDATA gives the same home", () => {
     expect(defaultProbeHome({ platform: "win32", env: {}, home: "C:\\Users\\u" })).toBe(
       "C:\\Users\\u\\AppData\\Local\\sessiondeck",
     );
@@ -159,14 +159,14 @@ describe("paths", () => {
       "/Users/u/.local/state/sessiondeck",
     );
   });
-  it("the Windows CLI default home ignores LOCALAPPDATA; the hook default keeps it", () => {
+  it("the Windows hook and CLI defaults both ignore LOCALAPPDATA", () => {
     const e = {
       platform: "win32" as const,
       env: { LOCALAPPDATA: "C:\\evil" },
       home: "C:\\Users\\u",
     };
     expect(cliDefaultHome(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck");
-    expect(defaultProbeHome(e)).toBe("C:\\evil\\sessiondeck");
+    expect(defaultProbeHome(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck");
   });
   it("only an explicit --home moves the CLI home; SESSIONDECK_HOME is ignored", () => {
     for (const platform of ["win32", "linux"] as const) {
