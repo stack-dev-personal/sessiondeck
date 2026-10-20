@@ -48,3 +48,40 @@ export function hookErrorsLog(home: string, platform?: NodeJS.Platform): string 
 export function dayFileName(ts: number): string {
   return `${new Date(ts).toISOString().slice(0, 10)}.jsonl`;
 }
+
+// Daemon paths (all under the probe home; nothing elsewhere).
+
+export function daemonDir(home: string, platform?: NodeJS.Platform): string {
+  return homeChild(home, "daemon", platform);
+}
+
+export function daemonChild(home: string, name: string, platform?: NodeJS.Platform): string {
+  return homeChild(daemonDir(home, platform), name, platform);
+}
+
+/** Daemon-originated envelopes (heartbeat, liveness, transcript): day files, single writer. */
+export function outboxDir(home: string, platform?: NodeJS.Platform): string {
+  return daemonChild(home, "outbox", platform);
+}
+
+/** Batches the hub refused with a non-retryable 4xx. */
+export function rejectedDir(home: string, platform?: NodeJS.Platform): string {
+  return daemonChild(home, "rejected", platform);
+}
+
+export function daemonLogPath(home: string, platform?: NodeJS.Platform): string {
+  return daemonChild(home, "daemon.log", platform);
+}
+
+export function daemonLockPath(home: string, platform?: NodeJS.Platform): string {
+  return daemonChild(home, "daemon.lock", platform);
+}
+
+/** Cursors, next_seq and the pending-batch journal, in one atomically replaced file. */
+export function daemonStatePath(home: string, platform?: NodeJS.Platform): string {
+  return daemonChild(home, "state.json", platform);
+}
+
+export function probeConfigFile(home: string, platform?: NodeJS.Platform): string {
+  return homeChild(home, "probe.json", platform);
+}
