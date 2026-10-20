@@ -1,3 +1,33 @@
+# Final verification, branch p3/board-live, HEAD d4c845f
+
+Verified 2026-10-20T22:20:00Z by sd-verifier. Nothing was fixed. Partial is fail. Earlier sections below are history.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R3.1 Live session on board within 1 s of SessionStart reaching the hub | `SD_E2E_WORK_VOLUME=sprint-1-work bash packages/web/scripts/e2e-live.sh` (hub container built from packages/hub/Dockerfile; e2e/R3.1.spec.ts) | "R3.1 latency ms, 5 samples: 82, 41, 43, 18, 21"; max 82 ms vs 1000 ms; spec passed. R3.1.png | PASS | 2026-10-20T22:15Z |
+| R3.3 Attention sessions sort to top within one render, accent, one notification per transition | same live script (e2e/R3.3.spec.ts) | "R3.3 reorder latency: 11.9 ms, 1 frames, index 0"; spec passed (sort, accent, one notification per transition, filters). R3.3.png, R3.3-filters.png, R3.3-hidden-attention.png | PASS | 2026-10-20T22:16Z |
+| R3.6 20 sessions, 2 hosts, 20 deltas/s, no dropped frames, main thread < 50% busy | same live script, R3.6 not skipped (e2e/R3.6.spec.ts, rule (a)-(d)) | Load window: busy 7.23% (idle baseline 2.2%), frame p99 16.8 ms (max 16.8), 0 dropped-frame intervals of 1800 frames (idle 0), longest script task 2.78 ms (idle 2.45), 20.07 session msgs/s, 700 posts sent, 0 failed, 0 long tasks, longest top-level task 21.16 ms. Spec passed (1.3m). R3.6.png, R3.6-trace.json | PASS | 2026-10-20T22:17Z |
+| R3.9 WS disconnect banner, auto-reconnect with resync, no stale working card | same live script (e2e/R3.9.spec.ts) | spec passed (2.8s). R3.9-banner.png, R3.9.png | PASS | 2026-10-20T22:17Z |
+| R3.7 WCAG AA contrast light and dark; no color-only information (handoff re-verify, incl. live a11y specs) | mock Playwright suite (e2e/R3.7.spec.ts, e2e/R3.7-live.spec.ts); `pnpm -F @sessiondeck/web contrast` | contrast: "Text failures (0)", all other pairs pass; e2e "0 of 280 measured" fail dark and light; axe none on /board, /dev/cards, live connection, settings, error boundary, both themes; keyboard walk, 320 px reflow, text spacing, reduced motion, tones off by default all pass | PASS | 2026-10-20T22:14Z |
+| R3.2 Card indicators, n/a nulls, no layout shift (no regression) | mock Playwright suite (e2e/R3.2.spec.ts, R3.2 320 px null-to-value in R3.7-live.spec.ts); web unit | 28/28 Playwright pass; unit 214/214 | PASS | 2026-10-20T22:14Z |
+| R3.4 Compact toggle with `c`, persisted (no regression) | mock Playwright suite (e2e/R3.4.spec.ts); web unit | pass. R3.4-compact.png | PASS | 2026-10-20T22:14Z |
+| R3.5 Drawer Enter/click open, Esc close, focus returns (no regression) | mock Playwright suite (e2e/R3.5.spec.ts); web unit | pass. R3.5-drawer.png | PASS | 2026-10-20T22:14Z |
+| R3.8 Mock mode runs full UI with no hub (no regression) | mock Playwright suite (e2e/R3.8.spec.ts); `vite build --outDir /tmp/sd-s6-nomock-<pid>` then `node scripts/check-bundle.mjs <outDir> nomock` | e2e pass (8 states); "nomock: 1 js files, 280911 bytes, fixture marker absent, __sd absent". R3.8.png | PASS | 2026-10-20T22:15Z |
+
+## Suites at d4c845f
+
+- `pnpm -r test -- --maxWorkers=2`: contract 28 files, 1090 passed + 1 skipped (1091); hub 15 files, 177/177; web 20 files, 214/214; scripts 28 files + 1 skipped, 575 passed + 7 skipped (582). No failures.
+- `pnpm -r typecheck`: contract, hub, web, scripts all clean. `pnpm -r lint`: all four clean.
+- Mock Playwright (pinned image, command in the task): 28 passed (44.4s).
+- Live script: 4 passed (1.5m): R3.1, R3.3, R3.6, R3.9.
+- Substitute note: infra/docker-compose.yml does not exist on this base (S4 not merged); e2e-live.sh building packages/hub/Dockerfile is the recorded substitute.
+- CI wiring: .github/workflows/ci.yml has jobs `e2e-web` (mock build, pinned Playwright container) and `e2e-web-live` (runs e2e-live.sh with SD_E2E_SKIP_PERF=1, then a continue-on-error R3.6 report-only step). R3.6 is therefore not a blocking CI gate; it is gated here. Branch trigger not separately checked.
+- Environment: node v22.23.3, Linux 6.18 WSL2, 20 CPUs (browserHardwareConcurrency 20).
+- Screenshots in /state/1/screens/S6/ (listing includes some earlier files): R3.1.png, R3.2.png, R3.2-board.png, R3.2-2560.png, R3.3.png, R3.3-filters.png, R3.3-hidden-attention.png, R3.4-compact.png, R3.5-drawer.png, R3.6.png, R3.6-trace.json, R3.6-trace.raw.json.gz, R3.7-dark.png, R3.7-light.png, R3.7-board-light.png, R3.7-320.png, R3.7-banner(-light).png, R3.7-live-(dark|light).png, R3.7-settings-(dark|light).png, R3.8.png, R3.9.png, R3.9-banner.png, summary.json.
+- Containers sd-1-S6-*: none remain (`docker ps -a --filter name=sd-1-S6` empty).
+
+# History: earlier sections
+
 # VERIFY P3 (branch p3/board-mock, HEAD e816b7c)
 
 Re-verified 2026-10-20T14:33:16Z by sd-verifier after U6 (four tokens raised to 4.5:1). Nothing was fixed. Partial is fail.
