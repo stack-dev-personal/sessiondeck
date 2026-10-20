@@ -66,4 +66,20 @@ CREATE INDEX session_baselines_host_state ON session_baselines(host, state);
 CREATE TABLE hub_lease (id INTEGER PRIMARY KEY, holder TEXT NOT NULL, expires_at BIGINT NOT NULL);
 `,
   },
+  {
+    version: 5,
+    name: "dedup_index_by_session",
+    // R2.4. The 5 s duplicate check ran on events(signature, ts). A signature is a hash, so every
+    // insert dirtied a random leaf of that index: about 100 of the ~200 WAL pages a batch of 100
+    // wrote, and about a third of its CPU. The signature material includes session_id, so equal
+    // signatures always share a session: the check now seeks (session_id, ts) and compares the
+    // signature inside the same index entries (covering, no table reads). Inserts append at the
+    // tail of the session's range. The new index also serves everything events_session_ts did
+    // (it is a strict prefix), so both old indexes are dropped. Valid on SQLite and Postgres.
+    sql: `
+CREATE INDEX events_session_ts_sig ON events(session_id, ts, signature);
+DROP INDEX events_signature_ts;
+DROP INDEX events_session_ts;
+`,
+  },
 ];

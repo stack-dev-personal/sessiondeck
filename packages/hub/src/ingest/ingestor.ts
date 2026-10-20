@@ -193,7 +193,7 @@ export class Ingestor {
         continue;
       }
       const signature = computeEventSignature(env);
-      if (store.hasSignatureWithin(signature, env.ts, SIGNATURE_WINDOW_MS)) {
+      if (store.hasSignatureWithin(signature, env.session_id, env.ts, SIGNATURE_WINDOW_MS)) {
         duplicates++;
         continue;
       }

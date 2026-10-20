@@ -184,14 +184,25 @@ export class Store {
     ).run(row);
   }
 
-  /** An event with this signature and |ts - ts'| < windowMs exists (events_signature_ts index, a range seek). */
-  hasSignatureWithin(signature: string, ts: number, windowMs: number): boolean {
+  /**
+   * An event with this signature and |ts - ts'| < windowMs exists. Equal signatures share a
+   * session_id (it is part of the hashed material), so the seek is a range on events_session_ts_sig
+   * (session_id, ts, signature) and the signature is compared inside the index.
+   */
+  hasSignatureWithin(
+    signature: string,
+    sessionId: string | null,
+    ts: number,
+    windowMs: number,
+  ): boolean {
     return (
-      this.stmt("SELECT 1 AS x FROM events WHERE signature = ? AND ts > ? AND ts < ? LIMIT 1").get(
-        signature,
-        ts - windowMs,
-        ts + windowMs,
-      ) !== undefined
+      (sessionId === null
+        ? this.stmt(
+            "SELECT 1 AS x FROM events WHERE session_id IS NULL AND ts > ? AND ts < ? AND signature = ? LIMIT 1",
+          ).get(ts - windowMs, ts + windowMs, signature)
+        : this.stmt(
+            "SELECT 1 AS x FROM events WHERE session_id = ? AND ts > ? AND ts < ? AND signature = ? LIMIT 1",
+          ).get(sessionId, ts - windowMs, ts + windowMs, signature)) !== undefined
     );
   }
 
