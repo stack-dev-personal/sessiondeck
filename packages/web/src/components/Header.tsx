@@ -4,7 +4,7 @@ import { selectHosts, useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
 const btn =
-  "rounded border border-border bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3";
+  "rounded border border-fg-muted bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3";
 
 export function Header() {
   const sessions = useBoard((s) => s.sessions);

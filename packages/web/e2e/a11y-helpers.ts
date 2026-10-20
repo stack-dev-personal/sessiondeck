@@ -168,3 +168,47 @@ export function expectAllReadable(recs: TextRec[], label: string): void {
     `${label}: text below 4.5:1`,
   ).toEqual([]);
 }
+
+/** 1.4.11: enabled text inputs, selects and buttons need a 3:1 boundary against what surrounds them. */
+export async function measureControlBorders(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const rgb = (c: string): [number, number, number, number] => {
+      const m = /rgba?\(([^)]+)\)/.exec(c)!;
+      const p = m[1]!
+        .split(/[ ,/]+/)
+        .filter(Boolean)
+        .map(Number);
+      return [p[0]!, p[1]!, p[2]!, p[3] ?? 1];
+    };
+    const lum = (c: number[]) => {
+      const f = (v: number) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(c[0]!) + 0.7152 * f(c[1]!) + 0.0722 * f(c[2]!);
+    };
+    const surround = (el: Element): number[] => {
+      for (let n = el.parentElement; n; n = n.parentElement) {
+        const c = rgb(getComputedStyle(n).backgroundColor);
+        if (c[3] === 1) return c;
+      }
+      return [255, 255, 255, 1];
+    };
+    const out: string[] = [];
+    const sel = "select, input:not([type=checkbox]):not([type=radio]), button:not(:disabled)";
+    for (const el of document.querySelectorAll(sel)) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) continue;
+      const cs = getComputedStyle(el);
+      if (parseFloat(cs.borderTopWidth) === 0) continue;
+      const [hi, lo] = [lum(rgb(cs.borderTopColor)), lum(surround(el))].sort((a, b) => b - a);
+      const ratio = (hi! + 0.05) / (lo! + 0.05);
+      if (ratio < 3) {
+        out.push(
+          `${el.tagName.toLowerCase()} "${(el.textContent || el.id).trim().slice(0, 20)}" ${ratio.toFixed(2)}`,
+        );
+      }
+    }
+    return out;
+  });
+}

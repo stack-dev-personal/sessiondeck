@@ -4,6 +4,7 @@ import {
   axeViolations,
   expectAllReadable,
   measureAllText,
+  measureControlBorders,
   setConnection,
   tokenRatio,
 } from "./a11y-helpers";
@@ -54,6 +55,7 @@ for (const theme of ["dark", "light"] as const) {
     await expect(page.getByTestId("board-count")).toContainText("Showing");
     bad.push(...(await axeViolations(page, `${theme} board+toolbar+hint`)));
     expectAllReadable(await measureAllText(page), `${theme} toolbar+hint`);
+    expect(await measureControlBorders(page), `${theme} board control boundaries`).toEqual([]);
     await fullShot(page, `R3.7-live-${theme}.png`);
     await page.locator("#board-filter-project").selectOption("");
 
@@ -103,6 +105,7 @@ for (const theme of ["dark", "light"] as const) {
     expect(await saved.count()).toBeGreaterThan(0);
     expect(await axeViolations(page, `${theme} settings`)).toEqual([]);
     expectAllReadable(await measureAllText(page), `${theme} settings`);
+    expect(await measureControlBorders(page), `${theme} settings control boundaries`).toEqual([]);
     await page.getByRole("button", { name: "Save" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
     expect(await axeViolations(page, `${theme} settings saved`)).toEqual([]);
