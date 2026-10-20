@@ -15,7 +15,7 @@
 | U1 hub scaffold, config, migrations (5.1), store, bearer auth, /health | sd-executor-hub | R2.8 | U0 | done d3b4f88 |
 | U2 POST /ingest: validation, 1 MB limit, id+signature dedup, batch txn, reducer wiring all kinds, golden replay | sd-executor-hub | R2.1, R2.2, R2.3, R2.7 | U1 | done 337e5d2 (R2.7 read path in U3) |
 | U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6, R2.7 | U2 | done ba15e04 |
-| U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | committed 93a97d7, in review |
+| U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | done 93a97d7, edcfd78, ffac2b5, fab329c, d2a3c6a |
 
 ## Decisions made
 
@@ -36,6 +36,8 @@
 - D-S3-4: default bind 127.0.0.1 (HUB_BIND); LAN bind is an explicit opt-in. Architecture section 7 says the hub binds to the LAN interface; Phase 2 runs on the laptop, so localhost default is the safer reading and is configurable.
 
 - D-S3-16: run interrupted by subscription usage limit (429) at about 03:00Z after U4 was committed (93a97d7) and before its review. Resumed 2026-10-20; working tree clean, U4 kept as committed and sent through /review-loop.
+
+- D-S3-17: root .dockerignore (deny-all allow-list, owned by sd-executor-contract as root config) kept as defense in depth against the legacy builder ignoring Dockerfile.dockerignore. Any future image built with the repo root as context (web, S4 compose) must extend its allow-list. Note for S4 and web owners.
 
 - infra/docker-compose.yml is S4 scope (R2.10 handoff); S3 proves the container with `docker build` + `docker run` (sd-1-S3-* names).
 
@@ -58,7 +60,17 @@
 - Review: iteration 1 sd-reviewer fix-then-merge (1 MAJOR harness gate, 6 MINOR), security Gate pass (1 MEDIUM refused sockets never destroyed, 2 LOW). Iteration 2 reviewer fix-then-merge (1 MAJOR read limiter keyed on unauthenticated header, 1 MINOR), security Gate pass (2 LOW). Iteration 3 reviewer fix-then-merge, no BLOCKING (1 MAJOR: fallback-destroy test does not exercise the timer). Exit condition met per /review-loop; the MAJOR is folded into U4 and re-reviewed there.
 - Verify: R2.5, R2.6, R2.7 pass, R2.8 re-run pass (docs/VERIFY-P2.md, 8965728, 32bc47f). Harness: 200 deltas x 5 clients, max 29.49 ms, 0 dup, 0 missing; negative self-test fails the gate as designed.
 
+### U4 (93a97d7, edcfd78, ffac2b5, fab329c, d2a3c6a)
+- Files: packages/hub/{Dockerfile,Dockerfile.dockerignore,package.json,scripts/container-smoke.mjs,src/stream.ts,test/read-limit.test.ts,test/ingest-reduce.test.ts}, docs/HUB.md, .dockerignore.
+- Review: iteration 1 sd-reviewer merge (4 MINOR); security Gate fail (HIGH: legacy builder ignores Dockerfile.dockerignore, untracked contract fixtures/raw and .env reach runtime image; MEDIUM tag-only base; 3 LOW). Iteration 2 security Gate pass (3 LOW, MEDIUM deferred); reviewer fix-then-merge (BLOCKING root .dockerignore scope, resolved by D-S3-17; 3 MINOR). Iteration 3 reviewer merge, no findings.
+- Verify: final run at fab329c, all of R2.1-R2.3, R2.5-R2.8 pass; container smoke pass (817/817 ingest, 14 live sessions, restart persistence, canary clean). docs/VERIFY-P2.md.
+
 ## Deferred findings
+
+- U4 security MEDIUM: base image node:22-bookworm-slim pinned by tag only; pin by digest before Phase 7 (documented in Dockerfile and docs/HUB.md).
+- U4: SMOKE_HOST_PORT mode unverified (fails in nested Docker); needs one run on a real host.
+- U4: arm64 image build not exercised (no buildx/qemu in the sprint container).
+
 
 - U1 sd-reviewer MINOR (packages/hub/test/auth.test.ts:111): no test for unauthenticated malformed-JSON POST returning empty 401. Folded into U2.
 - U2 security LOW: HUB_MAX_HOSTS can be filled permanently by a token holder (hosts never age out). Accepted risk with D-S3-6.
