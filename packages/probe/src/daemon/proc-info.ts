@@ -1,18 +1,22 @@
 // Process lookup and the parent walk for the liveness component (R1.7).
 //
-// Ported from ccmonitor.
-//   Source repo: https://github.com/martinwickman/ccmonitor, commit 88f7d1adfbff82a790fbb37346cc70d276548f5c
-//   Paths:       internal/hook/hook.go (findParentPID), internal/session/session.go (isShellProcess)
-//   License:     MIT, Copyright (c) 2026 Martin Wickman
-//   Changes:     Go to TypeScript. The process table is an injectable lookup (Linux reads /proc, macOS
-//                runs `ps`, Windows runs one hidden PowerShell CIM query) instead of direct OS calls,
-//                and every lookup is asynchronous. The walk starts from the pid the hook reported
-//                rather than os.Getppid(), and it returns 0 when the chain ends in a shell or a dead
-//                process instead of returning a shell pid, so the caller never tracks a transient
-//                shell. The shell list is the interpreter names a Claude Code hook can run under on
-//                Linux, macOS, and Windows (Git Bash, cmd, PowerShell).
+// Provenance (exact):
+//   findParentPID is ported from ccmonitor.
+//     Source repo: https://github.com/martinwickman/ccmonitor, commit 88f7d1adfbff82a790fbb37346cc70d276548f5c
+//     Path:        internal/hook/hook.go (findParentPID), as quoted in docs/planning/01-architecture.md
+//                  section 3.2 (the Go file itself was not opened by this work)
+//     License:     MIT, Copyright (c) 2026 Martin Wickman
+//     Changes:     Go to TypeScript. The process table is an injectable lookup (Linux reads /proc, macOS
+//                  runs /bin/ps, Windows runs one hidden PowerShell CIM snapshot) instead of direct OS
+//                  calls, and every lookup is asynchronous. The walk starts from the pid the hook
+//                  reported rather than os.Getppid(), and it returns nothing when the chain ends in a
+//                  shell or a dead process instead of returning a shell pid, so the caller never tracks
+//                  a transient shell.
+//   isShellProcess and the SHELLS list are original. They were written from a behavioural description
+//   (the interpreters a hook command line runs under on Linux, macOS, Windows); no ccmonitor source
+//   was copied for them.
 import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -23,6 +27,8 @@ export interface ProcInfo {
   name: string;
   /** Opaque process start token, equal across reads of the same process, when the OS gives one. */
   start?: string;
+  /** The start as epoch milliseconds, when it can be derived (used to reject a process younger than the hook). */
+  startMs?: number;
 }
 
 export interface ProcLookup {
@@ -34,6 +40,14 @@ export interface ProcLookup {
    * sessions file for pid-reuse protection.
    */
   cheapStart?(pid: number): string | undefined;
+  /**
+   * The chain pid, its parent, its grandparent ... (at most MAX_WALK entries, stops at a missing
+   * process or a cycle) from ONE process-table read. Lets a spawning platform walk with one child
+   * process instead of one per step.
+   */
+  ancestry?(pid: number): Promise<ProcInfo[]>;
+  /** True when lookup/ancestry start a child process; the monitor then rate-limits them. */
+  spawns?: boolean;
 }
 
 const SHELLS = new Set([
@@ -67,27 +81,43 @@ export function isShellProcess(name: string): boolean {
 export const MAX_WALK = 20;
 
 /**
- * findParentPID. `pid` is the process the hook reported as its parent. If that is not a shell it is
+ * findParent. `pid` is the process the hook reported as its parent. If that is not a shell it is
  * returned as is. Otherwise walk up through shells to the first non-shell ancestor that is alive.
- * Returns 0 when there is no such ancestor, the chain is unreadable, or a cycle is found, so the
- * caller can leave the session untracked rather than watch a shell that will exit on its own.
+ * Returns undefined when there is no such ancestor, the chain is unreadable, or a cycle is found,
+ * so the caller can leave the session untracked rather than watch a shell that will exit on its own.
  */
-export async function findParentPID(
+export async function findParent(
   pid: number,
-  procs: Pick<ProcLookup, "lookup">,
+  procs: Pick<ProcLookup, "lookup" | "ancestry">,
   isAlive: (pid: number) => boolean,
-): Promise<number> {
+): Promise<ProcInfo | undefined> {
+  if (procs.ancestry !== undefined) {
+    for (const info of (await procs.ancestry(pid)).slice(0, MAX_WALK)) {
+      if (info.pid <= 1) return undefined;
+      if (!isShellProcess(info.name)) return isAlive(info.pid) ? info : undefined;
+    }
+    return undefined;
+  }
   let cur = pid;
   const seen = new Set<number>();
   for (let i = 0; i < MAX_WALK; i += 1) {
-    if (cur <= 1 || seen.has(cur)) return 0;
+    if (cur <= 1 || seen.has(cur)) return undefined;
     seen.add(cur);
     const info = await procs.lookup(cur);
-    if (info === undefined) return 0;
-    if (!isShellProcess(info.name)) return isAlive(cur) ? cur : 0;
+    if (info === undefined) return undefined;
+    if (!isShellProcess(info.name)) return isAlive(cur) ? info : undefined;
     cur = info.ppid;
   }
-  return 0;
+  return undefined;
+}
+
+/** findParentPID: the pid of findParent, 0 when there is none. */
+export async function findParentPID(
+  pid: number,
+  procs: Pick<ProcLookup, "lookup" | "ancestry">,
+  isAlive: (pid: number) => boolean,
+): Promise<number> {
+  return (await findParent(pid, procs, isAlive))?.pid ?? 0;
 }
 
 /** Parses /proc/<pid>/stat: `pid (comm) state ppid ... starttime(field 22)`; comm may hold ")" . */
@@ -108,11 +138,31 @@ export function parseProcStat(
   return { ppid, name: normalizeProcName(text.slice(open + 1, close)), start };
 }
 
+/** Boot time in epoch ms from `btime` in /proc/stat, or undefined. */
+function readBtimeMs(procRoot: string): number | undefined {
+  try {
+    const m = /^btime\s+(\d+)/m.exec(readFileSync(path.join(procRoot, "stat"), "utf8"));
+    return m?.[1] === undefined ? undefined : Number(m[1]) * 1000;
+  } catch {
+    return undefined;
+  }
+}
+
 export function linuxProcLookup(procRoot = "/proc"): ProcLookup {
+  let btime: number | undefined | null = null;
+  const withMs = (pid: number, p: { ppid: number; name: string; start: string }): ProcInfo => {
+    if (btime === null) btime = readBtimeMs(procRoot);
+    // starttime is in clock ticks since boot; USER_HZ is 100 on every Linux Claude Code runs on.
+    return {
+      pid,
+      ...p,
+      ...(btime !== undefined ? { startMs: btime + Number(p.start) * 10 } : {}),
+    };
+  };
   const readSync = (pid: number): ProcInfo | undefined => {
     try {
       const p = parseProcStat(readFileSync(path.join(procRoot, String(pid), "stat"), "utf8"));
-      return p === undefined ? undefined : { pid, ...p };
+      return p === undefined ? undefined : withMs(pid, p);
     } catch {
       return undefined;
     }
@@ -121,7 +171,7 @@ export function linuxProcLookup(procRoot = "/proc"): ProcLookup {
     async lookup(pid) {
       try {
         const p = parseProcStat(await readFile(path.join(procRoot, String(pid), "stat"), "utf8"));
-        return p === undefined ? undefined : { pid, ...p };
+        return p === undefined ? undefined : withMs(pid, p);
       } catch {
         return undefined;
       }
@@ -130,13 +180,18 @@ export function linuxProcLookup(procRoot = "/proc"): ProcLookup {
   };
 }
 
-function run(file: string, args: string[], timeoutMs: number): Promise<string | undefined> {
+function run(
+  file: string,
+  args: string[],
+  timeoutMs: number,
+  maxBuffer = 64 * 1024,
+): Promise<string | undefined> {
   return new Promise((resolve) => {
     try {
       execFile(
         file,
         args,
-        { windowsHide: true, timeout: timeoutMs, maxBuffer: 64 * 1024, encoding: "utf8" },
+        { windowsHide: true, timeout: timeoutMs, maxBuffer, encoding: "utf8" },
         (err, stdout) => resolve(err ? undefined : stdout),
       );
     } catch {
@@ -151,25 +206,53 @@ export function parsePs(out: string, pid: number): ProcInfo | undefined {
   if (t.length < 7) return undefined;
   const ppid = Number(t[0]);
   if (!Number.isInteger(ppid)) return undefined;
+  const start = t.slice(1, 6).join(" ");
+  const ms = Date.parse(start);
   return {
     pid,
     ppid,
-    start: t.slice(1, 6).join(" "),
+    start,
+    ...(Number.isFinite(ms) ? { startMs: ms } : {}),
     name: normalizeProcName(t.slice(6).join(" ")),
   };
 }
 
+/** The absolute ps on macOS, never found through PATH. */
+export const PS_PATH = "/bin/ps";
+
 export function psLookup(timeoutMs = 3000): ProcLookup {
   return {
+    spawns: true,
     async lookup(pid) {
       if (!Number.isInteger(pid) || pid <= 0) return undefined;
-      const out = await run("ps", ["-o", "ppid=,lstart=,comm=", "-p", String(pid)], timeoutMs);
+      const out = await run(PS_PATH, ["-o", "ppid=,lstart=,comm=", "-p", String(pid)], timeoutMs);
       return out === undefined ? undefined : parsePs(out, pid);
     },
   };
 }
 
-/** Output of the Windows query below: `ppid|name|creationdate-ticks`. */
+/** .NET ticks (100 ns since 0001-01-01 UTC) to epoch ms, or undefined for 0 or garbage. */
+export function ticksToMs(ticks: string | undefined): number | undefined {
+  if (ticks === undefined || !/^\d+$/.test(ticks)) return undefined;
+  const ms = Number(BigInt(ticks) / 10000n) - 62135596800000;
+  return ms > 0 ? ms : undefined;
+}
+
+function winInfo(pidS: string, ppidS: string, name: string, start: string | undefined) {
+  const pid = Number(pidS);
+  const ppid = Number(ppidS);
+  if (!Number.isInteger(pid) || !Number.isInteger(ppid) || name === "") return undefined;
+  const ms = ticksToMs(start);
+  return {
+    pid,
+    ppid,
+    name: normalizeProcName(name),
+    ...(start ? { start } : {}),
+    ...(ms !== undefined ? { startMs: ms } : {}),
+  } satisfies ProcInfo;
+}
+
+/** Output of the single-process Windows query: `ppid|name|creationdate-ticks`. */
 export function parseWinLine(out: string, pid: number): ProcInfo | undefined {
   const line = out
     .split(/\r?\n/)
@@ -177,31 +260,94 @@ export function parseWinLine(out: string, pid: number): ProcInfo | undefined {
     .find((l) => l.includes("|"));
   if (line === undefined) return undefined;
   const [ppid, name, start] = line.split("|");
-  const n = Number(ppid);
-  if (!Number.isInteger(n) || name === undefined || name === "") return undefined;
-  return { pid, ppid: n, name: normalizeProcName(name), ...(start ? { start } : {}) };
+  return winInfo(String(pid), ppid ?? "", name ?? "", start);
 }
 
+/** Output of the snapshot query: one `pid|ppid|name|ticks` line per process. */
+export function parseWinSnapshot(out: string): Map<number, ProcInfo> {
+  const m = new Map<number, ProcInfo>();
+  for (const raw of out.split(/\r?\n/)) {
+    const [pid, ppid, name, start] = raw.trim().split("|");
+    if (pid === undefined || ppid === undefined || name === undefined) continue;
+    const info = winInfo(pid, ppid, name, start);
+    if (info !== undefined) m.set(info.pid, info);
+  }
+  return m;
+}
+
+/** The chain pid, parent, grandparent ... from a snapshot; stops at a gap, pid <= 1, or a cycle. */
+export function chainFromSnapshot(snap: Map<number, ProcInfo>, pid: number): ProcInfo[] {
+  const chain: ProcInfo[] = [];
+  const seen = new Set<number>();
+  let cur = pid;
+  while (chain.length < MAX_WALK && cur > 1 && !seen.has(cur)) {
+    seen.add(cur);
+    const info = snap.get(cur);
+    if (info === undefined) break;
+    chain.push(info);
+    cur = info.ppid;
+  }
+  return chain;
+}
+
+const WIN_PS_REL = "System32/WindowsPowerShell/v1.0/powershell.exe";
+
 /**
- * Windows: one hidden, time-limited PowerShell CIM query per lookup. The daemon calls lookup only
- * when a new pid is registered (a handful per session), never on the 10 s tick. No admin rights
- * are needed to read Win32_Process for the user's own processes, and nothing is written.
+ * The PowerShell to run: the pinned C:/Windows install; the SystemRoot environment variable is a
+ * fallback only when the pinned file is missing and the variable's own file exists.
  */
-export function windowsLookup(timeoutMs = 8000): ProcLookup {
-  const root = process.env["SystemRoot"] ?? "C:\\Windows";
-  const ps = `${root.replaceAll("\\", "/")}/System32/WindowsPowerShell/v1.0/powershell.exe`;
+export function resolvePowerShell(
+  env: Record<string, string | undefined> = process.env,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  const pinned = `C:/Windows/${WIN_PS_REL}`;
+  if (exists(pinned)) return pinned;
+  const root = env["SystemRoot"];
+  if (root !== undefined && root !== "") {
+    const alt = `${root.replaceAll("\\", "/")}/${WIN_PS_REL}`;
+    if (exists(alt)) return alt;
+  }
+  return pinned;
+}
+
+const WIN_FIELDS =
+  `"$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)|" + ` +
+  `$(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 })`;
+
+/**
+ * Windows: hidden, time-limited PowerShell CIM queries. `lookup` reads one process; `ancestry` reads
+ * the whole table once and walks it in JS, so a registration costs one child process however deep
+ * the shell chain is. The daemon calls these only when a pid is registered or re-checked, never on
+ * the 10 s tick, and the monitor rate-limits them. No admin rights are needed to read Win32_Process
+ * for the user's own processes, and nothing is written.
+ */
+export function windowsLookup(timeoutMs = 8000, powershell?: string): ProcLookup {
+  const ps = powershell ?? resolvePowerShell();
+  const args = (script: string): string[] => [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ];
   return {
+    spawns: true,
     async lookup(pid) {
       if (!Number.isInteger(pid) || pid <= 0) return undefined;
       const script =
         `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; ` +
-        `if ($p) { [Console]::Out.WriteLine("$($p.ParentProcessId)|$($p.Name)|$($p.CreationDate.ToUniversalTime().Ticks)") }`;
-      const out = await run(
-        ps,
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-        timeoutMs,
-      );
+        `if ($p) { [Console]::Out.WriteLine("$($p.ParentProcessId)|$($p.Name)|$(if ($p.CreationDate) { $p.CreationDate.ToUniversalTime().Ticks } else { 0 })") }`;
+      const out = await run(ps, args(script), timeoutMs);
       return out === undefined ? undefined : parseWinLine(out, pid);
+    },
+    async ancestry(pid) {
+      if (!Number.isInteger(pid) || pid <= 1) return [];
+      const script =
+        `Get-CimInstance Win32_Process | ForEach-Object { ` +
+        `[Console]::Out.WriteLine(${WIN_FIELDS}) }`;
+      const out = await run(ps, args(script), timeoutMs, 4 * 1024 * 1024);
+      return out === undefined ? [] : chainFromSnapshot(parseWinSnapshot(out), pid);
     },
   };
 }

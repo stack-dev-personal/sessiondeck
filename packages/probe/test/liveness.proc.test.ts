@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("R1.7 real process", () => {
-  it("detects a killed pid and queues alive:false within 15 s", { timeout: 40_000 }, async () => {
+  it("detects a killed pid and queues alive:false within 15 s", { timeout: 60_000 }, async () => {
     tmp = mkdtempSync(join(tmpdir(), "sd-liveness-proc-"));
     child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
       windowsHide: true,
@@ -45,6 +45,13 @@ describe("R1.7 real process", () => {
     };
     await m.registerSession("real-proc-session", pid, env.ts);
     expect(m.snapshot()[0]).toMatchObject({ pid, state: "tracking" });
+    // A node process is not named "claude", so it is on probation until the first tick finds it alive.
+    const regAt = Date.now();
+    while (m.snapshot()[0]?.probation === true && Date.now() - regAt < 20_000) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(m.snapshot()[0]).toMatchObject({ pid, state: "tracking" });
+    expect(m.snapshot()[0]?.probation).toBeUndefined();
     const exited = new Promise<void>((r) => child!.once("exit", () => r()));
     const killedAt = Date.now();
     child.kill("SIGKILL");

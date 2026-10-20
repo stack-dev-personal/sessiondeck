@@ -1,6 +1,6 @@
 // Liveness harness (R1.7). Real child processes stand in for claude; the real LivenessMonitor (real
 // process.kill probe, real process lookup, real outbox, real state file, default 10 s tick) watches
-// them. Prints evidence lines; exit 1 on any failure. Takes about 15 s.
+// them. Prints evidence lines; exit 1 on any failure. Takes about 40 s.
 //   node scripts/harness-liveness.mjs        (Node 22.18+ runs the .ts sources directly)
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -77,6 +77,17 @@ m.onSpoolLine(env(SC2, C.pid));
 await sleep(500);
 m.onSpoolLine(hook(SB, "SessionEnd"));
 await sleep(500);
+
+// node children are not named "claude": each is on probation until the first tick finds it alive.
+for (
+  let i = 0;
+  i < 150 && m.snapshot().some((e) => e.state === "tracking" && e.probation === true);
+  i += 1
+)
+  await sleep(100);
+console.log(
+  `R1.7 probation_cleared=${m.snapshot().every((e) => e.state !== "tracking" || e.probation !== true)}`,
+);
 
 const killedAt = Date.now();
 for (const c of [A, B, C]) c.kill("SIGKILL");

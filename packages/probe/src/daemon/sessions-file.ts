@@ -5,7 +5,15 @@
 // startedAt, procStart, status, updatedAt. There is no fixture in packages/contract/fixtures, so
 // every field is optional here except what a lookup needs, extra fields are ignored, and a file of
 // an unknown shape is skipped (logged once per daemon run, never an error).
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Logger } from "./types.ts";
@@ -19,7 +27,32 @@ export interface SessionFile {
 }
 
 const MAX_FILES = 500;
-const MAX_FILE_BYTES = 64 * 1024;
+export const MAX_FILE_BYTES = 64 * 1024;
+
+/**
+ * Reads one regular file without ever blocking or following a link: lstat must say "regular file"
+ * (a symlink, FIFO, or device is skipped), the open is O_NONBLOCK (and O_NOFOLLOW on POSIX), the
+ * opened descriptor is fstat-checked again (closes the stat/open race), and at most
+ * MAX_FILE_BYTES + 1 bytes are read through it. Returns undefined for anything else or over the cap.
+ */
+export function readRegularFileCapped(file: string, maxBytes = MAX_FILE_BYTES): string | undefined {
+  if (!lstatSync(file).isFile()) return undefined;
+  const flags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(file, flags);
+  try {
+    if (!fstatSync(fd).isFile()) return undefined;
+    const buf = Buffer.allocUnsafe(maxBytes + 1);
+    let n = 0;
+    while (n < buf.length) {
+      const r = readSync(fd, buf, n, buf.length - n, null);
+      if (r === 0) break;
+      n += r;
+    }
+    return n > maxBytes ? undefined : buf.toString("utf8", 0, n);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 export function sessionsDir(env: Record<string, string | undefined> = process.env): string {
   const base = env["CLAUDE_CONFIG_DIR"];
@@ -89,11 +122,8 @@ export class SessionsReader {
     for (const n of names.slice(0, MAX_FILES)) {
       try {
         const p = path.join(this.dir, n);
-        if (statSync(p).size > MAX_FILE_BYTES) {
-          unusable += 1;
-          continue;
-        }
-        const e = parseSessionFile(readFileSync(p, "utf8"), n);
+        const text = readRegularFileCapped(p);
+        const e = text === undefined ? undefined : parseSessionFile(text, n);
         if (e === undefined) unusable += 1;
         else out.push(e);
       } catch {
@@ -110,8 +140,8 @@ export class SessionsReader {
     const n = `${pid}.json`;
     try {
       const p = path.join(this.dir, n);
-      if (statSync(p).size > MAX_FILE_BYTES) return undefined;
-      return parseSessionFile(readFileSync(p, "utf8"), n);
+      const text = readRegularFileCapped(p);
+      return text === undefined ? undefined : parseSessionFile(text, n);
     } catch {
       return undefined;
     }
