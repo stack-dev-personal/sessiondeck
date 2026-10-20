@@ -42,3 +42,19 @@ Branch p1/probe-daemon, HEAD a7a7e93. Verified 2026-10-20T19:22Z to 19:30Z (Linu
 Windows-only paths (win32 real-filesystem tests, junction cases, win32 CI matrix): CI pending. HEAD a7a7e93 run 39482860743 in_progress; 763ec25 run 39482661180 cancelled (superseded); earlier run 39480584779 (e7b6660) failed (the transcript test the 763ec25 fix addresses). Not verified by CI yet.
 
 U4a count: 5 pass / 1 fail / 0 unverifiable (R1.5 integration gap; Windows CI pending).
+
+## S2 U4b integration check (autostart R1.4, daemon-process outage R1.5)
+
+Branch p1/probe-daemon, HEAD 7c1f9a7. Verified 2026-10-20T22:21Z to 22:25Z (Linux WSL2, node v22.23.3). One test process at a time, --maxWorkers=2.
+
+| ID | Requirement | Command | Key output | Result |
+|---|---|---|---|---|
+| R1.4 | `probe daemon install/uninstall` registers the daemon at logon (Windows per-user Task Scheduler, Limited, InteractiveToken, files under %LOCALAPPDATA%\sessiondeck, D-S2-7; Linux systemd user unit) | `pnpm exec vitest run --maxWorkers=2` (packages/probe, unit, includes test/autostart.test.ts with fake runner) | 11 files passed; 305 passed, 1 skipped (306), 7.2 s; `test/autostart.test.ts (44 tests)` green | PASS |
+| R1.4 | Linux systemd unit, real files | `pnpm exec vitest run -c vitest.proc.config.ts --maxWorkers=2 test/autostart.proc.test.ts --reporter=verbose` | `systemd user unit (real files, no user bus) > writes the unit, prints how to start it, exits 0; uninstall removes it` passed (144 ms); 1 passed, 2 skipped | PASS (Linux) |
+| R1.4 | Windows real Task Scheduler and real wscript launcher restart | same file: `windows Task Scheduler (real) > registers a logon task for the current user, Limited, and removes it`; `windows launcher restart (real wscript) > restarts a daemon that exits non-zero and stops when it exits 0` | Both skipped on Linux. Last real windows-latest result: run 39486100922 on 4eb9e97, only the RunLevel assertion failed; fixed in 9b1ccc7. No run on 9b1ccc7 or 7c1f9a7 exists because GitHub Actions has no runner assigned since 22:15Z | verified by CI (pending: Actions unavailable) |
+| R1.4 | docs/PROBE.md daemon section matches behavior | read docs/PROBE.md lines 104-175 against the autostart tests | Section exists: task name SessionDeckProbeDaemon, logon trigger, Limited, no admin, files under %LOCALAPPDATA%\sessiondeck, launcher restart backoff, /End then taskkill of the node pid, Linux unit with Restart=on-failure. Matches the test names; not re-checked against a real Windows host | PASS (read check) |
+| R1.5 | All events delivered in order across an outage, through a real `probe daemon run` process | `node scripts/build.mjs` then `node scripts/harness-daemon-outage.mjs` (packages/probe), compressed default SD_OUTAGE_MS=15000 | `R1.5 daemon outage 15000ms via probe daemon run: sent=600 accepted=600 duplicates=0 gaps=0 order=outage-host=ok delivered_during_outage=0 resent_ids=0 recover_ms=501`, `RESULT pass`, exit 0 | PASS (compressed, 15 s) |
+| R1.5 | Full 10 minute outage through the daemon process | `SD_OUTAGE_MS=600000 SD_BACKOFF_CAP_MS=30000 node scripts/harness-daemon-outage.mjs` (about 11 min, exceeds the 10 min shell call limit) | NOT RUN. Deferred to the session-close verify. The 10 minute component-level run passed at 0143d8e (see R1.5 row above) | NOT VERIFIED at 600000 ms through the daemon process |
+| gates | typecheck, lint (packages/probe) | `pnpm typecheck`; `pnpm lint` | both exit 0 | PASS |
+
+U4b count: 4 pass / 0 fail / 2 unverifiable-now (Windows scheduler and launcher: CI pending; 10 min daemon-process outage: deferred).
