@@ -194,6 +194,7 @@ describe("R2.9 event compaction", () => {
     const before = derived(store);
     const total = store.countEvents();
     const r = await compactEvents(store, capture(), {
+      maxTs: Infinity,
       cutoffMs: cut,
       maxOpenSessionsPerHost: OPEN,
       batchSize: 3,
@@ -226,6 +227,7 @@ describe("R2.9 event compaction", () => {
     expect(derived(store)).toEqual(before);
     // Idempotent.
     const again = await compactEvents(store, capture(), {
+      maxTs: Infinity,
       cutoffMs: cut,
       maxOpenSessionsPerHost: OPEN,
     });
@@ -237,6 +239,7 @@ describe("R2.9 event compaction", () => {
     const before = derived(store);
     for (const c of [cut - 2 * DAY_MS, cut, cut + 2 * DAY_MS]) {
       await compactEvents(store, capture(), {
+        maxTs: Infinity,
         cutoffMs: c,
         maxOpenSessionsPerHost: OPEN,
         batchSize: 5,
@@ -250,7 +253,11 @@ describe("R2.9 event compaction", () => {
   it("all events compacted: replay rebuilds from baselines alone", async () => {
     const { store } = setup();
     const before = derived(store);
-    await compactEvents(store, capture(), { cutoffMs: NOW, maxOpenSessionsPerHost: OPEN });
+    await compactEvents(store, capture(), {
+      maxTs: Infinity,
+      cutoffMs: NOW,
+      maxOpenSessionsPerHost: OPEN,
+    });
     expect(store.countEvents()).toBe(0);
     replay(store, capture(), { maxOpenSessionsPerHost: OPEN });
     expect(derived(store)).toEqual(before);
@@ -266,6 +273,7 @@ describe("R2.9 event compaction", () => {
     ing.ingest("h1", [a, recent, { ...c, ts: cut - 500 }]);
     const before = derived(t.store);
     const r = await compactEvents(t.store, capture(), {
+      maxTs: Infinity,
       cutoffMs: cut,
       maxOpenSessionsPerHost: OPEN,
     });
@@ -276,7 +284,11 @@ describe("R2.9 event compaction", () => {
 
   it("dedup still works at the cut: signature window against retained events, watermark against compacted ones", async () => {
     const { store, ing, envs } = setup();
-    await compactEvents(store, capture(), { cutoffMs: cut, maxOpenSessionsPerHost: OPEN });
+    await compactEvents(store, capture(), {
+      maxTs: Infinity,
+      cutoffMs: cut,
+      maxOpenSessionsPerHost: OPEN,
+    });
     const retained = store.listEventsAfterRowid(0, 1)[0]!;
     const orig = envs.find((e) => e.id === retained.id)!;
     // Same content 1 s later, new id and seq: a signature duplicate of a retained event.
@@ -292,7 +304,7 @@ describe("R2.9 event compaction", () => {
       seq: 10_000,
     });
     const r = ing.ingest(orig.host, [dupSig, old, compacted, fresh]);
-    expect(r).toMatchObject({ accepted: 1, duplicates: 3 });
+    expect(r).toMatchObject({ accepted: 1, duplicates: 1, expired: 2 });
   });
 
   it("does not delete transcript_lines or move their rowids (usage index high-water mark)", async () => {
@@ -315,6 +327,7 @@ describe("R2.9 event compaction", () => {
     const before = lines();
     expect(before).toHaveLength(2);
     const r = await compactEvents(t.store, capture(), {
+      maxTs: Infinity,
       cutoffMs: cut,
       maxOpenSessionsPerHost: OPEN,
     });
@@ -342,7 +355,11 @@ describe("R2.9 statusline sample retention and scheduling", () => {
       });
     }
     const log = capture();
-    const r = await pruneSamples(t.store, log, { cutoffMs: now - 10 * DAY_MS + 1, batchSize: 4 });
+    const r = await pruneSamples(t.store, log, {
+      maxTs: Infinity,
+      cutoffMs: now - 10 * DAY_MS + 1,
+      batchSize: 4,
+    });
     expect(r.samples).toBe(15); // i = 10..24
     const left = (
       t.store.db.prepare("SELECT COUNT(*) AS n FROM statusline_samples").get() as { n: number }
@@ -448,6 +465,7 @@ describe("R2.9 compaction over the Phase 0 fixture sequences", () => {
         const idx = Math.min(seq.envelopes.length - 1, Math.floor(seq.envelopes.length * frac));
         const cutoffMs = frac >= 1 ? Number.MAX_SAFE_INTEGER : seq.envelopes[idx]!.ts;
         const c = await compactEvents(t.store, capture(), {
+          maxTs: Infinity,
           cutoffMs,
           maxOpenSessionsPerHost: OPEN,
           batchSize: 7,

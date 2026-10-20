@@ -10,10 +10,10 @@ let cleanup: (() => void) | undefined;
 afterEach(() => cleanup?.());
 
 describe("migrations", () => {
-  it("creates all tables and indexes, is idempotent, records versions 1 to 3", () => {
+  it("creates all tables and indexes, is idempotent, records versions 1 to 4", () => {
     const t = tempStore({ file: true });
     cleanup = t.cleanup;
-    expect(t.store.migrate()).toEqual([1, 2, 3]);
+    expect(t.store.migrate()).toEqual([1, 2, 3, 4]);
     const names = (type: string) =>
       (
         t.store.db
@@ -31,6 +31,7 @@ describe("migrations", () => {
         "layouts",
         "session_baselines",
         "compaction_state",
+        "hub_lease",
         "schema_migrations",
       ]),
     );
@@ -39,7 +40,7 @@ describe("migrations", () => {
     );
     expect(names("index")).not.toContain("events_signature"); // superseded by events_signature_ts
     expect(t.store.migrate()).toEqual([]);
-    expect(t.store.schemaVersion()).toBe(3);
+    expect(t.store.schemaVersion()).toBe(4);
   });
 
   it("sets WAL and foreign keys", () => {

@@ -1,6 +1,7 @@
 import { loadConfig } from "./config.ts";
 import { Store } from "./db/store.ts";
 import { PricingProvider, cachePathFor, loadPricing, refreshPricing } from "./pricing/loader.ts";
+import { startLease } from "./lease.ts";
 import { startRetentionTimer } from "./retention.ts";
 import { buildServer } from "./server.ts";
 
@@ -28,9 +29,14 @@ export async function serve(): Promise<void> {
     sampleRetentionDays: config.sampleRetentionDays,
     maxOpenSessionsPerHost: config.maxOpenSessionsPerHost,
     intervalMs: config.retentionIntervalMs,
+    maxClockSkewMs: config.maxClockSkewMs,
+    compactBatchSize: config.compactBatchSize,
+    compactBatchBudgetMs: config.compactBatchBudgetMs,
   });
+  const lease = startLease(store, app.log);
   app.addHook("onClose", async () => {
     retention.stop();
+    lease.stop();
     store.close();
   });
   await app.listen({ port: config.port, host: config.bind });

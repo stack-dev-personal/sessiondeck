@@ -7,10 +7,11 @@
 // wait up to busy_timeout (5 s) and then fail with SQLITE_BUSY (the probe retries from its spool),
 // so nothing ingested during a replay can be lost or interleaved. A crash or exception rolls
 // back and leaves the old snapshots. Run it with the hub stopped for a clean experience; the
-// hub's in-process usage index notices the project_dir change only through its own writes.
+// hub's in-process state (WS clients, usage index) would go stale, so the CLI refuses while the
+// serving hub's lease is fresh.
 import type { Envelope, HostOs, SessionSnapshot } from "@sessiondeck/contract";
 import type { EventRow, SampleRow, Store } from "./db/store.ts";
-import { MemSessions, SnapshotEngine } from "./ingest/engine.ts";
+import { MemSessions, SnapshotEngine, type SessionSource } from "./ingest/engine.ts";
 import { rowOf, type Logger } from "./ingest/ingestor.ts";
 
 /** Events read per page, and events per engine (an engine stands in for one ingest batch). */
@@ -41,12 +42,14 @@ export interface FoldStats {
 }
 
 /**
- * Folds events (already in ingest order) into mem. Transcript and probe envelopes and events
+ * Folds events (already in ingest order) into source; commit receives every snapshot a chunk
+ * changed, after the chunk (the next chunk's engine reads it back from source). Transcript and probe envelopes and events
  * without a session do not touch snapshots, exactly as at ingest. A reducer exception is logged
  * with the envelope id and counted, and the event is skipped, as at ingest.
  */
 export function foldEvents(
-  mem: MemSessions,
+  source: SessionSource,
+  commit: (sn: SessionSnapshot) => void,
   rows: readonly EventRow[],
   log: Logger,
   maxOpenSessionsPerHost: number,
@@ -54,7 +57,7 @@ export function foldEvents(
   stats: FoldStats,
 ): void {
   for (let i = 0; i < rows.length; i += CHUNK) {
-    const engine = new SnapshotEngine(mem, log, maxOpenSessionsPerHost);
+    const engine = new SnapshotEngine(source, log, maxOpenSessionsPerHost);
     const end = Math.min(rows.length, i + CHUNK);
     for (let j = i; j < end; j++) {
       const row = rows[j] as EventRow;
@@ -73,7 +76,7 @@ export function foldEvents(
         );
       }
     }
-    for (const sn of engine.dirtySnapshots()) mem.map.set(sn.session_id, sn);
+    for (const sn of engine.dirtySnapshots()) commit(sn);
   }
 }
 
@@ -85,8 +88,38 @@ export function loadBaselines(store: Store): MemSessions {
   return mem;
 }
 
+/**
+ * Compaction's view of the baselines: reads go to the session_baselines table, so a batch sees
+ * what other writers committed (it runs inside the batch's own write transaction) and no
+ * whole-map copy or full load is needed per batch.
+ */
+export class BaselineSessions implements SessionSource {
+  constructor(private readonly store: Store) {}
+
+  get(id: string): SessionSnapshot | undefined {
+    const raw = this.store.getBaseline(id);
+    return raw === undefined ? undefined : (JSON.parse(raw) as SessionSnapshot);
+  }
+
+  listOpenForHost(host: string, skip: (id: string) => boolean): SessionSnapshot[] {
+    return this.store
+      .listOpenBaselinesForHost(host)
+      .map((raw) => JSON.parse(raw) as SessionSnapshot)
+      .filter((sn) => !skip(sn.session_id));
+  }
+
+  countOpenForHost(host: string): number {
+    return this.store.countOpenBaselinesForHost(host);
+  }
+}
+
 export interface ReplayOptions {
   maxOpenSessionsPerHost: number;
+  /**
+   * Samples outside [minTs, maxTs] are not rebuilt: the retention window must not be undone by
+   * replay (a pruned sample must not come back from a retained statusline event).
+   */
+  sampleWindow?: { minTs: number; maxTs: number };
   /** Called after every page of events, inside the transaction (tests use it to interleave). */
   onProgress?: (eventsSoFar: number) => void;
 }
@@ -106,15 +139,18 @@ export function replay(store: Store, log: Logger, opts: ReplayOptions): ReplayRe
     const stats: FoldStats = { exceptions: 0 };
     let events = 0;
     let samples = 0;
+    const win = opts.sampleWindow;
     const onSample = (s: SampleRow): void => {
+      if (win !== undefined && (s.ts < win.minTs || s.ts > win.maxTs)) return;
       store.upsertSample(s);
       samples++;
     };
+    const commit = (sn: SessionSnapshot): void => void mem.map.set(sn.session_id, sn);
     let after = 0;
     for (;;) {
       const rows = store.listEventsAfterRowid(after, PAGE);
       if (rows.length === 0) break;
-      foldEvents(mem, rows, log, opts.maxOpenSessionsPerHost, onSample, stats);
+      foldEvents(mem, commit, rows, log, opts.maxOpenSessionsPerHost, onSample, stats);
       events += rows.length;
       after = (rows[rows.length - 1] as { rid: number }).rid;
       opts.onProgress?.(events);

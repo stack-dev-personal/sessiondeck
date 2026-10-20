@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -347,8 +348,10 @@ export class Store {
   advanceCompaction(cutTs: number, compacted: number, now: number): void {
     this.stmt(
       `INSERT INTO compaction_state (id, cut_ts, compacted_events, updated_at) VALUES (1, @cutTs, @compacted, @now)
-       ON CONFLICT(id) DO UPDATE SET cut_ts = CASE WHEN excluded.cut_ts > cut_ts THEN excluded.cut_ts ELSE cut_ts END,
-         compacted_events = compacted_events + excluded.compacted_events, updated_at = excluded.updated_at`,
+       ON CONFLICT(id) DO UPDATE SET
+         cut_ts = CASE WHEN excluded.cut_ts > compaction_state.cut_ts THEN excluded.cut_ts ELSE compaction_state.cut_ts END,
+         compacted_events = compaction_state.compacted_events + excluded.compacted_events,
+         updated_at = excluded.updated_at`,
     ).run({ cutTs, compacted, now });
   }
 
@@ -359,11 +362,53 @@ export class Store {
     }[];
   }
 
-  upsertBaseline(sessionId: string, snapshot: string, now: number): void {
+  upsertBaseline(sn: SessionSnapshot, now: number): void {
     this.stmt(
-      `INSERT INTO session_baselines (session_id, snapshot, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at`,
-    ).run(sessionId, snapshot, now);
+      `INSERT INTO session_baselines (session_id, snapshot, updated_at, host, state) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at,
+         host = excluded.host, state = excluded.state`,
+    ).run(sn.session_id, JSON.stringify(sn), now, sn.host, sn.state);
+  }
+
+  getBaseline(sessionId: string): string | undefined {
+    const r = this.stmt("SELECT snapshot FROM session_baselines WHERE session_id = ?").get(
+      sessionId,
+    ) as { snapshot: string } | undefined;
+    return r?.snapshot;
+  }
+
+  listOpenBaselinesForHost(host: string): string[] {
+    return (
+      this.stmt("SELECT snapshot FROM session_baselines WHERE host = ? AND state <> 'ended'").all(
+        host,
+      ) as { snapshot: string }[]
+    ).map((r) => r.snapshot);
+  }
+
+  countOpenBaselinesForHost(host: string): number {
+    return (
+      this.stmt(
+        "SELECT COUNT(*) AS n FROM session_baselines WHERE host = ? AND state <> 'ended'",
+      ).get(host) as { n: number }
+    ).n;
+  }
+
+  /** The serving hub's lease, or undefined when none was ever written or it was released. */
+  getLease(): { holder: string; expires_at: number } | undefined {
+    return this.stmt("SELECT holder, expires_at FROM hub_lease WHERE id = 1").get() as
+      { holder: string; expires_at: number } | undefined;
+  }
+
+  setLease(holder: string, expiresAt: number): void {
+    this.stmt(
+      `INSERT INTO hub_lease (id, holder, expires_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at`,
+    ).run(holder, expiresAt);
+  }
+
+  /** Releases the lease if this holder still owns it. */
+  clearLease(holder: string): void {
+    this.stmt("DELETE FROM hub_lease WHERE id = 1 AND holder = ?").run(holder);
   }
 
   /**
@@ -385,12 +430,15 @@ export class Store {
     return this.stmt("DELETE FROM events WHERE rowid >= ? AND rowid <= ?").run(from, to).changes;
   }
 
-  /** Deletes up to limit statusline samples with ts < cutoff (statusline_samples_ts); returns the count. */
-  deleteSamplesBefore(cutoffMs: number, limit: number): number {
+  /**
+   * Deletes up to limit statusline samples with ts < cutoff or ts > maxTs (statusline_samples_ts);
+   * the second bound removes samples stamped in the future, which would otherwise never age out.
+   */
+  deleteSamplesOutside(cutoffMs: number, maxTs: number, limit: number): number {
     return this.stmt(
       `DELETE FROM statusline_samples WHERE (session_id, ts) IN
-         (SELECT session_id, ts FROM statusline_samples WHERE ts < ? LIMIT ?)`,
-    ).run(cutoffMs, limit).changes;
+         (SELECT session_id, ts FROM statusline_samples WHERE ts < ? OR ts > ? LIMIT ?)`,
+    ).run(cutoffMs, maxTs, limit).changes;
   }
 
   /** Replay only: drops every session row (the caller re-inserts inside the same transaction). */

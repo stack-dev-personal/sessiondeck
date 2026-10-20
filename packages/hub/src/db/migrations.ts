@@ -50,4 +50,20 @@ CREATE TABLE compaction_state (id INTEGER PRIMARY KEY, cut_ts BIGINT NOT NULL, c
 CREATE INDEX statusline_samples_ts ON statusline_samples(ts);
 `,
   },
+  {
+    version: 4,
+    name: "baseline_index_and_lease",
+    // Compaction folds each batch against the baselines table itself (inside the batch's write
+    // transaction), so the open-session cap and the supersede pid index need host and state as
+    // columns. The backfill uses SQLite json_extract; the Postgres twin of this file (Phase 7)
+    // uses snapshot::json ->> 'host'. hub_lease is a single row (id = 1): the serving hub
+    // refreshes expires_at every few seconds; replay and compact refuse while it is fresh.
+    sql: `
+ALTER TABLE session_baselines ADD COLUMN host TEXT;
+ALTER TABLE session_baselines ADD COLUMN state TEXT;
+UPDATE session_baselines SET host = json_extract(snapshot, '$.host'), state = json_extract(snapshot, '$.state');
+CREATE INDEX session_baselines_host_state ON session_baselines(host, state);
+CREATE TABLE hub_lease (id INTEGER PRIMARY KEY, holder TEXT NOT NULL, expires_at BIGINT NOT NULL);
+`,
+  },
 ];

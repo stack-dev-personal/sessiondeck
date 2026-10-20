@@ -44,6 +44,11 @@ export interface HubConfig {
   sampleRetentionDays: number;
   /** HUB_RETENTION_INTERVAL_MS: time between retention passes; 0 disables the timer. */
   retentionIntervalMs: number;
+  /** HUB_MAX_CLOCK_SKEW_MS: ingest rejects an envelope whose ts is further ahead of the hub clock. */
+  maxClockSkewMs: number;
+  /** HUB_COMPACT_BATCH_SIZE / HUB_COMPACT_BATCH_MS: events and fold time budget per compaction batch. */
+  compactBatchSize: number;
+  compactBatchBudgetMs: number;
 }
 
 /** What the replay and compact subcommands need; no token, no network settings. */
@@ -53,6 +58,9 @@ export interface RetentionSettings {
   sampleRetentionDays: number;
   retentionIntervalMs: number;
   maxOpenSessionsPerHost: number;
+  maxClockSkewMs: number;
+  compactBatchSize: number;
+  compactBatchBudgetMs: number;
 }
 
 function nonNegInt(env: Record<string, string | undefined>, name: string, dflt: number): number {
@@ -70,6 +78,9 @@ export function loadRetentionSettings(env: Record<string, string | undefined>): 
     sampleRetentionDays: posInt(env, "HUB_SAMPLE_RETENTION_DAYS", 30),
     retentionIntervalMs: nonNegInt(env, "HUB_RETENTION_INTERVAL_MS", 3_600_000),
     maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
+    maxClockSkewMs: posInt(env, "HUB_MAX_CLOCK_SKEW_MS", 86_400_000),
+    compactBatchSize: posInt(env, "HUB_COMPACT_BATCH_SIZE", 100),
+    compactBatchBudgetMs: posInt(env, "HUB_COMPACT_BATCH_MS", 10),
   };
 }
 
@@ -125,6 +136,9 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     eventRetentionDays: retention.eventRetentionDays,
     sampleRetentionDays: retention.sampleRetentionDays,
     retentionIntervalMs: retention.retentionIntervalMs,
+    maxClockSkewMs: retention.maxClockSkewMs,
+    compactBatchSize: retention.compactBatchSize,
+    compactBatchBudgetMs: retention.compactBatchBudgetMs,
     ...(pricingFile !== undefined && pricingFile !== "" ? { pricingFile } : {}),
     ...(timezone !== undefined && timezone !== "" ? { timezone } : {}),
     pricingFetch: bool(env, "HUB_PRICING_FETCH", true),

@@ -189,6 +189,9 @@ function childReplay(): void {
 async function childCompact(): Promise<void> {
   const store = Store.open(dbPath);
   store.migrate();
+  // Diagnostic: --autocheckpoint <pages> (0 = off) separates WAL checkpoint stalls (shared with ingest) from fold cost.
+  const ck = opt("autocheckpoint", "");
+  if (ck !== "") store.db.pragma(`wal_autocheckpoint = ${Number(ck)}`);
   const h = monitorEventLoopDelay({ resolution: 1 });
   h.enable();
   // Independent lag probe: a 1 ms timer measures how late it fires while compaction yields.
@@ -201,7 +204,11 @@ async function childCompact(): Promise<void> {
   }, 1);
   const cutoffMs = Date.now() - Number(opt("cutoff-days", "15")) * DAY_MS;
   const before = store.countEvents();
-  const r = await compactEvents(store, quietLog(), { cutoffMs, maxOpenSessionsPerHost: 100000 });
+  const r = await compactEvents(store, quietLog(), {
+    cutoffMs,
+    maxTs: Date.now() + DAY_MS,
+    maxOpenSessionsPerHost: 100000,
+  });
   clearInterval(probe);
   h.disable();
   console.log(

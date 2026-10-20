@@ -25,6 +25,8 @@ export function buildServer(opts: {
   logStream?: { write(msg: string): void };
   /** Test hook: clock for the rate limiter and the hosts.last_seen column. */
   now?: () => number;
+  /** Test hook: wall clock for the envelope-ts bound (defaults to Date.now, independent of `now`). */
+  wallClock?: () => number;
   /** Test hooks for WS /stream. */
   heartbeatMs?: number;
   maxBufferedBytes?: number;
@@ -140,6 +142,8 @@ export function buildServer(opts: {
       now,
     ),
     maxHosts: opts.config.maxHosts,
+    now: opts.wallClock ?? Date.now,
+    maxClockSkewMs: opts.config.maxClockSkewMs,
     sanitize,
   });
   registerRead(app, opts.store, now);

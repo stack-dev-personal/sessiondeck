@@ -124,6 +124,15 @@ export class SnapshotEngine {
     this.cache.set(snap.session_id, snap);
     this.reindex(old, snap);
     if (snap !== this.original.get(snap.session_id)) this.dirty.add(snap.session_id);
+    // Keep the cached open count exact: ingest (probe batches) and replay (chunks) must admit and
+    // refuse at the same event, so a session that ends frees its slot and a revived one takes it.
+    const n = this.openCount.get(snap.host);
+    if (n !== undefined && old !== undefined) {
+      const wasOpen = old.state !== "ended";
+      const isOpen = snap.state !== "ended";
+      if (wasOpen && !isOpen) this.openCount.set(snap.host, n - 1);
+      else if (!wasOpen && isOpen) this.openCount.set(snap.host, n + 1);
+    }
   }
 
   // Open-session cap per host: counted lazily, once per host per engine.
