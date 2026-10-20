@@ -111,7 +111,7 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
   await fullShot(page, "R3.2-board.png", { baseline: true });
 });
 
-test("R3.2 compact rows: every nullable field null to longest value moves nothing at 320-480 px", async ({
+test("R3.2 compact rows: every nullable field null to longest value moves nothing and never clips at 320-1280 px", async ({
   page,
 }) => {
   await page.addInitScript(() => window.localStorage.setItem("sd.compact", "1"));
@@ -177,9 +177,34 @@ test("R3.2 compact rows: every nullable field null to longest value moves nothin
       captured_at: future,
     },
     tasks: { total: 100, completed: 100, last_subject: "x" },
-    subagents: [],
+    subagents: Array.from({ length: 12 }, (_, i) => ({
+      agent_id: `agent-${i}`,
+      agent_type: "general-purpose",
+      started_at: future - 60_000,
+      ended_at: null,
+      tokens: null,
+      context_window: null,
+      model: null,
+    })),
   };
-  for (const w of [320, 360, 400, 440, 480]) {
+  // No slot may pass the card content box (the card clips silently) and the name keeps room.
+  const noClip = (id: string) =>
+    page.evaluate((sid) => {
+      const card = document.querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
+      const cs = getComputedStyle(card);
+      const c = card.getBoundingClientRect();
+      const right = c.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight) + 0.5;
+      const over: string[] = [];
+      for (const e of Array.from(card.querySelectorAll<HTMLElement>("[data-slot], [data-meter]"))) {
+        if (e.closest('[data-slot="tasks"]') && e.dataset["slot"] !== "tasks") continue;
+        const r = e.getBoundingClientRect();
+        if (r.right > right)
+          over.push(`${e.dataset["slot"] ?? e.dataset["meter"]}:${r.right}>${right}`);
+      }
+      const name = card.querySelector<HTMLElement>('[data-slot="name"]')!;
+      return { over, nameW: name.getBoundingClientRect().width };
+    }, id);
+  for (const w of [320, 360, 400, 440, 480, 520, 560, 600, 640, 800, 1280]) {
     await page.setViewportSize({ width: w, height: 800 });
     const id = await patch(empty);
     await raf();
@@ -190,5 +215,8 @@ test("R3.2 compact rows: every nullable field null to longest value moves nothin
     const after = await boxes(id);
     expect(after.card, `${w}px card box`).toEqual(before.card);
     expect(after.items, `${w}px item boxes`).toEqual(before.items);
+    const m = await noClip(id);
+    expect(m.over, `${w}px slots past content box`).toEqual([]);
+    expect(m.nameW, `${w}px name width`).toBeGreaterThan(0);
   }
 });

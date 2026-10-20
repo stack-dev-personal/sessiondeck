@@ -65,12 +65,27 @@ body {
      */
     grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem;
   }
-  /*
-   * Compact rows hold fixed-width items (state 9rem, three 3.5rem meters, agents 5rem, tasks 4rem;
-   * the name takes the rest) that exceed 320 px, so they wrap onto extra lines instead of
-   * clipping. Every item has a fixed width (text truncates inside it), so null to value or a
-   * state change moves nothing; height is min 36 px and stable per viewport.
-   */
+  /* The label is a constant per meter, so letting it size to its text moves nothing (R3.2). */
+  .sd-card [data-slot="label"] {
+    width: auto;
+  }
+  .sd-card [data-slot="bar"],
+  .sd-card [data-slot="task-bar"] {
+    display: none;
+  }
+}
+
+/*
+ * Compact rows hold fixed-width items (state 9rem, three 3.5rem meters, agents 5rem, tasks 4rem;
+ * the name takes the rest) that need about 528 px of content width (456 px of items plus six
+ * 12 px gaps). Compact rows are a single full-width column, so the card content box is the
+ * viewport minus about 58 px; wrapping at 40rem (640 px) leaves the unwrapped row at least
+ * 580 px, so it never clips (R3.2, R3.7). Below that the items wrap onto extra lines. Every item
+ * has a fixed width (text truncates inside it), so null to value or a state change moves
+ * nothing; height is min 36 px and stable per viewport. Viewport media query, not a container
+ * query: the card's `contain` rule is unchanged.
+ */
+@media (max-width: 40rem) {
   .sd-card[data-density="compact"] {
     height: auto !important;
     min-height: var(--card-compact-h);
@@ -80,14 +95,6 @@ body {
   }
   .sd-card[data-density="compact"] [data-slot="name"] {
     flex: 1 1 8rem;
-  }
-  /* The label is a constant per meter, so letting it size to its text moves nothing (R3.2). */
-  .sd-card [data-slot="label"] {
-    width: auto;
-  }
-  .sd-card [data-slot="bar"],
-  .sd-card [data-slot="task-bar"] {
-    display: none;
   }
 }
 
