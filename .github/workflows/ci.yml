@@ -103,6 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SD_E2E_SCREENS_OUT: ${{ github.workspace }}/e2e-live-screens
+      SD_E2E_RESULTS_OUT: ${{ github.workspace }}/e2e-live-results
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -120,4 +121,11 @@ jobs:
         with:
           name: e2e-web-live-screens
           path: e2e-live-screens
+          if-no-files-found: warn
+      - name: upload live playwright results (actual, expected, diff)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-results
+          path: e2e-live-results
           if-no-files-found: warn
