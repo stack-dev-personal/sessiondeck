@@ -534,3 +534,26 @@ describe("compact toggle", () => {
     expect(screen.getByTestId("session-card")).toHaveAttribute("data-density", "compact");
   });
 });
+
+describe("R3.2 row 1 truncation", () => {
+  it("state detail and project/branch spans truncate and are separated by a gap", () => {
+    const { container } = render(
+      <SessionCard
+        s={snap({
+          state: "working",
+          state_detail: "tool:ExitPlanMode",
+          git: { branch: "feat/chart-widgets", worktree: "chart-wt", pr: null },
+        })}
+        now={NOW}
+      />,
+    );
+    const row = container.querySelector('[data-row="1"]')!;
+    const detail = row.querySelector('[data-part="detail"]')!;
+    const where = row.querySelector('[data-slot="where"]')!;
+    for (const el of [detail, where]) {
+      expect(el.className).toContain("min-w-0");
+      expect(el.className).toContain("truncate");
+    }
+    expect(row.className).toContain("gap-s-");
+  });
+});

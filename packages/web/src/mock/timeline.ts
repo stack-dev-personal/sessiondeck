@@ -168,10 +168,13 @@ const PROMPT_POOL = [
 const ASSISTANT_POOL = [
   "Done. I updated the parser, added a regression test and the full suite passes; the diff is ready for review. One follow-up remains: the migration script still needs a dry-run flag.",
   "Done. The checks pass and the diff is ready for review.",
+  "Fixed the failing lint rules in the store and re-ran the suite; everything is green except one flaky timing test I left alone.",
+  "The migration is split into two steps now. Step one adds the column, step two backfills it; both are covered by tests.",
+  "Reworked the card layout so long names truncate with an ellipsis instead of wrapping, and added a keyboard test for it.",
   "I updated the parser and added a regression test.",
   "Tests pass",
   "Done",
-  "Ok",
+  "All good",
 ];
 const OTHER_POOL = ["Reading the config", "Updating the parser", "Run the tests", "Done", "Ok"];
 
@@ -182,28 +185,40 @@ function poolFor(key: string): string[] {
 }
 
 /**
- * Readable stand-in for a scrubbed `<TEXT n>` placeholder: the longest phrase of the pool for the
- * field (`prompt`, `last_assistant_message`, anything else) that fits in n characters.
+ * Readable stand-in for a scrubbed `<TEXT n>` placeholder: one of the four longest phrases of the
+ * pool for the field (`prompt`, `last_assistant_message`, anything else) that fit in n characters,
+ * chosen by n plus a per-session `salt` so sessions do not all show the same sentence.
  */
-export function synthText(n: number, key = ""): string {
-  const fit = poolFor(key)
+export function synthText(n: number, key = "", salt = 0): string {
+  const fits = poolFor(key)
     .filter((p) => p.length <= n)
-    .sort((a, b) => b.length - a.length)[0];
-  return fit ?? "x".repeat(Math.max(1, n));
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 4);
+  return fits.length > 0 ? fits[(n + salt) % fits.length]! : "x".repeat(Math.max(1, n));
+}
+
+function saltOf(project: string): number {
+  return Math.max(
+    0,
+    SCRIPTS.findIndex((sc) => sc.project === project),
+  );
 }
 
 /** Replaces scrubber placeholders (<TEXT n>, <HOME>, <PROJECT_x>) inside any string. */
-function humanize(v: unknown, project: string, key = ""): unknown {
+function humanize(v: unknown, project: string, key = "", salt = saltOf(project)): unknown {
   if (typeof v === "string") {
     return v
-      .replace(/<TEXT (\d+)>/g, (_, n: string) => synthText(Number(n), key))
+      .replace(/<TEXT (\d+)>/g, (_, n: string) => synthText(Number(n), key, salt))
       .replace(/<HOME>/g, "/home/dev")
       .replace(/<PROJECT_\w+>/g, project);
   }
-  if (Array.isArray(v)) return v.map((x) => humanize(x, project, key));
+  if (Array.isArray(v)) return v.map((x) => humanize(x, project, key, salt));
   if (v !== null && typeof v === "object") {
     return Object.fromEntries(
-      Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, humanize(x, project, k)]),
+      Object.entries(v as Record<string, unknown>).map(([k, x]) => [
+        k,
+        humanize(x, project, k, salt),
+      ]),
     );
   }
   return v;

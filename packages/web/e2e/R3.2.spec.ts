@@ -79,5 +79,28 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
   expect(new Set(mix.names).size).toBe(mix.names.length);
   expect(mix.withBranch).toBeGreaterThanOrEqual(6);
   expect(Object.keys(mix.states).sort()).toEqual(STATES.map(([st]) => st).sort());
+  const bad = await page.getByTestId("session-card").evaluateAll((cards) => {
+    const out: string[] = [];
+    cards.forEach((card, i) => {
+      const row = card.querySelector('[data-row="1"]')!;
+      for (const el of row.querySelectorAll("*")) {
+        const h = el as HTMLElement;
+        if (h.scrollWidth > h.clientWidth && getComputedStyle(h).textOverflow !== "ellipsis") {
+          // Only leaf-text boxes must carry the ellipsis; containers clip their truncating children.
+          if (h.children.length === 0) out.push(`card ${i}: ${h.textContent}`);
+        }
+      }
+      const a =
+        row.querySelector('[data-part="detail"]') ?? row.querySelector('[data-slot="state"]');
+      const b = row.querySelector('[data-slot="where"]');
+      if (a && b) {
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        if (ra.right > rb.left && ra.left < rb.right) out.push(`card ${i}: overlap`);
+      }
+    });
+    return out;
+  });
+  expect(bad).toEqual([]);
   await fullShot(page, "R3.2-board.png", { baseline: true });
 });

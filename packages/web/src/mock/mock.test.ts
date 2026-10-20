@@ -119,6 +119,17 @@ describe("mock replay", () => {
     expect(busiest.last_prompt).not.toBe(busiest.last_assistant_message);
   });
 
+  it("settled sessions show at least 3 distinct last assistant texts", () => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+    });
+    const store = createBoardStore();
+    playTimeline(buildMockTimeline(NOW), store.getState().enqueue);
+    vi.advanceTimersByTime(10 * 60_000);
+    const texts = Object.values(store.getState().sessions).map((s) => s.last_assistant_message);
+    expect(new Set(texts.filter(Boolean)).size).toBeGreaterThanOrEqual(3);
+  });
+
   it("fills placeholders from the pool of the field they sit in", () => {
     const tl = buildMockTimeline(NOW);
     const prompts = new Set<string>();
@@ -134,8 +145,8 @@ describe("mock replay", () => {
       expect(synthText(n, "prompt")).not.toBe(synthText(n, "last_assistant_message"));
     }
     for (const m of replies) expect(prompts.has(m)).toBe(false);
-    expect(synthText(102, "prompt")).toMatch(/^Fix the lint errors/);
-    expect(synthText(42, "last_assistant_message")).toBe("Tests pass");
+    expect(synthText(102, "prompt").length).toBeGreaterThan(20);
+    expect(["Tests pass", "Done", "Ok"]).toContain(synthText(42, "last_assistant_message"));
   });
 
   it("?replay=fast delivers quickly and sets data-replay=done", () => {

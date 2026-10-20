@@ -159,7 +159,7 @@ function SessionCardImpl({
         Enter opens details
       </span>
       <div data-row="1" className={`${ROW} justify-between`}>
-        <span className={`${ROW} min-w-0`}>
+        <span data-slot="state" className={`${ROW} min-w-0`}>
           <StateChip state={s.state} detail={s.state_detail} />
           {badge ? (
             <span
@@ -170,7 +170,9 @@ function SessionCardImpl({
             </span>
           ) : null}
         </span>
-        <span className="num min-w-0 truncate text-fg-muted">{where}</span>
+        <span data-slot="where" className="num min-w-0 truncate text-fg-muted">
+          {where}
+        </span>
       </div>
       <div data-row="2" className={`${ROW} justify-between`}>
         <span data-slot="name" className="min-w-0 flex-1 truncate">
