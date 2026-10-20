@@ -34,6 +34,10 @@ export interface UiState {
   theme: Theme;
   compact: boolean;
   settings: Settings;
+  /** Session whose detail drawer is open; null when closed. Not persisted. */
+  selectedSessionId: string | null;
+  openSession: (id: string) => void;
+  closeSession: () => void;
   toggleTheme: () => void;
   toggleCompact: () => void;
   saveSettings: (s: Settings) => void;
@@ -43,6 +47,9 @@ export const useUi = create<UiState>()((set, get) => ({
   theme: readStored(STORAGE_KEYS.theme) === "light" ? "light" : "dark",
   compact: readStored(STORAGE_KEYS.compact) === "1",
   settings: loadSettings(),
+  selectedSessionId: null,
+  openSession: (id) => set({ selectedSessionId: id }),
+  closeSession: () => set({ selectedSessionId: null }),
   toggleTheme: () => {
     const theme: Theme = get().theme === "dark" ? "light" : "dark";
     writeStored(STORAGE_KEYS.theme, theme);
