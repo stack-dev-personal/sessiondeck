@@ -10,7 +10,7 @@
 //                (inode on POSIX; birthtime plus a head-bytes fingerprint on Windows, where inode is
 //                unreliable); lines are emitted as `transcript` envelopes into the daemon outbox
 //                with a start_line counter that survives resets; oversize lines become a marker.
-import { open, readFile, rename, stat } from "node:fs/promises";
+import { open, readFile, realpath, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { hostOs } from "../envelope.ts";
 import { writeFileAtomic } from "../install/atomic.ts";
@@ -81,6 +81,32 @@ export function isUnder(p: string, dir: string): boolean {
   const norm = (x: string): string => (w ? m.resolve(x).toLowerCase() : m.resolve(x));
   const rel = m.relative(norm(dir), norm(p));
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${m.sep}`) && !m.isAbsolute(rel);
+}
+
+/**
+ * realpath of p, or of its deepest existing ancestor with the rest appended (the file may not exist
+ * yet). Paths in the other platform's style (table tests) are returned unchanged.
+ */
+export async function realpathLoose(p: string): Promise<string> {
+  if (looksWindows(p) !== (process.platform === "win32")) return p;
+  const rest: string[] = [];
+  let cur = path.resolve(p);
+  for (;;) {
+    try {
+      return path.join(await realpath(cur), ...rest);
+    } catch {
+      const up = path.dirname(cur);
+      if (up === cur) return p;
+      rest.unshift(path.basename(cur));
+      cur = up;
+    }
+  }
+}
+
+/** isUnder after resolving symlinks on both sides: a link inside dir that points out does not pass. */
+export async function isUnderReal(p: string, dir: string): Promise<boolean> {
+  if (!isUnder(p, dir)) return false;
+  return isUnder(await realpathLoose(p), await realpathLoose(dir));
 }
 
 /**
@@ -339,8 +365,13 @@ export class TranscriptTailer implements DaemonComponent {
           ...(mainPath ? [path.dirname(mainPath)] : []),
           ...(this.o.projectsDir ? [this.o.projectsDir] : []),
         ];
-        if (roots.some((r) => isUnder(agentPath, r))) ok = agentPath;
-        else
+        for (const r of roots) {
+          if (await isUnderReal(agentPath, r)) {
+            ok = agentPath;
+            break;
+          }
+        }
+        if (!ok)
           this.log("warn", "transcript: SubagentStop agent_transcript_path outside projects dir");
       }
       if (!e) {

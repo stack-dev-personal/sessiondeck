@@ -5,6 +5,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
@@ -532,6 +533,26 @@ describe("transcript tailer review fixes", () => {
     await t2.onSubagentStop(S, "a1", sub);
     expect(flat("a1")).toEqual(gen(0, 2, "S"));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "SubagentStop path that reaches outside projectsDir through a symlink is refused",
+    async () => {
+      const proj = join(dir, "proj");
+      const outside = join(dir, "outside");
+      mkdirSync(join(outside, "subagents"), { recursive: true });
+      mkdirSync(proj, { recursive: true });
+      writeFileSync(join(outside, "subagents", "agent-a1.jsonl"), nl(gen(0, 2, "X")));
+      symlinkSync(outside, join(proj, S));
+      const sub = join(proj, S, "subagents", "agent-a1.jsonl");
+      const logs: string[] = [];
+      const t = mk({ projectsDir: proj, log: (lv, m) => logs.push(`${lv} ${m}`) });
+      await t.onSubagentStop(S, "a1", sub);
+      await t.poll();
+      expect(out).toHaveLength(0);
+      expect(t.entries()).toHaveLength(0);
+      expect(logs.some((l) => l.includes("outside projects dir"))).toBe(true);
+    },
+  );
 
   it("re-tracking after a prune never reuses numbers, even if the clock steps back", async () => {
     const f = join(dir, "t.jsonl");
