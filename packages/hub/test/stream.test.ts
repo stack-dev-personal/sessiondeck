@@ -381,8 +381,12 @@ describe("heartbeat", () => {
     await boot({}, { heartbeatMs: 500 });
     const dead = await connect({ autoPong: false });
     const live = await connect();
+    let livePings = 0;
+    live.ws.on("ping", () => livePings++);
     await waitFor(() => dead.ws.readyState === WebSocket.CLOSED, 5000);
-    await sleep(300);
+    // Load-robust: require at least two pings answered by live, so a tick after one pong has
+    // checked its alive flag (fails if the server's pong handler is removed).
+    await waitFor(() => livePings >= 2, 5000);
     expect(live.ws.readyState).toBe(WebSocket.OPEN);
   });
 });
