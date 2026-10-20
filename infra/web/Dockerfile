@@ -5,7 +5,7 @@
 # digest once a release process can resolve it online (same note as packages/hub/Dockerfile).
 # The hub URL is not a build input: the UI takes it at run time (Settings, stored in the browser).
 ARG NODE_IMAGE=node:22-bookworm-slim
-ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.27-alpine
+ARG NGINX_IMAGE=nginxinc/nginx-unprivileged:1.30-alpine
 
 FROM ${NODE_IMAGE} AS build
 ENV CI=true
@@ -31,7 +31,13 @@ COPY packages/web/e2e/*.ts packages/web/e2e/
 RUN pnpm -F @sessiondeck/web build
 
 FROM ${NGINX_IMAGE} AS runtime
-COPY infra/web/nginx.conf /etc/nginx/conf.d/default.conf
+# Rendered at start by the image's envsubst step; only SD_* variables are substituted.
+ENV NGINX_ENVSUBST_FILTER=^SD_ \
+    SD_WEB_CONNECT_SRC="http://localhost:8787 ws://localhost:8787 http://127.0.0.1:8787 ws://127.0.0.1:8787"
+USER root
+RUN rm -f /etc/nginx/conf.d/default.conf
+USER 101
+COPY infra/web/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /repo/packages/web/dist /usr/share/nginx/html
 EXPOSE 8080
 # nginx-unprivileged already runs as uid 101.

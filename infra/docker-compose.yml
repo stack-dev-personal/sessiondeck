@@ -3,7 +3,9 @@
 #   docker compose -f infra/docker-compose.yml up -d --build
 # Never run `docker compose config` against the real env file in a shared session: it prints it.
 # Default-deny: both ports publish on loopback only. A LAN bind is an explicit override
-# (HUB_BIND / WEB_BIND in infra/.env), and then HUB_ALLOWED_ORIGINS should be set too.
+# (SD_HUB_PUBLISH_IP / SD_WEB_PUBLISH_IP). Those names are compose-only: the hub never reads them, so a
+# leftover `export HUB_BIND=...` or HUB_PORT in the shell cannot change what is published.
+# Shell values win over infra/.env for compose interpolation; check `env | grep -E 'SD_|HUB_'`.
 name: sessiondeck
 
 services:
@@ -19,9 +21,12 @@ services:
       # Inside the container the hub must listen on all interfaces so the published port reaches it.
       # Exposure to the host network is decided only by the port mapping below.
       HUB_BIND: 0.0.0.0
+      HUB_PORT: "8787"
+      # Default-deny for WebSocket upgrades: the local web origin only (an empty list accepts any Origin).
+      HUB_ALLOWED_ORIGINS: ${HUB_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       HUB_DB_PATH: /data/hub.sqlite
     ports:
-      - "${HUB_BIND:-127.0.0.1}:${HUB_PORT:-8787}:8787"
+      - "${SD_HUB_PUBLISH_IP:-127.0.0.1}:${SD_HUB_PUBLISH_PORT:-8787}:8787"
     volumes:
       - hub-data:/data
     read_only: true
@@ -45,11 +50,16 @@ services:
       context: ..
       dockerfile: infra/web/Dockerfile
     image: sessiondeck-web:dev
+    environment:
+      # Hub origin(s) the page may connect to (CSP connect-src), space separated, http and ws forms.
+      SD_WEB_CONNECT_SRC: ${SD_WEB_CONNECT_SRC:-http://localhost:8787 ws://localhost:8787 http://127.0.0.1:8787 ws://127.0.0.1:8787}
     ports:
-      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-5173}:8080"
+      - "${SD_WEB_PUBLISH_IP:-127.0.0.1}:${SD_WEB_PUBLISH_PORT:-5173}:8080"
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
+      # The image renders the nginx template into conf.d at start; keep it writable while / is read-only.
+      - /etc/nginx/conf.d:size=1m,mode=0755,uid=101,gid=101
     security_opt:
       - no-new-privileges:true
     cap_drop:
