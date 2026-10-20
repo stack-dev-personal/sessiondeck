@@ -16,6 +16,7 @@
 | U2 POST /ingest: validation, 1 MB limit, id+signature dedup, batch txn, reducer wiring all kinds, golden replay | sd-executor-hub | R2.1, R2.2, R2.3, R2.7 | U1 | done 337e5d2 (R2.7 read path in U3) |
 | U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6, R2.7 | U2 | done ba15e04 |
 | U7 hub test CPU cut for Windows R0.5 | sd-executor-hub | R0.5 (CI) | U5 | done 0e1810f, 416b3ca |
+| U8 contract lock-poll test flake on Windows | sd-executor-contract | R0.5 (CI) | U7 | done ad73c91 |
 | U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | done 93a97d7, edcfd78, ffac2b5, fab329c, d2a3c6a |
 
 ## Decisions made
@@ -87,6 +88,13 @@
 - Review: iteration 1 sd-reviewer merge (2 MINOR, deferred). Normal and shuffled runs 177/177.
 - CI 39443991770 (PR) and 39443984373 (push): 4/4 jobs success, Windows R0.5 step 36-41 s (19 s headroom).
 - Verify: sd-verifier final at 416b3ca, R2.1-R2.3, R2.5-R2.8 pass, R0.5 pass by CI; pnpm -r test 10 s, typecheck and lint clean; ws-harness and container smoke pass; no sd-1-S3-* resources left.
+
+### U8 (ad73c91) contract lock-held tests on loaded Windows runner
+- Trigger: PR CI 39456320083 at ea03c31, windows node 22, state-file-cli-merge.test.ts:78 timed out at 5 s (push run same SHA green).
+- Files: packages/contract/test/{state-file-cli-merge,state-file-lock}.test.ts (tests only). Root cause: acquire() polls waitMs/pollMs = 200 rounds of real fs calls even with a fake clock; tests now pass pollMs 1000 (5 rounds). Default LOCK_POLL_MS and LOCK_WAIT_MS stay asserted.
+- Review: iteration 1 sd-reviewer merge, no findings.
+- CI 39457486239 (PR) and 39457476643 (push): 4/4 jobs success each, Windows R0.5 step 25-41 s.
+- Verify: sd-verifier at ad73c91, R0.5 pass by CI, pnpm -r test and lint pass; R2.x carried from 416b3ca (hub unchanged).
 
 ### Session close
 - sd-verifier final at 7425f9e (d749719): R2.1, R2.2, R2.3, R2.5, R2.6, R2.7, R2.8 pass, R0.5 pass by CI; pnpm -r test 17 s, typecheck and lint clean; ws-harness and container smoke pass. R2.4 and R2.10 are S4.
