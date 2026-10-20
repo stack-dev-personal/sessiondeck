@@ -76,6 +76,15 @@ body {
 }
 
 /*
+ * Card layout, paint and style are isolated: a text change in one card (elapsed clock, meters) no
+ * longer invalidates the whole board (R3.6). The card's own ring and outline are not clipped by its
+ * own paint containment.
+ */
+.sd-card {
+  contain: layout paint style;
+}
+
+/*
  * Attention: steady 1px ring plus a 4 px inset stripe on the left edge (a shape cue that survives
  * grayscale; the badge and the state word are the other cues), and a one-time 400 ms glow on
  * arrival. Shadows only, so the card box never changes size.
