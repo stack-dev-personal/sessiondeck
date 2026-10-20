@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs script
 import * as cb from "../../scripts/check-bundle.mjs";

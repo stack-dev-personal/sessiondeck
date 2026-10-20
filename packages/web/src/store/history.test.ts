@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { Envelope } from "@sessiondeck/contract";
 import { describe, expect, it } from "vitest";
 import { createBoardStore } from "./board";

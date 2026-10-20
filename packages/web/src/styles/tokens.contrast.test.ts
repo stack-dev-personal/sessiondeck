@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs helper shared with scripts/contrast-report.mjs
 import * as lib from "../../scripts/contrast-lib.mjs";

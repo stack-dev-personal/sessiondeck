@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import { createSnapshot } from "@sessiondeck/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
