@@ -19,13 +19,18 @@ export const SIGNATURE_WINDOW_MS = 5000;
  * Written with string concatenation and a cache of quoted keys because it runs once per envelope
  * on the ingest hot path (R2.4); the output is byte-identical to the array/join form it replaced.
  */
+/** Longest key worth caching; real payload keys are short identifiers. */
+export const MAX_CACHED_KEY = 64;
 const quoted = new Map<string, string>();
+/** Test hook: number of cached keys. */
+export const quotedKeyCacheSize = (): number => quoted.size;
 function quoteKey(k: string): string {
   let q = quoted.get(k);
   if (q === undefined) {
     q = JSON.stringify(k);
-    // Bounded: payload keys come from the wire, so the cache must not grow without limit.
-    if (quoted.size < 4096) quoted.set(k, q);
+    // Bounded in count and in key length: payload keys come from the wire, so neither the number
+    // nor the size of retained keys may be attacker-controlled (a 1M-char key must not be kept).
+    if (k.length <= MAX_CACHED_KEY && quoted.size < 4096) quoted.set(k, q);
   }
   return q;
 }

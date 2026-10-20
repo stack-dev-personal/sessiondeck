@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { canonicalJson } from "../src/ingest/signature.ts";
+import { canonicalJson, MAX_CACHED_KEY, quotedKeyCacheSize } from "../src/ingest/signature.ts";
 
 function reference(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((v) => reference(v ?? null)).join(",")}]`;
@@ -58,5 +58,18 @@ describe("canonicalJson", () => {
       }
     }
     expect(n).toBeGreaterThan(20);
+  });
+});
+
+describe("quoted-key cache bound (S1)", () => {
+  it("does not retain long keys and still serializes them correctly", () => {
+    const before = quotedKeyCacheSize();
+    for (let i = 0; i < 50; i++) {
+      const k = `${i}-${"k".repeat(MAX_CACHED_KEY + 1)}`;
+      expect(canonicalJson({ [k]: 1 })).toBe(`{${JSON.stringify(k)}:1}`);
+    }
+    expect(quotedKeyCacheSize()).toBe(before);
+    canonicalJson({ short_key_for_cache: 1 });
+    expect(quotedKeyCacheSize()).toBe(before + 1);
   });
 });

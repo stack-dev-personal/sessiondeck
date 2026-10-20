@@ -77,7 +77,7 @@ export function registerIngest(
       if (future >= 0) {
         // Counts only: no payload, no ids, no timestamps echoed from the batch.
         req.log.warn(
-          { host, index: future, count: envelopes.length },
+          { host: host.slice(0, 64), index: future, count: envelopes.length },
           "batch rejected: envelope ts too far in the future",
         );
         return bad(reply, `envelopes[${future}].ts: too_far_in_future`);
