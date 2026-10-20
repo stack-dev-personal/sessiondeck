@@ -41,6 +41,9 @@
 - 2026-10-20: infra/docker-compose.yml does not exist on this base (S4 not merged). Live e2e and the R3.6 trace run against the hub image built from packages/hub/Dockerfile via packages/web/scripts/e2e-live.sh; the sprint gate reruns against compose after S4.
 - 2026-10-20: notification text follows the design system (title "<project> needs permission" or "<project> needs input", body session name and tool name); no transcript content.
 - 2026-10-20: a session already waiting when first observed notifies once per episode (id, state, state_since); seen episodes persist in sessionStorage and never re-notify after resync or reload.
+- 2026-10-20: R3.6 pass definition (reviewer-recommended, recorded in e2e/R3.6.spec.ts header): (a) longest script task < 16.7 ms; (b) dropped-frame intervals (> 1.5x median) under load <= idle window + 0.5% of frames; (c) main thread busy < 50%; (d) frame interval p99 < 33 ms. Gated in the verifier's container run; report-only in CI (shared runners are too noisy for (b)).
+- 2026-10-20: manual DOM reorder kept (b65c88e): React keyed order with memoized cards measured 21.6% busy and 18 dropped intervals vs 11.89% and 0 for the manual reorder.
+- 2026-10-20: design deviation: the attention arrival glow is an opacity-animated inner-edge glow (::after) instead of an outer border glow, because the card clips overflow and box-shadow animation repainted every frame; plays once per attention transition. 03-design-system.md section 3 should be amended by its owner.
 
 ## Deferred findings
 - MINOR packages/web/src/live/stream-client.ts:288: 10 s connect timer spans until initial is parsed and does not grow with attempt; a slow link with a large initial could never connect (U3 re-review).
