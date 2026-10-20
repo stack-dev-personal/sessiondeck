@@ -54,6 +54,8 @@ The user must decide which of these to adopt, or to accept the risk, before writ
 - Tokens enter only through `.sprint/env`, read by compose `env_file`. They are never build args, never interpolated in the compose file, never on a command line.
 - `run-sprint.ps1` checks that the file exists and reads its permissions (ACL). It never opens, prints, hashes or copies its content. It warns about extra readers; it does not refuse to start.
 - Every process in the container can read both tokens from its environment.
+- Nested sessions: Claude Code removes `CLAUDE_CODE_OAUTH_TOKEN`, by name only, from the environment of every Bash tool subprocess, so a nested `claude -p` would exit "Not logged in". The entrypoint therefore also exports the same value as `SPRINT_CLAUDE_OAUTH_TOKEN`, and the token reaches the Bash subprocesses of nested sessions under that name. The value is identical, so `docker inspect` and the redaction of `sprint.jsonl` and `docker logs` are unchanged (redaction matches by value). The mirror is set in the entrypoint's process environment only: it is never written to a file and never read from `.sprint/env`.
+- Limits of the mirror. (1) The copy is present in level 1's Bash tool environment, so anything level 1 runs (pnpm lifecycle scripts, gate tests, `gh`, `git`) can read it, and level 1 writes unredacted files (status.json, sprint-log.md, prompts, reports, questions, PR bodies, commits); PR bodies and commits leave the laptop for GitHub. This is an accepted residual risk, because the copy has to exist at level 1 for the nested launch to work. (2) Level-2 session logs (`/state/<id>/logs/<session>.jsonl`, written by `tee`) are not redacted. They can hold `GH_TOKEN`, and without `env -u SPRINT_CLAUDE_OAUTH_TOKEN` in the launch command the mirror would reach them too. (3) `env -u` only prevents accidental dumps by the phase manager and its tools; any process with the same uid can still read the value from `/proc/$PPID/environ`. Deferred follow-up: ship `redact_stream` as an image script and pipe level-2 output through it before `tee`.
 - `docker compose config` against the real env file prints both tokens. Never run it in a session, and never paste its output.
 - Never add `infra/sprint/docker-compose.override.yml` (compose merges that name into any run without `-f`) or `infra/sprint/.env` (compose reads it for interpolation and it could switch the image). `run-sprint.ps1` exits 3 if `infra/sprint/.env` exists and always sets `SPRINT_IMAGE` itself.
 - Compose sends the env file values to whatever daemon the docker target names. `run-sprint.ps1` exits 3 if `DOCKER_HOST` is set, if `DOCKER_CONFIG` is set (another config directory can name any context), if `DOCKER_CONTEXT` is anything other than `default` or `desktop-linux`, or if `docker context show` (the context saved by `docker context use`) prints anything other than `default` or `desktop-linux`. It names the variable, never the value, and never prints a context name. After `docker context use hub-box`, run `docker context use default` (or `desktop-linux`) before starting a sprint. `stop-sprint.ps1` does not check this (it sends no tokens).
@@ -128,7 +130,7 @@ The manual steps:
 
 Observed on Claude Code 2.1.295 in the image (2026-10-14, no credentials): as root, `--dangerously-skip-permissions` is refused with "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons". As the non-root user, `claude -p` exits 1 without hanging or onboarding, with the result "Not logged in - Please run /login" (the real text has a middle dot, not a hyphen). So a missing token shows up as exit 1 and that message in `sprint.jsonl`. Not observed: what a rejected or expired token prints. It may be different text (the harness also accepts an `authentication_failed` error), so do not rely on finding "Not logged in" in that case.
 
-Not verified: `--agent` together with `-p` and a project-scoped agent is not documented either way, so the first real sprint is also its confirmation.
+Not verified: `--agent` together with `-p` and a project-scoped agent is not documented either way, so the first real sprint is also its confirmation. The nested launch with a real token (`CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" env -u SPRINT_CLAUDE_OAUTH_TOKEN claude -p ...` from the orchestrator's Bash tool) is not verified yet; the next Sprint 1 relaunch is the proof.
 
 ## Container contract
 
@@ -146,6 +148,7 @@ Environment:
 |----------|--------|---------|
 | `CLAUDE_CODE_OAUTH_TOKEN` | `.sprint/env` | Claude auth for headless sessions on a subscription |
 | `GH_TOKEN` | `.sprint/env` | push branches, open PRs, read checks |
+| `SPRINT_CLAUDE_OAUTH_TOKEN` | set by `entrypoint.sh` stage 2 from `CLAUDE_CODE_OAUTH_TOKEN`; not in `.sprint/env` | mirror of the Claude token under a name Claude Code does not strip from Bash tool subprocesses; consumed by the level-2 launch command |
 | `SPRINT_ID`, `SPRINT_BRANCH`, `SPRINT_REPO_URL` | set by `run-sprint.ps1` through compose | which package, which branch, which repository |
 | `BASH_ENV`, `LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH` | compose, pinned to empty | block code-loading hooks |
 | `DISABLE_AUTOUPDATER=1`, `CLAUDE_CONFIG_DIR=/home/sprint/.claude`, `HOME=/home/sprint`, `GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`, `PATH` | image and compose, same values | pinned versions, no prompts |
@@ -167,7 +170,13 @@ claude -p "$(cat /state/$SPRINT_ID/sprint-prompt.md)" --agent sd-sprint-orchestr
   --dangerously-skip-permissions --output-format stream-json --verbose
 ```
 
-`entrypoint.sh` runs this in the background with its output passed through the redaction filter and `tee`d to `/state/<id>/logs/sprint.jsonl`. Phase managers inside are launched by the orchestrator with the command in `PROMPT-BOOK.md` section 2. The project deny rules and `guard.mjs` still run inside, but see the security note: the container is not the sandbox.
+`entrypoint.sh` runs this in the background with its output passed through the redaction filter and `tee`d to `/state/<id>/logs/sprint.jsonl`. Phase managers inside are launched by the orchestrator with the command in `PROMPT-BOOK.md` section 2. Because Claude Code strips `CLAUDE_CODE_OAUTH_TOKEN` from Bash tool subprocesses, the nested launch sets it inline from the mirror and removes the mirror from the child:
+
+```
+CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" env -u SPRINT_CLAUDE_OAUTH_TOKEN claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)" ... </dev/null | tee /state/{SPRINT_ID}/logs/{SESSION_ID}.jsonl
+```
+
+The shell-prefix assignment keeps the value off every command line; `env -u` keeps the mirror out of the phase manager and its tools. The resume launch (`PROMPT-BOOK.md` section 5) and fix sessions (section 7) use the same command with only the prompt path changed. Whether the project deny rules and `guard.mjs` apply inside the container is unverified (see the security note and the Notes section); the container is not the sandbox.
 
 `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0`: headless `claude -p` stops background tasks ten minutes after the main turn goes idle and then exits. That ended a real orchestrator run that was waiting on background subagents. Zero removes the ceiling. Sessions should still keep subagent calls in the foreground.
 
@@ -237,6 +246,7 @@ A sprint whose package has `runs_in` other than `container` (Sprint 0) is refuse
 ## Limits and known gaps
 
 - Every headless session counts against the subscription's 5h and 7d windows. The conductor's `MAX_SPRINT_CONTAINERS` and each package's `max_parallel` are the throttle.
+- The entrypoint's stderr says `/work` is untrusted, so the `permissions.allow` entries of `.claude/settings.json` are ignored inside the container. `--dangerously-skip-permissions` (bypassPermissions) covers that gap. Whether the deny rules and `guard.mjs` still apply is unverified: the harness uses a stub `claude`, so no hook has ever run in the container. Recorded only; nothing changed for it. Check it on the next Sprint 1 relaunch with one blocked guard command whose result is logged.
 - Windows-only code (probe hook, runner pty) cannot be exercised in the Linux container; the windows-latest CI job and the conductor's laptop checks cover it.
 - A container that loses network mid-session leaves the session's branch pushed up to its last commit; `-Resume` picks up from the session log and `docs/HANDOFF-*.md`.
 - Deferred, with the reason it is acceptable for Phase 0 (local build, apt over TLS, the gh keyring checked against GitHub's published fingerprints, base image pinned by digest). Close these before building on the hub box or before Phase 8:

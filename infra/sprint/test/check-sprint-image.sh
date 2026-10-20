@@ -292,6 +292,9 @@ verify_run() {
   expect_eq "$label 4 checked-out branch" "$TEST_BRANCH" "$(read_fact "$facts" git_branch)"
   expect_eq "$label 4 origin URL has no credentials" "/remote/repo.git" "$(read_fact "$facts" git_origin)"
   expect_eq "$label 4 credential helper returns GH_TOKEN" "yes" "$(read_fact "$facts" credential_helper_matches_env)"
+  # SPRINT_CLAUDE_OAUTH_TOKEN is the mirror nested sessions launch from; it must
+  # hold the same value as CLAUDE_CODE_OAUTH_TOKEN (the stub records only a verdict).
+  expect_eq "$label 4 SPRINT_CLAUDE_OAUTH_TOKEN mirror equals CLAUDE_CODE_OAUTH_TOKEN" "equal" "$(read_fact "$facts" mirror-token)"
 }
 
 check_5_real_binary() {
@@ -322,7 +325,8 @@ check_5_real_binary() {
 }
 
 # expect_clean <name> <file-or-dir>: PASS only when the target exists, is not
-# empty, and holds no placeholder token; a missing or empty target, or a grep
+# empty, and holds no placeholder token (it scans by value, so the mirror
+# SPRINT_CLAUDE_OAUTH_TOKEN, which holds the OAuth placeholder, is covered); a missing or empty target, or a grep
 # error (exit 2), is a FAIL, never a zero count.
 expect_clean() {
   local name=$1 target=$2 rc

@@ -151,6 +151,14 @@ if [[ $SPRINT_REPO_URL =~ ://[^/]*@ ]]; then
   die "SPRINT_REPO_URL must not embed credentials; the token is supplied at use time"
 fi
 
+# Claude Code removes CLAUDE_CODE_OAUTH_TOKEN, by name only, from the environment
+# of every Bash tool subprocess, so a nested "claude -p" started by the
+# orchestrator would exit "Not logged in". The same value under another name does
+# reach the Bash tool; the nested launch (PROMPT-BOOK.md section 2) sets
+# CLAUDE_CODE_OAUTH_TOKEN inline from this mirror. Never logged, echoed or
+# written to a file; redact_stream matches by value, so it is redacted too.
+export SPRINT_CLAUDE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"
+
 readonly STATE_DIR="$STATE_ROOT/$SPRINT_ID"
 readonly PROMPT_FILE="$STATE_DIR/sprint-prompt.md"
 readonly SESSION_LOG="$STATE_DIR/logs/sprint.jsonl"
