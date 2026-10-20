@@ -65,3 +65,4 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - f230f09 fixes iteration-1 findings 1-7. Iteration 2: sd-reviewer fix-then-merge (1 MAJOR: pruned set grows forever; 7 MINOR, 1 LOW). Iteration 3 (last) sent with a persisted max-issued counter design.
 - For U4: pass `projectsDir` (Claude projects dir) to TranscriptTailer; the untracked SubagentStop fallback depends on it.
 - 26a1e25 fixes iteration-2 findings (max_issued counter, bounded pruned map, lost_until window, outbox multi-file fsync, isUnder table tests). Iteration 3: sd-reviewer merge, 2 MINOR deferred. 172 probe tests pass, 1 win32-gated.
+- U2 verify 1394e96: R1.6 PASS (component; Windows real-fs replace verified by CI). U2 complete.
