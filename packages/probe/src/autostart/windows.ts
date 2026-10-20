@@ -2,9 +2,11 @@
 // user (DOMAIN\user), RunLevel LeastPrivilege ("Limited"), Interactive logon (no stored password, no
 // admin), restart on failure, no execution time limit. The console is hidden by a launcher file
 // inside the probe home (<LOCALAPPDATA>\sessiondeck): wscript.exe runs it, it runs node with window
-// style 0 and waits, so the task stays "running" while the daemon lives and a non-zero exit is a
-// failure the scheduler restarts. The daemon only ever writes under the probe home; the task
-// definition itself lives in the Task Scheduler store.
+// style 0 and waits, so the task stays "running" while the daemon lives. Task Scheduler only restarts
+// a task that fails to start, not one whose action later exits non-zero, so the launcher itself
+// restarts the daemon after a non-zero exit (backoff 5 s doubling to 60 s). Exit 0 (graceful stop, or
+// another daemon already holds the lock for this home) ends the launcher: no tight loop. The daemon
+// only ever writes under the probe home; the task definition itself lives in the Task Scheduler store.
 //
 // All commands are exec form (schtasks.exe with an argv, the task defined by an XML file), so no
 // path is ever interpolated into a shell string.
@@ -40,10 +42,26 @@ export function currentUserId(e: AutostartEnv): string {
   return domain ? `${domain}\\${name}` : name;
 }
 
+const WINDOWS_ROOT = "C:\\Windows";
+
+/**
+ * System32 comes from the OS default, never from the environment: a repo-controlled "env" in
+ * .claude/settings.json could otherwise point SystemRoot at a directory holding a planted
+ * wscript.exe that the task would then run at every logon. An environment value is accepted only
+ * when it names C:\\Windows (case-insensitive); anything else is refused.
+ */
 function system32(e: AutostartEnv, exe: string): string {
-  const root = e.env["SystemRoot"] ?? e.env["SYSTEMROOT"] ?? e.env["windir"];
-  const base = root && win32.isAbsolute(root) ? root : "C:\\Windows";
-  return win32.join(base, "System32", exe);
+  for (const key of ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]) {
+    const v = e.env[key];
+    if (v === undefined || v === "") continue;
+    const norm = v.replace(/[\\/]+$/, "").replace(/\//g, "\\");
+    if (norm.toLowerCase() !== WINDOWS_ROOT.toLowerCase()) {
+      throw new Error(
+        `${key} is ${JSON.stringify(v)}, not ${WINDOWS_ROOT}; refusing to register a task that runs a binary from there`,
+      );
+    }
+  }
+  return win32.join(WINDOWS_ROOT, "System32", exe);
 }
 
 export const schtasksPath = (e: AutostartEnv): string => system32(e, "schtasks.exe");
@@ -62,32 +80,63 @@ function vbs(s: string): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
+export interface LauncherOptions {
+  /** First restart delay in ms (default 5000; doubles up to 60000). Tests shorten it. */
+  initialDelayMs?: number;
+}
+
+/** A path word is refused when it could be altered on its way through wscript or the scheduler. */
+function assertLaunchable(label: string, v: string): void {
+  assertPlain(label, v);
+  if (v.includes('"')) throw new Error(`${label} contains a double quote`);
+  // WshShell.Run and Task Scheduler expand %VAR% in command strings.
+  if (v.includes("%")) throw new Error(`${label} contains a percent sign`);
+}
+
 /**
- * VBScript that starts the daemon with a hidden window and waits for it. WScript.Quit passes the
- * daemon's exit code to the scheduler.
+ * VBScript that starts the daemon with a hidden window and waits for it. A non-zero exit restarts it
+ * after a backoff (5 s, doubling, capped at 60 s; reset after a run of 10 minutes or more); exit 0
+ * ends the launcher, including the "another daemon holds the lock" exit.
  */
-export function launcherScript(cmd: DaemonCommand): string {
+export function launcherScript(cmd: DaemonCommand, opts: LauncherOptions = {}): string {
   for (const [label, v] of [
     ["node path", cmd.node],
     ["daemon script", cmd.script],
     ["probe home", cmd.probeHome],
   ] as const) {
-    assertPlain(label, v);
-    if (v.includes('"')) throw new Error(`${label} contains a double quote`);
+    assertLaunchable(label, v);
   }
+  const first = Math.max(1, Math.floor(opts.initialDelayMs ?? 5000));
   // cmd.exe is not involved: wscript passes this line to CreateProcess.
   const line = `"${cmd.node}" "${cmd.script}" --home "${cmd.probeHome}"`;
   return [
     "' sessiondeck probe daemon launcher (written by `probe daemon install`; safe to delete via `probe daemon uninstall`)",
     'Set sh = CreateObject("WScript.Shell")',
-    `rc = sh.Run(${vbs(line)}, 0, True)`,
-    "WScript.Quit rc",
+    `first = ${String(first)}`,
+    "delay = first",
+    "Do",
+    "  started = Timer",
+    "  On Error Resume Next",
+    `  rc = sh.Run(${vbs(line)}, 0, True)`,
+    "  If Err.Number <> 0 Then",
+    "    rc = 1",
+    "    Err.Clear",
+    "  End If",
+    "  On Error GoTo 0",
+    "  If rc = 0 Then WScript.Quit 0",
+    "  ran = Timer - started",
+    "  If ran >= 600 Then delay = first",
+    "  WScript.Sleep delay",
+    "  delay = delay * 2",
+    "  If delay > 60000 Then delay = 60000",
+    "Loop",
     "",
   ].join("\r\n");
 }
 
 /** The task definition. Rendered with CRLF; written as UTF-16LE with a BOM. */
 export function taskXml(e: AutostartEnv, probeHome: string): string {
+  assertLaunchable("probe home", probeHome);
   const user = xmlEscape(currentUserId(e));
   const wscript = xmlEscape(wscriptPath(e));
   const args = xmlEscape(`//B //Nologo "${launcherPath(probeHome)}"`);
@@ -150,7 +199,8 @@ export const createArgs = (name: string, xmlFile: string): string[] => [
   xmlFile,
   "/F",
 ];
-export const queryArgs = (name: string): string[] => ["/Query", "/TN", name];
+/** Lists every task as CSV: locale-independent, unlike the text of an error message. */
+export const listArgs = (): string[] => ["/Query", "/FO", "CSV", "/NH"];
 export const queryXmlArgs = (name: string): string[] => ["/Query", "/TN", name, "/XML"];
 export const runArgs = (name: string): string[] => ["/Run", "/TN", name];
 export const endArgs = (name: string): string[] => ["/End", "/TN", name];
@@ -169,6 +219,42 @@ export interface WinOptions {
   start?: boolean;
 }
 
+/** Both markers must be present in the registered task for it to count as ours. */
+export function isOurTask(xml: string): boolean {
+  const t = xml.split("\0").join("");
+  return t.includes("sessiondeck probe daemon") && t.includes("launch-daemon.vbs");
+}
+
+type TaskState = "absent" | "ours" | "foreign" | "error";
+
+/** Is a root-folder task of this name registered, and is it ours? Prints the reason on error. */
+async function taskState(d: AutostartDeps, name: string): Promise<TaskState> {
+  const l = await d.exec(schtasksPath(d.e), listArgs());
+  if (l.code !== 0) {
+    d.err(`probe: could not list scheduled tasks: ${detail(l)}`);
+    return "error";
+  }
+  const want = `"\\${name}"`.toLowerCase();
+  const present = l.stdout
+    .split("\0")
+    .join("")
+    .split(/\r?\n/)
+    .some((ln) => ln.trim().toLowerCase().startsWith(want));
+  if (!present) return "absent";
+  const q = await d.exec(schtasksPath(d.e), queryXmlArgs(name));
+  if (q.code !== 0) {
+    d.err(`probe: could not read the scheduled task ${name}: ${detail(q)}`);
+    return "error";
+  }
+  if (!isOurTask(q.stdout)) {
+    d.err(
+      `probe: a scheduled task named ${name} exists and is not a sessiondeck probe task; not touching it (pick another --task-name)`,
+    );
+    return "foreign";
+  }
+  return "ours";
+}
+
 /** Registers (or re-registers: /F replaces) the logon task. Returns the exit code. */
 export async function installWindows(
   d: AutostartDeps,
@@ -183,6 +269,13 @@ export async function installWindows(
   const xmlFile = taskXmlPath(cmd.probeHome);
   const xml = taskXml(d.e, cmd.probeHome);
   const script = launcherScript(cmd);
+  const state = await taskState(d, name);
+  if (state === "error" || state === "foreign") return 1;
+  if (state === "ours") {
+    // Stop the running instance first: /Create /F replaces the definition but not the process, and
+    // /Run is a no-op while it runs. The new launcher is written only after the old one is gone.
+    await d.exec(schtasksPath(d.e), endArgs(name));
+  }
   await d.fs.mkdirp(cmd.probeHome);
   await d.fs.write(launcherPath(cmd.probeHome), utf16leBom(script));
   await d.fs.write(xmlFile, utf16leBom(xml));
@@ -212,7 +305,7 @@ export async function installWindows(
   return 0;
 }
 
-/** Removes the task and the files install wrote. Absent is success. */
+/** Removes the task and the files install wrote. Absent is success; a task that is not ours is not touched. */
 export async function uninstallWindows(
   d: AutostartDeps,
   probeHome: string,
@@ -223,8 +316,9 @@ export async function uninstallWindows(
     d.err(`probe: invalid task name ${JSON.stringify(name)}`);
     return 2;
   }
-  const q = await d.exec(schtasksPath(d.e), queryArgs(name));
-  if (q.code === 0) {
+  const state = await taskState(d, name);
+  if (state === "error" || state === "foreign") return 1;
+  if (state === "ours") {
     await d.exec(schtasksPath(d.e), endArgs(name)); // best effort: stops the launcher if running
     const r = await d.exec(schtasksPath(d.e), deleteArgs(name));
     if (r.code !== 0) {
@@ -235,9 +329,6 @@ export async function uninstallWindows(
     d.out(
       "note: a daemon that is already running keeps running until you log off or stop it (Task Manager: node.exe)",
     );
-  } else if (q.spawnError) {
-    d.err(`probe: could not run schtasks: ${detail(q)}`);
-    return 1;
   } else {
     d.out(`the scheduled task ${name} is not registered; nothing to remove`);
   }

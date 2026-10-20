@@ -1,7 +1,8 @@
 // Seams for `probe daemon install|uninstall`. Every OS call goes through ExecFn and every file
 // write through AutostartFs, so unit tests assert the exact argv and bytes without touching the host.
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 
 export interface ExecResult {
   /** Exit code; null when the process could not be started or was killed. */
@@ -18,8 +19,14 @@ export type ExecFn = (file: string, args: string[]) => Promise<ExecResult>;
 export interface AutostartFs {
   /** Creates the directory and parents. */
   mkdirp(dir: string): Promise<void>;
-  /** Replaces the file with these exact bytes. */
-  write(file: string, data: string | Uint8Array): Promise<void>;
+  /**
+   * Replaces the file with these exact bytes (default mode 0o600). The real implementation writes a
+   * new temp file exclusively and renames it over the target, so an existing file, symlink or
+   * junction at the target is replaced, never written through, and its mode is not inherited.
+   */
+  write(file: string, data: string | Uint8Array, mode?: number): Promise<void>;
+  /** Owner and permission bits of a path, or undefined when it does not exist. */
+  statPath(path: string): Promise<{ uid: number; mode: number } | undefined>;
   /** The file's text, or undefined when it does not exist. */
   read(file: string): Promise<string | undefined>;
   /** Removes the file; a missing file is fine. */
@@ -33,6 +40,8 @@ export interface AutostartEnv {
   home: string;
   /** Account name without the domain, used when the environment has none. */
   userName: string;
+  /** Numeric user id (POSIX); used to check that a probe home is ours. */
+  uid?: number;
 }
 
 export interface AutostartIo {
@@ -94,7 +103,32 @@ export const realFs: AutostartFs = {
   mkdirp: async (dir) => {
     await mkdir(dir, { recursive: true, mode: 0o700 });
   },
-  write: (file, data) => writeFile(file, data, { mode: 0o600 }),
+  write: async (file, data, mode = 0o600) => {
+    const tmp = `${file}.${String(process.pid)}.${randomBytes(6).toString("hex")}.tmp`;
+    let renamed = false;
+    try {
+      const fh = await open(tmp, "wx", mode);
+      try {
+        await fh.writeFile(data);
+        if (process.platform !== "win32") await fh.chmod(mode);
+      } finally {
+        await fh.close();
+      }
+      await rename(tmp, file);
+      renamed = true;
+    } finally {
+      if (!renamed) await rm(tmp, { force: true });
+    }
+  },
+  statPath: async (path) => {
+    try {
+      const st = await stat(path);
+      return { uid: st.uid, mode: st.mode };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw e;
+    }
+  },
   read: async (file) => {
     try {
       return await readFile(file, "utf8");

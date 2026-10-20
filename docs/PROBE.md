@@ -128,14 +128,26 @@ background process at every logon is a separate decision from adding hooks. Run
 
 - **Windows**: a per-user Task Scheduler task named `SessionDeckProbeDaemon`. Trigger: at logon of the
   current user (`DOMAIN\user`). Principal: that user, interactive logon, run level Limited (not
-  elevated); no password is stored and no admin rights are needed by design. Settings: restart on
-  failure every minute (up to 999 times), no execution time limit, runs on battery. The console is
-  hidden by `launch-daemon.vbs` in the probe home: `wscript.exe` runs it, it starts `node daemon.mjs`
-  with window style 0 and waits, so the task shows as running while the daemon lives. Install runs
+  elevated); no password is stored and no admin rights are needed by design. Settings: no execution
+  time limit, runs on battery. Task Scheduler only restarts a task that fails to start, so the
+  restart is done by `launch-daemon.vbs` in the probe home: `wscript.exe` runs it, it starts
+  `node daemon.mjs` with window style 0 and waits (the task shows as running while the daemon
+  lives), and after a non-zero exit it starts the daemon again, waiting 5 s, then 10 s, doubling up
+  to 60 s (reset after a run of 10 minutes or more). Exit 0 ends the launcher: that is a graceful
+  stop, or another daemon already holding the lock for this home, so there is no tight loop.
+  Install first lists the tasks (locale-independent), and only touches a task of that name when its
+  definition is ours (Description and launcher path); a foreign task of the same name is refused
+  with exit 1, for install and for uninstall. When our task is already registered, install ends the
+  running instance, rewrites the launcher and the task, and starts it. It runs
   `schtasks.exe /Create /TN SessionDeckProbeDaemon /XML <file> /F` (so installing twice leaves one
-  task) and then `/Run`; uninstall runs `/End` and `/Delete /F`, and succeeds when the task is absent.
-  A daemon that is already running is not killed by uninstall; it ends at logoff, or stop the
-  `node.exe` that runs `daemon.mjs`. Check the task:
+  task) and then `/Run`; uninstall runs `/End` and `/Delete /F`, and succeeds when the task is absent
+  (any other query failure, such as access denied, exits 1 and keeps the launcher). The schtasks and
+  wscript paths are fixed at `C:\Windows\System32`; a `SystemRoot` or `windir` that names anything
+  else is refused. On Windows `--home` must be the default probe home or a folder beneath it (the
+  launcher runs at every logon and no ACL is set elsewhere); paths containing `%` are refused. On
+  Linux an existing `--home` must be owned by you and not group or world writable. Files are
+  written to a fresh temp name and renamed over the target (mode 0600), never through a symlink.
+  Check the task:
   ```
   schtasks /Query /TN SessionDeckProbeDaemon /V /FO LIST
   Get-ScheduledTask -TaskName SessionDeckProbeDaemon | Get-ScheduledTaskInfo

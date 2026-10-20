@@ -4,10 +4,11 @@
 // and unregisters it in finally. Linux: the unit file and the no-user-bus path, with HOME in a temp
 // dir; skipped when the host has a working `systemctl --user` (it would act on a real manager).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { launcherScript, utf16leBom } from "../src/autostart/windows.ts";
 import { probeRoot } from "./helpers.ts";
 
 const cli = join(probeRoot, "dist", "probe.mjs");
@@ -23,7 +24,10 @@ const winOnly = process.platform === "win32" ? it : it.skip;
 describe("windows Task Scheduler (real)", () => {
   winOnly("registers a logon task for the current user, Limited, and removes it", () => {
     const name = `SessionDeckTest-${process.pid}-${Date.now()}`;
-    const home = mkdtempSync(join(tmpdir(), "sd-task-home-"));
+    // Windows only accepts a home inside the user's default probe home (no ACL on other folders).
+    const base = join(homedir(), "AppData", "Local", "sessiondeck");
+    mkdirSync(base, { recursive: true });
+    const home = mkdtempSync(join(base, "test-task-"));
     const schtasks = join(process.env["SystemRoot"] ?? "C:\\Windows", "System32", "schtasks.exe");
     try {
       const a = run(["daemon", "install", "--home", home, "--task-name", name, "--no-start"]);
@@ -65,6 +69,42 @@ describe("windows Task Scheduler (real)", () => {
     } finally {
       spawnSync(schtasks, ["/Delete", "/TN", name, "/F"], { windowsHide: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("windows launcher restart (real wscript)", () => {
+  winOnly("restarts a daemon that exits non-zero and stops when it exits 0", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sd-launch-"));
+    try {
+      const counter = join(dir, "runs.txt");
+      const fake = join(dir, "fake-daemon.mjs");
+      // fails twice (as a crash would), then exits 0
+      writeFileSync(
+        fake,
+        `import { appendFileSync, readFileSync } from "node:fs";
+appendFileSync(${JSON.stringify(counter)}, "x");
+process.exit(readFileSync(${JSON.stringify(counter)}, "utf8").length >= 3 ? 0 : 1);`,
+      );
+      const vbs = join(dir, "launch-daemon.vbs");
+      writeFileSync(
+        vbs,
+        utf16leBom(
+          launcherScript(
+            { node: process.execPath, script: fake, probeHome: dir },
+            { initialDelayMs: 200 },
+          ),
+        ),
+      );
+      const wscript = join("C:\\Windows", "System32", "wscript.exe");
+      const r = spawnSync(wscript, ["//B", "//Nologo", vbs], {
+        windowsHide: true,
+        timeout: 30_000,
+      });
+      expect(r.status).toBe(0);
+      expect(readFileSync(counter, "utf8")).toBe("xxx");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
