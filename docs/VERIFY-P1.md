@@ -24,3 +24,21 @@ Workspace gates (all exit 0): `pnpm -r typecheck`, `pnpm -r lint`, `pnpm lint:ro
 S2 unit check (U1, daemon core, HEAD f563f93, Linux WSL2, node v22.23.3), packages/probe: `pnpm test` 7 files, 130 passed; `pnpm typecheck` exit 0; `pnpm lint` exit 0; `pnpm test:proc` first run 140 passed / 2 skipped, second run 1 failed (lock-race), isolated lock-race reruns 0 of 3 passed. Windows-specific behaviour (taskkill path, NTFS) is verified by CI (pending) in windows-latest.
 
 Count: 7 pass / 0 fail / 0 unverifiable (R1.1 laptop number outstanding).
+
+## S2 U4a integration check (daemon wiring, `probe daemon run`)
+
+Branch p1/probe-daemon, HEAD a7a7e93. Verified 2026-10-20T19:22Z to 19:30Z (Linux WSL2 container, node v22.23.3). One test process at a time, --maxWorkers=2 or fewer.
+
+| ID | Command | Key output | Result |
+|---|---|---|---|
+| all | `pnpm -F @sessiondeck/probe exec vitest run --maxWorkers=2` | 10 files passed; 261 passed, 1 skipped (262), 8.4 s | PASS |
+| all | `pnpm exec vitest run -c vitest.proc.config.ts --maxWorkers=2` (packages/probe, `test:proc`) | 10 files passed; 145 passed, 2 skipped (Windows-only), 57 s; includes `daemon-run.proc.test.ts`: "probe daemon run (R1.4) starts, heartbeats to the hub, and exits 0 on SIGTERM" | PASS |
+| R1.4 | `node packages/probe/scripts/harness-daemon-e2e.mjs` | "seq contiguous, no duplicate ids: 12 envelopes, seq 0..11, conflicts=0, resent_ids=0"; "no redelivery after daemon kill and restart: non_heartbeat_before=9 after=9 resent_ids=0 conflicts=0"; whole run 63 envelopes, seq 0..62, conflicts=0 | PASS |
+| R1.5 | same harness; component 10 min run in U2 rows above | Hub-down 10 min is NOT re-run through `daemon run`; the e2e harness covers in-order delivery with seq 1,4,5 and restart only. Integrated 10-minute outage has no runnable check in the repo | FAIL (integration unverifiable; component PASS above) |
+| R1.6 | `node packages/probe/scripts/harness-transcript.mjs`; e2e harness | "R1.6 lines_written=209 delivered=209 duplicates=0 resets=2 subagent_lines=50 restarts=3", order ok, RESULT pass; e2e: main 9/9 and subagent 7/7 exactly once through the daemon, resumes tailing after restart 10/10 | PASS |
+| R1.7 | e2e harness | "liveness alive:false within 15 s of the kill: detected_ms=11795 pid=166528" (limit 15000) | PASS |
+| D-S2-11 | read `packages/probe/src/daemon/transcript.ts`; `vitest run test/transcript.test.ts -t "backslash exploit\|drive-letter"` | `trusted()` first calls `foreignStyle(p, platform)` (`platform !== "win32" && (includes("\\") \|\| /^[A-Za-z]:/)`), logs a warn and returns undefined. Tests "backslash exploit: a link named a\b under projects pointing outside is refused" and "a drive-letter path is refused on a posix platform" exist (posix only) and pass (2 passed) | PASS |
+
+Windows-only paths (win32 real-filesystem tests, junction cases, win32 CI matrix): CI pending. HEAD a7a7e93 run 39482860743 in_progress; 763ec25 run 39482661180 cancelled (superseded); earlier run 39480584779 (e7b6660) failed (the transcript test the 763ec25 fix addresses). Not verified by CI yet.
+
+U4a count: 5 pass / 1 fail / 0 unverifiable (R1.5 integration gap; Windows CI pending).
