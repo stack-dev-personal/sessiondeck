@@ -31,4 +31,12 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 
 ## Units
 
+### U1 daemon core (R1.4, R1.5)
+- Commits 9466783, 5075a58, 950883e; review round 1 fixes 17cb010, round 2 fixes f563f93; round 3: sd-reviewer merge, sd-security-reviewer gate pass.
+- Verify (d31fc8f, docs/VERIFY-P1.md): R1.4 FAIL, because lock-race.proc "exactly one of 8 simultaneous starters wins" failed in 4 of 5 runs (2 or 3 winners), so stale-lock takeover is not exclusive. R1.5 counted as FAIL because only the compressed 15 s outage ran; the full 10 min `SD_OUTAGE_MS=600000` run is due at session close.
+- New task U1-fix-lock: the executor began reworking src/daemon/lock.ts into generation-numbered lock files (no remove or rename on takeover) plus three test files. Uncommitted when the run died.
+
+### Restart 2026-10-20 ~14:20Z
+- The sprint container restarted and killed the run in the middle of U1-fix-lock (not a session failure). Resumed at 14:21Z. Uncommitted diff: lock.ts (+286/-), daemon-review1.test.ts, daemon-review2.test.ts, lock-race.proc.test.ts. Decision: the generation design is sound in principle (exactly one creator per generation through link EEXIST), so sd-executor-probe finishes it rather than discarding it. Review loop restarts at iteration 1 for the fix.
+
 ## Deferred findings
