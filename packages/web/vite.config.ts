@@ -19,5 +19,7 @@ export default defineConfig({
     pool: "threads",
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["src/test-setup.ts"],
+    // Must exceed asyncUtilTimeout (5000) in test-setup.ts so real query failures show a DOM dump.
+    testTimeout: 10_000,
   },
 });
