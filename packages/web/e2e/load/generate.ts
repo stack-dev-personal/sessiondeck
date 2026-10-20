@@ -211,7 +211,14 @@ export function createLoad(opts: LoadOptions) {
     });
   };
 
-  const post = async (host: string, envelopes: Env[]): Promise<void> => {
+  /** Every post in flight, so `stop` can wait for all of them, not only the last tick's. */
+  const pending = new Set<Promise<void>>();
+  const post = (host: string, envelopes: Env[]): Promise<void> => {
+    const p = doPost(host, envelopes).finally(() => pending.delete(p));
+    pending.add(p);
+    return p;
+  };
+  const doPost = async (host: string, envelopes: Env[]): Promise<void> => {
     posts++;
     try {
       const res = await fetch(`${LIVE.directUrl}/ingest`, {
@@ -265,7 +272,6 @@ export function createLoad(opts: LoadOptions) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running = false;
   let startedAt = 0;
-  let inflight: Promise<void> = Promise.resolve();
 
   const run = (): void => {
     running = true;
@@ -278,7 +284,7 @@ export function createLoad(opts: LoadOptions) {
         h,
         envs: pick(h, per).map((s) => next(s)),
       }));
-      inflight = Promise.all(batches.map((b) => post(b.h, b.envs))).then(() => undefined);
+      for (const b of batches) void post(b.h, b.envs);
       // Fixed schedule (no drift): the next tick is due at startedAt + tick * tickMs.
       timer = setTimeout(step, Math.max(0, startedAt + tick * tickMs - Date.now()));
     };
@@ -288,7 +294,7 @@ export function createLoad(opts: LoadOptions) {
   const stop = async (): Promise<LoadStats> => {
     running = false;
     if (timer !== undefined) clearTimeout(timer);
-    await inflight;
+    await Promise.allSettled([...pending]);
     const elapsedMs = Date.now() - startedAt;
     return { sent, posts, failedPosts, elapsedMs, ratePerSec: sent / (elapsedMs / 1000) };
   };
