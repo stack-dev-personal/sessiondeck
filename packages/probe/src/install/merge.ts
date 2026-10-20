@@ -9,6 +9,8 @@ export const STATUS_KEYS: readonly StatusKey[] = ["statusLine", "subagentStatusL
 export interface Previous {
   present: boolean;
   value?: unknown;
+  /** The recorded value failed the schema: known to have existed, but never restored. */
+  invalid?: boolean;
 }
 
 /** What one install changed in one settings file. */
@@ -28,8 +30,11 @@ export interface Ctx {
   home: string;
   /** Host name, passed as `--host`. */
   host: string;
-  statuslineCommand: string;
-  subagentsCommand: string;
+  /** Absent when a path is unsafe in a shell command line; then the key is skipped. */
+  statuslineCommand?: string;
+  subagentsCommand?: string;
+  /** Why the status commands are absent (names the path). */
+  statusSkipReason?: string;
 }
 
 export class SettingsShapeError extends Error {}
@@ -83,11 +88,11 @@ function buildStatus(ctx: Ctx, key: StatusKey): Json {
   return key === "statusLine"
     ? {
         type: "command",
-        command: ctx.statuslineCommand,
+        command: ctx.statuslineCommand as string,
         padding: 0,
         refreshInterval: STATUSLINE_REFRESH_SECONDS,
       }
-    : { type: "command", command: ctx.subagentsCommand };
+    : { type: "command", command: ctx.subagentsCommand as string };
 }
 
 /** Removes our hooks from groups; foreign groups pass through by reference. */
@@ -144,7 +149,11 @@ export function applyInstall(
   };
   for (const key of STATUS_KEYS) {
     const cur = settings[key];
-    if (cur === undefined) {
+    const command = key === "statusLine" ? ctx.statuslineCommand : ctx.subagentsCommand;
+    if (command === undefined) {
+      notices.push(`${key}: not installed; ${ctx.statusSkipReason ?? "unsafe path"}`);
+      if (isOurStatus(cur)) previous[key] = prior?.previous[key] ?? { present: false };
+    } else if (cur === undefined) {
       out[key] = buildStatus(ctx, key);
     } else if (isOurStatus(cur)) {
       out[key] = buildStatus(ctx, key);
@@ -209,4 +218,35 @@ export function applyUninstall(
     out = prev?.present && verified.has(key) ? { ...out, [key]: prev.value } : omit(out, key);
   }
   return out;
+}
+
+/** Every hook entry of ours in the settings (any event). */
+function ourHooks(settings: Json): Json[] {
+  const hooks = settings["hooks"];
+  if (!isRecord(hooks)) return [];
+  const found: Json[] = [];
+  for (const groups of Object.values(hooks)) {
+    if (!Array.isArray(groups)) continue;
+    for (const g of groups) {
+      if (!isRecord(g) || !Array.isArray(g["hooks"])) continue;
+      for (const h of g["hooks"]) if (isRecord(h) && isOurHook(h)) found.push(h);
+    }
+  }
+  return found;
+}
+
+/** True when the settings hold any entry of ours. */
+export function hasProbeEntries(settings: Json): boolean {
+  return ourHooks(settings).length > 0 || STATUS_KEYS.some((k) => isOurStatus(settings[k]));
+}
+
+/** The `--home` argument of our installed hook entries, if present (not yet validated). */
+export function installedHome(settings: Json): string | undefined {
+  for (const h of ourHooks(settings)) {
+    const args = h["args"] as unknown[];
+    const i = args.indexOf("--home");
+    const v = i >= 0 ? args[i + 1] : undefined;
+    if (typeof v === "string" && v !== "") return v;
+  }
+  return undefined;
 }

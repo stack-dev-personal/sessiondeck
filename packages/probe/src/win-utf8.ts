@@ -28,7 +28,7 @@ const defaultRun: Runner = (file, args, opts) =>
     timeout: 1000,
   });
 
-const isFile = (p: string): boolean => {
+export const isFile = (p: string): boolean => {
   try {
     return statSync(p).isFile();
   } catch {

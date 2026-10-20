@@ -70,7 +70,7 @@ export function serialize(settings: Json, layout: Layout): string {
   return layout.bom ? `${BOM}${text}` : text;
 }
 
-const BACKUP_RE = /^settings\.backup-.*\.json$/;
+export const BACKUP_RE = /^settings\.backup-.*\.json$/;
 
 /**
  * Copies the current file into the probe home as settings.backup-<ts>.json. Created exclusively

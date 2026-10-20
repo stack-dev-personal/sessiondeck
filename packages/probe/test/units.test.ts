@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ULID_PATTERN } from "@sessiondeck/contract";
 import { buildEnvelope, hookEnvelopeFromPayload, hostOs } from "../src/envelope.ts";
 import { dayFileName, defaultProbeHome, spoolDir, hookErrorsLog } from "../src/paths.ts";
-import { probeHome } from "../src/cli-paths.ts";
+import { cliDefaultHome, probeHome } from "../src/cli-paths.ts";
 import { parseProbeArgs } from "../src/args.ts";
 import { isWsl } from "../src/host.ts";
 import { MAX_LINE_BYTES, parseSpoolLine } from "../src/spool.ts";
@@ -158,6 +158,15 @@ describe("paths", () => {
     expect(defaultProbeHome({ platform: "darwin", env: {}, home: "/Users/u" })).toBe(
       "/Users/u/.local/state/sessiondeck",
     );
+  });
+  it("the Windows CLI default home ignores LOCALAPPDATA; the hook default keeps it", () => {
+    const e = {
+      platform: "win32" as const,
+      env: { LOCALAPPDATA: "C:\\evil" },
+      home: "C:\\Users\\u",
+    };
+    expect(cliDefaultHome(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck");
+    expect(defaultProbeHome(e)).toBe("C:\\evil\\sessiondeck");
   });
   it("only an explicit --home moves the CLI home; SESSIONDECK_HOME is ignored", () => {
     for (const platform of ["win32", "linux"] as const) {

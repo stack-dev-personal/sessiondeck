@@ -1,15 +1,25 @@
 // CLI-only paths (install, uninstall, config). Not imported by the hook bundle. The probe home comes
 // from an explicit `--home <dir>` flag or the platform default; no environment variable moves it
 // (a repo-controlled "env" in .claude/settings.json must not be able to).
-import { join, resolve } from "node:path";
+import { join, resolve, win32 } from "node:path";
 import { type PathEnv, currentPathEnv, defaultProbeHome } from "./paths.ts";
 
 export type { PathEnv };
 export { currentPathEnv };
 
-/** Probe home for the CLI: the explicit --home flag, else the platform default. */
+/**
+ * CLI default home. On Windows this is <homedir>\\AppData\\Local\\sessiondeck and never reads
+ * LOCALAPPDATA (an env var must not move where the token is written). Elsewhere it is the
+ * shared platform default.
+ */
+export function cliDefaultHome(e: PathEnv): string {
+  if (e.platform === "win32") return win32.join(e.home, "AppData", "Local", "sessiondeck");
+  return defaultProbeHome(e);
+}
+
+/** Probe home for the CLI: the explicit --home flag, else the CLI default. */
 export function probeHome(e: PathEnv = currentPathEnv(), homeFlag?: string): string {
-  return homeFlag ? resolve(homeFlag) : defaultProbeHome(e);
+  return homeFlag ? resolve(homeFlag) : cliDefaultHome(e);
 }
 
 /** Probe config file (hub URL, token, host). Never inside the Claude settings directory. */

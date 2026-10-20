@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { chmod, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { resolveHostName } from "../host.ts";
+import { isFile, system32Dir } from "../win-utf8.ts";
 import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
 
 /** probe.json: hub URL, token, host name. Lives in the probe home, never in settings.json. */
@@ -67,25 +68,66 @@ export function validateToken(token: string): string {
   return t;
 }
 
-/** The current user's SID (S-1-5-...) from `whoami /user`, so the grant does not depend on names. */
-export function currentUserSid(): string {
-  const out = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], {
-    windowsHide: true,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
+export interface SysDeps {
+  env: NodeJS.ProcessEnv;
+  exists: (p: string) => boolean;
+  /** Runs an absolute executable with cwd System32 and a timeout; returns stdout. */
+  run: (file: string, args: string[], opts: { cwd: string; timeout: number }) => string;
+}
+
+const defaultDeps: SysDeps = {
+  env: process.env,
+  exists: isFile,
+  run: (file, args, opts) =>
+    execFileSync(file, args, {
+      cwd: opts.cwd,
+      timeout: opts.timeout,
+      env: { SystemRoot: opts.cwd.slice(0, -"\\System32".length) },
+      windowsHide: true,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }),
+};
+
+/** `<SystemRoot>\System32\<name>` (never a PATH or cwd lookup); throws when it is not a file. */
+export function resolveSystemExe(
+  name: string,
+  d: Pick<SysDeps, "env" | "exists"> = defaultDeps,
+): { exe: string; dir: string } {
+  const dir = system32Dir(d.env);
+  const exe = `${dir}\\${name}`;
+  if (!d.exists(exe)) throw new Error(`${exe} not found`);
+  return { exe, dir };
+}
+
+/** A real per-user SID. Well-known group SIDs (Everyone, Authenticated Users, ...) are refused. */
+export function validateUserSid(sid: string): string {
+  if (
+    !/^S-1-5-21-[0-9-]+$/.test(sid) ||
+    sid === "S-1-1-0" ||
+    sid === "S-1-5-11" ||
+    sid.startsWith("S-1-5-32-")
+  ) {
+    throw new Error("whoami did not return a user SID");
+  }
+  return sid;
+}
+
+/** The current user's SID from `whoami /user`, so the grant does not depend on names. */
+export function currentUserSid(d: SysDeps = defaultDeps): string {
+  const { exe, dir } = resolveSystemExe("whoami.exe", d);
+  const out = d.run(exe, ["/user", "/fo", "csv", "/nh"], { cwd: dir, timeout: 10000 });
   const m = /"(S-1-[0-9-]+)"/.exec(out);
   if (!m?.[1]) throw new Error("no SID in whoami output");
-  return m[1];
+  return validateUserSid(m[1]);
 }
 
 /** Windows: drop inherited ACEs and grant only the current user, by SID. Throws on failure. */
-export function restrictWindowsAcl(path: string): void {
+export function restrictWindowsAcl(path: string, d: SysDeps = defaultDeps): void {
   try {
-    execFileSync("icacls", [path, "/inheritance:r", "/grant:r", `*${currentUserSid()}:F`], {
-      windowsHide: true,
-      stdio: "ignore",
-    });
+    const sid = currentUserSid(d);
+    const { exe, dir } = resolveSystemExe("icacls.exe", d);
+    d.run(exe, [path, "/inheritance:r", "/grant:r", `*${sid}:F`], { cwd: dir, timeout: 10000 });
   } catch {
     throw new ConfigError(
       `could not restrict permissions on ${path} with icacls; nothing was written (the token stays out of the file)`,

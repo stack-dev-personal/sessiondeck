@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, readFile, rm } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import {
   ConfigError,
   ensureConfigPrivate,
@@ -27,6 +27,8 @@ import {
   isRecord,
   type StatusKey,
   STATUS_KEYS,
+  hasProbeEntries,
+  installedHome,
   applyInstall,
   applyUninstall,
   validateSettings,
@@ -38,7 +40,7 @@ import {
   removeBackups,
   serialize,
 } from "./settings-io.ts";
-import { getEntry, putEntry } from "./state.ts";
+import { getEntry, isInHome, putEntry } from "./state.ts";
 import { isDeepStrictEqual } from "node:util";
 
 export interface RunIo {
@@ -122,12 +124,8 @@ const toSlash = (p: string): string => p.replace(/\\/g, "/");
  */
 const SHELL_SAFE = /^[A-Za-z0-9 _./:=+-]+$/;
 
-function shellWord(word: string): string {
-  if (!SHELL_SAFE.test(word)) {
-    throw new SettingsShapeError(
-      `cannot install: the path ${JSON.stringify(word)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + -). Install from or into a path without them.`,
-    );
-  }
+function shellWord(word: string): string | undefined {
+  if (!SHELL_SAFE.test(word)) return undefined;
   return word.includes(" ") ? `"${word}"` : word;
 }
 
@@ -142,20 +140,25 @@ function gitWorkTreeAbove(dir: string): string | undefined {
   }
 }
 
-function shellCommand(script: string, home: string, host: string): string {
-  return ["node", script, "--home", home, "--host", host, MARKER].map(shellWord).join(" ");
+function shellCommand(script: string, home: string, host: string): string | undefined {
+  const words = ["node", script, "--home", home, "--host", host, MARKER].map(shellWord);
+  return words.every((w) => w !== undefined) ? words.join(" ") : undefined;
 }
 
 export function buildCtx(distDir: string, homeDir: string, host: string): Ctx {
   const dir = toSlash(resolve(distDir));
   const home = toSlash(resolve(homeDir));
-  return {
-    hookPath: `${dir}/hook.mjs`,
-    home,
-    host,
-    statuslineCommand: shellCommand(`${dir}/statusline.mjs`, home, host),
-    subagentsCommand: shellCommand(`${dir}/subagents.mjs`, home, host),
-  };
+  const ctx: Ctx = { hookPath: `${dir}/hook.mjs`, home, host };
+  const statusline = shellCommand(`${dir}/statusline.mjs`, home, host);
+  const subagents = shellCommand(`${dir}/subagents.mjs`, home, host);
+  if (statusline !== undefined) ctx.statuslineCommand = statusline;
+  if (subagents !== undefined) ctx.subagentsCommand = subagents;
+  if (statusline === undefined || subagents === undefined) {
+    // Hooks are argv and never reach a shell; only the shell-run status commands need safe paths.
+    const bad = [dir, home].filter((p) => !SHELL_SAFE.test(p));
+    ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(dir)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + -); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
+  }
+  return ctx;
 }
 
 async function resolveToken(args: Args, io: RunIo): Promise<string | undefined> {
@@ -174,6 +177,14 @@ async function resolveToken(args: Args, io: RunIo): Promise<string | undefined> 
   return undefined;
 }
 
+function refuseInsideClaude(args: Args, e: PathEnv, verb: string): void {
+  if (e.env["CLAUDECODE"] && !args.flags.has("--allow-inside-claude")) {
+    throw new UsageError(
+      `refusing to ${verb} from inside a Claude Code session (CLAUDECODE is set); run it in your own terminal, or pass --allow-inside-claude`,
+    );
+  }
+}
+
 async function install(args: Args, io: RunIo): Promise<number> {
   const replaceStatus = ((): boolean => {
     const v = str(args.flags, "--statusline");
@@ -184,11 +195,7 @@ async function install(args: Args, io: RunIo): Promise<number> {
   const e = io.pathEnv;
   const homeFlag = str(args.flags, "--home");
   const home = probeHome(e, homeFlag);
-  if (e.env["CLAUDECODE"] && !args.flags.has("--allow-inside-claude")) {
-    throw new UsageError(
-      "refusing to install from inside a Claude Code session (CLAUDECODE is set); run it in your own terminal, or pass --allow-inside-claude",
-    );
-  }
+  refuseInsideClaude(args, e, "install");
   if (!homeFlag) {
     const repo = gitWorkTreeAbove(home);
     if (repo) {
@@ -265,6 +272,7 @@ async function install(args: Args, io: RunIo): Promise<number> {
 async function verifyPrevious(
   entry: ReturnType<typeof getEntry> extends Promise<infer T> ? T : never,
   io: RunIo,
+  home: string,
 ): Promise<Set<StatusKey>> {
   const ok = new Set<StatusKey>();
   if (!entry) return ok;
@@ -273,8 +281,9 @@ async function verifyPrevious(
     if (!prev.present) continue;
     const file = entry.backups?.[key];
     let matches = false;
-    if (file) {
+    if (file && !prev.invalid && isInHome(file, home)) {
       try {
+        if (!(await lstat(file)).isFile()) throw new Error("not a regular file");
         const doc: unknown = JSON.parse((await readFile(file, "utf8")).replace(/^\uFEFF/, ""));
         matches = isRecord(doc) && isDeepStrictEqual(doc[key], prev.value);
       } catch {
@@ -295,16 +304,36 @@ async function verifyPrevious(
 
 async function uninstall(args: Args, io: RunIo): Promise<number> {
   const e = io.pathEnv;
-  const homeFlag = str(args.flags, "--home");
-  const home = probeHome(e, homeFlag);
-  io.out(`probe home: ${home}`);
+  refuseInsideClaude(args, e, "uninstall");
   const settingsPath = str(args.flags, "--settings") ?? claudeSettingsPath(e);
   const loaded = await loadSettings(settingsPath);
   validateSettings(loaded.settings);
+  // Without --home, use the one our installed hook entries carry (a later plain uninstall must
+  // find the state, backups and token of the install that wrote them).
+  let homeFlag = str(args.flags, "--home");
+  let inferred = false;
+  if (!homeFlag) {
+    const recorded = installedHome(loaded.settings);
+    if (recorded && (isAbsolute(recorded) || win32.isAbsolute(recorded))) {
+      homeFlag = recorded;
+      inferred = true;
+    } else if (recorded) {
+      io.err(
+        `warning: ignoring the relative --home ${JSON.stringify(recorded)} in the installed hook`,
+      );
+    }
+  }
+  const home = probeHome(e, homeFlag);
+  io.out(`probe home: ${home}${inferred ? " (from the installed hook entries)" : ""}`);
   const stateFile = installStatePath(e, homeFlag);
   const entry = await getEntry(stateFile, loaded.path);
+  if (!entry && hasProbeEntries(loaded.settings)) {
+    io.err(
+      `warning: probe entries are installed in ${loaded.path} but no install record was found in ${stateFile}; any statusLine you replaced is not restored. Pass --home <dir> if the install used another home`,
+    );
+  }
   if (loaded.existed) {
-    const verified = await verifyPrevious(entry, io);
+    const verified = await verifyPrevious(entry, io, home);
     const next = applyUninstall(loaded.settings, entry, verified);
     if (serialize(next, loaded.layout) === loaded.original) {
       io.out(`nothing to remove in ${loaded.path}`);
@@ -331,6 +360,7 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
 }
 
 async function configShow(args: Args, io: RunIo): Promise<number> {
+  refuseInsideClaude(args, io.pathEnv, "show the config");
   const cfgPath = probeConfigPath(io.pathEnv, str(args.flags, "--home"));
   const cfg = await readConfig(cfgPath);
   if (!cfg) {

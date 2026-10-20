@@ -92,11 +92,11 @@ one in the backup taken at install; otherwise the key is removed and the backup 
 
 ## Where files live
 
-Probe home: Windows `%LOCALAPPDATA%\sessiondeck`; Linux and WSL2 `~/.local/state/sessiondeck`.
+Probe home: Windows `<user profile>\AppData\Local\sessiondeck` (the CLI does not read `LOCALAPPDATA`); Linux and WSL2 `~/.local/state/sessiondeck`.
 `probe install` records the resolved path in the hook arguments (`--home`). Only an explicit `--home <dir>`
 moves it; no environment variable does (a repo's `.claude/settings.json` can set env). Install
 prints the resolved home, refuses a default home inside a git work tree (pass `--home` to
-override), and refuses to run when `CLAUDECODE` is set unless `--allow-inside-claude`. WSL2 has its own home inside the
+override), and refuses to run (install, uninstall, config show) when `CLAUDECODE` is set unless `--allow-inside-claude`. Without `--home`, uninstall takes the home from the `--home` argument of the installed hook entries (it must be absolute) and warns when our entries exist but no install record is found. Paths unsafe in a shell command (non-ASCII, quotes, `%`, `$`) skip only `statusLine`/`subagentStatusLine` with a notice; the hooks, which are argv, still install. Backups named in `install-state.json` are trusted only as `settings.backup-*.json` regular files directly in the probe home. On Windows `whoami.exe` and `icacls.exe` are run from `<SystemRoot>\System32` and the SID must be a per-user `S-1-5-21-...` SID. WSL2 has its own home inside the
 distro; install there separately. Directories are created `0700` and files `0600` on POSIX (the
 spool holds raw prompts and tool inputs); the hook opens day files with `O_NOFOLLOW` (lstat on
 Windows) and refuses anything that is not a regular file.

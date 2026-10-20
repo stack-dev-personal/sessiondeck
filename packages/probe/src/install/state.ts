@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { ensurePrivateDir, writeFileAtomic } from "./atomic.ts";
-import { dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
+import { BACKUP_RE } from "./settings-io.ts";
 import { type InstallEntry, STATUS_KEYS, type StatusKey, isRecord } from "./merge.ts";
 
 /** install-state.json: per settings file, what install changed (for an exact uninstall). */
@@ -24,8 +25,16 @@ export function isStatusValue(v: unknown): boolean {
   );
 }
 
+const norm = (p: string): string => (process.platform === "win32" ? p.toLowerCase() : p);
+
+/** A backup is accepted only as settings.backup-*.json directly inside the probe home. */
+export function isInHome(file: string, home: string): boolean {
+  const f = resolve(file);
+  return norm(dirname(f)) === norm(resolve(home)) && BACKUP_RE.test(basename(f));
+}
+
 /** Schema check for one entry read from disk; undefined when it does not fit. */
-export function parseEntry(raw: unknown): InstallEntry | undefined {
+export function parseEntry(raw: unknown, home?: string): InstallEntry | undefined {
   if (!isRecord(raw) || !isRecord(raw["previous"])) return undefined;
   const { createdEvents, createdHooksKey, createdFile } = raw;
   if (!Array.isArray(createdEvents) || !createdEvents.every((e) => typeof e === "string")) {
@@ -38,9 +47,11 @@ export function parseEntry(raw: unknown): InstallEntry | undefined {
   for (const key of STATUS_KEYS) {
     const p = raw["previous"][key];
     if (!isRecord(p) || typeof p["present"] !== "boolean") return undefined;
-    if (p["present"] && !isStatusValue(p["value"])) return undefined;
-    previous[key] = p["present"] ? { present: true, value: p["value"] } : { present: false };
-    if (typeof rawBackups[key] === "string") backups[key] = rawBackups[key];
+    if (!p["present"]) previous[key] = { present: false };
+    else if (isStatusValue(p["value"])) previous[key] = { present: true, value: p["value"] };
+    else previous[key] = { present: true, invalid: true };
+    const b = rawBackups[key];
+    if (typeof b === "string" && (home === undefined || isInHome(b, home))) backups[key] = b;
   }
   return { previous, createdEvents, createdHooksKey, createdFile, backups };
 }
@@ -51,7 +62,7 @@ async function load(path: string): Promise<StateFile> {
     if (isRecord(raw) && isRecord(raw["installs"])) {
       const installs: Record<string, InstallEntry> = {};
       for (const [k, v] of Object.entries(raw["installs"])) {
-        const entry = parseEntry(v);
+        const entry = parseEntry(v, dirname(path));
         if (entry) installs[k] = entry;
       }
       return { version: 1, installs };
