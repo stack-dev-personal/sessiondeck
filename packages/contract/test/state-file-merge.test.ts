@@ -77,18 +77,21 @@ describe("mergeSprintStatus", () => {
     const base = { sprint: "0", name: "n", branch: "b", state: "running" };
     await mergeSprintStatus(stateDir, base);
     const ids = Array.from({ length: 12 }, (_, i) => `S${i}`);
-    await Promise.all(
+    // allSettled: cleanup must not start while a sibling merge is still in flight.
+    const results = await Promise.allSettled(
       ids.map((id) =>
         mergeSprintStatus(
           stateDir,
           { sessions: { [id]: { state: "running" } } },
-          { lock: { pollMs: 1, waitMs: 60_000 } },
+          // waitMs stays below LOCK_STALE_MS (30 s) so a stuck lock fails instead of being taken over.
+          { lock: { pollMs: 1, waitMs: 20_000 } },
         ),
       ),
     );
+    expect(results.filter((r) => r.status === "rejected")).toEqual([]);
     const sessions = (await readJson(sprintStatusPath(stateDir)))["sessions"] as object;
     expect(Object.keys(sessions).sort()).toEqual([...ids].sort());
-  }, 90_000);
+  }, 30_000);
 });
 
 describe("mergeSessionStatus over an existing file", () => {
@@ -141,11 +144,11 @@ describe("mergeSessionStatus over an existing file", () => {
     // allSettled: cleanup must not start while a sibling merge is still in flight.
     const results = await Promise.allSettled(
       keys.map((key) =>
-        mergeSessionStatus(stateDir, "S6", { [key]: 1 }, { lock: { pollMs: 1, waitMs: 60_000 } }),
+        mergeSessionStatus(stateDir, "S6", { [key]: 1 }, { lock: { pollMs: 1, waitMs: 20_000 } }),
       ),
     );
     expect(results.filter((r) => r.status === "rejected")).toEqual([]);
     const file = await readJson(path());
     expect(keys.filter((k) => file[k] !== 1)).toEqual([]);
-  }, 90_000);
+  }, 30_000);
 });
