@@ -135,6 +135,13 @@ jobs:
           name: e2e-web-live-perf
           path: e2e-live-perf-screens
           if-no-files-found: warn
+      - name: upload R3.6 perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-perf-results
+          path: e2e-live-perf-results
+          if-no-files-found: warn
       - name: upload live screenshots
         if: always()
         uses: actions/upload-artifact@v4
