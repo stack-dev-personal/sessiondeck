@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <span>Something failed while drawing this page.</span>
         <button
           type="button"
-          className="rounded border border-fg-muted bg-surface-2 px-s-3 py-s-1 hover:bg-surface-3"
+          className="rounded border border-border-control bg-surface-2 px-s-3 py-s-1 hover:bg-surface-3"
           onClick={() => this.setState({ failed: false })}
         >
           Retry

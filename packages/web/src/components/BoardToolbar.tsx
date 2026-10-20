@@ -4,7 +4,7 @@ import { selectHosts, useBoard } from "../store/board";
 import { useFilters } from "../store/filters";
 
 const select =
-  "w-48 max-w-full rounded border border-fg-muted bg-surface-2 px-s-2 py-s-1 text-sm text-fg";
+  "w-48 max-w-full rounded border border-border-control bg-surface-2 px-s-2 py-s-1 text-sm text-fg";
 
 /** A persisted filter value that no session has right now stays selectable so it can be undone. */
 function withCurrent(options: string[], current: string | null): string[] {
@@ -77,7 +77,7 @@ export function BoardToolbar({
         type="button"
         onClick={clear}
         disabled={!active}
-        className="rounded border border-fg-muted bg-surface-2 px-s-3 py-s-1 text-fg enabled:hover:bg-surface-3 disabled:text-fg-faint"
+        className="rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-fg enabled:hover:bg-surface-3 disabled:text-fg-faint"
       >
         Clear filters
       </button>

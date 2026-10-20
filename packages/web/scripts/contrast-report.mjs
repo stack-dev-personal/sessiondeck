@@ -24,6 +24,12 @@ for (const theme of ["dark", "light"]) {
       `${pad(theme, 6)}${pad(name + " / surface-1", 28)}${ratio.toFixed(2)}  ${ratio >= TEXT_MIN ? "pass" : "FAIL"}`,
     );
   }
+  for (const surf of ["bg", "surface-1", "surface-2", "surface-3"]) {
+    const ratio = contrast(t["border-control"], t[surf]);
+    console.log(
+      `${pad(theme, 6)}${pad("border-control / " + surf, 28)}${ratio.toFixed(2)}  ${ratio >= ICON_MIN ? "pass" : "FAIL"} (non-text)`,
+    );
+  }
   for (const name of ["meter-ok", "meter-warn", "meter-high"]) {
     const ratio = contrast(t[name], t["meter-track"]);
     console.log(

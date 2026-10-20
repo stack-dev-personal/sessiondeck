@@ -52,6 +52,16 @@ describe("token contrast (R3.7)", () => {
     }
   });
 
+  it.each(["dark", "light"] as const)(
+    "%s: border-control is >= 3:1 (non-text) on bg and surface-1..3",
+    (theme) => {
+      const t = tokens[theme];
+      for (const s of ["bg", "surface-1", "surface-2", "surface-3"]) {
+        expect(lib.contrast(t["border-control"], t[s]), s).toBeGreaterThanOrEqual(3);
+      }
+    },
+  );
+
   it("math sanity: black on white is 21:1", () => {
     expect(lib.contrast("#000000", "#ffffff")).toBeCloseTo(21, 5);
   });

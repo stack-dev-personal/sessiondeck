@@ -227,7 +227,7 @@ export function DetailDrawer({
             ref={closeRef}
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded border border-fg-muted bg-surface-2 px-s-2 py-s-1 text-sm text-fg hover:bg-surface-3"
+            className="shrink-0 rounded border border-border-control bg-surface-2 px-s-2 py-s-1 text-sm text-fg hover:bg-surface-3"
           >
             Close (Esc)
           </button>
@@ -385,7 +385,7 @@ export function DetailDrawer({
               aria-expanded={rawOpen}
               aria-controls={rawId}
               onClick={() => setRawOpen((o) => !o)}
-              className="self-start rounded border border-fg-muted bg-surface-2 px-s-2 py-s-1 text-xs text-fg hover:bg-surface-3"
+              className="self-start rounded border border-border-control bg-surface-2 px-s-2 py-s-1 text-xs text-fg hover:bg-surface-3"
             >
               <span aria-hidden="true">{rawOpen ? "▾ " : "▸ "}</span>
               {rawOpen ? "Hide" : "Show"} <span className="num">{history.tail.length}</span>{" "}
