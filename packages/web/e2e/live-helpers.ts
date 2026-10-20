@@ -41,12 +41,13 @@ export function hookEnvelope(
   name: string,
   fixtureRel: string,
   extra: Record<string, unknown> = {},
+  host: string = HOST,
 ) {
   return {
     v: 1,
     id: ulid(),
     kind: "hook",
-    host: HOST,
+    host,
     os: "linux",
     session_id: sessionId,
     hook_event_name: name,
@@ -63,11 +64,11 @@ export const promptEnv = (id: string) =>
 export const stopEnv = (id: string) => hookEnvelope(id, "Stop", "Stop/02-sample.json");
 export const endEnv = (id: string) => hookEnvelope(id, "SessionEnd", "SessionEnd/01-other.json");
 
-export async function ingest(envelopes: unknown[]): Promise<void> {
+export async function ingest(envelopes: unknown[], host: string = HOST): Promise<void> {
   const res = await fetch(`${LIVE.directUrl}/ingest`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${LIVE.token}` },
-    body: JSON.stringify({ host: HOST, envelopes }),
+    body: JSON.stringify({ host, envelopes }),
   });
   if (!res.ok) throw new Error(`ingest failed: ${res.status}`);
 }
@@ -75,7 +76,10 @@ export async function ingest(envelopes: unknown[]): Promise<void> {
 export const newSessionId = (): string => crypto.randomUUID();
 
 /** Stores hub URL and token the way Settings does, before any page script runs. */
-export async function configureHub(page: Page): Promise<void> {
+export async function configureHub(
+  page: Page,
+  overrides: Record<string, unknown> = {},
+): Promise<void> {
   await page.addInitScript(
     (s) => {
       try {
@@ -84,7 +88,7 @@ export async function configureHub(page: Page): Promise<void> {
         /* ignore */
       }
     },
-    { hubUrl: LIVE.hubUrl, token: LIVE.token, notifications: false },
+    { hubUrl: LIVE.hubUrl, token: LIVE.token, notifications: false, ...overrides },
   );
 }
 

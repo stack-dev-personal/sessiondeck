@@ -5,7 +5,7 @@ import { defineConfig } from "@playwright/test";
 const vite = "node ./node_modules/vite/bin/vite.js";
 
 /**
- * Live mode (R3.1, R3.9): set SD_E2E_HUB_URL to run only the live specs against a real hub, with a
+ * Live mode (R3.1, R3.3, R3.9): set SD_E2E_HUB_URL to run only the live specs against a real hub, with a
  * non-mock build on port 5174. Variables (all read by e2e/live-helpers.ts):
  *   SD_E2E_HUB_URL         hub base URL the browser uses (http://host:8787); required
  *   SD_E2E_HUB_TOKEN       the hub's HUB_TOKEN (passed in the environment, never committed)
@@ -15,7 +15,7 @@ const vite = "node ./node_modules/vite/bin/vite.js";
  * hub, gate and Playwright containers and cleans up: scripts/e2e-live.sh.
  */
 const live = (process.env["SD_E2E_HUB_URL"] ?? "") !== "";
-const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.9.spec.ts"];
+const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.3.spec.ts", "**/R3.9.spec.ts"];
 const port = live ? 5174 : 5173;
 
 /**

@@ -32,9 +32,10 @@ export function BoardToolbar({ shown, total }: { shown: number; total: number })
       data-testid="board-toolbar"
       className="flex items-center gap-s-3 border-b border-border px-s-4 py-s-2 text-sm"
     >
-      <label className="flex items-center gap-s-2 text-fg-muted">
-        Host
+      <span className="flex items-center gap-s-2 text-fg-muted">
+        <label htmlFor="board-filter-host">Host</label>
         <select
+          id="board-filter-host"
           className={select}
           value={host ?? ""}
           onChange={(e) => setHost(e.target.value === "" ? null : e.target.value)}
@@ -46,10 +47,11 @@ export function BoardToolbar({ shown, total }: { shown: number; total: number })
             </option>
           ))}
         </select>
-      </label>
-      <label className="flex items-center gap-s-2 text-fg-muted">
-        Project
+      </span>
+      <span className="flex items-center gap-s-2 text-fg-muted">
+        <label htmlFor="board-filter-project">Project</label>
         <select
+          id="board-filter-project"
           className={select}
           value={project ?? ""}
           onChange={(e) => setProject(e.target.value === "" ? null : e.target.value)}
@@ -61,7 +63,7 @@ export function BoardToolbar({ shown, total }: { shown: number; total: number })
             </option>
           ))}
         </select>
-      </label>
+      </span>
       <button
         type="button"
         onClick={clear}
