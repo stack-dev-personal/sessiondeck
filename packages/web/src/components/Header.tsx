@@ -41,7 +41,9 @@ export function Header() {
           ? "◇ mock"
           : connection === "open"
             ? "● connected"
-            : `◌ ${connection}`}
+            : connection === "connecting"
+              ? "◌ connecting"
+              : "✖ disconnected"}
       </span>
       <button type="button" className={btn} onClick={toggleCompact} aria-pressed={compact}>
         {compact ? "Compact: on" : "Compact: off"} (c)

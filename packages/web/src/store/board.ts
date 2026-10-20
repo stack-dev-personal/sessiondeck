@@ -16,9 +16,13 @@ export interface BoardState {
   /** Bounded per-session history for the detail drawer; fed by the same flush as snapshots. */
   history: Record<string, SessionHistory>;
   connection: ConnectionStatus;
-  setConnection: (c: ConnectionStatus) => void;
+  /** Epoch ms of the next reconnect attempt while closed; null otherwise. */
+  retryAt: number | null;
+  setConnection: (c: ConnectionStatus, retryAt?: number | null) => void;
   /** Queue an envelope; applied with every other queued update in the next animation frame. */
   enqueue: (e: Envelope) => void;
+  /** Queue a hub snapshot delta; the latest per session_id wins within a frame. */
+  enqueueSnapshot: (s: SessionSnapshot) => void;
   /** Replace the whole set (initial resync). Immediate. */
   replaceAll: (list: SessionSnapshot[]) => void;
   /** Apply everything queued now (also what the animation frame calls). */
@@ -35,21 +39,31 @@ type Raf = (cb: () => void) => unknown;
 export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>> {
   const schedule: Raf = raf ?? ((cb) => requestAnimationFrame(cb));
   let queue: Envelope[] = [];
+  let snaps = new Map<string, SessionSnapshot>();
   let scheduled = false;
+  const arm = (flush: () => void) => {
+    if (scheduled) return;
+    scheduled = true;
+    schedule(flush);
+  };
   return create<BoardState>()((set, get) => ({
     sessions: {},
     exceeds200k: {},
     history: {},
     connection: "closed",
-    setConnection: (connection) => set({ connection }),
+    retryAt: null,
+    setConnection: (connection, retryAt = null) => set({ connection, retryAt }),
     enqueue: (e) => {
       queue.push(e);
-      if (scheduled) return;
-      scheduled = true;
-      schedule(() => get().flush());
+      arm(() => get().flush());
+    },
+    enqueueSnapshot: (s) => {
+      snaps.set(s.session_id, s);
+      arm(() => get().flush());
     },
     replaceAll: (list) => {
       queue = [];
+      snaps = new Map();
       set({
         sessions: Object.fromEntries(list.map((s) => [s.session_id, s])),
         exceeds200k: {},
@@ -58,9 +72,11 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     },
     flush: () => {
       scheduled = false;
-      if (queue.length === 0) return;
+      if (queue.length === 0 && snaps.size === 0) return;
       const batch = queue;
+      const deltas = snaps;
       queue = [];
+      snaps = new Map();
       const next = { ...get().sessions };
       let flags = get().exceeds200k;
       const history = { ...get().history };
@@ -77,6 +93,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
           if (flags[e.session_id] !== f) flags = { ...flags, [e.session_id]: f };
         }
       }
+      for (const [id, snap] of deltas) next[id] = snap;
       set({ sessions: next, exceeds200k: flags, history });
     },
   }));

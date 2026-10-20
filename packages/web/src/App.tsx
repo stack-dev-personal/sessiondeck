@@ -1,5 +1,6 @@
 import { Suspense, lazy, useMemo } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { ConnectionBanner } from "./components/ConnectionBanner";
 import { DrawerHost } from "./components/DrawerHost";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
@@ -42,6 +43,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/board" replace />} />
         </Routes>
       </main>
+      <ConnectionBanner />
       <DrawerHost />
     </div>
   );

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -69,7 +69,7 @@ describe("shell", () => {
     await userEvent.type(screen.getByLabelText("Hub URL"), "http://hub:8787");
     await userEvent.click(screen.getByLabelText(/notifications/i));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Saved");
+    expect(screen.getByText(/Saved/)).toBeInTheDocument();
     const stored = JSON.parse(window.localStorage.getItem("sd.settings")!);
     expect(stored).toMatchObject({ hubUrl: "http://hub:8787", notifications: true });
   });
@@ -124,5 +124,33 @@ describe("shell keys and surfaces", () => {
     });
     mount();
     expect(screen.getByTestId("session-card")).toHaveClass("bg-surface-1");
+  });
+});
+
+describe("disconnect banner", () => {
+  beforeEach(() => {
+    useBoard.setState({ sessions: {}, connection: "mock", retryAt: null });
+  });
+
+  it("is absent when open or mock, shows icon and text when closed, and clears on open", () => {
+    mount();
+    const banner = screen.getByTestId("connection-banner");
+    expect(banner).toHaveAttribute("aria-live", "polite");
+    expect(banner).toBeEmptyDOMElement();
+    act(() => useBoard.getState().setConnection("closed", Date.now() + 4000));
+    expect(banner).toHaveTextContent(/Disconnected, reconnecting in [1-4]s/);
+    expect(banner).toHaveTextContent("✖");
+    expect(screen.getByTestId("connection")).toHaveTextContent("disconnected");
+    act(() => useBoard.getState().setConnection("connecting"));
+    expect(banner).toHaveTextContent("Reconnecting");
+    act(() => useBoard.getState().setConnection("open"));
+    expect(banner).toBeEmptyDOMElement();
+    expect(screen.getByTestId("connection")).toHaveTextContent("connected");
+  });
+
+  it("takes no layout flow space (fixed overlay)", () => {
+    mount();
+    act(() => useBoard.getState().setConnection("closed", null));
+    expect(screen.getByTestId("connection-banner").parentElement!.className).toContain("fixed");
   });
 });
