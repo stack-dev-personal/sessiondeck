@@ -65,3 +65,7 @@
 ## Stop and restart
 - 2026-10-20 19:51Z: subscription usage limit (429) stopped the run during U5 fix iteration 2 (reviewer: 1 MAJOR compact tasks slot unsized, 2 MINOR docs). Uncommitted work at stop: SessionCard.tsx compact state and tasks slots given fixed widths, index.css comment, R3.2.spec compact 320-480 sweep, A11Y-P3.md design-change notes, 4 baselines.
 - 2026-10-20 22:04Z+: resumed (conductor addendum). No stale S6.hb-stop, previous heartbeat pid gone. Kept the uncommitted changes; the web executor verifies and commits them, then U5 re-review continues.
+### U5 review iterations (after restart)
+- Iteration 2 fix 205ffe0: compact state slot w-36 truncate, tasks slot w-16, sweep 320-480 px null to longest. sd-reviewer: fix-then-merge (MAJOR: compact rows silently clip at 481 to ~586 px, fixed items ~528 px but wrap only at <=30rem).
+- Iteration 3 fix 15bb2f8: compact wrap breakpoint 40rem, sweep 320..1280 px with content-box and name>0 assertions, 12 subagents. sd-reviewer: merge (vitest 214, Playwright R3.2 + R3.7-live 19/19).
+- Deferred: MINOR packages/web/e2e/R3.2.spec.ts:220 name slot asserted only > 0 px; a floor (>= 32 px) would catch future squeeze.
