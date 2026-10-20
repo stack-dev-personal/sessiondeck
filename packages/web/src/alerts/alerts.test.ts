@@ -78,6 +78,7 @@ describe("createAttentionDetector", () => {
 describe("startAlerts delivery", () => {
   let calls: { title: string; options?: NotificationOptions }[];
   let closed: string[];
+  let live: { tag: string; onclose: (() => void) | null }[];
   let tones: number[];
   let env: AlertEnv;
   const frames: (() => void)[] = [];
@@ -86,6 +87,7 @@ describe("startAlerts delivery", () => {
   beforeEach(() => {
     calls = [];
     closed = [];
+    live = [];
     tones = [];
     window.sessionStorage.clear();
     frames.length = 0;
@@ -93,9 +95,11 @@ describe("startAlerts delivery", () => {
     class FakeNotification {
       static permission: NotificationPermission = "granted";
       onclick: unknown = null;
+      onclose: (() => void) | null = null;
       tag: string;
       constructor(title: string, options?: NotificationOptions) {
         calls.push({ title, options });
+        live.push(this);
         this.tag = options?.tag ?? "";
       }
       close() {
@@ -215,6 +219,25 @@ describe("startAlerts delivery", () => {
     expect(calls).toHaveLength(2);
     second.set(snap("a", "working", { state_since: 20 }));
     expect(closed).toEqual(["sd-a-10"]);
+  });
+
+  it("does not re-create a notification the user dismissed before the reload", () => {
+    const first = setup(settings({ notifications: true }));
+    first.set(snap("a", "waiting_permission", { state_since: 10 }));
+    live[0]!.onclose?.();
+    first.stop();
+    const second = setup(settings({ notifications: true }));
+    second.set(snap("a", "waiting_permission", { state_since: 10 }));
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not show a toast on reload for an episode seen while notifications were off", () => {
+    const first = setup(settings());
+    first.set(snap("a", "waiting_permission", { state_since: 10 }));
+    first.stop();
+    const second = setup(settings({ notifications: true }));
+    second.set(snap("a", "waiting_permission", { state_since: 10 }));
+    expect(calls).toHaveLength(0);
   });
 
   it("does not re-create the notification after a reload when notifications are off", () => {

@@ -29,6 +29,8 @@ export interface AttentionEvent {
 export interface SeenEpisode {
   state: AttentionState;
   since: number;
+  /** A notification for this episode was shown and not dismissed (persisted for reload resume). */
+  shown?: boolean;
 }
 
 export interface DetectorOptions {
@@ -50,7 +52,11 @@ export interface DetectorOptions {
  */
 export function createAttentionDetector(opts: DetectorOptions = {}) {
   const seen = new Map<string, SeenEpisode>(Object.entries(opts.seed ?? {}));
-  const unresumed = new Set(Object.keys(opts.seed ?? {}));
+  const unresumed = new Set(
+    Object.entries(opts.seed ?? {})
+      .filter(([, e]) => e.shown === true)
+      .map(([id]) => id),
+  );
   let primed = opts.seed === undefined || Object.keys(opts.seed).length === 0;
   const end = (id: string) => {
     seen.delete(id);
@@ -83,6 +89,11 @@ export function createAttentionDetector(opts: DetectorOptions = {}) {
         events.push({ sessionId: id, state, session });
       }
       return events;
+    },
+    /** Record whether a notification for the current episode is on screen. */
+    markShown(id: string, shown: boolean): void {
+      const e = seen.get(id);
+      if (e) seen.set(id, { state: e.state, since: e.since, shown });
     },
     /** Current records, for persistence. */
     entries(): Record<string, SeenEpisode> {

@@ -4,7 +4,10 @@ import type { AttentionEvent, AttentionState } from "./detect";
 /** Env seams so tests can stub the browser APIs. */
 export interface AlertEnv {
   Notification?: {
-    new (title: string, options?: NotificationOptions): { onclick: unknown; close(): void };
+    new (
+      title: string,
+      options?: NotificationOptions,
+    ): { onclick: unknown; onclose?: unknown; close(): void };
     permission: NotificationPermission;
   };
   AudioContext?: new () => AudioContext;
@@ -41,6 +44,7 @@ export function notificationText(e: AttentionEvent): { title: string; body: stri
 
 export interface ShownNotification {
   onclick: unknown;
+  onclose?: unknown;
   close(): void;
 }
 

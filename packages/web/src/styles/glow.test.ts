@@ -11,9 +11,14 @@ describe("attention glow is compositor-only", () => {
     const props = [...m![1]!.matchAll(/([a-z-]+)\s*:/g)].map((x) => x[1]);
     expect(new Set(props)).toEqual(new Set(["opacity"]));
   });
+  it("the glow layer never takes pointer events and only animates under sd-arrive", () => {
+    expect(css).toMatch(/\.sd-attention::after \{[^}]*pointer-events: none;[^}]*opacity: 0;/);
+    expect(css).not.toMatch(/\.sd-attention::after \{[^}]*animation:/);
+    expect(css).toMatch(/\.sd-attention\.sd-arrive::after \{\s*animation: sd-glow 400ms/);
+  });
   it("the glow is off under prefers-reduced-motion", () => {
     expect(css).toMatch(
-      /prefers-reduced-motion: reduce\) \{\s*\.sd-attention::after \{\s*animation: none;/,
+      /prefers-reduced-motion: reduce\) \{\s*\.sd-attention\.sd-arrive::after \{\s*animation: none;/,
     );
   });
 });
