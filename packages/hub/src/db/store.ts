@@ -52,9 +52,13 @@ export interface SampleRow {
   seven_day_resets: number | null;
 }
 
-export interface UsageLineRow {
+export interface UsageFeedRow {
+  rid: number;
   session_id: string;
-  raw: string;
+  agent_id: string;
+  line_no: number;
+  raw: string | null;
+  project_dir: string | null;
 }
 
 export interface TranscriptLineRow {
@@ -280,22 +284,18 @@ export class Store {
   }
 
   /**
-   * Raw lines that carry a usage block ('"usage":{' is also ccusage's own line filter), one
-   * session, ordered (agent_id, line_no): main transcript first, then subagents.
+   * Usage feed for the cost index. transcript_lines is append-only (inserts never update), so the
+   * rowid is a high-water mark: pass the last rowid seen, get the next rows in rowid order.
+   * `raw` is null for rows without a usage block ('"usage":{' is also ccusage's own line filter)
+   * so the caller can advance past them without copying them. SQLite-specific (rowid).
    */
-  iterateSessionUsageLines(sessionId: string): IterableIterator<UsageLineRow> {
+  listUsageLinesAfter(afterRowid: number, limit: number): UsageFeedRow[] {
     return this.stmt(
-      `SELECT session_id, raw FROM transcript_lines
-       WHERE session_id = ? AND instr(raw, '"usage":{') > 0 ORDER BY agent_id, line_no`,
-    ).iterate(sessionId) as IterableIterator<UsageLineRow>;
-  }
-
-  /** Same filter across every session, ordered (session_id, agent_id, line_no). */
-  iterateAllUsageLines(): IterableIterator<UsageLineRow> {
-    return this.stmt(
-      `SELECT session_id, raw FROM transcript_lines
-       WHERE instr(raw, '"usage":{') > 0 ORDER BY session_id, agent_id, line_no`,
-    ).iterate() as IterableIterator<UsageLineRow>;
+      `SELECT t.rowid AS rid, t.session_id, t.agent_id, t.line_no,
+              CASE WHEN instr(t.raw, '"usage":{') > 0 THEN t.raw END AS raw,
+              (SELECT s.project_dir FROM sessions s WHERE s.session_id = t.session_id) AS project_dir
+       FROM transcript_lines t WHERE t.rowid > ? ORDER BY t.rowid LIMIT ?`,
+    ).all(afterRowid, limit) as UsageFeedRow[];
   }
 
   /** Configured projects plus every project_dir seen on a session. */

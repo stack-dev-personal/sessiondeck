@@ -20,6 +20,9 @@ export interface HubConfig {
   /** D-S3-14. Per-principal read limit (GET routes and WS upgrades), requests per second and burst. */
   readRate: number;
   readBurst: number;
+  /** Extra per-principal limit on /history/* (each call aggregates every stored usage row). */
+  historyRate: number;
+  historyBurst: number;
   /** Concurrent WS /stream clients; further upgrades get 503. */
   maxWsClients: number;
   /** HUB_ALLOWED_ORIGINS; when non-empty, an upgrade with any other Origin is refused (403). */
@@ -95,6 +98,8 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     hostBurst,
     readRate: posInt(env, "HUB_READ_RATE", 50),
     readBurst: posInt(env, "HUB_READ_BURST", 100),
+    historyRate: posInt(env, "HUB_HISTORY_RATE", 1),
+    historyBurst: posInt(env, "HUB_HISTORY_BURST", 2),
     maxWsClients: posInt(env, "HUB_MAX_WS_CLIENTS", 64),
     allowedOrigins: (env["HUB_ALLOWED_ORIGINS"] ?? "")
       .split(",")

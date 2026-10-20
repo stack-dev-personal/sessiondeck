@@ -13,6 +13,9 @@ rmSync(path.join(out, "projects"), { recursive: true, force: true });
 
 const S1 = "11111111-aaaa-4bbb-8ccc-000000000001";
 const S2 = "22222222-aaaa-4bbb-8ccc-000000000002";
+// A `claude --resume` of S1: its own session id (sorts before S1) in another project dir, with the
+// earlier assistant rows replayed under their original message ids and timestamps.
+const S3 = "00000000-aaaa-4bbb-8ccc-000000000003";
 const SONNET = "claude-sonnet-4-5-20250929";
 const TIERED = "claude-sonnet-4-5-20250929-v1:0"; // has *_above_200k_tokens rates
 const OPUS = "claude-opus-5"; // provider_specific_entry.fast = 2
@@ -259,6 +262,61 @@ const s2 = [
   }),
 ];
 
+const s3 = [
+  user(S3, "2026-01-03T09:00:00.000Z"),
+  // replay of msg_s1_a (streaming copy, smaller than the winner in S1): must not count again
+  asst(S3, "2026-01-01T10:00:02.000Z", {
+    id: "msg_s1_a",
+    req: "req_s1_a",
+    model: SONNET,
+    in: 3,
+    out: 80,
+    cc: 4000,
+    cr: 0,
+  }),
+  // replay of msg_s1_b with an identical total: a tie, ccusage keeps the copy in the file that
+  // sorts first by path (-synthetic-proj-a/<S1> before -synthetic-proj-b/<S3>) although S3 sorts
+  // first by session id
+  asst(S3, "2026-01-01T10:05:01.000Z", {
+    id: "msg_s1_b",
+    model: SONNET,
+    in: 12,
+    out: 300,
+    cc: 0,
+    cr: 4000,
+  }),
+  // replay of msg_s2_a with the same total as the winner in S2: tie again, S3's path sorts first
+  asst(S3, "2026-01-02T08:00:09.000Z", {
+    id: "msg_s2_a",
+    req: "req_s2_a",
+    model: HAIKU,
+    in: 1,
+    out: 640,
+    cc: 3000,
+    cr: 0,
+  }),
+  // replay of msg_s2_b where this copy is larger: it wins and the cost moves to S3
+  asst(S3, "2026-01-02T08:03:00.000Z", {
+    id: "msg_s2_b",
+    req: "req_s2_b",
+    model: SONNET,
+    in: 220,
+    out: 4300,
+    cc: 0,
+    cr: 3000,
+  }),
+  // new work after the resume
+  asst(S3, "2026-01-03T09:00:05.000Z", {
+    id: "msg_s3_a",
+    req: "req_s3_a",
+    model: SONNET,
+    in: 30,
+    out: 500,
+    cc: 600,
+    cr: 8000,
+  }),
+];
+
 function write(rel, rows) {
   const file = path.join(out, "projects", rel);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -270,6 +328,7 @@ function write(rel, rows) {
 write(`-synthetic-proj-a/${S1}.jsonl`, s1);
 write(`-synthetic-proj-a/${S1}/subagents/agent-a1b2c3.jsonl`, sub);
 write(`-synthetic-proj-b/${S2}.jsonl`, s2);
+write(`-synthetic-proj-b/${S3}.jsonl`, s3);
 
 // Pricing subset (same shape as LiteLLM, source key order) taken from the bundled snapshot.
 const snap = JSON.parse(

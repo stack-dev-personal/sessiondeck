@@ -92,6 +92,12 @@ export function buildServer(opts: {
   // D-S3-14: reads and upgrades share one per-principal bucket, separate from ingest's.
   const now = opts.now ?? Date.now;
   const readLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 16, now);
+  const historyLimiter = new RateLimiter(
+    opts.config.historyRate,
+    opts.config.historyBurst,
+    16,
+    now,
+  );
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
@@ -99,6 +105,11 @@ export function buildServer(opts: {
     if (principal === null) return deny(reply);
     if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
       return reply.code(429).header("content-length", "0").send();
+    }
+    if (req.method === "GET" && req.url.split("?")[0]?.startsWith("/history/") === true) {
+      if (!historyLimiter.take(principal, 1)) {
+        return reply.code(429).header("content-length", "0").send();
+      }
     }
   });
 

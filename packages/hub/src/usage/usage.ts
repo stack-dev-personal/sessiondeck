@@ -9,10 +9,11 @@
 //   files belong to the parent session).
 // apps/ccusage/src/date-utils.ts: createCachedDateFormatter (day bucketing, en-CA).
 // Changes: valibot replaced by zod; file walking replaced by rows of the transcript_lines table
-// (the hub session_id is the parent session, subagent rows arrive with agent_id set); a single
-// pass over rows in (session_id, agent_id, line_no) order replaces ccusage's per-file pass plus
-// global merge (same result: strictly larger token total replaces, ties keep the first); sidechain
-// rows are counted, exactly like ccusage (it has no sidechain filter).
+// (the hub session_id is the parent session, subagent rows arrive with agent_id set); rows are
+// fed incrementally in any order and the winner per message hash is chosen by (larger token
+// total, speed present, earlier position in ccusage's sorted file order), which equals ccusage's
+// sequential pass over sorted files; sidechain rows are counted, exactly like ccusage (it has no
+// sidechain filter). Pricing and day bucketing are applied at read time.
 import { z } from "zod";
 import type { PricingTable } from "../pricing/pricing.ts";
 
@@ -22,6 +23,9 @@ export const USAGE_MARKER = '"usage":{';
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const VERSION = /^\d+\.\d+\.\d+/;
 
+/** Token counts are non-negative integers; a negative, fractional or 1e999 count skips the line. */
+const tokens = z.number().int().nonnegative();
+
 /** ccusage usageDataSchema (valibot) re-expressed in zod; nulls are rejected like valibot optional. */
 const UsageLineSchema = z.object({
   cwd: z.string().optional(),
@@ -30,17 +34,17 @@ const UsageLineSchema = z.object({
   version: z.string().regex(VERSION).optional(),
   message: z.object({
     usage: z.object({
-      input_tokens: z.number(),
-      output_tokens: z.number(),
-      cache_creation_input_tokens: z.number().optional(),
-      cache_read_input_tokens: z.number().optional(),
+      input_tokens: tokens,
+      output_tokens: tokens,
+      cache_creation_input_tokens: tokens.optional(),
+      cache_read_input_tokens: tokens.optional(),
       speed: z.enum(["standard", "fast"]).optional(),
     }),
     model: z.string().min(1).optional(),
     id: z.string().min(1).optional(),
     content: z.array(z.object({ text: z.string().optional() })).optional(),
   }),
-  costUSD: z.number().optional(),
+  costUSD: z.number().finite().nonnegative().optional(),
   requestId: z.string().min(1).optional(),
   isApiErrorMessage: z.boolean().optional(),
 });
@@ -110,22 +114,38 @@ export function isValidTimeZone(tz: string): boolean {
 export interface UsageRowIn {
   session_id: string;
   raw: string;
+  /** Agent id of the file the line came from ('' = the main transcript). */
+  agent_id?: string;
+  /** Line number within that file; with the file key it is the position ccusage would read it at. */
+  line_no?: number;
+  /** Session's project_dir (a cwd); ccusage's file order starts with the encoded project dir. */
+  project_dir?: string | null;
 }
 
 interface Entry {
   sessionId: string;
-  date: string;
+  /** Path-like key of the source file, ordered like ccusage's `collectJsonlFiles` sort. */
+  file: string;
+  line: number;
   timestamp: string;
+  /** Model as written (used to price). */
   model: string | undefined;
+  /** Model as reported: `-fast` suffix for speed "fast" (ccusage). */
+  displayModel: string | undefined;
+  speed: string | undefined;
   input: number;
   output: number;
   cacheCreation: number;
   cacheRead: number;
-  cost: number;
-  uniqueHash: string | null;
+  costUSD: number | undefined;
   tokenTotal: number;
   hasSpeed: boolean;
   version: string | undefined;
+  // Read-time caches, valid for the table / formatter they were computed with.
+  pricedBy: PricingTable | undefined;
+  priced: number;
+  dayBy: DayFmt | undefined;
+  day: string;
 }
 
 export interface TokenStats {
@@ -162,29 +182,29 @@ const emptyStats = (): TokenStats => ({
   cost_usd: 0,
 });
 
-function add(s: TokenStats, e: Entry): void {
+function add(s: TokenStats, e: Entry, cost: number): void {
   s.input_tokens += e.input;
   s.output_tokens += e.output;
   s.cache_creation_tokens += e.cacheCreation;
   s.cache_read_tokens += e.cacheRead;
-  s.cost_usd += e.cost;
+  s.cost_usd += cost;
 }
 
 class Summary {
   readonly totals = emptyStats();
   readonly byModel = new Map<string, TokenStats>();
   readonly models: string[] = [];
-  add(e: Entry): void {
-    add(this.totals, e);
-    if (e.model === "<synthetic>") return;
-    const name = e.model ?? "unknown";
-    if (e.model !== undefined && !this.byModel.has(name)) this.models.push(name);
+  add(e: Entry, cost: number): void {
+    add(this.totals, e, cost);
+    if (e.displayModel === "<synthetic>") return;
+    const name = e.displayModel ?? "unknown";
+    if (e.displayModel !== undefined && !this.byModel.has(name)) this.models.push(name);
     let m = this.byModel.get(name);
     if (m === undefined) {
       m = emptyStats();
       this.byModel.set(name, m);
     }
-    add(m, e);
+    add(m, e, cost);
   }
   finish(): UsageSummary {
     return {
@@ -204,102 +224,210 @@ class Summary {
 
 export const emptyUsage = (): UsageSummary => new Summary().finish();
 
+interface DayFmt {
+  readonly tz: string | undefined;
+  readonly of: (iso: string) => string;
+}
+const fmtCache = new Map<string, DayFmt>();
+function dayFmt(tz: string | undefined): DayFmt {
+  const k = tz ?? "\0local";
+  let f = fmtCache.get(k);
+  if (f === undefined) {
+    if (fmtCache.size >= 64) fmtCache.clear();
+    f = { tz, of: makeDayFormatter(tz) };
+    fmtCache.set(k, f);
+  }
+  return f;
+}
+
+/** `YYYY-MM-DD` shifted by whole days (UTC arithmetic on the calendar date). */
+function shiftDay(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Encoded project directory name Claude Code uses under ~/.claude/projects (non-alphanumerics to '-'). */
+export function encodeProjectDir(dir: string | null | undefined): string {
+  return dir == null ? "" : dir.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
 /**
- * Feed rows in (session_id, agent_id, line_no) order. dedupeScope "global" keys the dedup on the
- * message hash alone (ccusage: one pass over all files); "session" keeps a separate key space per
- * session, which is what the cheap single-session read can afford.
+ * Parsed, globally deduplicated usage entries. Rows are append-only, so the index is fed
+ * incrementally (addRow) and never re-parses a line. The result does not depend on the order rows
+ * are added: for one message hash the winner is the largest token total, then a row carrying
+ * `speed`, then the earliest in ccusage's file order (path sort, then line), which is exactly what
+ * ccusage's sequential pass over sorted files yields. Pricing and time zone are applied at read.
  */
 export class UsageCollector {
   private readonly entries: Entry[] = [];
-  private readonly index = new Map<string, number>();
-  private readonly day: (iso: string) => string;
+  private readonly byHash = new Map<string, number>();
+  private readonly bySession = new Map<string, Set<number>>();
+  private readonly fileKeys = new Map<string, string>();
+  private ver = 0;
 
-  constructor(
-    private readonly pricing: PricingTable,
-    tz: string | undefined,
-    private readonly scope: "global" | "session" = "global",
-  ) {
-    this.day = makeDayFormatter(tz);
+  /** Bumps whenever a row changes what any read would return. */
+  get version(): number {
+    return this.ver;
   }
-
-  addRow(row: UsageRowIn): void {
-    const d = parseUsageLine(row.raw);
-    if (d === null) return;
-    const u = d.message.usage;
-    const hash = createUniqueHash(d);
-    const tokenTotal = sumTokens(u);
-    const hasSpeed = u.speed != null;
-    const key =
-      hash === null ? null : this.scope === "global" ? hash : `${row.session_id}\0${hash}`;
-    let at: number | undefined;
-    if (key !== null) {
-      at = this.index.get(key);
-      if (at !== undefined) {
-        const ex = this.entries[at]!;
-        // shouldReplaceEntryMetadata: larger total wins; on a tie only gaining a speed field wins.
-        const replace =
-          tokenTotal !== ex.tokenTotal ? tokenTotal > ex.tokenTotal : hasSpeed && !ex.hasSpeed;
-        if (!replace) return;
-      }
-    }
-    const model = d.message.model;
-    const entry: Entry = {
-      sessionId: row.session_id,
-      date: this.day(d.timestamp),
-      timestamp: d.timestamp,
-      model: model == null ? undefined : u.speed === "fast" ? `${model}-fast` : model,
-      input: u.input_tokens,
-      output: u.output_tokens,
-      cacheCreation: u.cache_creation_input_tokens ?? 0,
-      cacheRead: u.cache_read_input_tokens ?? 0,
-      // Cost mode "auto": costUSD when present, else priced from tokens.
-      cost: d.costUSD ?? this.pricing.cost(u, model, u.speed),
-      uniqueHash: hash,
-      tokenTotal,
-      hasSpeed,
-      version: d.version,
-    };
-    if (at !== undefined) this.entries[at] = entry;
-    else {
-      this.entries.push(entry);
-      if (key !== null) this.index.set(key, this.entries.length - 1);
-    }
-  }
-
   get count(): number {
     return this.entries.length;
   }
 
-  sessions(): SessionUsage[] {
+  private fileKey(session: string, agent: string, project: string | null | undefined): string {
+    const k = `${project ?? ""}\0${session}\0${agent}`;
+    let f = this.fileKeys.get(k);
+    if (f === undefined) {
+      const dir = encodeProjectDir(project);
+      f =
+        agent === ""
+          ? `${dir}/${session}.jsonl`
+          : `${dir}/${session}/subagents/agent-${agent}.jsonl`;
+      this.fileKeys.set(k, f);
+    }
+    return f;
+  }
+
+  /** Returns true when the row was a usage row that changed the index. */
+  addRow(row: UsageRowIn): boolean {
+    const d = parseUsageLine(row.raw);
+    if (d === null) return false;
+    const u = d.message.usage;
+    const hash = createUniqueHash(d);
+    const tokenTotal = sumTokens(u);
+    const hasSpeed = u.speed != null;
+    const file = this.fileKey(row.session_id, row.agent_id ?? "", row.project_dir);
+    const line = row.line_no ?? this.entries.length;
+    let at: number | undefined;
+    if (hash !== null) {
+      at = this.byHash.get(hash);
+      if (at !== undefined) {
+        const ex = this.entries[at]!;
+        let better: boolean;
+        if (tokenTotal !== ex.tokenTotal) better = tokenTotal > ex.tokenTotal;
+        else if (hasSpeed !== ex.hasSpeed) better = hasSpeed;
+        else better = file < ex.file || (file === ex.file && line < ex.line);
+        if (!better) return false;
+      }
+    }
+    const model = d.message.model ?? undefined;
+    const entry: Entry = {
+      sessionId: row.session_id,
+      file,
+      line,
+      timestamp: d.timestamp,
+      model,
+      displayModel: model === undefined ? undefined : u.speed === "fast" ? `${model}-fast` : model,
+      speed: u.speed,
+      input: u.input_tokens,
+      output: u.output_tokens,
+      cacheCreation: u.cache_creation_input_tokens ?? 0,
+      cacheRead: u.cache_read_input_tokens ?? 0,
+      // Cost mode "auto": costUSD when present, else priced from tokens at read time.
+      costUSD: d.costUSD,
+      tokenTotal,
+      hasSpeed,
+      version: d.version,
+      pricedBy: undefined,
+      priced: 0,
+      dayBy: undefined,
+      day: "",
+    };
+    if (at === undefined) {
+      at = this.entries.length;
+      this.entries.push(entry);
+      if (hash !== null) this.byHash.set(hash, at);
+    } else this.entries[at] = entry;
+    let set = this.bySession.get(entry.sessionId);
+    if (set === undefined) this.bySession.set(entry.sessionId, (set = new Set()));
+    set.add(at);
+    this.ver++;
+    return true;
+  }
+
+  private cost(e: Entry, pricing: PricingTable): number {
+    if (e.pricedBy !== pricing) {
+      e.priced =
+        e.costUSD ??
+        pricing.cost(
+          {
+            input_tokens: e.input,
+            output_tokens: e.output,
+            cache_creation_input_tokens: e.cacheCreation,
+            cache_read_input_tokens: e.cacheRead,
+          },
+          e.model,
+          e.speed,
+        );
+      e.pricedBy = pricing;
+    }
+    return e.priced;
+  }
+
+  private dayOf(e: Entry, f: DayFmt): string {
+    if (e.dayBy !== f) {
+      e.day = f.of(e.timestamp);
+      e.dayBy = f;
+    }
+    return e.day;
+  }
+
+  /**
+   * Per-session totals (ccusage `session`). With `sessionId` only that session is aggregated; the
+   * dedup is still global, so a message replayed into a resumed session counts once, where ccusage
+   * counts it.
+   */
+  sessions(pricing: PricingTable, tz: string | undefined, sessionId?: string): SessionUsage[] {
+    const f = dayFmt(tz);
     const groups = new Map<string, { latest: Entry; s: Summary; versions: Set<string> }>();
-    for (const e of this.entries) {
+    const visit = (e: Entry): void => {
       let g = groups.get(e.sessionId);
       if (g === undefined) {
         g = { latest: e, s: new Summary(), versions: new Set() };
         groups.set(e.sessionId, g);
       } else if (e.timestamp > g.latest.timestamp) g.latest = e;
       if (e.version != null) g.versions.add(e.version);
-      g.s.add(e);
+      g.s.add(e, this.cost(e, pricing));
+    };
+    if (sessionId === undefined) this.entries.forEach(visit);
+    else {
+      const idx = this.bySession.get(sessionId);
+      if (idx !== undefined) {
+        for (const i of [...idx].sort((a, b) => a - b)) {
+          const e = this.entries[i]!;
+          if (e.sessionId === sessionId) visit(e);
+        }
+      }
     }
     return [...groups].map(([session_id, g]) => ({
       session_id,
       ...g.s.finish(),
-      last_activity: g.latest.date,
+      last_activity: this.dayOf(g.latest, f),
       versions: [...g.versions].sort(),
     }));
   }
 
-  /** Ascending by date; from/to are inclusive YYYY-MM-DD in the collector's timezone. */
-  daily(from?: string, to?: string): DailyUsage[] {
+  /** Ascending by date; from/to are inclusive YYYY-MM-DD in the response timezone. */
+  daily(pricing: PricingTable, tz: string | undefined, from?: string, to?: string): DailyUsage[] {
+    const f = dayFmt(tz);
+    // No zone is more than 14 h from UTC: entries a whole day outside [from, to] on the UTC date
+    // cannot land inside it, so they skip the (costly) zone conversion.
+    const lo = from === undefined ? undefined : shiftDay(from, -1);
+    const hi = to === undefined ? undefined : shiftDay(to, 1);
     const groups = new Map<string, Summary>();
     for (const e of this.entries) {
-      if ((from !== undefined && e.date < from) || (to !== undefined && e.date > to)) continue;
-      let s = groups.get(e.date);
+      if (lo !== undefined || hi !== undefined) {
+        const utc = e.timestamp.slice(0, 10);
+        if ((lo !== undefined && utc < lo) || (hi !== undefined && utc > hi)) continue;
+      }
+      const date = this.dayOf(e, f);
+      if ((from !== undefined && date < from) || (to !== undefined && date > to)) continue;
+      let s = groups.get(date);
       if (s === undefined) {
         s = new Summary();
-        groups.set(e.date, s);
+        groups.set(date, s);
       }
-      s.add(e);
+      s.add(e, this.cost(e, pricing));
     }
     return [...groups]
       .map(([date, s]) => ({ date, ...s.finish() }))

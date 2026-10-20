@@ -52,7 +52,11 @@ export async function hubReport(opts: {
   const projects = path.join(opts.dir, "projects");
   const store = Store.open(":memory:");
   store.migrate();
-  const config = loadConfig({ HUB_TOKEN: TOKEN.padEnd(16, "x"), HUB_PRICING_FETCH: "0" });
+  const config = loadConfig({
+    HUB_TOKEN: TOKEN.padEnd(16, "x"),
+    HUB_PRICING_FETCH: "0",
+    HUB_HISTORY_BURST: "1000",
+  });
   const pricing = new PricingProvider(loadPricing({ file: opts.pricingFile }));
   const app = buildServer({ config, store, pricing });
   const auth = { authorization: `Bearer ${TOKEN.padEnd(16, "x")}` };
@@ -62,7 +66,39 @@ export async function hubReport(opts: {
     const sessionIds = new Set<string>();
     for (const file of walk(projects).sort()) {
       const { session, agent } = locate(projects, file);
-      sessionIds.add(session);
+      if (!sessionIds.has(session)) {
+        sessionIds.add(session);
+        // The project dir ccusage reads from the path ("-synthetic-proj-a") is the encoded cwd; a
+        // statusLine tick gives the hub the same project_dir so its file order matches.
+        const projectDir = path.relative(projects, file).split(path.sep)[0]!.replace(/-/g, "/");
+        const sres = await app.inject({
+          method: "POST",
+          url: "/ingest",
+          headers: { ...auth, "content-type": "application/json" },
+          payload: JSON.stringify({
+            host: "compare-host",
+            envelopes: [
+              {
+                v: 1,
+                id: ulid(seq + 1),
+                kind: "statusline",
+                host: "compare-host",
+                os: "linux",
+                session_id: session,
+                ts: 1_760_000_000_000 + seq * 6000,
+                seq: seq++,
+                payload: {
+                  session_id: session,
+                  cwd: projectDir,
+                  workspace: { project_dir: projectDir },
+                },
+              },
+            ],
+          }),
+        });
+        if (sres.statusCode !== 200)
+          throw new Error(`ingest failed: ${sres.statusCode} ${sres.body}`);
+      }
       const lines = readFileSync(file, "utf8").split("\n");
       for (let start = 0; start < lines.length; start += 400) {
         const chunk = lines.slice(start, start + 400);

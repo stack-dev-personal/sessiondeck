@@ -72,6 +72,25 @@ export function loadPricing(opts: {
   return bundledTable();
 }
 
+/** Reads the body with a running byte count and cancels the stream once it passes the cap. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (res.body === null) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > max) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("body too large");
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 function errName(err: unknown): string {
   return err instanceof Error ? err.name : "unknown";
 }
@@ -86,6 +105,8 @@ export async function refreshPricing(opts: {
   url?: string;
   timeoutMs?: number;
   fetchFn?: typeof fetch;
+  /** Test hook: body size cap in bytes (default 25 MB). */
+  maxBytes?: number;
 }): Promise<PricingTable | null> {
   const url = opts.url ?? LITELLM_PRICING_URL;
   try {
@@ -94,10 +115,10 @@ export async function refreshPricing(opts: {
       redirect: "error",
     });
     if (!res.ok) throw new Error(`status ${res.status}`);
+    const max = opts.maxBytes ?? MAX_BODY_BYTES;
     const len = Number(res.headers.get("content-length") ?? 0);
-    if (len > MAX_BODY_BYTES) throw new Error("body too large");
-    const text = await res.text();
-    if (text.length > MAX_BODY_BYTES) throw new Error("body too large");
+    if (len > max) throw new Error("body too large");
+    const text = await readCapped(res, max);
     const models = parseLiteLLM(z.record(z.unknown()).parse(JSON.parse(text) as unknown));
     const usable = [...models.values()].filter((m) => m.input_cost_per_token !== undefined);
     if (usable.length === 0) throw new Error("no usable model prices");

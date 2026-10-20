@@ -12,6 +12,7 @@ import {
   refreshPricing,
 } from "../src/pricing/loader.ts";
 import { PricingTable, parseLiteLLM } from "../src/pricing/pricing.ts";
+import { UsageService } from "../src/usage/service.ts";
 import { UsageCollector, createUniqueHash, parseUsageLine } from "../src/usage/usage.ts";
 import { hubReport } from "../scripts/compare-hub.ts";
 import { AUTH, makeHub } from "./support/hub.ts";
@@ -94,6 +95,13 @@ describe("cost history matches ccusage 19.0.3 (R2.10)", () => {
     expect(text).toContain('"speed":"fast"');
     expect(text).toContain("2026-01-02T00:00:30");
     expect(text.match(/"id":"msg_s1_a"/g)?.length).toBe(4);
+    // cross-session duplicates (the resume case) and a tie broken by path order
+    const resumed = readFileSync(
+      path.join(FX, "projects/-synthetic-proj-b/00000000-aaaa-4bbb-8ccc-000000000003.jsonl"),
+      "utf8",
+    );
+    expect(resumed).toContain('"id":"msg_s1_b"');
+    expect(resumed).toContain('"id":"msg_s2_b"');
     expect(expected.byTimezone["UTC"]?.days.length).toBe(3);
   });
 });
@@ -118,10 +126,10 @@ describe("dedup rules (ccusage createUniqueHash and shouldReplaceEntryMetadata)"
       },
     });
   const table = new PricingTable(parseLiteLLM(JSON.parse(readFileSync(PRICING, "utf8"))), "test");
-  const run = (rows: string[], scope: "global" | "session" = "global") => {
-    const c = new UsageCollector(table, "UTC", scope);
+  const run = (rows: string[]) => {
+    const c = new UsageCollector();
     rows.forEach((raw, i) => c.addRow({ session_id: i < 2 ? "a" : "b", raw }));
-    return c.daily()[0];
+    return c.daily(table, "UTC")[0];
   };
 
   it("hash is message.id[:requestId]; null without a message id", () => {
@@ -151,10 +159,65 @@ describe("dedup rules (ccusage createUniqueHash and shouldReplaceEntryMetadata)"
     const d = run([line({ id: "m", out: 9 }), line({ id: "m", out: 9, speed: "standard" })]);
     expect(d?.output_tokens).toBe(9);
   });
-  it("global scope dedups across sessions, session scope does not", () => {
+  it("dedups across sessions (a resumed transcript replays earlier messages)", () => {
     const rows = [line({ id: "m", out: 4 }), line({ id: "x", out: 1 }), line({ id: "m", out: 4 })];
-    expect(run(rows, "global")?.output_tokens).toBe(5);
-    expect(run(rows, "session")?.output_tokens).toBe(9);
+    expect(run(rows)?.output_tokens).toBe(5);
+  });
+  it("the winner does not depend on the order rows arrive in", () => {
+    const rows = [
+      { session_id: "s1", project_dir: "/p/b", line_no: 4, raw: line({ id: "m", out: 9 }) },
+      { session_id: "s2", project_dir: "/p/a", line_no: 7, raw: line({ id: "m", out: 9 }) },
+      { session_id: "s3", project_dir: "/p/a", line_no: 1, raw: line({ id: "m", out: 3 }) },
+    ];
+    const winners = new Set<string>();
+    for (const order of [
+      [0, 1, 2],
+      [2, 1, 0],
+      [1, 0, 2],
+      [1, 2, 0],
+    ]) {
+      const c = new UsageCollector();
+      order.forEach((i) => c.addRow(rows[i]!));
+      const s = c.sessions(table, "UTC");
+      expect(s.length).toBe(1);
+      winners.add(s[0]!.session_id);
+    }
+    // equal totals: the file that sorts first by path (project dir "-p-a") wins, not by session id
+    expect([...winners]).toEqual(["s2"]);
+  });
+  it("rejects negative, fractional and infinite counts and costs like any invalid line", () => {
+    const base = (usage: object, extra: object = {}) =>
+      JSON.stringify({
+        timestamp: "2026-01-01T00:00:00.000Z",
+        message: { usage },
+        ...extra,
+      });
+    expect(parseUsageLine(base({ input_tokens: 1, output_tokens: 2 }))).not.toBeNull();
+    expect(parseUsageLine(base({ input_tokens: -1, output_tokens: 2 }))).toBeNull();
+    expect(parseUsageLine(base({ input_tokens: 1.5, output_tokens: 2 }))).toBeNull();
+    expect(
+      parseUsageLine(
+        '{"timestamp":"2026-01-01T00:00:00.000Z","message":{"usage":{"input_tokens":1e999,"output_tokens":1}}}',
+      ),
+    ).toBeNull();
+    expect(parseUsageLine(base({ input_tokens: 1, output_tokens: 2 }, { costUSD: -3 }))).toBeNull();
+    expect(
+      parseUsageLine(
+        '{"timestamp":"2026-01-01T00:00:00.000Z","costUSD":1e999,"message":{"usage":{"input_tokens":1,"output_tokens":1}}}',
+      ),
+    ).toBeNull();
+  });
+  it("pricing entries with negative or infinite rates are skipped; the lookup memo is bounded", () => {
+    const m = parseLiteLLM({
+      neg: { input_cost_per_token: -1 },
+      inf: JSON.parse('{"input_cost_per_token":1e999}') as unknown,
+      ok: { input_cost_per_token: 1 },
+    });
+    expect([...m.keys()]).toEqual(["ok"]);
+    const t = new PricingTable(m, "t");
+    for (let i = 0; i < 5000; i++) t.lookup(`junk-${i}`);
+    expect((t as unknown as { memo: Map<string, unknown> }).memo.size).toBeLessThanOrEqual(1000);
+    expect(t.lookup("ok")).not.toBeNull();
   });
   it("costUSD wins over pricing (mode auto), and an unknown model costs 0", () => {
     expect(run([line({ id: "m", out: 1000, cost: 0.5 })])?.cost_usd).toBe(0.5);
@@ -243,6 +306,41 @@ describe("pricing sources", () => {
     }
     expect(warns.length).toBe(5);
   });
+  it("fetch: the body is read as a stream and cut off past the cap (no content-length)", async () => {
+    let pulled = 0;
+    let cancelled = false;
+    const chunk = new TextEncoder().encode("x".repeat(200));
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled++;
+        c.enqueue(chunk);
+        if (pulled > 1000) c.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const warns: { reason?: string }[] = [];
+    const r = await refreshPricing({
+      cachePath: null,
+      maxBytes: 1000,
+      log: { info: () => {}, warn: (o) => warns.push(o) },
+      fetchFn: async () => new Response(body, { status: 200 }),
+    });
+    expect(r).toBeNull();
+    expect(warns[0]?.reason).toBe("body too large");
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(20);
+    // counted in bytes: 3-byte characters exceed a cap that their UTF-16 length would not
+    const multi = JSON.stringify({ "claude-é": { input_cost_per_token: 1 }, pad: "€".repeat(400) });
+    expect(
+      await refreshPricing({
+        cachePath: null,
+        maxBytes: 600,
+        fetchFn: async () => new Response(multi, { status: 200 }),
+      }),
+    ).toBeNull();
+  });
   it("fetch honors the timeout", async () => {
     const t0 = Date.now();
     const r = await refreshPricing({
@@ -269,7 +367,7 @@ describe("pricing sources", () => {
 
 describe("REST", () => {
   it("requires auth, validates queries, 404s unknown sessions, returns shapes", async () => {
-    const h = await makeHub();
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
     try {
       for (const url of ["/sessions/x/cost", "/history/daily", "/history/sessions"]) {
         const r = await h.app.inject({ method: "GET", url });
@@ -328,6 +426,127 @@ describe("REST", () => {
       expect(
         ((await get("/history/daily?from=2026-03-02&tz=UTC")).json() as { days: unknown[] }).days,
       ).toEqual([]);
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("history index and limits", () => {
+  const usageLine = (id: string, out: number, ts = "2026-03-01T12:00:00.000Z") =>
+    JSON.stringify({
+      timestamp: ts,
+      requestId: `r-${id}`,
+      message: {
+        id,
+        model: "claude-sonnet-4-5",
+        usage: { input_tokens: 10, output_tokens: out },
+      },
+    });
+  const send = (
+    h: Awaited<ReturnType<typeof makeHub>>,
+    session: string,
+    n: number,
+    lines: string[],
+    start = 0,
+  ) =>
+    h.post({
+      host: "h1",
+      envelopes: [
+        {
+          v: 1,
+          id: `01ARZ3NDEKTSV4RRFFQ69G5F${String(n).padStart(2, "0")}`,
+          kind: "transcript",
+          host: "h1",
+          os: "linux",
+          session_id: session,
+          ts: 1_760_000_000_000 + n,
+          seq: n,
+          payload: { start_line: start, lines },
+        },
+      ],
+    });
+
+  it("a message replayed into a second session counts once, in both endpoints (F1)", async () => {
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      await send(h, "orig", 1, [usageLine("m1", 50), usageLine("m2", 70)]);
+      await send(h, "resumed", 2, [usageLine("m1", 50), usageLine("m3", 5)]);
+      const get = async (u: string) =>
+        (await h.app.inject({ method: "GET", url: u, headers: AUTH })).json() as Record<
+          string,
+          number
+        >;
+      const a = await get("/sessions/orig/cost?tz=UTC");
+      const b = await get("/sessions/resumed/cost?tz=UTC");
+      expect(a["output_tokens"]).toBe(120);
+      expect(b["output_tokens"]).toBe(5);
+      const days = (await get("/history/daily?tz=UTC")) as unknown as {
+        days: { output_tokens: number }[];
+      };
+      expect(days.days[0]?.output_tokens).toBe(125);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("advances incrementally from the rowid mark and rebuilds identically from the DB", async () => {
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      const svc = new UsageService(h.store);
+      await send(h, "s", 1, [usageLine("m1", 50), "{}", usageLine("m2", 70)]);
+      await svc.refresh();
+      expect(svc.index.count).toBe(2);
+      await send(h, "s", 2, [usageLine("m9", 1)], 10);
+      const v = svc.index.version;
+      await svc.refresh();
+      expect(svc.index.count).toBe(3);
+      expect(svc.index.version).toBeGreaterThan(v);
+      const v2 = svc.index.version;
+      await svc.refresh(); // nothing new: no change, memo stays valid
+      expect(svc.index.version).toBe(v2);
+      const fresh = new UsageService(h.store);
+      await fresh.refresh();
+      const t = bundledTable();
+      expect(fresh.index.sessions(t, "UTC")).toEqual(svc.index.sessions(t, "UTC"));
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("/history/sessions honors limit (default 100, max 1000) and sorts by cost", async () => {
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      for (let i = 0; i < 3; i++)
+        await send(h, `sess-${i}`, i + 1, [usageLine(`m${i}`, 10 + i * 1000)]);
+      const get = (u: string) => h.app.inject({ method: "GET", url: u, headers: AUTH });
+      const all = (await get("/history/sessions?tz=UTC")).json() as {
+        sessions: { session_id: string }[];
+      };
+      expect(all.sessions.map((s) => s.session_id)).toEqual(["sess-2", "sess-1", "sess-0"]);
+      const two = (await get("/history/sessions?tz=UTC&limit=2")).json() as {
+        sessions: unknown[];
+      };
+      expect(two.sessions.length).toBe(2);
+      expect((await get("/history/sessions?limit=0")).statusCode).toBe(400);
+      expect((await get("/history/sessions?limit=1001")).statusCode).toBe(400);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("/history/* has its own low limit (default burst 2, 1/s); other reads are unaffected", async () => {
+    let t = 1_800_000_000_000;
+    const h = await makeHub({}, () => t);
+    try {
+      const code = async (u: string) =>
+        (await h.app.inject({ method: "GET", url: u, headers: AUTH })).statusCode;
+      expect(await code("/history/daily?tz=UTC")).toBe(200);
+      expect(await code("/history/sessions?tz=UTC")).toBe(200);
+      expect(await code("/history/daily?tz=UTC")).toBe(429);
+      expect(await code("/sessions")).toBe(200);
+      t += 1000;
+      expect(await code("/history/daily?tz=UTC")).toBe(200);
     } finally {
       await h.cleanup();
     }

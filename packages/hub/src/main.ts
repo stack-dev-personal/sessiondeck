@@ -8,8 +8,20 @@ const config = loadConfig(process.env);
 const store = Store.open(config.dbPath);
 store.migrate();
 const cachePath = cachePathFor(config.dbPath);
-const pricing = new PricingProvider(loadPricing({ file: config.pricingFile, cachePath }));
+// The logger does not exist until the server is built, which needs the table: hold early lines.
+const early: Array<{ level: "info" | "warn"; obj: object; msg: string }> = [];
+const pricing = new PricingProvider(
+  loadPricing({
+    file: config.pricingFile,
+    cachePath,
+    log: {
+      info: (obj, msg) => early.push({ level: "info", obj, msg }),
+      warn: (obj, msg) => early.push({ level: "warn", obj, msg }),
+    },
+  }),
+);
 const app = buildServer({ config, store, logger: true, pricing });
+for (const l of early) app.log[l.level](l.obj, l.msg);
 app.addHook("onClose", async () => store.close());
 await app.listen({ port: config.port, host: config.bind });
 app.log.info(

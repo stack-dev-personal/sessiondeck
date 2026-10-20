@@ -24,17 +24,21 @@ const PROVIDER_PREFIXES = [
 ];
 
 const TIER_THRESHOLD = 200_000;
+const MEMO_MAX = 1000;
+
+/** Rates are finite and non-negative; a negative or 1e999 rate makes the entry invalid (skipped). */
+const rate = z.number().finite().nonnegative().optional();
 
 export const ModelPricingSchema = z.object({
-  input_cost_per_token: z.number().optional(),
-  output_cost_per_token: z.number().optional(),
-  cache_creation_input_token_cost: z.number().optional(),
-  cache_read_input_token_cost: z.number().optional(),
-  input_cost_per_token_above_200k_tokens: z.number().optional(),
-  output_cost_per_token_above_200k_tokens: z.number().optional(),
-  cache_creation_input_token_cost_above_200k_tokens: z.number().optional(),
-  cache_read_input_token_cost_above_200k_tokens: z.number().optional(),
-  provider_specific_entry: z.object({ fast: z.number().optional() }).optional(),
+  input_cost_per_token: rate,
+  output_cost_per_token: rate,
+  cache_creation_input_token_cost: rate,
+  cache_read_input_token_cost: rate,
+  input_cost_per_token_above_200k_tokens: rate,
+  output_cost_per_token_above_200k_tokens: rate,
+  cache_creation_input_token_cost_above_200k_tokens: rate,
+  cache_read_input_token_cost_above_200k_tokens: rate,
+  provider_specific_entry: z.object({ fast: rate }).optional(),
 });
 export type ModelPricing = z.infer<typeof ModelPricingSchema>;
 
@@ -101,7 +105,8 @@ export class PricingTable {
     const memo = this.memo.get(model);
     if (memo !== undefined) return memo;
     const found = this.find(model);
-    this.memo.set(model, found);
+    // Model strings come from transcripts: bound the memo so junk names cannot grow it.
+    if (this.memo.size < MEMO_MAX) this.memo.set(model, found);
     return found;
   }
 
