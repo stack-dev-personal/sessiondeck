@@ -632,19 +632,22 @@ describe("transcript tailer review fixes", () => {
     const t = mk({ now: () => clock });
     const size = (): number => readFileSync(statePath(), "utf8").length;
     const sizes: number[] = [];
-    for (let i = 0; i < 160; i++) {
+    // The pruned map is age-bounded (PRUNED_KEEP_MS = 30 d, 8 d per cycle => about 4 live
+    // entries), so steady state is reached after ~5 cycles; 3x that is enough and keeps the
+    // fs-write count low on slow filesystems (NTFS).
+    for (let i = 0; i < 24; i++) {
       await t.onSessionStart(`sess-${i}-${"x".repeat(30)}`, join(dir, "none.jsonl"));
       await t.onSessionEnd(`sess-${i}-${"x".repeat(30)}`);
       clock += 8 * day;
       await t.poll();
-      if (i === 59 || i === 159) sizes.push(size());
+      if (i === 11 || i === 23) sizes.push(size());
     }
     expect(sizes[1]!).toBeLessThanOrEqual(sizes[0]! * 1.2);
     expect(Object.keys(JSON.parse(readFileSync(statePath(), "utf8")).pruned).length).toBeLessThan(
       6,
     );
     expect(t.entries().length).toBeLessThan(3);
-  }, 30_000);
+  });
 
   it("fsyncs through the real outbox (enqueue.sync) before persisting offsets", async () => {
     const f = join(dir, "t.jsonl");
