@@ -103,3 +103,4 @@
 ### Session close checks (e816b7c)
 - pnpm -r test: scripts 575 pass / 7 skipped, contract 1090 pass / 1 skipped, web 115 pass. pnpm -r typecheck, pnpm -r lint, lint:root, format:check: exit 0.
 - Sprint branch still at 5b76608: no rebase needed.
+- CI on 7fd43a4: run 39440635653 success; run 39440624226 failed only on check (windows-latest, node 22), where the step "test (R0.5 budget 60 s)" timed out at 61 s with every suite passed (web 115/115). The same leg took 58 s at 2f9b6a6. The PAT cannot re-run jobs, so this log commit retriggers CI. Deferred, for the contract/CI owner: the R0.5 60 s budget has about 2 s headroom on windows-latest node 22.
