@@ -12,7 +12,7 @@
 |---|------|--------------|----------|---------------|------------|
 | U1 | daemon core: spool reader with persisted cursor, daemon outbox, seq assignment with pending-batch journal, batching, POST /ingest with backoff + jitter, host heartbeat, stub hub, loss harness | R1.4, R1.5 | sd-executor-probe | packages/probe/** | - |
 | U2 | transcript tailer: main + subagent, byte offset, compaction/rotation reset (inode on POSIX; size regression, birthtime change, head fingerprint on Windows, see D-S2-8), persisted offsets, transcript harness | R1.6 | sd-executor-probe | packages/probe/src/daemon/transcript*, packages/probe/test/**, packages/probe/scripts/** | U1 |
-| U3 | liveness: pid registry from hook liveness lines, 10 s kill(pid,0), ~/.claude/sessions second opinion, findParentPID/cleanupSamePID port | R1.7 | sd-executor-probe | packages/probe/src/daemon/liveness*, packages/probe/test/** | U1 |
+| U3 | liveness: pid registry from hook liveness lines, 10 s kill(pid,0), ~/.claude/sessions second opinion, findParentPID/cleanupSamePID port | R1.7 | sd-executor-probe | packages/probe/src/daemon/liveness*, new helpers proc-info.ts and sessions-file.ts under packages/probe/src/daemon/, packages/probe/test/**, packages/probe/scripts/harness-liveness.mjs (boundary widened in the delegation; recorded after review) | U1 |
 | U4 | daemon wiring and registration: `probe daemon run/install/uninstall`, Task Scheduler per-user logon task (Windows), systemd user unit (Linux), end-to-end daemon process test, docs/PROBE.md daemon section | R1.4-R1.7 (integration) | sd-executor-probe | packages/probe/**, docs/PROBE.md | U2, U3 |
 | U5 | NOTICE attribution lines; CI runs the daemon tests on windows-latest | borrow rules | sd-executor-contract | NOTICE, .github/** | U4 |
 | U6 | session close: full suite, loss + transcript harnesses, docs/VERIFY-P1.md rows for R1.4-R1.7, docs/PROBE-BENCH.md loss section | all | sd-verifier | docs/VERIFY-P1.md, docs/PROBE-BENCH.md | U1-U5 |
@@ -66,3 +66,7 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - For U4: pass `projectsDir` (Claude projects dir) to TranscriptTailer; the untracked SubagentStop fallback depends on it.
 - 26a1e25 fixes iteration-2 findings (max_issued counter, bounded pruned map, lost_until window, outbox multi-file fsync, isUnder table tests). Iteration 3: sd-reviewer merge, 2 MINOR deferred. 172 probe tests pass, 1 win32-gated.
 - U2 verify 1394e96: R1.6 PASS (component; Windows real-fs replace verified by CI). U2 complete.
+
+### U3 liveness (R1.7)
+- 05ff594: liveness.ts, proc-info.ts, sessions-file.ts, liveness tests (22 unit + 1 real-process proc test), harness-liveness.mjs (`detected_ms=10546 within_15s=true`, RESULT pass).
+- Review iteration 1: sd-reviewer fix-then-merge (BLOCKING boundary not recorded, resolved by updating the task table above; 2 MAJOR sessions-file fallback picks dead pid, no pid-reuse/reboot check on Windows/macOS; 3 MINOR; 3 LOW). sd-security-reviewer gate pass (2 MEDIUM sessions-dir FIFO/symlink blocking read, unbounded spool registrations and lookups; 3 LOW). Hub follow-up (not this branch): contract reduceLiveness does not call supersedeSamePid, so the hub must call it on every alive:true; reported to the sprint as an open item for S3/S4. statePath LOW goes to U4.
