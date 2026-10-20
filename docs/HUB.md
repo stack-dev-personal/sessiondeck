@@ -70,7 +70,6 @@ Phase 7 runs linux/arm64. Nothing in the Dockerfile is amd64-only: the base tag 
 | `HUB_MAX_WS_CLIENTS`    | `64`                            | Concurrent `/stream` clients. Further upgrades get 503.                                                                                  |
 | `HUB_ALLOWED_ORIGINS`   | empty                           | Comma-separated Origin allow-list for WS upgrades. When non-empty, an upgrade carrying any other Origin is refused (403). See security. |
 | `HUB_MAX_CLOCK_SKEW_MS` | `86400000` (1 day)              | An envelope whose `ts` is more than this ahead of the hub clock refuses the whole batch (400 `too_far_in_future`; a warn log with counts only). Range 60000 (1 min) to 604800000 (7 days); outside it the hub does not start. |
-
 | `HUB_EVENT_RETENTION_DAYS` | `30` | Events older than this are folded into per-session baselines and deleted by compaction. |
 | `HUB_SAMPLE_RETENTION_DAYS` | `30` | Statusline samples older than this are deleted. |
 | `HUB_RETENTION_INTERVAL_MS` | `3600000` (1 hour) | Time between retention passes; `0` disables the timer. The first pass runs 30 s after start. |

@@ -1,4 +1,8 @@
 // R2.4: compaction yields to ingest and is capped per pass.
+import net from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Envelope } from "@sessiondeck/contract";
 import { Ingestor } from "../src/ingest/ingestor.ts";
@@ -9,7 +13,9 @@ import {
   compactEvents,
   startRetentionTimer,
 } from "../src/retention.ts";
-import { batch, makeHub, mkEnv } from "./support/hub.ts";
+import { Store } from "../src/db/store.ts";
+import { runCli } from "../src/cli.ts";
+import { TOKEN, batch, makeHub, mkEnv } from "./support/hub.ts";
 import { tempStore } from "./helpers.ts";
 
 const quiet = { info: () => undefined, warn: () => undefined };
@@ -170,6 +176,89 @@ describe("server reports ingest activity", () => {
       expect(activity.waitMs(1000)).toBeGreaterThan(0); // just ended: not yet quiet
     } finally {
       await h.cleanup();
+    }
+  });
+
+  it("does not count unauthenticated POST /ingest as activity (F1)", async () => {
+    const activity = new IngestActivity();
+    let begun = 0;
+    const orig = activity.begin.bind(activity);
+    activity.begin = () => {
+      begun++;
+      return orig();
+    };
+    const h = await makeHub({}, undefined, { activity });
+    try {
+      const r = await h.app.inject({
+        method: "POST",
+        url: "/ingest",
+        headers: { "content-type": "application/json" },
+        payload: "{}",
+      });
+      expect(r.statusCode).toBe(401);
+      await new Promise((res) => setImmediate(res));
+      expect(begun).toBe(0);
+      expect(activity.waitMs(1000)).toBe(0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("a request destroyed mid-body leaves the counter at zero (F2)", async () => {
+    const activity = new IngestActivity();
+    const h = await makeHub({}, undefined, { activity });
+    try {
+      const { http } = await h.listen();
+      const port = Number(new URL(http).port);
+      const sock = net.connect(port, "127.0.0.1");
+      await new Promise<void>((res) => sock.once("connect", () => res()));
+      sock.write(
+        `POST /ingest HTTP/1.1\r\nHost: x\r\nauthorization: Bearer ${TOKEN}\r\n` +
+          'content-type: application/json\r\ncontent-length: 100000\r\n\r\n{"a":',
+      );
+      const end = Date.now() + 3000;
+      while (activity.active === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
+      expect(activity.active).toBe(1);
+      sock.destroy();
+      while (activity.active !== 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
+      expect(activity.active).toBe(0);
+    } finally {
+      await h.cleanup();
+    }
+  });
+});
+
+describe("hub compact CLI is uncapped (F3)", () => {
+  it("drains every old event although HUB_COMPACT_MAX_EVENTS is small", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "hub-cli-"));
+    const dbPath = path.join(dir, "hub.sqlite");
+    try {
+      const s = Store.open(dbPath);
+      s.migrate();
+      const ing = new Ingestor(s, quiet);
+      const old = Date.now() - 10 * DAY_MS;
+      const envs = Array.from({ length: 30 }, (_, i) => mkEnv({ seq: i + 1, ts: old + i }));
+      for (let i = 0; i < 30; i += 10) ing.ingest("h1", envs.slice(i, i + 10));
+      expect(s.countEvents()).toBe(30);
+      s.close();
+      const out: string[] = [];
+      const code = await runCli(
+        ["compact", "--db", dbPath],
+        {
+          HUB_EVENT_RETENTION_DAYS: "1",
+          HUB_COMPACT_MAX_EVENTS: "5",
+          HUB_COMPACT_BATCH_SIZE: "5",
+        },
+        (l) => out.push(l),
+        quiet,
+      );
+      expect(code).toBe(0);
+      expect(out[0]).toMatch(/capped=false/);
+      const s2 = Store.open(dbPath);
+      expect(s2.countEvents()).toBe(0);
+      s2.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

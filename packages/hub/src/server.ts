@@ -105,15 +105,17 @@ export function buildServer(opts: {
     now,
   );
   app.addHook("onRequest", async (req, reply) => {
-    // Covers body read, handling and the reply: closed by the response's own 'close', which also
-    // fires when the client aborts, so a dropped connection cannot leave the counter raised.
-    if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
-      reply.raw.once("close", activity.begin());
-    }
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
     const principal = principalOf(req.headers.authorization);
     if (principal === null) return deny(reply);
+    // Only authenticated ingest counts as activity, or a tokenless client could keep compaction from
+    // ever seeing quiet. Covers body read, handling and the reply: closed by the response's own
+    // 'close', which also fires when the client aborts, so a dropped connection cannot leave the
+    // counter raised.
+    if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
+      reply.raw.once("close", activity.begin());
+    }
     if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
       return reply.code(429).header("content-length", "0").send();
     }

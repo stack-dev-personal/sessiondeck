@@ -1,8 +1,13 @@
 // R2.4: WAL checkpoints run on a worker thread so a commit never carries the fsync.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { statSync } from "node:fs";
 import type { Envelope } from "@sessiondeck/contract";
-import { SAFETY_NET_FRAMES, failureReporter, startCheckpointer } from "../src/checkpoint.ts";
+import {
+  MAX_CONSECUTIVE_FAILURES,
+  SAFETY_NET_FRAMES,
+  failureReporter,
+  startCheckpointer,
+} from "../src/checkpoint.ts";
 import { Ingestor } from "../src/ingest/ingestor.ts";
 import { mkEnv } from "./support/hub.ts";
 import { tempStore } from "./helpers.ts";
@@ -68,6 +73,48 @@ describe("startCheckpointer", () => {
     expect(warns[0]).toBe("checkpoint worker unavailable, automatic checkpoints restored");
     expect(t.store.db.pragma("wal_autocheckpoint", { simple: true })).toBe(1000);
     await ck.stop();
+  });
+});
+
+describe("consecutive failure fallback (F5)", () => {
+  it("drops the worker and restores wal_autocheckpoint = 1000 after 100 failed checkpoints", async () => {
+    // A worker that reports an error on every tick, 100 times, then keeps running.
+    vi.resetModules();
+    const real = await import("node:worker_threads");
+    const src = `
+      const { parentPort } = require("node:worker_threads");
+      for (let i = 0; i < ${MAX_CONSECUTIVE_FAILURES}; i++) parentPort.postMessage({ error: "locked" });
+      setInterval(() => {}, 1000);
+    `;
+    vi.doMock("node:worker_threads", () => ({
+      ...real,
+      Worker: class extends real.Worker {
+        constructor(_src: string, o: object) {
+          super(src, o as never);
+        }
+      },
+    }));
+    try {
+      const { startCheckpointer: start } = await import("../src/checkpoint.ts");
+      const t = tempStore({ file: true });
+      cleanup = t.cleanup;
+      t.store.migrate();
+      const warns: { o: unknown; m: string }[] = [];
+      const log = {
+        info: () => undefined,
+        warn: (o: object, m: string) => void warns.push({ o, m }),
+      };
+      const ck = start(t.store, t.store.db.name, log, 25);
+      expect(t.store.db.pragma("wal_autocheckpoint", { simple: true })).toBe(SAFETY_NET_FRAMES);
+      await waitFor(() => t.store.db.pragma("wal_autocheckpoint", { simple: true }) === 1000);
+      expect(warns.map((w) => w.m)).toContain(
+        "checkpoint worker unavailable, automatic checkpoints restored",
+      );
+      expect(JSON.stringify(warns.at(-1)?.o)).toContain("too many consecutive");
+      await ck.stop();
+    } finally {
+      vi.doUnmock("node:worker_threads");
+    }
   });
 });
 

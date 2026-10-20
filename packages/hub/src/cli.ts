@@ -101,7 +101,7 @@ export async function runCli(
     } else {
       const r = await runRetention(store, log, { ...cfg, compactMaxEvents: 0 });
       out(
-        `compact: events=${r.compact.events} batches=${r.compact.batches} sessions=${r.compact.sessions} samples_deleted=${r.samples} elapsed_ms=${r.compact.elapsedMs} max_batch_ms=${r.compact.maxBatchMs} reducer_exceptions=${r.compact.exceptions}`,
+        `compact: events=${r.compact.events} batches=${r.compact.batches} sessions=${r.compact.sessions} capped=${r.compact.capped} samples_deleted=${r.samples} elapsed_ms=${r.compact.elapsedMs} max_batch_ms=${r.compact.maxBatchMs} reducer_exceptions=${r.compact.exceptions}`,
       );
     }
     return 0;
