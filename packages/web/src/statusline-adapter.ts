@@ -3,12 +3,22 @@
  * normalizeRateLimitWindow). Until the hub owns this, the web applies the statusLine fields to a
  * snapshot here. Field mapping follows architecture 3.3 and snapshot.ts. Pure; never mutates.
  */
-import type { SessionSnapshot, StatusLinePayload } from "@sessiondeck/contract";
+import type { SessionSnapshot, StatusLinePayload, Window } from "@sessiondeck/contract";
 import {
   epochSecondsToMs,
   normalizeRateLimitWindow,
   parseStatusLinePayload,
 } from "@sessiondeck/contract";
+
+/**
+ * Window as it should render at `now`: used_pct is null once resets_at has passed (architecture
+ * 4: n/a until the next statusLine tick). Use this wherever a meter renders, not the raw window.
+ */
+export function windowAt(w: Window | null | undefined, now: number): Window {
+  if (!w) return { used_pct: null, resets_at: null };
+  if (w.resets_at !== null && now >= w.resets_at) return { used_pct: null, resets_at: w.resets_at };
+  return w;
+}
 
 function pickNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -44,11 +54,14 @@ export function applyStatusLine(prev: SessionSnapshot, raw: unknown, ts: number)
       input: pickNumber(cw?.total_input_tokens) ?? prev.context.input,
       output: pickNumber(cw?.total_output_tokens) ?? prev.context.output,
     },
-    rate_limits: {
-      five_hour: normalizeRateLimitWindow(rl?.five_hour, ts),
-      seven_day: normalizeRateLimitWindow(rl?.seven_day, ts),
-      captured_at: ts,
-    },
+    rate_limits:
+      rl === null
+        ? prev.rate_limits
+        : {
+            five_hour: normalizeRateLimitWindow(rl.five_hour, ts),
+            seven_day: normalizeRateLimitWindow(rl.seven_day, ts),
+            captured_at: ts,
+          },
     cost: {
       usd: pickNumber(p.cost?.total_cost_usd) ?? prev.cost.usd,
       duration_ms: pickNumber(p.cost?.total_duration_ms) ?? prev.cost.duration_ms,

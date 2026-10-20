@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -98,5 +98,31 @@ describe("shell", () => {
     unmount();
     mount("/dev/cards");
     expect(screen.getByText("/dev/cards")).toBeInTheDocument();
+  });
+});
+
+describe("shell keys and surfaces", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    document.documentElement.setAttribute("data-theme", "dark");
+    useUi.setState({ theme: "dark", compact: false });
+    useBoard.setState({ sessions: {}, connection: "mock" });
+  });
+
+  it("auto-repeat keydown does not toggle again", async () => {
+    mount();
+    const press = (repeat: boolean) => fireEvent.keyDown(window, { key: "t", repeat });
+    press(false);
+    expect(useUi.getState().theme).toBe("light");
+    press(true);
+    expect(useUi.getState().theme).toBe("light");
+  });
+
+  it("board rows sit on surface-1 (state and faint text are measured there)", () => {
+    useBoard.setState({
+      sessions: { a: createSnapshot({ session_id: "a", host: "h", cwd: "/p/a", ts: 1 }) },
+    });
+    mount();
+    expect(screen.getByTestId("session-row")).toHaveClass("bg-surface-1");
   });
 });

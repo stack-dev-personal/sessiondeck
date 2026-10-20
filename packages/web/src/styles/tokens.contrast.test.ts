@@ -15,7 +15,14 @@ const tokens: Record<"dark" | "light", Record<string, string>> = lib.parseTokens
 const key = (r: Row) => `${r.theme} ${r.token} ${r.value}`;
 
 /** Known text-contrast failures pending a user decision. Fixing one (or adding one) flips a test. */
-const KNOWN_TEXT_FAILURES = ["dark state-ended #6e7681", "light state-starting #8c959f"];
+const KNOWN_TEXT_FAILURES = [
+  "dark state-ended #6e7681",
+  "light state-starting #8c959f",
+  "dark fg-faint #6b7784",
+  "light fg-faint #8c959f",
+];
+// Measured on --surface-1 only (design system rule). State-colored or faint TEXT must therefore
+// sit on bg-surface-1, never on --bg or --surface-2; do not add those ratios to the pinned set.
 
 describe("token contrast (R3.7)", () => {
   it("covers 10 tokens in 2 themes", () => {
@@ -26,13 +33,14 @@ describe("token contrast (R3.7)", () => {
     expect(rows.filter((r) => !r.icon).map(key)).toEqual([]);
   });
 
-  it("text failures (< 4.5:1) are exactly the two known ones", () => {
-    expect(
-      rows
-        .filter((r) => !r.text)
-        .map(key)
-        .sort(),
-    ).toEqual([...KNOWN_TEXT_FAILURES].sort());
+  it("text failures (< 4.5:1) are exactly the four known ones", () => {
+    const textTokenFails = (["dark", "light"] as const).flatMap((theme) =>
+      (lib.TEXT_TOKENS as string[])
+        .filter((n) => lib.contrast(tokens[theme][n], tokens[theme]["surface-1"]) < 4.5)
+        .map((n) => `${theme} ${n} ${tokens[theme][n]}`),
+    );
+    const stateFails = rows.filter((r) => !r.text).map(key);
+    expect([...stateFails, ...textTokenFails].sort()).toEqual([...KNOWN_TEXT_FAILURES].sort());
   });
 
   it("known failures are near their documented ratios", () => {

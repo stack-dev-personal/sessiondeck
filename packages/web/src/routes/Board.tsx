@@ -17,7 +17,7 @@ export function Board() {
       {list.map((s) => (
         <li
           key={s.session_id}
-          className="flex items-center gap-s-4 border-b border-border py-s-2"
+          className="flex items-center gap-s-4 border-b border-border bg-surface-1 py-s-2"
           data-testid="session-row"
         >
           <span className="w-64 shrink-0">

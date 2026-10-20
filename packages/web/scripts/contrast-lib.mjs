@@ -77,3 +77,6 @@ export function report(tokens = parseTokens()) {
   }
   return rows;
 }
+
+/** Text tokens (not states) that must also be readable on surface-1. fg-faint is a known failure. */
+export const TEXT_TOKENS = ["fg", "fg-muted", "fg-faint"];

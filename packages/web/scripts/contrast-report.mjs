@@ -1,4 +1,4 @@
-import { report, parseTokens, contrast, TEXT_MIN, ICON_MIN } from "./contrast-lib.mjs";
+import { TEXT_TOKENS, report, parseTokens, contrast, TEXT_MIN, ICON_MIN } from "./contrast-lib.mjs";
 
 const rows = report();
 const pad = (s, n) => String(s).padEnd(n);
@@ -15,7 +15,7 @@ const tokens = parseTokens();
 console.log("\nOther pairs");
 for (const theme of ["dark", "light"]) {
   const t = tokens[theme];
-  for (const name of ["fg", "fg-muted"]) {
+  for (const name of TEXT_TOKENS) {
     const ratio = contrast(t[name], t["surface-1"]);
     console.log(
       `${pad(theme, 6)}${pad(name + " / surface-1", 28)}${ratio.toFixed(2)}  ${ratio >= TEXT_MIN ? "pass" : "FAIL"}`,
@@ -31,4 +31,11 @@ for (const theme of ["dark", "light"]) {
 const textFails = rows
   .filter((r) => !r.text)
   .map((r) => `${r.theme} ${r.token} ${r.value} ${r.ratio.toFixed(2)}`);
+for (const theme of ["dark", "light"]) {
+  for (const name of TEXT_TOKENS) {
+    const ratio = contrast(tokens[theme][name], tokens[theme]["surface-1"]);
+    if (ratio < TEXT_MIN)
+      textFails.push(`${theme} ${name} ${tokens[theme][name]} ${ratio.toFixed(2)}`);
+  }
+}
 console.log(`\nText failures (${textFails.length}):\n  ${textFails.join("\n  ") || "none"}`);

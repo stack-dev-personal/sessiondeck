@@ -8,13 +8,13 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 /**
- * Global single-key shortcuts. Ignored while typing and when Ctrl, Meta or Alt is held
+ * Global single-key shortcuts. Ignored on auto-repeat, while typing and when Ctrl, Meta or Alt is held
  * (Ctrl+K and friends belong to later units). Keys are matched on event.key.
  */
 export function useShortcuts(map: Record<string, () => void>): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return;
       const fn = map[e.key];
       if (fn) {
         e.preventDefault();
