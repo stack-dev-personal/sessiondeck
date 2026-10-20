@@ -84,3 +84,4 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - Deferred from U3 iteration 4:
   - [MINOR] proc-info.ts:399-403: after a forced (stale) read, an empty result for an exited pid triggers a second read on the same rate-limit token. Fix: skip the second read when the first was forced.
   - [MINOR/LOW] liveness.ts:245-253,282: start() never resets `abandoned` (and stop() does not clear pendingEnd); a restarted instance after an abandoned stop would go silent. Not reachable today (daemon stops components only at exit). Fix: reset abandoned and pendingEnd in start(). Candidate for U4 if U4 touches the lifecycle.
+- U3 verify 74cddca: R1.7 PASS (63 unit tests, real-process proc test, harness detected_ms=11484 within_15s=true; Windows snapshot and pid-reuse paths verified by CI, needs laptop confirmation). U3 complete.
