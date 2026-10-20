@@ -101,7 +101,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   if (!acquired) return undefined;
   const lock: Lock = acquired;
   if (!lock.touch()) return undefined; // taken over at once: not ours, leave it alone
-  hardenDirs(home);
+  try {
+    hardenDirs(home);
+  } catch (e) {
+    lock.release(); // do not leave the lock behind for a daemon that never ran
+    throw e;
+  }
   const fileLog = createFileLogger(daemonLogPath(home), now);
   const log: Logger = opts.stderr
     ? (l, m) => {
@@ -135,6 +140,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     // reported above
   }
 
+  /** Components whose start() succeeded; only these see spool lines and get stopped. */
+  const active: DaemonComponent[] = [];
   let timer: NodeJS.Timeout | undefined;
   const timers: { lock?: NodeJS.Timeout } = {};
   let ended = false;
@@ -166,7 +173,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       if (!ended) onLost();
     },
     onSpoolLine: (env: Envelope) => {
-      for (const c of components) c.onSpoolLine?.(env);
+      for (const c of active) c.onSpoolLine?.(env);
     },
   });
 
@@ -195,42 +202,63 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     });
   };
 
-  await fwd.start();
   const ctx: ComponentContext = { home, host: hostName, log, enqueue: enqueueRaw };
-  for (const c of components) await c.start?.(ctx);
-  await heartbeat();
-  if ((opts.heartbeatMs ?? HEARTBEAT_MS) > 0) {
-    timer = setInterval(
-      () => void heartbeat().catch(() => undefined),
-      opts.heartbeatMs ?? HEARTBEAT_MS,
-    );
-    timer.unref();
+  // Components start before the forwarder so no spool line reaches one that has not started. A
+  // component that cannot start is logged and left out; hook forwarding must survive it.
+  for (const c of components) {
+    try {
+      await c.start?.(ctx);
+      active.push(c);
+    } catch (e) {
+      log(
+        "error",
+        `component ${c.name} did not start: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
   }
-  log("info", `daemon started pid=${process.pid} home=${home}`);
-
   const lockTimer = setInterval(() => {
     if (ended || lock.touch()) return;
     onLost();
   }, opts.lockTouchMs ?? LOCK_TOUCH_MS);
   lockTimer.unref();
   timers.lock = lockTimer;
+  try {
+    await fwd.start();
+    await heartbeat();
+    if ((opts.heartbeatMs ?? HEARTBEAT_MS) > 0) {
+      timer = setInterval(
+        () => void heartbeat().catch(() => undefined),
+        opts.heartbeatMs ?? HEARTBEAT_MS,
+      );
+      timer.unref();
+    }
+  } catch (e) {
+    // Fatal: stop the forwarder and the components that did start, and release the lock.
+    await finish(true).catch(() => undefined);
+    throw e;
+  }
+  log("info", `daemon started pid=${process.pid} home=${home}`);
+
   async function finish(graceful: boolean): Promise<void> {
     if (ended) return;
     ended = true;
     if (timer) clearInterval(timer);
     if (timers.lock) clearInterval(timers.lock);
-    await fwd.stop();
-    if (graceful) {
-      for (const c of components) {
-        try {
-          await c.stop?.();
-        } catch (e) {
-          log("error", `component ${c.name} stop: ${e instanceof Error ? e.message : String(e)}`);
+    try {
+      await fwd.stop();
+      if (graceful) {
+        for (const c of active) {
+          try {
+            await c.stop?.();
+          } catch (e) {
+            log("error", `component ${c.name} stop: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
+        log("info", "daemon stopped");
       }
-      log("info", "daemon stopped");
+    } finally {
+      lock.release();
     }
-    lock.release();
   }
 
   return {
