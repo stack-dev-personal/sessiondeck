@@ -12,6 +12,7 @@ if (typeof document !== "undefined") {
 // Files share one environment (isolate: false), so reset per-viewer state between tests.
 afterEach(async () => {
   const { vi } = await import("vitest");
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   if (typeof document !== "undefined") {

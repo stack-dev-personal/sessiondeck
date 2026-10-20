@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { App } from "./App";
 import { useBoard } from "./store/board";
-import { useUi } from "./store/ui";
+import { DEFAULT_SETTINGS, useUi } from "./store/ui";
 import { STATE_VOCAB } from "./lib/state-vocab";
 import { SESSION_STATES, createSnapshot } from "@sessiondeck/contract";
 
@@ -20,7 +20,7 @@ describe("shell", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.setAttribute("data-theme", "dark");
-    useUi.setState({ theme: "dark", compact: false });
+    useUi.setState({ theme: "dark", compact: false, settings: DEFAULT_SETTINGS });
     useBoard.setState({ sessions: {}, connection: "mock" });
   });
 

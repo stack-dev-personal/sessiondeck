@@ -21,7 +21,7 @@ export default defineConfig({
     setupFiles: ["src/test-setup.ts"],
     projects: [
       {
-        // DOM files share one jsdom per worker (isolate: false); test-setup.ts resets shared state.
+        // DOM files share a module cache per worker (isolate: false; jsdom is still per file); test-setup.ts resets shared state.
         extends: true,
         test: {
           name: "dom",
@@ -35,6 +35,8 @@ export default defineConfig({
         },
       },
       {
+        // Only src/{App,routes,components,mock,alerts} and store/{board,filters} get jsdom. A DOM test
+        // elsewhere (src/lib, live, styles, root) needs a `// @vitest-environment jsdom` docblock or a dom glob.
         // Pure logic files run under node (`@vitest-environment node` pragma kept as documentation).
         extends: true,
         test: {
