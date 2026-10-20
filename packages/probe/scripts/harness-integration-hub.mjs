@@ -1,9 +1,18 @@
-// Sprint integration check (R1.4, R1.5): the REAL probe daemon (`probe daemon run`, Linux build)
+// Sprint-1 integration check ONLY ("500 sent, 500 accepted, 0 duplicates, hub killed and restarted
+// mid-run"). R1.4/R1.5 evidence stays with harness-loss and harness-daemon-outage, not this script.
+// The REAL probe daemon (`probe daemon run`, Linux build)
 // forwards 500 hook envelopes to the REAL hub image running in docker, and the hub container is
 // killed (`docker kill`) and restarted mid-run. The hub keeps its SQLite store on a named volume,
 // so rows accepted before the kill survive. Afterwards the hub's REST API is asked for the events.
 // Prints `sent=.. accepted=.. duplicates=.. gaps=.. hub_killed_at=.. hub_restarted_at=..` and
-// `RESULT pass|fail`.
+// `RESULT pass|fail`. "duplicates" means duplicate ROWS stored (the hub's constraints make that
+// nearly impossible by design); the daemon's resends are measured separately from the hub's
+// "ingest batch" log lines (hub_log_accepted / hub_log_duplicates / resends). The daemon runs with
+// periodic heartbeats off (SESSIONDECK_HEARTBEAT_MS=0); the daemon still sends one startup
+// heartbeat, so the session events may show at most one seq gap, hub-log accepted must equal
+// TOTAL + 1 = last_seq + 1, and GET /hosts last_seq must match.
+// Security note: HUB_TOKEN is visible via `docker inspect` of the throwaway hub container; the
+// token is random per run and the data synthetic, so this is accepted.
 //   pnpm -F @sessiondeck/probe build && node scripts/harness-integration-hub.mjs
 //
 // The hub is reached over the docker network by name (cleartext http, non-loopback), so probe.json
@@ -13,7 +22,8 @@
 // touched. Docker image repositories must be lowercase, so the image tag is the lowercased prefix.
 // The token is random per run, passed to the container through the environment (not argv), written
 // to the temp probe.json, and never printed. Cleanup runs in `finally` and on SIGINT/SIGTERM.
-// Env: INT_PREFIX, INT_TOTAL (500), INT_DOWN_MS (10000), INT_NETWORK (sprint-1_default), INT_SKIP_BUILD=1 to reuse an existing image.
+// Env: INT_PREFIX, INT_TOTAL (500), INT_DOWN_MS (10000), INT_NETWORK (sprint-1_default), INT_SKIP_BUILD=1 to reuse an existing image,
+// INT_KEEP_IMAGE=1 to keep the built image (otherwise it is removed in cleanup).
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -25,10 +35,12 @@ import { killTree, makeUlid } from "./loss-lib.mjs";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(root, "..", "..");
 const PREFIX = process.env.INT_PREFIX ?? "sd-1-S2-";
+const NETWORK = process.env.INT_NETWORK ?? "sprint-1_default";
+if (!/^sd-\d+-[A-Za-z0-9]+-$/.test(PREFIX)) throw new Error(`INT_PREFIX rejected: ${PREFIX}`);
+if (!/^sprint-\d+_default$/.test(NETWORK)) throw new Error(`INT_NETWORK rejected: ${NETWORK}`);
 const NAME = `${PREFIX}hub`;
 const VOLUME = `${PREFIX}hubdata`;
 const IMAGE = `${PREFIX.toLowerCase()}hub:dev`;
-const NETWORK = process.env.INT_NETWORK ?? "sprint-1_default";
 const TOTAL = Number(process.env.INT_TOTAL ?? 500);
 const DOWN_MS = Number(process.env.INT_DOWN_MS ?? 10_000);
 const HOST = "integration-host";
@@ -52,6 +64,9 @@ function docker(args, { env, allowFail = false } = {}) {
 function cleanupDocker() {
   docker(["rm", "-f", NAME], { allowFail: true });
   docker(["volume", "rm", "-f", VOLUME], { allowFail: true });
+  if (process.env.INT_SKIP_BUILD !== "1" && process.env.INT_KEEP_IMAGE !== "1") {
+    docker(["rmi", "-f", IMAGE], { allowFail: true });
+  }
 }
 
 /** Copies the files the hub Dockerfile needs into a scratch context (legacy builder, no BuildKit). */
@@ -188,12 +203,13 @@ async function main() {
   writeFileSync(
     join(home, "probe.json"),
     JSON.stringify({ hubUrl: base, token: TOKEN, host: HOST, allowInsecureHub: true }),
+    { mode: 0o600 },
   );
   daemon = spawn(
     process.execPath,
     [join(root, "dist", "probe.mjs"), "daemon", "run", "--home", home],
     {
-      env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir },
+      env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir, SESSIONDECK_HEARTBEAT_MS: "0" },
       windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -221,29 +237,36 @@ async function main() {
   };
   const stored = async () => (await fetchEvents(base))?.length ?? 0;
 
-  // Phase 1: first third, paced at 10 ms per line (about 1.7 s), until the hub holds a third.
+  // Phase 1+2: write at 10 ms per line; once the hub holds half a third, kill it while writes
+  // continue (so batches are in flight), and keep writing for DOWN_MS.
   const third = Math.floor(TOTAL / 3);
   let n = 0;
-  while (n < third) {
+  let killedAt = 0;
+  let acceptedAtKill = 0;
+  let lastCheck = 0;
+  while (n < TOTAL && !killedAt) {
     write(n++);
     await sleep(10);
+    if (n >= third && Date.now() - lastCheck > 200) {
+      lastCheck = Date.now();
+      const have = await stored();
+      if (have >= Math.floor(third / 2)) {
+        acceptedAtKill = have;
+        docker(["kill", NAME]);
+        killedAt = Date.now();
+      }
+    }
   }
-  if (!(await until(async () => (await stored()) >= third, 30_000))) {
+  if (!killedAt) {
     const logs = docker(["logs", "--tail", "400", NAME], { allowFail: true });
     throw new Error(
-      `hub never accepted the first third; daemon stderr: ${daemonErr}\nhub logs: ${logs
+      `hub never accepted a first half-third; daemon stderr: ${daemonErr}\nhub logs: ${logs
         .split("\n")
-        .filter((l) => !l.includes("GET") && !l.includes('"statusCode":404'))
         .slice(-8)
         .join("\n")}`,
     );
   }
-
-  // Phase 2: kill the hub, keep writing for DOWN_MS.
-  const acceptedAtKill = await stored().catch(() => 0);
-  docker(["kill", NAME]);
-  const killedAt = Date.now();
-  const interval = Math.max(5, Math.min(100, Math.floor((DOWN_MS * 0.6) / (TOTAL - n))));
+  const interval = Math.max(5, Math.min(100, Math.floor((DOWN_MS * 0.6) / Math.max(1, TOTAL - n))));
   while (n < TOTAL && Date.now() - killedAt < DOWN_MS * 0.6) {
     write(n++);
     await sleep(interval);
@@ -270,13 +293,56 @@ async function main() {
   for (let i = 0; i < TOTAL; i++) if (!ns.has(i)) gaps++;
   const sortedSeq = events.map((e) => e.seq).sort((a, b) => a - b);
   const seqGaps = sortedSeq.filter((s, i) => i > 0 && s !== sortedSeq[i - 1] + 1).length;
+  const orderOk = events.every(
+    (e, i) => i === 0 || (e.seq > events[i - 1].seq && e.payload.n > events[i - 1].payload.n),
+  );
+
+  // Hub-side counts from the "ingest batch" log lines (the container log survives kill/start).
+  let logAccepted = 0;
+  let logDuplicates = 0;
+  let logBatches = 0;
+  for (const line of docker(["logs", NAME], { allowFail: true }).split("\n")) {
+    if (!line.includes("ingest batch")) continue;
+    try {
+      const o = JSON.parse(line);
+      if (o.msg !== "ingest batch") continue;
+      logAccepted += Number(o.accepted) || 0;
+      logDuplicates += Number(o.duplicates) || 0;
+      logBatches += 1;
+    } catch {
+      // not a JSON log line
+    }
+  }
+  let hostLastSeq = null;
+  try {
+    const r = await fetch(`${base}/hosts`, { headers: AUTH });
+    hostLastSeq = ((await r.json()).hosts ?? []).find((h) => h.host === HOST)?.last_seq ?? null;
+  } catch {
+    // reported as null and fails below
+  }
+  const firstSeq = sortedSeq[0];
+  const lastSeq = sortedSeq[sortedSeq.length - 1];
   console.log(
-    `# accepted_before_kill=${acceptedAtKill} drain_ms=${drainMs} seq_gaps=${seqGaps} (heartbeat envelopes share the host seq space) order_by_seq_matches_n=${events.every((e, i) => i === 0 || e.payload.n > events[i - 1].payload.n)}`,
+    `# accepted_before_kill=${acceptedAtKill} drain_ms=${drainMs} seq_gaps=${seqGaps} first_seq=${firstSeq} last_seq=${lastSeq} hosts_last_seq=${hostLastSeq} order_by_seq_matches_n=${orderOk}`,
+  );
+  console.log(
+    `# hub_log batches=${logBatches} accepted=${logAccepted} duplicates=${logDuplicates} resends=${logDuplicates} (no duplicate rows stored: ${duplicates === 0})`,
   );
   console.log(
     `sent=${sent} accepted=${events.length} duplicates=${duplicates} gaps=${gaps} hub_killed_at=${killedAt} hub_restarted_at=${restartedAt}`,
   );
-  return drained && sent === TOTAL && events.length === TOTAL && duplicates === 0 && gaps === 0;
+  return (
+    drained &&
+    sent === TOTAL &&
+    events.length === TOTAL &&
+    duplicates === 0 &&
+    gaps === 0 &&
+    seqGaps <= 1 && // the one startup heartbeat (session_id null) is not a session event
+    orderOk &&
+    hostLastSeq === lastSeq &&
+    logAccepted === lastSeq + 1 &&
+    logAccepted === TOTAL + 1
+  );
 }
 
 let pass = false;
