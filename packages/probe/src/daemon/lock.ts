@@ -6,6 +6,8 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
+  chmodSync,
+  lstatSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -46,6 +48,10 @@ const BOOT_TOLERANCE_MS = 10 * 60_000;
 const UNPARSEABLE_GRACE_MS = 5_000;
 const TMP_STALE_MS = 60_000;
 const MAX_ROUNDS = 200;
+/** A lock file is a few dozen bytes; anything at or above this is foreign. */
+const MAX_LOCK_BYTES = 4096;
+/** Highest generation we will create; planting one at or above it makes starting fail loudly. */
+const MAX_GEN = 10 ** 15 - 1;
 
 interface LockInfo {
   pid: number;
@@ -124,8 +130,15 @@ function parseInfo(text: string): LockInfo | undefined {
 
 type Raw = { ok: true; text: string } | { ok: false; code: string };
 
+/**
+ * Reads a lock file. Only a regular file under MAX_LOCK_BYTES is read (lstat, so a symlink is never
+ * followed and a FIFO is never opened); anything else yields code ENOTREG. A current holder is never
+ * such a file, so the starter treats it as stale; touch/verify treat it as transient.
+ */
 function readRaw(path: string): Raw {
   try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size >= MAX_LOCK_BYTES) return { ok: false, code: "ENOTREG" };
     return { ok: true, text: readFileSync(path, "utf8") };
   } catch (e) {
     return { ok: false, code: (e as NodeJS.ErrnoException).code ?? "EUNKNOWN" };
@@ -158,19 +171,43 @@ function sleepSync(ms: number): void {
 
 const genPath = (base: string, gen: number): string => (gen === 0 ? base : `${base}.${gen}`);
 
-/** Existing generations, ascending. Throws when the directory cannot be listed. */
-function scan(base: string): number[] {
+interface GenEntry {
+  gen: number;
+  path: string;
+}
+
+/**
+ * Existing generations, ascending. Any digit-suffixed name counts (however long, or with leading
+ * zeros) so an existing file is never invisible to the fence. Throws when the directory cannot be
+ * listed.
+ */
+function scan(base: string): GenEntry[] {
   const dir = dirname(base);
   const name = basename(base);
-  const gens: number[] = [];
+  const gens: GenEntry[] = [];
   for (const f of readdirSync(dir)) {
-    if (f === name) gens.push(0);
+    if (f === name) gens.push({ gen: 0, path: base });
     else if (f.startsWith(`${name}.`)) {
       const rest = f.slice(name.length + 1);
-      if (/^\d{1,15}$/.test(rest)) gens.push(Number(rest));
+      if (/^\d+$/.test(rest)) gens.push({ gen: Number(rest), path: join(dir, f) });
     }
   }
-  return gens.sort((a, b) => a - b);
+  return gens.sort((a, b) => a.gen - b.gen);
+}
+
+/** Tombstones (pid 0) a generation file we created, keeping its number taken. Best effort. */
+function tombstone(base: string, file: string, token: string): void {
+  const tmp = `${base}.tmp-${randomBytes(6).toString("hex")}`;
+  try {
+    writeFileSync(tmp, JSON.stringify({ pid: 0, token }), { mode: 0o600, flag: "wx" });
+    renameSync(tmp, file);
+  } catch {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**
@@ -225,9 +262,9 @@ function createExclusive(target: string, content: string, d: LockDeps): boolean 
 function cleanup(base: string, mine: number, d: LockDeps): void {
   try {
     for (const g of scan(base)) {
-      if (g < mine) {
+      if (g.gen < mine) {
         try {
-          rmSync(genPath(base, g), { force: true });
+          rmSync(g.path, { force: true });
         } catch {
           // ignore
         }
@@ -256,7 +293,7 @@ function makeLock(base: string, gen: number, token: string, content: string, d: 
   const higherExists = (): boolean | undefined => {
     try {
       const g = scan(base);
-      return g.length > 0 && g[g.length - 1]! > gen;
+      return g.length > 0 && g[g.length - 1]!.gen > gen;
     } catch {
       return undefined; // cannot list: transient
     }
@@ -276,7 +313,14 @@ function makeLock(base: string, gen: number, token: string, content: string, d: 
       if (r.code !== "ENOENT") return true; // transient (sharing violation, EPERM): try again later
       if (higher === undefined) return true;
       try {
-        if (createExclusive(mine, content, d)) return true; // someone removed it; ours again
+        if (createExclusive(mine, content, d)) {
+          // Ours again, unless a takeover happened meanwhile (we may have slept through it).
+          if (higherExists() === true) {
+            tombstone(base, mine, token);
+            return fail();
+          }
+          return true;
+        }
       } catch {
         return true;
       }
@@ -307,17 +351,7 @@ function makeLock(base: string, gen: number, token: string, content: string, d: 
       if (!r.ok || parseInfo(r.text)?.token !== token) return;
       // Tombstone, not delete: generation numbers must never be reused, or a late starter that
       // judged an older generation stale could create the number a fresh holder just vacated.
-      const tmp = `${base}.tmp-${randomBytes(6).toString("hex")}`;
-      try {
-        writeFileSync(tmp, JSON.stringify({ pid: 0, token }), { mode: 0o600, flag: "wx" });
-        renameSync(tmp, mine);
-      } catch {
-        try {
-          rmSync(tmp, { force: true });
-        } catch {
-          // ignore
-        }
-      }
+      tombstone(base, mine, token);
     },
     touch: () => check(true),
     verify: () => check(false),
@@ -330,18 +364,26 @@ function makeLock(base: string, gen: number, token: string, content: string, d: 
  */
 export function acquireLock(path: string, deps: Partial<LockDeps> = {}): Lock | undefined {
   const d: LockDeps = { ...realDeps, ...deps };
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  ensurePrivateDir(dirname(path));
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const gens = scan(path);
-    const top = gens.length ? gens[gens.length - 1]! : -1;
-    if (top >= 0) {
-      const topPath = genPath(path, top);
-      const cur = readRaw(topPath);
+    const topEntry = gens.length ? gens[gens.length - 1]! : undefined;
+    const top = topEntry ? topEntry.gen : -1;
+    if (top >= MAX_GEN) {
+      throw new Error(
+        `lock generation ${top} in ${dirname(path)} is out of range; remove the stray ${basename(path)}.* files`,
+      );
+    }
+    if (topEntry) {
+      const cur = readRaw(topEntry.path);
       if (!cur.ok) {
-        if (cur.code !== "ENOENT") sleepSync(5 + Math.floor(Math.random() * 20));
-        continue; // vanished between scan and read, or transiently unreadable
-      }
-      if (isLive(topPath, cur.text, d)) return undefined;
+        if (cur.code === "ENOTREG") {
+          // symlink, FIFO, directory or oversized: never a live holder, never read; take over
+        } else {
+          if (cur.code !== "ENOENT") sleepSync(5 + Math.floor(Math.random() * 20));
+          continue; // vanished between scan and read, or transiently unreadable
+        }
+      } else if (isLive(topEntry.path, cur.text, d)) return undefined;
     }
     const gen = top + 1 || 1; // none -> 1; legacy 0 -> 1
     const token = randomBytes(8).toString("hex");
@@ -349,10 +391,33 @@ export function acquireLock(path: string, deps: Partial<LockDeps> = {}): Lock | 
     const start = d.procStart(process.pid);
     if (start !== undefined) info.start = start;
     const content = JSON.stringify(info);
-    if (!createExclusive(genPath(path, gen), content, d)) continue; // lost the race: judge again
-    held.add(genPath(path, gen));
+    const mine = genPath(path, gen);
+    if (!createExclusive(mine, content, d)) continue; // lost the race: judge again
+    try {
+      const after = scan(path);
+      if (after.length > 0 && after[after.length - 1]!.gen > gen) {
+        // A later starter took a higher generation while we were stalled: we never held it.
+        tombstone(path, mine, token);
+        continue;
+      }
+    } catch {
+      // cannot list: the fence (verify) will catch it
+    }
+    held.add(mine);
     cleanup(path, gen, d);
     return makeLock(path, gen, token, content, d);
   }
   return undefined;
+}
+
+/** Creates the lock directory user-only; on POSIX refuses a symlink or a foreign owner, tightens loose modes. */
+function ensurePrivateDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === "win32" || typeof process.getuid !== "function") return;
+  const st = lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory())
+    throw new Error(`lock directory ${dir} is not a plain directory`);
+  if (st.uid !== process.getuid())
+    throw new Error(`lock directory ${dir} is owned by another user`);
+  if (st.mode & 0o077) chmodSync(dir, 0o700);
 }

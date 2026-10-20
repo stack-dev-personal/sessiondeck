@@ -2,17 +2,20 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -344,6 +347,90 @@ describe("R1.4 single-instance lock", () => {
     writeLock(`${lockPath()}.1`, "", 60_000);
     expect(acquireLock(lockPath(), { ...deps, link })).toBeDefined();
   });
+
+  it("a planted maximum generation is refused loudly, never wrapped into an invisible name", () => {
+    writeLock(`${lockPath()}.999999999999999`, { pid: 0 });
+    expect(() => acquireLock(lockPath(), deps)).toThrow(/out of range/);
+    expect(readdirSync(join(home, "daemon"))).toEqual(["daemon.lock.999999999999999"]);
+    // longer digit names still count as generations for the fence
+    rmSync(`${lockPath()}.999999999999999`);
+    const l = acquireLock(lockPath(), deps)!;
+    writeLock(`${lockPath()}.1000000000000000`, { pid: 0 });
+    expect(l.verify()).toBe(false);
+  });
+
+  it("a generation created while we stalled is not ours: tombstone and judge again", () => {
+    let planted = false;
+    const link = (a: string, t: string): void => {
+      if (!planted) {
+        planted = true;
+        writeLock(`${lockPath()}.2`, { pid: process.ppid, boot: bootNow, token: "c" });
+      }
+      linkSync(a, t);
+    };
+    expect(acquireLock(lockPath(), { ...deps, link })).toBeUndefined();
+    expect(JSON.parse(readFileSync(`${lockPath()}.1`, "utf8")).pid).toBe(0);
+    expect(JSON.parse(readFileSync(`${lockPath()}.2`, "utf8")).token).toBe("c");
+  });
+
+  it("startDaemon in that interleaving returns undefined and leaves no live orphan", async () => {
+    const dl = join(home, "daemon", "daemon.lock");
+    let planted = false;
+    const link = (a: string, t: string): void => {
+      if (!planted) {
+        planted = true;
+        writeLock(`${dl}.2`, { pid: process.ppid, token: "c" });
+      }
+      linkSync(a, t);
+    };
+    mkdirSync(join(home, "daemon"), { recursive: true });
+    expect(await startDaemon({ home, config: undefined, lockDeps: { link } })).toBeUndefined();
+    expect(JSON.parse(readFileSync(`${dl}.1`, "utf8")).pid).toBe(0);
+  });
+
+  it("touch recreating a vanished file fails if a takeover happened meanwhile", () => {
+    let armed = false;
+    const link = (a: string, t: string): void => {
+      if (armed) writeLock(`${lockPath()}.2`, { pid: process.ppid, token: "c" }); // C wins mid-recreate
+      linkSync(a, t);
+    };
+    const l = acquireLock(lockPath(), { ...deps, link })!;
+    rmSync(`${lockPath()}.1`);
+    armed = true;
+    expect(l.touch()).toBe(false);
+    expect(l.verify()).toBe(false);
+    expect(JSON.parse(readFileSync(`${lockPath()}.1`, "utf8")).pid).toBe(0); // tombstoned, not live
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "a FIFO, a symlink or an oversized file as the top generation is stale, never read",
+    () => {
+      mkdirSync(join(home, "daemon"), { recursive: true });
+      execFileSync("mkfifo", [`${lockPath()}.3`]);
+      const l = acquireLock(lockPath(), deps)!; // would hang if the FIFO were opened
+      expect(l).toBeDefined();
+      expect(existsSync(`${lockPath()}.4`)).toBe(true);
+      l.release();
+      writeFileSync(`${lockPath()}.9`, "x".repeat(10_000));
+      expect(acquireLock(lockPath(), deps)).toBeDefined();
+      symlinkSync("/dev/zero", `${lockPath()}.20`);
+      expect(acquireLock(lockPath(), deps)).toBeDefined();
+      expect(existsSync(`${lockPath()}.21`)).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a loose lock directory is tightened; a symlinked one is refused",
+    () => {
+      const dir = join(home, "loose");
+      mkdirSync(dir, { mode: 0o777 });
+      chmodSync(dir, 0o777);
+      acquireLock(join(dir, "daemon.lock"), deps)!.release();
+      expect(statSync(dir).mode & 0o077).toBe(0);
+      symlinkSync(dir, join(home, "link"));
+      expect(() => acquireLock(join(home, "link", "daemon.lock"), deps)).toThrow(/plain directory/);
+    },
+  );
 
   it("old temp files are removed by the new owner", () => {
     writeLock(`${lockPath()}.tmp-old`, "x", 120_000);

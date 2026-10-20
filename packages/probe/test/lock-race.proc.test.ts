@@ -8,28 +8,37 @@ import { describe, expect, it } from "vitest";
 const child = join(dirname(fileURLToPath(import.meta.url)), "lock-race-child.mjs");
 
 interface Starter {
+  ready: Promise<void>;
+  go: (startAt: number) => void;
   result: Promise<string>;
   stop: () => void;
 }
 
 /** A winner stays alive until the test stops it, so a slow-starting child always sees it live. */
-function run(lockPath: string, startAt: number): Starter {
-  const p = spawn(process.execPath, [child, lockPath, String(startAt), "120000"], {
+function run(lockPath: string): Starter {
+  const p = spawn(process.execPath, [child, lockPath, "120000"], {
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
   let out = "";
   let err = "";
+  let markReady: () => void = () => undefined;
+  const ready = new Promise<void>((r) => (markReady = r));
   const result = new Promise<string>((resolve, reject) => {
     p.stdout.on("data", (c: Buffer) => {
       out += c.toString();
-      if (out.includes("\n")) resolve(out.trim());
+      if (out.startsWith("READY\n")) markReady();
+      const lines = out.trim().split("\n");
+      if (lines.length >= 2) resolve(lines[1]!);
     });
     p.stderr.on("data", (c: Buffer) => (err += c.toString()));
     p.on("error", reject);
-    p.on("close", () => resolve(out.trim() || `ERR ${err.slice(0, 200)}`));
+    p.on("close", () => {
+      markReady();
+      resolve(out.trim().split("\n")[1] || `ERR ${err.slice(0, 200)}`);
+    });
   });
-  return { result, stop: () => p.kill() };
+  return { ready, go: (at) => p.stdin.write(`${at}\n`), result, stop: () => p.kill() };
 }
 
 const ROUNDS = 20;
@@ -56,8 +65,10 @@ async function race(kind: Setup): Promise<void> {
   try {
     for (let round = 0; round < ROUNDS; round++) {
       const lockPath = setup(kind, dir, round);
-      const startAt = Date.now() + 1500; // node start-up of all children is done by then
-      const starters = Array.from({ length: STARTERS }, () => run(lockPath, startAt));
+      const starters = Array.from({ length: STARTERS }, () => run(lockPath));
+      await Promise.all(starters.map((st) => st.ready)); // all started: no fixed wait
+      const startAt = Date.now() + 100;
+      for (const st of starters) st.go(startAt);
       const results = await Promise.all(starters.map((st) => st.result));
       for (const st of starters) st.stop();
       const won = results.filter((r) => r === "WON").length;

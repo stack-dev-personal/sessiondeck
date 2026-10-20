@@ -18,7 +18,7 @@ import { ulid } from "../ulid.ts";
 import { Forwarder, MAX_BATCH_ENVELOPES, MAX_BATCH_MS, MAX_BODY_BYTES } from "./forwarder.ts";
 import { createFileLogger } from "./log.ts";
 import { checkHubUrl, INSECURE_HUB_WARNING } from "./hub-url.ts";
-import { LOCK_TOUCH_MS, type Lock, acquireLock } from "./lock.ts";
+import { LOCK_TOUCH_MS, type Lock, type LockDeps, acquireLock } from "./lock.ts";
 import { createOutbox } from "./outbox.ts";
 import type { ComponentContext, DaemonComponent, Logger } from "./types.ts";
 
@@ -33,6 +33,8 @@ export interface DaemonOptions {
   /** Config source; default reads `<home>/probe.json` before each send attempt. */
   config?: ProbeConfig | (() => Promise<ProbeConfig | undefined> | ProbeConfig | undefined);
   components?: DaemonComponent[];
+  /** Test seam for the lock primitives. */
+  lockDeps?: Partial<LockDeps>;
   fetch?: typeof fetch;
   now?: () => number;
   /** Resolves after ms or when the signal aborts. Injectable so tests can run time fast. */
@@ -95,7 +97,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const home = opts.home;
   const now = opts.now ?? Date.now;
   mkdirSync(daemonDir(home), { recursive: true, mode: 0o700 });
-  const acquired = acquireLock(daemonLockPath(home));
+  const acquired = acquireLock(daemonLockPath(home), opts.lockDeps);
   if (!acquired) return undefined;
   const lock: Lock = acquired;
   if (!lock.touch()) return undefined; // taken over at once: not ours, leave it alone
