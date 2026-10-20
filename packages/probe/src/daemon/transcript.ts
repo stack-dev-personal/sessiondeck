@@ -65,6 +65,18 @@ export interface TailEntry {
 interface TailState {
   v: 1;
   files: Record<string, TailEntry>;
+  /** Keys of entries pruned after SessionEnd; a later re-track starts at a high mark. */
+  pruned?: string[];
+  /** Offsets were lost once (corrupt file); new entries start at a high mark. */
+  lost?: boolean;
+}
+
+function isUnder(p: string, dir: string): boolean {
+  const w = looksWindows(dir) || looksWindows(p);
+  const m = w ? path.win32 : path.posix;
+  const norm = (x: string): string => (w ? m.resolve(x).toLowerCase() : m.resolve(x));
+  const rel = m.relative(norm(dir), norm(p));
+  return rel !== "" && !rel.startsWith("..") && !m.isAbsolute(rel);
 }
 
 /**
@@ -100,10 +112,22 @@ export interface TranscriptTailerOptions {
   strategy?: ReplaceStrategy;
   /** Test seam for stat (fake inode or birthtime). */
   stat?: (p: string) => Promise<StatLike>;
+  /** Claude projects dir; subagent transcript paths from hooks must live under it or the main dir. */
+  projectsDir?: string;
+  /** Flushes the outbox to disk; defaults to `enqueue.sync` when the outbox provides one. */
+  syncOutbox?: () => void;
   pollMs?: number;
   maxEnvelopeBytes?: number;
   maxLineJsonBytes?: number;
 }
+
+/** Seconds since 2026-01-01 times 4: ~1.2e8 in 2026, below 2^31 until about 2043. */
+const HIGH_MARK_EPOCH_MS = Date.UTC(2026, 0, 1);
+export function highMark(nowMs: number): number {
+  return Math.max(0, Math.floor((nowMs - HIGH_MARK_EPOCH_MS) / 1000)) * 4;
+}
+
+const AGENT_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 const key = (session: string, agent?: string): string => `${session}|${agent ?? ""}`;
 
@@ -173,6 +197,8 @@ export class TranscriptTailer implements DaemonComponent {
   private readonly strategy: ReplaceStrategy;
   private readonly statFn: (p: string) => Promise<StatLike>;
   private dirty = false;
+  private lost = false;
+  private pruned = new Set<string>();
   /** Counters for harnesses and logs. */
   readonly stats = { lines: 0, envelopes: 0, resets: 0, markers: 0 };
 
@@ -235,23 +261,36 @@ export class TranscriptTailer implements DaemonComponent {
     const aid = env.agent_id ?? (typeof p["agent_id"] === "string" ? p["agent_id"] : undefined);
     switch (env.hook_event_name) {
       case "SessionStart":
-        if (tp) void this.onSessionStart(sid, tp);
+        if (tp) this.fire(this.onSessionStart(sid, tp), "SessionStart");
         break;
       case "SubagentStart":
-        if (aid) void this.onSubagentStart(sid, aid, tp);
+        if (aid) this.fire(this.onSubagentStart(sid, aid, tp), "SubagentStart");
         break;
       case "SubagentStop":
         if (aid)
-          void this.onSubagentStop(
-            sid,
-            aid,
-            typeof p["agent_transcript_path"] === "string" ? p["agent_transcript_path"] : undefined,
+          this.fire(
+            this.onSubagentStop(
+              sid,
+              aid,
+              typeof p["agent_transcript_path"] === "string"
+                ? p["agent_transcript_path"]
+                : undefined,
+              tp,
+            ),
+            "SubagentStop",
           );
         break;
       case "SessionEnd":
-        void this.onSessionEnd(sid);
+        this.fire(this.onSessionEnd(sid), "SessionEnd");
         break;
     }
+  }
+
+  /** A failed handler is logged, never an unhandled rejection; the spool replay retries it. */
+  private fire(p: Promise<unknown>, what: string): void {
+    p.catch((e: unknown) =>
+      this.log("error", `transcript ${what}: ${e instanceof Error ? e.message : String(e)}`),
+    );
   }
 
   // --- API for the daemon wiring and tests ---
@@ -266,6 +305,10 @@ export class TranscriptTailer implements DaemonComponent {
   /** transcriptPath is the session's own transcript_path; the agent file is derived from it. */
   onSubagentStart(sessionId: string, agentId: string, transcriptPath?: string): Promise<void> {
     return this.run(async () => {
+      if (!AGENT_ID_RE.test(agentId)) {
+        this.log("warn", "transcript: SubagentStart with an invalid agent id ignored");
+        return;
+      }
       const main = this.files.get(key(sessionId));
       const base = transcriptPath ?? main?.path;
       if (!base) {
@@ -277,11 +320,36 @@ export class TranscriptTailer implements DaemonComponent {
     });
   }
 
-  onSubagentStop(sessionId: string, agentId: string, agentPath?: string): Promise<void> {
+  onSubagentStop(
+    sessionId: string,
+    agentId: string,
+    agentPath?: string,
+    transcriptPath?: string,
+  ): Promise<void> {
     return this.run(async () => {
-      const e = this.files.get(key(sessionId, agentId));
-      if (!e) return;
-      if (agentPath && agentPath !== e.path && e.offset === 0) e.path = agentPath;
+      if (!AGENT_ID_RE.test(agentId)) {
+        this.log("warn", "transcript: SubagentStop with an invalid agent id ignored");
+        return;
+      }
+      let e = this.files.get(key(sessionId, agentId));
+      let ok: string | undefined;
+      if (agentPath) {
+        const mainPath = this.files.get(key(sessionId))?.path ?? transcriptPath;
+        const roots = [
+          ...(mainPath ? [path.dirname(mainPath)] : []),
+          ...(this.o.projectsDir ? [this.o.projectsDir] : []),
+        ];
+        if (roots.some((r) => isUnder(agentPath, r))) ok = agentPath;
+        else this.log("warn", "transcript: SubagentStop agent_transcript_path outside projects dir");
+      }
+      if (!e) {
+        if (!ok) return;
+        this.track(sessionId, agentId, ok);
+        e = this.files.get(key(sessionId, agentId));
+        if (!e) return;
+      } else if (ok && ok !== e.path && e.offset === 0) {
+        e.path = ok;
+      }
       await this.drain(e);
       this.endEntry(e);
       await this.persist();
@@ -306,7 +374,15 @@ export class TranscriptTailer implements DaemonComponent {
       const before = this.stats.lines;
       for (const e of [...this.files.values()]) {
         if (e.ended_at !== undefined) continue;
-        await this.drain(e);
+        try {
+          await this.drain(e);
+        } catch (err) {
+          // one bad file must not starve the rest; its entry is untouched, so the next poll retries
+          this.log(
+            "warn",
+            `transcript drain ${e.path}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
       this.prune();
       await this.persist();
@@ -332,13 +408,14 @@ export class TranscriptTailer implements DaemonComponent {
 
   private async load(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
     let text: string;
     try {
       text = await readFile(this.o.statePath, "utf8");
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw e;
+      // loaded stays false on other errors (EBUSY, EIO): never persist over offsets we could not read
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      this.loaded = true;
+      return;
     }
     try {
       const parsed = JSON.parse(text) as Partial<TailState>;
@@ -346,6 +423,11 @@ export class TranscriptTailer implements DaemonComponent {
         for (const [k, v] of Object.entries(parsed.files)) {
           if (validEntry(v)) this.files.set(k, v);
         }
+        if (Array.isArray(parsed.pruned)) {
+          for (const k of parsed.pruned) if (typeof k === "string") this.pruned.add(k);
+        }
+        this.lost = parsed.lost === true;
+        this.loaded = true;
         return;
       }
     } catch {
@@ -354,11 +436,22 @@ export class TranscriptTailer implements DaemonComponent {
     const aside = `${this.o.statePath}.corrupt-${this.now()}`;
     this.log("error", `transcript offsets unreadable; moved to ${aside}`);
     await rename(this.o.statePath, aside).catch(() => undefined);
+    this.lost = true;
+    this.dirty = true;
+    this.loaded = true;
   }
 
   private async persist(): Promise<void> {
     if (!this.dirty) return;
-    const state: TailState = { v: 1, files: Object.fromEntries(this.files) };
+    // The offsets must never get ahead of the outbox lines they cover (power loss).
+    const sync = this.o.syncOutbox ?? (this.enqueue as { sync?: () => void }).sync;
+    sync?.();
+    const state: TailState = {
+      v: 1,
+      files: Object.fromEntries(this.files),
+      ...(this.pruned.size > 0 ? { pruned: [...this.pruned] } : {}),
+      ...(this.lost ? { lost: true } : {}),
+    };
     await writeFileAtomic(this.o.statePath, JSON.stringify(state), { mode: 0o600 });
     this.dirty = false;
   }
@@ -380,12 +473,20 @@ export class TranscriptTailer implements DaemonComponent {
       }
       return;
     }
+    let next_line = 0;
+    if (this.lost || this.pruned.has(k)) {
+      // State for this stream was lost; the hub may hold lines from 0, and ON CONFLICT DO NOTHING
+      // would drop re-read lines that collide. Number from a time-based mark that fits INTEGER.
+      next_line = highMark(this.now());
+      this.pruned.delete(k);
+      this.log("warn", `transcript ${k}: no saved offsets, numbering restarts at ${next_line}`);
+    }
     this.files.set(k, {
       session_id: sessionId,
       ...(agentId !== undefined ? { agent_id: agentId } : {}),
       path: p,
       offset: 0,
-      next_line: 0,
+      next_line,
       resets: 0,
       sig: { ino: 0, birthtimeMs: 0, ctimeMs: 0, mtimeMs: 0, head: "" },
     });
@@ -402,6 +503,7 @@ export class TranscriptTailer implements DaemonComponent {
     for (const [k, e] of this.files) {
       if (e.ended_at !== undefined && e.ended_at < cutoff) {
         this.files.delete(k);
+        this.pruned.add(k);
         this.dirty = true;
       }
     }

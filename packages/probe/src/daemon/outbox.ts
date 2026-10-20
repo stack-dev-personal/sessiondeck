@@ -1,4 +1,12 @@
-import { appendFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 import { dayFileName } from "../paths.ts";
 import type { SpoolLine } from "../spool-format.ts";
@@ -8,11 +16,31 @@ import type { SpoolLine } from "../spool-format.ts";
  * day files like the spool but written only by the daemon and without the 64 KB line cap. The
  * forwarder reads them with its own cursor.
  */
-export function createOutbox(dir: string, now: () => number = Date.now): (line: SpoolLine) => void {
-  return (line) => {
+export type Outbox = ((line: SpoolLine) => void) & { sync: () => void };
+
+export function createOutbox(dir: string, now: () => number = Date.now): Outbox {
+  let last: string | undefined;
+  const put = (line: SpoolLine): void => {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    appendFileSync(join(dir, dayFileName(now())), `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    last = join(dir, dayFileName(now()));
+    appendFileSync(last, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   };
+  /** fsyncs the day file last written, so a caller can commit state that depends on it. */
+  const sync = (): void => {
+    if (last === undefined) return;
+    let fd: number;
+    try {
+      fd = openSync(last, "r+");
+    } catch {
+      return;
+    }
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  };
+  return Object.assign(put, { sync });
 }
 
 /** Removes outbox day files older than the one the cursor is in (they are fully delivered). */

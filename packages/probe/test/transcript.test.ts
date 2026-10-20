@@ -8,6 +8,7 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs";
+import { vi } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
@@ -19,6 +20,7 @@ import {
   type StatLike,
   TranscriptTailer,
   type TranscriptTailerOptions,
+  highMark,
   shouldReset,
   splitLines,
   subagentTranscriptPath,
@@ -113,7 +115,7 @@ describe("transcript tailer", () => {
       },
     });
     await t.onSessionStart(S, f);
-    await expect(t.poll()).rejects.toThrow("disk full");
+    await t.poll(); // logged per file, not thrown
     expect(t.entries()[0]!.offset).toBe(0);
     fail = false;
     await t.poll();
@@ -376,6 +378,175 @@ describe("transcript tailer", () => {
     await t.onSessionStart(S, f);
     await t.poll();
     expect(flat()).toEqual(gen(0, 1));
+  });
+});
+
+describe("transcript tailer review fixes", () => {
+  const hook = (name: string, sid: string, p: Record<string, unknown>, agent?: string): Envelope =>
+    ({
+      v: 1,
+      id: "x",
+      kind: "hook",
+      host: "h",
+      os: "linux",
+      session_id: sid,
+      ...(agent ? { agent_id: agent } : {}),
+      hook_event_name: name,
+      ts: 1,
+      seq: 0,
+      payload: p,
+    }) as Envelope;
+
+  it("a handler failure in onSpoolLine is logged, not an unhandled rejection", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 1)));
+    const logs: string[] = [];
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      const t = mk({
+        log: (lv, m) => logs.push(`${lv} ${m}`),
+        enqueue: () => {
+          throw new Error("disk full");
+        },
+      });
+      await t.onSessionStart(S, f);
+      t.onSpoolLine(hook("SessionEnd", S, {}));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(logs.some((l) => l.startsWith("error ") && l.includes("SessionEnd"))).toBe(true);
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+
+  it("SubagentStop without a tracked SubagentStart delivers via agent_transcript_path", async () => {
+    const stop = JSON.parse(
+      readFileSync(join(fixturesDir, "SubagentStop", "01-subagent.json"), "utf8"),
+    );
+    const proj = join(dir, "proj");
+    const sub = join(proj, stop.session_id, "subagents", `agent-${stop.agent_id}.jsonl`);
+    mkdirSync(join(proj, stop.session_id, "subagents"), { recursive: true });
+    writeFileSync(sub, nl(gen(0, 3, "S")));
+    const t = mk();
+    t.onSpoolLine(
+      hook(
+        "SubagentStop",
+        stop.session_id,
+        {
+          ...stop,
+          transcript_path: join(proj, `${stop.session_id}.jsonl`),
+          agent_transcript_path: sub,
+        },
+        stop.agent_id,
+      ),
+    );
+    await t.poll();
+    expect(flat(stop.agent_id)).toEqual(gen(0, 3, "S"));
+    expect(t.entries()[0]!.ended_at).toBeDefined();
+  });
+
+  it("rejects bad agent ids and agent paths outside the projects dir", async () => {
+    const proj = join(dir, "proj");
+    mkdirSync(proj, { recursive: true });
+    const secret = join(dir, "secret.jsonl");
+    writeFileSync(secret, nl(gen(0, 2, "X")));
+    const logs: string[] = [];
+    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    await t.onSessionStart(S, join(proj, `${S}.jsonl`));
+    await t.onSubagentStart(S, "../../secret", join(proj, `${S}.jsonl`));
+    await t.onSubagentStop(S, "ok1", secret);
+    await t.onSubagentStop(S, "../x", join(proj, "x.jsonl"));
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(1);
+    expect(logs.filter((l) => l.startsWith("warn")).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("a lost offsets file restarts numbering at a high mark that fits 32 bits", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 13)));
+    const t1 = mk();
+    await t1.onSessionStart(S, f);
+    await t1.poll();
+    writeFileSync(statePath(), "{nope");
+    const logs: string[] = [];
+    out.length = 0;
+    const t2 = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    await t2.onSessionStart(S, f);
+    await t2.poll();
+    const first = (out[0]!.payload as { start_line: number }).start_line;
+    expect(first).toBe(highMark(Date.now())); // within the same second, give or take one tick
+    expect(first).toBeGreaterThan(13);
+    expect(first + 1e6).toBeLessThan(2 ** 31);
+    expect(logs.some((l) => l.startsWith("warn") && l.includes("numbering restarts"))).toBe(true);
+  });
+
+  it("a pruned ended entry that returns restarts at a high mark", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    let clock = Date.now();
+    const t1 = mk({ now: () => clock });
+    await t1.onSessionStart(S, f);
+    await t1.poll();
+    await t1.onSessionEnd(S);
+    clock += 8 * 24 * 3600 * 1000;
+    await t1.poll(); // prunes
+    expect(t1.entries()).toHaveLength(0);
+    const t2 = mk({ now: () => clock });
+    await t2.onSessionStart(S, f);
+    expect(t2.entries()[0]!.next_line).toBe(highMark(clock));
+  });
+
+  it("syncs the outbox before persisting offsets", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const order: string[] = [];
+    const t = mk({
+      enqueue: (l) => {
+        order.push("enqueue");
+        out.push(l);
+      },
+      syncOutbox: () => order.push("sync"),
+    });
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(order.slice(-2)).toEqual(["enqueue", "sync"]);
+    expect(JSON.parse(readFileSync(statePath(), "utf8")).files[`${S}|`].offset).toBeGreaterThan(0);
+  });
+
+  it("one unreadable file does not stop the others from draining", async () => {
+    const bad = join(dir, "bad.jsonl");
+    mkdirSync(bad); // EISDIR on read
+    const good = join(dir, "good.jsonl");
+    writeFileSync(good, nl(gen(0, 2)));
+    const logs: string[] = [];
+    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    await t.onSessionStart("bad", bad);
+    await t.onSessionStart("good", good);
+    await t.poll();
+    expect(out.some((l) => l.session_id === "good")).toBe(true);
+    expect(logs.some((l) => l.startsWith("warn") && l.includes("bad.jsonl"))).toBe(true);
+  });
+
+  it("a transient read error on load does not let persist overwrite the offsets", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const t1 = mk();
+    await t1.onSessionStart(S, f);
+    await t1.poll();
+    const good = readFileSync(statePath(), "utf8");
+    // a directory at the path makes readFile fail with EISDIR (not ENOENT)
+    renameSync(statePath(), `${statePath()}.bak`);
+    mkdirSync(statePath());
+    const t2 = mk();
+    await expect(t2.start()).rejects.toThrow();
+    await expect(t2.poll()).rejects.toThrow();
+    rmSync(statePath(), { recursive: true });
+    renameSync(`${statePath()}.bak`, statePath());
+    await t2.poll();
+    expect(readFileSync(statePath(), "utf8")).toBe(good);
+    expect(t2.entries()[0]!.offset).toBeGreaterThan(0);
   });
 });
 
