@@ -78,7 +78,7 @@ export function loadRetentionSettings(env: Record<string, string | undefined>): 
     sampleRetentionDays: posInt(env, "HUB_SAMPLE_RETENTION_DAYS", 30),
     retentionIntervalMs: nonNegInt(env, "HUB_RETENTION_INTERVAL_MS", 3_600_000),
     maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
-    maxClockSkewMs: posInt(env, "HUB_MAX_CLOCK_SKEW_MS", 86_400_000),
+    maxClockSkewMs: skewMs(env),
     compactBatchSize: posInt(env, "HUB_COMPACT_BATCH_SIZE", 100),
     compactBatchBudgetMs: posInt(env, "HUB_COMPACT_BATCH_MS", 10),
   };
@@ -94,6 +94,20 @@ function posInt(env: Record<string, string | undefined>, name: string, dflt: num
   if (raw === undefined || raw === "") return dflt;
   const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${name} must be a positive integer`);
+  return n;
+}
+
+export const MIN_CLOCK_SKEW_MS = 60_000;
+export const MAX_CLOCK_SKEW_MS = 7 * 86_400_000;
+
+/** HUB_MAX_CLOCK_SKEW_MS: one minute to seven days; outside that range startup fails. */
+function skewMs(env: Record<string, string | undefined>): number {
+  const n = posInt(env, "HUB_MAX_CLOCK_SKEW_MS", 86_400_000);
+  if (n < MIN_CLOCK_SKEW_MS || n > MAX_CLOCK_SKEW_MS) {
+    throw new Error(
+      `HUB_MAX_CLOCK_SKEW_MS must be between ${MIN_CLOCK_SKEW_MS} and ${MAX_CLOCK_SKEW_MS}`,
+    );
+  }
   return n;
 }
 

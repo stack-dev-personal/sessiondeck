@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
+import { loadConfig } from "../src/config.ts";
 import { Store } from "../src/db/store.ts";
 import { runCli } from "../src/cli.ts";
 import { Ingestor, type Logger } from "../src/ingest/ingestor.ts";
@@ -98,6 +99,15 @@ function file(): { path: string; dir: string } {
 }
 
 describe("K1 clock skew bound", () => {
+  it("HUB_MAX_CLOCK_SKEW_MS must be 60000 ms .. 7 days", () => {
+    const t = { HUB_TOKEN: "a".repeat(16) };
+    for (const v of ["59999", "604800001", "0", "x"]) {
+      expect(() => loadConfig({ ...t, HUB_MAX_CLOCK_SKEW_MS: v }), v).toThrow(/CLOCK_SKEW/);
+    }
+    expect(loadConfig({ ...t, HUB_MAX_CLOCK_SKEW_MS: "60000" }).maxClockSkewMs).toBe(60000);
+    expect(loadConfig({ ...t, HUB_MAX_CLOCK_SKEW_MS: "604800000" }).maxClockSkewMs).toBe(604800000);
+  });
+
   it("ingest refuses an envelope more than HUB_MAX_CLOCK_SKEW_MS ahead of the hub clock (400, reason, nothing stored)", async () => {
     hub = await makeHub({ HUB_MAX_CLOCK_SKEW_MS: "60000" }, undefined, { wallClock: () => NOW });
     const ok = mkEnv({ ts: NOW + 59_000, seq: 1 });
@@ -110,6 +120,16 @@ describe("K1 clock skew bound", () => {
     });
     expect(hub.eventCount()).toBe(0);
     expect((await hub.post(batch([ok]))).statusCode).toBe(200);
+  });
+
+  it("logs a far-future rejection with host, index and count only", async () => {
+    hub = await makeHub({}, undefined, { wallClock: () => NOW });
+    await hub.post(batch([mkEnv({ ts: NOW, seq: 1 }), mkEnv({ ts: 9e15, seq: 2 })]));
+    const line = hub.logs
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((o) => String(o["msg"]).includes("too far in the future"));
+    expect(line).toMatchObject({ host: "h1", index: 1, count: 2 });
+    expect(JSON.stringify(line)).not.toContain("9000000000000000");
   });
 
   it("the default skew is 24 h", async () => {

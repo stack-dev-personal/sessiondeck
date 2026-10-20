@@ -74,7 +74,14 @@ export function registerIngest(
       // pruning behind it. The batch is refused whole, like any other bound violation.
       const latest = deps.now() + deps.maxClockSkewMs;
       const future = envelopes.findIndex((e) => e.ts > latest);
-      if (future >= 0) return bad(reply, `envelopes[${future}].ts: too_far_in_future`);
+      if (future >= 0) {
+        // Counts only: no payload, no ids, no timestamps echoed from the batch.
+        req.log.warn(
+          { host, index: future, count: envelopes.length },
+          "batch rejected: envelope ts too far in the future",
+        );
+        return bad(reply, `envelopes[${future}].ts: too_far_in_future`);
+      }
 
       // (c) Synchronous from here to ingest(): the count and the insert cannot interleave.
       if (deps.store.getHost(host) === undefined && deps.store.countHosts() >= deps.maxHosts) {
