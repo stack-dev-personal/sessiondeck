@@ -50,6 +50,7 @@
 - 2026-10-20: R3.6 pass definition (reviewer-recommended, recorded in e2e/R3.6.spec.ts header): (a) longest script task < 16.7 ms; (b) dropped-frame intervals (> 1.5x median) under load <= idle window + 0.5% of frames; (c) main thread busy < 50%; (d) frame interval p99 < 33 ms. Gated in the verifier's container run; report-only in CI (shared runners are too noisy for (b)).
 - 2026-10-20: manual DOM reorder kept (b65c88e): React keyed order with memoized cards measured 21.6% busy and 18 dropped intervals vs 11.89% and 0 for the manual reorder.
 - 2026-10-20: design deviation: the attention arrival glow is an opacity-animated inner-edge glow (::after) instead of an outer border glow, because the card clips overflow and box-shadow animation repainted every frame; plays once per attention transition. 03-design-system.md section 3 should be amended by its owner.
+- 2026-10-20 22:55Z, answer to questions/S6.md (conductor, under the user's standing rule): A. GitHub Actions runners are assigned again since 22:50Z; the conductor reran run 39507132891 on PR #10. S6 resumes only to confirm CI and set green; no code changes pending. If CI fails again with 0 steps, ask again.
 
 ## Deferred findings
 - MINOR packages/web/src/live/stream-client.ts:288: 10 s connect timer spans until initial is parsed and does not grow with attempt; a slow link with a large initial could never connect (U3 re-review).
@@ -73,3 +74,4 @@
 - Final sd-verifier at d4c845f (65aaec5): R3.1, R3.3, R3.6, R3.9, R3.7, R3.2, R3.4, R3.5, R3.8 all PASS. Suites: contract 1090 (+1 skipped), hub 177, web 214, scripts 575 (+7 skipped); typecheck and lint clean; mock Playwright 28/28; live 4/4 (R3.6 busy 7.23%, p99 16.8 ms, 0 dropped).
 - origin/sprint/1-mvp (78b3ba8) is already an ancestor; no merge needed. Pushed p3/board-live; PR #10 against sprint/1-mvp.
 - CI: every job fails in 2 to 5 s with 0 steps and no runner, repo-wide since about 22:15Z (p1/probe-daemon too). Account-level, not code. Rerun refused (token 403). Blocked: /state/1/questions/S6.md.
+- 2026-10-20 23:00Z: resumed with answer A. Rerun 39507132891 (65aaec5) in progress with runners and steps. This log commit pushes a fresh CI run on the branch head.
