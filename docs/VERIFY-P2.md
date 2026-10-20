@@ -36,3 +36,11 @@
 4. Not re-run in this pass: the no-outbound-network grep of packages/hub/src and the live curl checks recorded in earlier versions of this file; the hub src is unchanged since fab329c except tests and vitest config (`git diff fab329c HEAD -- packages/hub` touches only test files and vitest.config.ts).
 5. The earlier PR run 39456320083 (HEAD ea03c31) failed: windows-latest node 22, R0.5 step, packages/contract state-file-cli-merge.test.ts "reports a lock that stays held, without sleeping for real" timed out at 5000 ms (200 fs-bound poll rounds). U8 (ad73c91) passes pollMs 1000 in the two contract lock tests; the same matrix is green at ad73c91 (runs above). The ea03c31 failure is a contract test timeout, not a hub failure.
 6. At ad73c91 `pnpm -r test` was run twice in sequence (second only to capture counts), both exit 0, same counts; `pnpm -r lint` exit 0.
+
+## S4 (p2/hub-history)
+
+- Branch p2/hub-history, HEAD 695c605. Run 2026-10-20T17:22Z. Machine and node as in docs/HUB-BENCH.md.
+
+| ID | Command | Evidence | Verdict |
+|---|---|---|---|
+| R2.10 Cost history per session and per day matches ccusage `session` output for the same transcripts within 1% | `pnpm -F @sessiondeck/hub exec vitest run --maxWorkers=2 test/usage-cost.test.ts`; `node packages/hub/scripts/ccusage-compare.mjs packages/hub/test/fixtures/transcripts --tz UTC,Asia/Tokyo`; same harness on a snapshot of real transcripts with the full LiteLLM table (sha256 5a5243a5...eed8), UTC | vitest 31 passed. Fixtures: 4 runs (UTC and Tokyo, file and late order), every row ok, max delta 0.000000%, token deltas 0, "PASS: all deltas within tolerance". Real: 5 sessions, 1 day, ccusage 25.502192 USD vs hub 25.502192, max delta 0.000000% (session and day), token deltas 0, both order modes, PASS; models claude-opus-5-5 and claude-sonnet-5-5 both priced non-zero. Details in docs/HUB-BENCH.md section "R2.10 cost comparison vs ccusage 19.0.3". Caveat: real data is one UTC day, so day-bucket coverage on real data is thin; the fixtures cover 4 days and two time zones. | pass |
