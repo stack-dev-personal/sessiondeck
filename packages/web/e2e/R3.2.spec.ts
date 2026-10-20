@@ -90,6 +90,12 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
           if (h.children.length === 0) out.push(`card ${i}: ${h.textContent}`);
         }
       }
+      const det = row.querySelector('[data-part="detail"]') as HTMLElement | null;
+      if (det && det.textContent) {
+        const ch = parseFloat(getComputedStyle(det).fontSize) * 0.5;
+        if (det.clientWidth < ch * 6)
+          out.push(`card ${i}: detail collapsed (${det.clientWidth}px)`);
+      }
       const a =
         row.querySelector('[data-part="detail"]') ?? row.querySelector('[data-slot="state"]');
       const b = row.querySelector('[data-slot="where"]');

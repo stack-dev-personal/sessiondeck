@@ -122,6 +122,21 @@ describe("SessionCard states", () => {
   });
 });
 
+describe("row 1 titles", () => {
+  it("carry the full detail and where text", () => {
+    render(
+      <SessionCard s={snap({ state: "working", state_detail: "tool:ExitPlanMode" })} now={NOW} />,
+    );
+    const card = screen.getByTestId("session-card");
+    expect(card.querySelector('[data-part="detail"]')).toHaveAttribute(
+      "title",
+      "tool:ExitPlanMode",
+    );
+    const where = card.querySelector('[data-slot="where"]')!;
+    expect(where).toHaveAttribute("title", where.textContent ?? "");
+  });
+});
+
 describe("thresholds", () => {
   it("context boundaries 59/60/80/81", () => {
     expect([59, 60, 80, 81].map((p) => levelFor("context", p))).toEqual([
@@ -551,7 +566,7 @@ describe("R3.2 row 1 truncation", () => {
     const detail = row.querySelector('[data-part="detail"]')!;
     const where = row.querySelector('[data-slot="where"]')!;
     for (const el of [detail, where]) {
-      expect(el.className).toContain("min-w-0");
+      expect(el.className).toMatch(/min-w-(0|\[10ch\])/);
       expect(el.className).toContain("truncate");
     }
     expect(row.className).toContain("gap-s-");

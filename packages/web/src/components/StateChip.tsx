@@ -11,7 +11,7 @@ export function StateChip({ state, detail }: { state: SessionState; detail?: str
       </span>
       <span className="shrink-0">{v.label}</span>
       {detail ? (
-        <span data-part="detail" className="num min-w-0 truncate text-fg-muted">
+        <span data-part="detail" title={detail} className="num min-w-[10ch] truncate text-fg-muted">
           · {detail}
         </span>
       ) : null}
