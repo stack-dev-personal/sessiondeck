@@ -15,7 +15,7 @@
 | U1 hub scaffold, config, migrations (5.1), store, bearer auth, /health | sd-executor-hub | R2.8 | U0 | done d3b4f88 |
 | U2 POST /ingest: validation, 1 MB limit, id+signature dedup, batch txn, reducer wiring all kinds, golden replay | sd-executor-hub | R2.1, R2.2, R2.3, R2.7 | U1 | done 337e5d2 (R2.7 read path in U3) |
 | U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6, R2.7 | U2 | done ba15e04 |
-| U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | pending |
+| U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | committed 93a97d7, in review |
 
 ## Decisions made
 
@@ -34,6 +34,8 @@
 - D-S3-14: per-principal read rate limit (HUB_READ_RATE 50/s, burst 100) for REST GETs and WS upgrades, keyed on the credential that authenticated.
 - D-S3-15: WS auth for browsers: Sec-WebSocket-Protocol `sessiondeck.v1` + `sessiondeck.bearer.<base64url(token)>`; server selects only sessiondeck.v1. Header Authorization also accepted. For S6.
 - D-S3-4: default bind 127.0.0.1 (HUB_BIND); LAN bind is an explicit opt-in. Architecture section 7 says the hub binds to the LAN interface; Phase 2 runs on the laptop, so localhost default is the safer reading and is configurable.
+
+- D-S3-16: run interrupted by subscription usage limit (429) at about 03:00Z after U4 was committed (93a97d7) and before its review. Resumed 2026-10-20; working tree clean, U4 kept as committed and sent through /review-loop.
 
 - infra/docker-compose.yml is S4 scope (R2.10 handoff); S3 proves the container with `docker build` + `docker run` (sd-1-S3-* names).
 
