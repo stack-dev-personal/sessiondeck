@@ -40,3 +40,10 @@ Hub units run one after another (one package, and the memory rule allows one tes
 - Deferred (LOW): SD_WEB_CONNECT_SRC regex allows `*` and scheme-only tokens (operator-set); validate hook depends on the git exec bit (COPY --chmod fails under the legacy builder).
 - Open question for S6: hub has no CORS; web and hub are separate origins, REST from the browser needs hub CORS or a same-origin proxy.
 - Note: /tmp/sd-1-S4-hub (git archive copy, no secrets) could not be deleted by the executor (guard).
+
+### U3 retention + replay (R2.9): done
+- Commits: 07710c7, d02c41e (fix 1). Migrations 3 (session_baselines, compaction_state) and 4 (baseline host/state index, hub_lease). CLI `node dist/main.mjs replay|compact [--db] [--force] [--init]`; `pnpm -F @sessiondeck/hub replay --db <path>`.
+- Review: sd-reviewer fix-then-merge (BLOCKING far-future ts stops compaction; MAJOR silent drop of pre-cut envelopes, concurrent compaction race, batch stalls) then merge. sd-security-reviewer fail (HIGH far-future ts) then pass.
+- Verify: sd-verifier R2.9 pass, e3efbac: 1,020,000 events replay 12.7 s, 0 reducer exceptions (docs/HUB-BENCH.md "R2.9 replay bench").
+- Deferred minors: whole batch 400 on one far-future ts (probe moves the batch to rejected/); skew config has no range clamp; hub startup does not check an existing live lease and CLI does not hold the lease while running; supersede-by-pid scan inside compaction batches; events rely on SQLite rowid order (Phase 7 needs a sequence column).
+- Observation: compaction batch max 578 ms on this WSL2 disk, attributed to WAL autocheckpoint (affects every writer); measured against R2.4 in U4.
