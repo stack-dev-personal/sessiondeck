@@ -12,8 +12,9 @@
 |---|------|--------------|----------|------------|--------|
 | U1 | tokens and shell (scaffold, tokens.css, Tailwind, Zustand store, VITE_MOCK fixture replay through reduce(), theme toggle, contrast test) | R3.7, R3.8 | sd-executor-web | none | reviewed: merge; verification after U4 (IDs span units) |
 | U2 | session card (6-row and compact 1-row, attention accent, n/a without layout shift, subagent +n, compact `c` with localStorage) | R3.2, R3.4, R3.7 | sd-executor-web | U1 | reviewed: merge; verification after U4 |
-| U3 | detail drawer (Enter/click open, Esc close, focus return, sections per design system 5.2) | R3.5 | sd-executor-web | U2 | pending |
+| U3 | detail drawer (Enter/click open, Esc close, focus return, sections per design system 5.2) | R3.5 | sd-executor-web | U2 | reviewed: merge; verification after U4 |
 | U4 | /dev/cards route, Playwright suite in container, screenshots to /state/1/screens/S5 | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-web | U3 | pending |
+| U5 | CI job running the Playwright smoke suite (phase DoD: Playwright smoke green in CI) | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-contract (.github) | U4 | pending |
 
 ## Decisions made
 
@@ -41,6 +42,14 @@
 - Decision: compact board is a dense single-column list of 36 px rows; the scrolling strip (section 5.4) is left to Phase 6 layouts.
 - Decision: footer reads "in state <duration>" because the snapshot has no prompt timestamp; reset countdown in the meter title, visible in the drawer.
 
+### U3 detail drawer and keyboard
+- Commits: 46e1308, c866961, fix 54bf94f. Files: packages/web/src/store/history.ts, components/{DetailDrawer,DrawerHost}.tsx, lib/keys.ts, SessionCard.tsx, Board.tsx, ui.ts, tests.
+- Review iteration 1 (460edc1..c866961): fix-then-merge. 1 MAJOR (board keys and Tab trap depended on focus inside drawer), 3 MINOR. Fixed in 54bf94f.
+- Review iteration 2 (c866961..54bf94f): merge; reviewer proved the new tests fail against the old code in a scratch copy. 2 MINOR folded into U4 (focusNearest focuses first card; inert-cleared asserts on switch and vanish).
+- Tests: 105/105 pass.
+- Decision: tasks section shows counts plus last subject (snapshot has no per-task list); j/k clamp; no ?session= URL.
+
 ## Deferred findings
+- [contract, for S6 / contract owner] SessionSnapshot has no per-task list; the drawer's "tasks list" (design system 5.2) shows counts and last subject until it does.
 - [contract, for S6 / contract owner] Add `context.exceeds_200k` (from statusLine `exceeds_200k_tokens`) to SessionSnapshot; the web-side map in packages/web/src/store/board.ts does not survive once the hub owns snapshots. Also a prompt timestamp would allow "since prompt" in the footer.
 - [MINOR, S6] packages/web/src/store/board.ts:47-50: replaceAll (reconnect resync) clears the exceeds200k map, so an idle session above 200k loses its tag until its next statusLine tick; no store tests for set / replaceAll / compaction flip. S6 owns reconnect.
