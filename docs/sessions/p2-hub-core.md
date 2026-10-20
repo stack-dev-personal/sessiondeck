@@ -39,6 +39,8 @@
 
 - D-S3-17: root .dockerignore (deny-all allow-list, owned by sd-executor-contract as root config) kept as defense in depth against the legacy builder ignoring Dockerfile.dockerignore. Any future image built with the repo root as context (web, S4 compose) must extend its allow-list. Note for S4 and web owners.
 
+- D-S3-18: sprint container restarted at about 14:20Z and killed the run during U5 fixes (not a session failure). Resumed 14:21Z. Commit 6e80da6 (the U5 iteration-2 optional MINOR) was local and unpushed; U5 reviewer verdict merge at iteration 2. The remaining Windows CI failure is the contract test state-file-merge.test.ts:135, which times out at 5 s once sort: false runs the package suites concurrently. That becomes U6 (sd-executor-contract).
+
 - infra/docker-compose.yml is S4 scope (R2.10 handoff); S3 proves the container with `docker build` + `docker run` (sd-1-S3-* names).
 
 ## Units
@@ -64,6 +66,11 @@
 - Files: packages/hub/{Dockerfile,Dockerfile.dockerignore,package.json,scripts/container-smoke.mjs,src/stream.ts,test/read-limit.test.ts,test/ingest-reduce.test.ts}, docs/HUB.md, .dockerignore.
 - Review: iteration 1 sd-reviewer merge (4 MINOR); security Gate fail (HIGH: legacy builder ignores Dockerfile.dockerignore, untracked contract fixtures/raw and .env reach runtime image; MEDIUM tag-only base; 3 LOW). Iteration 2 security Gate pass (3 LOW, MEDIUM deferred); reviewer fix-then-merge (BLOCKING root .dockerignore scope, resolved by D-S3-17; 3 MINOR). Iteration 3 reviewer merge, no findings.
 - Verify: final run at fab329c, all of R2.1-R2.3, R2.5-R2.8 pass; container smoke pass (817/817 ingest, 14 live sessions, restart persistence, canary clean). docs/VERIFY-P2.md.
+
+### U5 (f6b9603, b6d6133, dde6b3d, 6e80da6) CI: R0.5 budget on Windows
+- Files: packages/hub/{vitest.config.ts,test/ingest-golden.test.ts,test/stream.test.ts}, pnpm-workspace.yaml (sort: false).
+- Review: iteration 1 fix-then-merge (1 MAJOR hookTimeout, 3 MINOR). Iteration 2 merge (1 optional MINOR, heartbeat check could pass vacuously; fixed in 6e80da6).
+- CI at dde6b3d: hub green on all four jobs; windows node 22 failed on contract state-file-merge timeout (U6).
 
 ## Deferred findings
 
