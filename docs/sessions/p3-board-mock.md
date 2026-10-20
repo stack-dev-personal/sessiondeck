@@ -86,8 +86,20 @@
 - 2026-10-20 R3.7 contrast tokens: option A, per /state/1/answers/S5.md (conductor, 2026-10-20T09:15Z). This was the conductor's call under the user's standing rule (decide after two messages without a choice; the user replied "continue, long tailed development overnight (5 hrs)" and "continue" without picking). The user may revise the values before PR #8 merges. New values: dark --state-ended #7f868f, dark --fg-faint #7c8792, light --state-starting #6e757d, light --fg-faint #6e757d. The design-system rule (every --state-* on --surface-1 passes 4.5:1 as text) is unchanged; docs/planning/03-design-system.md gets the new values in this PR.
 - U6 added: sd-executor-web, tokens.css, contrast test pinned list emptied, R3.7 e2e made strict, Playwright baselines refreshed, design-system doc section 2 values (doc edit granted to the web executor for this unit only).
 
-| U6 | contrast tokens per answer A | R3.7 | sd-executor-web | U1-U5 | in progress |
+| U6 | contrast tokens per answer A | R3.7 | sd-executor-web | U1-U5 | reviewed: merge; verified |
 
 ## Resume 2026-10-20 (after the container restart at about 14:20Z)
 
 - Decision: the sprint container restarted at about 14:20Z and killed the previous run during U6. Not a failure. State found: working tree clean, no heartbeat running, U6 commits 5edf2af (tokens.css and design-system section 2) and 8dbb110 (contrast unit test and R3.7 e2e strict) present but unpushed; Playwright baselines not yet refreshed. Sprint branch still at 5b76608. U6 continues with the same executor role: refresh baselines, run unit and e2e suites, then review and verify.
+
+### U6 contrast tokens (answer A)
+- Commits: 5edf2af (tokens.css, design system section 2), 8dbb110 (contrast unit test and R3.7 e2e strict, pinned lists removed), 8f7af88 (8 Playwright baselines refreshed with --update-snapshots=all; plain update left them unchanged because the shift is within per-pixel tolerance), fix e816b7c.
+- Review iteration 1 (41116f0..8f7af88): merge. 1 MINOR (stale "pinned set" comment in tokens.contrast.test.ts) fixed in e816b7c.
+- Contrast on surface-1: dark state-ended 4.75, dark fg-faint 4.78, light state-starting 4.66, light fg-faint 4.66; lowest untouched light state-ended 4.55. Report: text failures 0. R3.7 e2e: 0 of 280 elements below 4.5:1 per theme, axe clean.
+- Web unit tests 115 (was 116: the pinned-ratio assertion went away with the pinned list).
+- Verification (74562db): R3.2, R3.4, R3.5, R3.7, R3.8 all PASS in docs/VERIFY-P3.md; Playwright 12/12.
+- Note: /work is a named volume in the sprint container, so test containers use `--volumes-from sprint-1`; root-owned files a container run left in packages/web/dist (ignored) were chowned back to uid 1000.
+
+### Session close checks (e816b7c)
+- pnpm -r test: scripts 575 pass / 7 skipped, contract 1090 pass / 1 skipped, web 115 pass. pnpm -r typecheck, pnpm -r lint, lint:root, format:check: exit 0.
+- Sprint branch still at 5b76608: no rebase needed.
