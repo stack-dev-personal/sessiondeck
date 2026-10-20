@@ -1,0 +1,26 @@
+# Root .dockerignore (R2.8: hub image must not bake secrets).
+# The legacy Docker builder (no buildx) ignores packages/hub/Dockerfile.dockerignore,
+# so without this file `docker build -f packages/hub/Dockerfile .` would send
+# gitignored local files (unscrubbed fixtures/raw, .env*, probe.json, sqlite data)
+# into the build context. Deny everything, allow only what the hub build needs.
+# Keep in sync with packages/hub/Dockerfile.dockerignore.
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!packages/contract/package.json
+!packages/contract/tsconfig.json
+!packages/contract/src
+!packages/hub/package.json
+!packages/hub/tsconfig.json
+!packages/hub/src
+!packages/hub/scripts
+!packages/hub/Dockerfile
+
+# Re-exclude sensitive material even inside allowed directories (last match wins).
+**/.env*
+**/probe.json
+**/*.sqlite*
+**/node_modules
+**/fixtures/raw
