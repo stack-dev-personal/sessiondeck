@@ -1216,13 +1216,148 @@ describe("U3-fix iteration 3: file candidates, parking, eviction, load, snapshot
     );
     execFail.err = { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" };
     try {
-      expect((await w.lookupMany!([30])).size).toBe(0);
+      expect(await w.lookupMany!([30])).toBeUndefined();
       expect(msgs.some((m) => m.includes("exceeded"))).toBe(true);
       execFail.err = undefined;
-      expect([...(await w.lookupMany!([30])).keys()]).toEqual([30]); // retried, not cached
+      expect([...(await w.lookupMany!([30]))!.keys()]).toEqual([30]); // retried, not cached
       expect(execCalls).toHaveLength(2);
     } finally {
       execFail.err = undefined;
     }
+  });
+});
+
+describe("U3-fix iteration 4 (review iteration 3 findings 1-5)", () => {
+  /** Persists a registration, then returns the saved state with its boot time moved (forces recheck). */
+  async function shiftedStore(procs: ProcLookup, isAlive: (p: number) => boolean) {
+    const store = memStore();
+    const m0 = mk({ store, procs, isAlive });
+    await m0.start();
+    await m0.registerSession(SID_A, 100, 1000);
+    await m0.stop();
+    return store;
+  }
+
+  it("1: ancestry takes a new snapshot when the cached one began before the hook line", async () => {
+    execCalls.length = 0;
+    let t = 1_000_000;
+    const w = windowsLookup(8000, undefined, undefined, () => t);
+    await w.ancestry!(50, t);
+    expect(execCalls).toHaveLength(1);
+    t += 500; // still inside the 2 s reuse window
+    await w.ancestry!(50, t - 400); // the line (1_000_100) is newer than the snapshot (1_000_000)
+    expect(execCalls).toHaveLength(2);
+    await w.ancestry!(50, t - 400);
+    expect(execCalls).toHaveLength(2); // the new snapshot (at t) is newer than the line: reused
+    await w.ancestry!(50); // no ts: ordinary reuse
+    expect(execCalls).toHaveLength(2);
+  });
+
+  it("1: the monitor passes the hook line ts to ancestry", async () => {
+    const seen: (number | undefined)[] = [];
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: () => Promise.resolve(undefined),
+      ancestry: (pid, nb) => {
+        seen.push(nb);
+        return Promise.resolve([{ pid, ppid: 1, name: "claude" }]);
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: () => true });
+    await m.start();
+    await m.registerSession(SID_A, 100, 4242);
+    expect(seen).toEqual([4242]);
+    await m.stop();
+  });
+
+  it("2: a SessionEnd stuck behind slow queued work still wins over the grace death check", async () => {
+    const p = spawnProcs({ 100: { ppid: 1, name: "claude", start: "AAA" } });
+    let release: () => void = () => undefined;
+    const hang = new Promise<undefined>((r) => (release = () => r(undefined)));
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: (pid) => (pid === 200 ? hang : p.procs.lookup(pid)),
+      lookupMany: p.procs.lookupMany!,
+    };
+    p.alive.add(200);
+    const m = mk({ store: memStore(), procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    m.onSpoolLine(liveEnv(SID_B, 200, 1001)); // stalls the work queue
+    await flush();
+    p.alive.delete(100);
+    m.onSpoolLine(hookEnv(SID_A, "SessionEnd", Date.now())); // queued behind the stall
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deaths()).toHaveLength(0);
+    release();
+    await flush();
+    expect(m.snapshot().find((e) => e.session_id === SID_A)?.state).toBe("ended");
+    await m.stop();
+  });
+
+  it("3: a failed process snapshot does not count as a completed re-check", async () => {
+    const p = spawnProcs({ 100: { ppid: 1, name: "claude", start: "AAA" } });
+    const store = await shiftedStore(p.procs, p.isAlive);
+    const s = JSON.parse(store.text!) as { boot: number };
+    s.boot = 9_000_000;
+    store.text = JSON.stringify(s);
+    let fail = true;
+    const procs: ProcLookup = {
+      ...p.procs,
+      lookupMany: (pids) => (fail ? Promise.resolve(undefined) : p.procs.lookupMany!(pids)),
+    };
+    const m = mk({ store, procs, isAlive: p.isAlive });
+    await m.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(m.snapshot()[0]).toMatchObject({ recheck: true }); // still owed
+    fail = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(m.snapshot()[0]).not.toHaveProperty("recheck");
+    expect(deaths()).toHaveLength(0);
+    await m.stop();
+  });
+
+  it("4: work queued behind a hung task does not run after stop() gave up", async () => {
+    const p = spawnProcs({
+      200: { ppid: 1, name: "claude" },
+      300: { ppid: 1, name: "claude" },
+    });
+    let release: () => void = () => undefined;
+    const hang = new Promise<undefined>((r) => (release = () => r(undefined)));
+    const looked: number[] = [];
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: (pid) => {
+        looked.push(pid);
+        return pid === 200 ? hang : p.procs.lookup(pid);
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 200, 1000));
+    await flush();
+    m.onSpoolLine(liveEnv(SID_B, 300, 1001)); // queued behind the hung one
+    await flush();
+    const stopped = m.stop();
+    await vi.advanceTimersByTimeAsync(3000);
+    await stopped;
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(looked).toEqual([200]); // 300 never started
+  });
+
+  it("5: a forced re-check flag is dropped on an entry with no recorded OS start", async () => {
+    const p = spawnProcs({ 100: { ppid: 1, name: "claude" } }); // no start token
+    const store = await shiftedStore(p.procs, p.isAlive);
+    const s = JSON.parse(store.text!) as { boot: number };
+    s.boot = 9_000_000;
+    store.text = JSON.stringify(s);
+    const m = mk({ store, procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(m.snapshot()[0]).toMatchObject({ state: "tracking" });
+    expect(m.snapshot()[0]).not.toHaveProperty("recheck");
+    await m.stop();
   });
 });

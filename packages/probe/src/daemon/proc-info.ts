@@ -43,14 +43,17 @@ export interface ProcLookup {
   /**
    * The chain pid, its parent, its grandparent ... (at most MAX_WALK entries, stops at a missing
    * process or a cycle) from ONE process-table read. Lets a spawning platform walk with one child
-   * process instead of one per step.
+   * process instead of one per step. `notBefore` (epoch ms, the hook line's ts) is the oldest
+   * process-table read that may answer: a shared snapshot taken before it could resolve a pid the OS
+   * has since handed to a new process, so a platform that caches reads must take a new one.
    */
-  ancestry?(pid: number): Promise<ProcInfo[]>;
+  ancestry?(pid: number, notBefore?: number): Promise<ProcInfo[]>;
   /**
    * Several processes from ONE process-table read (a pid that does not exist is absent from the
    * map). The monitor uses it for the periodic start re-check, so N entries cost one child process.
+   * undefined when the process table could not be read (not the same as "no such process").
    */
-  lookupMany?(pids: number[]): Promise<Map<number, ProcInfo>>;
+  lookupMany?(pids: number[]): Promise<Map<number, ProcInfo> | undefined>;
   /** True when lookup/ancestry start a child process; the monitor then rate-limits them. */
   spawns?: boolean;
 }
@@ -95,9 +98,10 @@ export async function findParent(
   pid: number,
   procs: Pick<ProcLookup, "lookup" | "ancestry">,
   isAlive: (pid: number) => boolean,
+  notBefore?: number,
 ): Promise<ProcInfo | undefined> {
   if (procs.ancestry !== undefined) {
-    for (const info of (await procs.ancestry(pid)).slice(0, MAX_WALK)) {
+    for (const info of (await procs.ancestry(pid, notBefore)).slice(0, MAX_WALK)) {
       if (info.pid <= 1) return undefined;
       if (!isShellProcess(info.name)) return isAlive(info.pid) ? info : undefined;
     }
@@ -388,10 +392,12 @@ export function windowsLookup(
       const out = await run(ps, args(script), timeoutMs);
       return out === undefined ? undefined : parseWinLine(out, pid);
     },
-    async ancestry(pid) {
+    async ancestry(pid, notBefore) {
       if (!Number.isInteger(pid) || pid <= 1) return [];
+      // A snapshot begun before the hook line may name a pid that has since been reused.
+      const stale = cache !== undefined && notBefore !== undefined && cache.at < notBefore;
       const age = cache === undefined ? 0 : nowFn() - cache.at;
-      let s = await snap(SNAPSHOT_TTL_MS);
+      let s = await snap(stale ? -1 : SNAPSHOT_TTL_MS);
       let chain = s === undefined ? [] : chainFromSnapshot(s, pid);
       // A shared snapshot older than the process being walked cannot contain it: read a new one.
       if (chain.length === 0 && s !== undefined && age > SNAPSHOT_REFRESH_MIN_MS) {
@@ -403,7 +409,7 @@ export function windowsLookup(
     async lookupMany(pids) {
       const out = new Map<number, ProcInfo>();
       const s = await snap(SNAPSHOT_TTL_MS);
-      if (s === undefined) return out;
+      if (s === undefined) return undefined;
       for (const pid of pids) {
         const i = s.get(pid);
         if (i !== undefined) out.set(pid, i);

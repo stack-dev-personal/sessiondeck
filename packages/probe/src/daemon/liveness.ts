@@ -190,6 +190,10 @@ export class LivenessMonitor implements DaemonComponent {
   private warned = new Set<string>();
   private loaded = false;
   private stopped = false;
+  /** Set when stop() gave up waiting: work still queued behind the hung task is skipped. */
+  private abandoned = false;
+  /** SessionEnd lines seen but not yet applied (the work queue may be behind); newest ts per session. */
+  private pendingEnd = new Map<string, number>();
   private enqueue: (line: SpoolLine) => void;
   private host: string;
   private log: Logger;
@@ -275,6 +279,7 @@ export class LivenessMonitor implements DaemonComponent {
       }),
     ]);
     clearTimeout(cap);
+    if (this.inflight > 0) this.abandoned = true;
   }
 
   /** Hook-spool envelope tap (at-least-once; every handler here is idempotent by ts). */
@@ -301,6 +306,8 @@ export class LivenessMonitor implements DaemonComponent {
     }
     if (env.kind !== "hook") return;
     if (env.hook_event_name === "SessionEnd") {
+      // Noted before the queue so a death grace timer firing while this waits sees the end.
+      this.pendingEnd.set(sid, Math.max(env.ts, this.pendingEnd.get(sid) ?? env.ts));
       this.fire(this.endSession(sid, env.ts), "SessionEnd");
     } else {
       this.fire(this.discover(sid, env.ts), "discover");
@@ -375,6 +382,7 @@ export class LivenessMonitor implements DaemonComponent {
     this.inflight += 1;
     const exec = async (): Promise<T> => {
       try {
+        if (this.abandoned) return undefined as T; // stop() has returned: nothing new starts
         return await fn();
       } finally {
         this.inflight -= 1;
@@ -443,7 +451,12 @@ export class LivenessMonitor implements DaemonComponent {
     const ancestry = p.ancestry?.bind(p);
     return {
       lookup: wrap((pid: number) => p.lookup(pid), undefined),
-      ...(ancestry ? { ancestry: wrap(ancestry, [] as ProcInfo[]) } : {}),
+      ...(ancestry
+        ? {
+            ancestry: (pid: number, notBefore?: number): Promise<ProcInfo[]> =>
+              wrap((a: number) => ancestry(a, notBefore), [] as ProcInfo[])(pid),
+          }
+        : {}),
     };
   }
 
@@ -601,7 +614,7 @@ export class LivenessMonitor implements DaemonComponent {
     ts: number,
   ): Promise<{ info: ProcInfo; walked: boolean } | undefined> {
     if (reported <= 0) return undefined;
-    const info = await findParent(reported, this.gated(), this.isAlive);
+    const info = await findParent(reported, this.gated(), this.isAlive, ts);
     if (info === undefined) return undefined;
     if (info.startMs !== undefined && info.startMs > ts + START_SKEW_MS) {
       this.log("info", `liveness: pid ${info.pid} started after the hook line; not claude`);
@@ -767,15 +780,23 @@ export class LivenessMonitor implements DaemonComponent {
 
   endSession(sid: string, ts: number): Promise<void> {
     return this.run(async () => {
-      await this.load();
-      const e = this.entries.get(sid);
-      if (!e || ts < e.ts) return;
-      if (e.state === "ended") return;
-      e.state = "ended";
-      e.ts = ts;
-      e.at = this.now();
-      this.dirty = true;
+      try {
+        await this.endNow(sid, ts);
+      } finally {
+        if (this.pendingEnd.get(sid) === ts) this.pendingEnd.delete(sid);
+      }
     });
+  }
+
+  private async endNow(sid: string, ts: number): Promise<void> {
+    await this.load();
+    const e = this.entries.get(sid);
+    if (!e || ts < e.ts) return;
+    if (e.state === "ended") return;
+    e.state = "ended";
+    e.ts = ts;
+    e.at = this.now();
+    this.dirty = true;
   }
 
   // --- the check ---
@@ -827,6 +848,7 @@ export class LivenessMonitor implements DaemonComponent {
       if (!this.takeToken()) return out;
       this.stats.lookups += 1;
       const m = await p.lookupMany(pids);
+      if (m === undefined) return out; // the table could not be read: nothing was looked up
       for (const pid of pids) out.set(pid, m.get(pid));
       return out;
     }
@@ -863,6 +885,14 @@ export class LivenessMonitor implements DaemonComponent {
     const due: LivenessEntry[] = [];
     for (const e of [...this.entries.values()]) {
       if (e.state !== "tracking") continue;
+      // A forced re-check only means something where the OS start is read and one is recorded.
+      if (
+        e.recheck === true &&
+        (e.proc_start === undefined || this.procs.cheapStart !== undefined)
+      ) {
+        delete e.recheck;
+        this.dirty = true;
+      }
       if (e.probation === true) {
         if (now - e.at < PROBATION_MIN_MS) continue;
         delete e.probation;
@@ -988,10 +1018,12 @@ export class LivenessMonitor implements DaemonComponent {
     this.dying.delete(sid);
     const e = this.entries.get(sid);
     if (this.stopped || !e || e.state !== "tracking") return; // SessionEnd or supersede won
+    if (this.endPending(e)) return; // a SessionEnd is still queued: it wins
     let dead = this.goneNow(e);
     if (!dead && this.procs.cheapStart === undefined && e.proc_start !== undefined) {
       const r = await this.startLookup([e.pid]);
       if (this.stopped || this.entries.get(sid) !== e || e.state !== "tracking") return;
+      if (this.endPending(e)) return;
       if (!r.has(e.pid)) {
         e.recheck = true;
         this.flushSoon();
@@ -1011,6 +1043,11 @@ export class LivenessMonitor implements DaemonComponent {
     this.stats.deaths += 1;
     this.fileMismatch.delete(sid);
     this.flushSoon();
+  }
+
+  private endPending(e: LivenessEntry): boolean {
+    const t = this.pendingEnd.get(e.session_id);
+    return t !== undefined && t >= e.ts;
   }
 
   /** Read-only view for tests and harnesses. */
