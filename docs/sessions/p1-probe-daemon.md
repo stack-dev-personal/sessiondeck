@@ -40,3 +40,12 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - The sprint container restarted and killed the run in the middle of U1-fix-lock (not a session failure). Resumed at 14:21Z. Uncommitted diff: lock.ts (+286/-), daemon-review1.test.ts, daemon-review2.test.ts, lock-race.proc.test.ts. Decision: the generation design is sound in principle (exactly one creator per generation through link EEXIST), so sd-executor-probe finishes it rather than discarding it. Review loop restarts at iteration 1 for the fix.
 
 ## Deferred findings
+- [MINOR] packages/probe/src/daemon/lock.ts:313-323: the check() ENOENT recreate ignores a live lower generation created after an external delete. Short two-holder window, closed at the next verify(). Fix: fail when scan shows any other live generation.
+- [MINOR] lock.ts:403-405: if the re-scan after create throws (EMFILE/EACCES), the starter falls through to holding the lock. Fix: tombstone and continue.
+- [LOW] lock.ts:139-142: readRaw races lstat against readFileSync (FIFO/symlink swap by the same user). Fix: open O_NOFOLLOW|O_NONBLOCK, fstat, bounded read.
+- [LOW] lock.ts:419-421 and index.ts:88-93 hardenDirs: chmod follows symlinks after lstat. Fix: fchmod on an O_DIRECTORY|O_NOFOLLOW fd.
+- [LOW] lock.ts scan: readdir on every verify(), with no cap on directory size. Fix: dedicated lock subdirectory or cached scan.
+
+### U1-fix-lock review (after restart)
+- b799eb2 generation-numbered lock (tombstone on release). Iteration 1: sd-reviewer merge (3 MINOR), sd-security-reviewer gate pass (1 MEDIUM, 3 LOW). Fixed all in 7fd9b0a (overflow refusal, re-scan after create, recheck after recreate, READY handshake, lstat-bounded readRaw, ensurePrivateDir).
+- Iteration 2 on b799eb2..7fd9b0a: sd-reviewer merge, sd-security-reviewer gate pass. lock-race.proc 10/10 isolated runs, about 17 s per file.
