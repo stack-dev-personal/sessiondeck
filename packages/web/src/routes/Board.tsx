@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { BoardToolbar } from "../components/BoardToolbar";
 import { CompactCard, SessionCard } from "../components/SessionCard";
 import { useNow } from "../hooks/useNow";
-import { applyFilters, sortForAttention } from "../lib/attention";
+import { applyFilters, isAttentionState, sortForAttention } from "../lib/attention";
 import { useShortcuts } from "../lib/keys";
 import { useBoard } from "../store/board";
 import { useFilters } from "../store/filters";
@@ -44,6 +44,11 @@ export function Board() {
     () => sortForAttention(applyFilters(all, { host, project })),
     [all, host, project],
   );
+  /** Waiting sessions the filters leave out; the toolbar says so, because nothing else would. */
+  const hiddenAttention = useMemo(() => {
+    const shown = new Set(list.map((s) => s.session_id));
+    return all.filter((s) => isAttentionState(s.state) && !shown.has(s.session_id)).length;
+  }, [all, list]);
   // A reorder moves DOM nodes, which can drop focus to <body>; put it back on the same card.
   const focusedId = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -80,7 +85,7 @@ export function Board() {
   return (
     <>
       <h1 className="sr-only">Board</h1>
-      <BoardToolbar shown={list.length} total={all.length} />
+      <BoardToolbar shown={list.length} total={all.length} hiddenAttention={hiddenAttention} />
       {empty}
       {list.length === 0 ? null : (
         <ul

@@ -53,6 +53,16 @@ describe("createAttentionDetector", () => {
     expect(d.observe(map(snap("a", "waiting_permission")))).toEqual([]);
   });
 
+  it("calls onEnd when an episode ends or the session disappears", () => {
+    const ended: string[] = [];
+    const d = createAttentionDetector({ onEnd: (id) => ended.push(id) });
+    d.observe(map(snap("a", "waiting_input"), snap("b", "waiting_input")));
+    d.observe(map(snap("a", "working"), snap("b", "waiting_input")));
+    expect(ended).toEqual(["a"]);
+    d.observe(map(snap("a", "working")));
+    expect(ended).toEqual(["a", "b"]);
+  });
+
   it("reports a session that began waiting during the disconnect, and forgets removed ones", () => {
     const d = createAttentionDetector();
     d.observe(map(snap("a", "working"), snap("b", "waiting_input")));
@@ -67,6 +77,7 @@ describe("createAttentionDetector", () => {
 
 describe("startAlerts delivery", () => {
   let calls: { title: string; options?: NotificationOptions }[];
+  let closed: string[];
   let tones: number[];
   let env: AlertEnv;
   const frames: (() => void)[] = [];
@@ -74,16 +85,22 @@ describe("startAlerts delivery", () => {
 
   beforeEach(() => {
     calls = [];
+    closed = [];
     tones = [];
+    window.sessionStorage.clear();
     frames.length = 0;
     resetAudioForTests();
     class FakeNotification {
       static permission: NotificationPermission = "granted";
       onclick: unknown = null;
+      tag: string;
       constructor(title: string, options?: NotificationOptions) {
         calls.push({ title, options });
+        this.tag = options?.tag ?? "";
       }
-      close() {}
+      close() {
+        closed.push(this.tag);
+      }
     }
     class FakeAudio {
       currentTime = 0;
@@ -136,15 +153,61 @@ describe("startAlerts delivery", () => {
       }),
     );
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.title).toBe("refactor");
-    expect(calls[0]!.options?.body).toBe("Needs permission");
+    expect(calls[0]!.title).toBe("a needs permission");
+    expect(calls[0]!.options?.body).toBe("refactor");
     expect(JSON.stringify(calls[0])).not.toContain("SECRET");
     for (let i = 0; i < 5; i++) set(snap("a", "waiting_permission", { last_event_at: 10 + i }));
     expect(calls).toHaveLength(1);
     set(snap("a", "working"));
     set(snap("a", "waiting_input"));
     expect(calls).toHaveLength(2);
-    expect(calls[1]!.options?.body).toBe("Needs input");
+    expect(calls[1]!.title).toBe("a needs input");
+  });
+
+  it("closes the notification when the episode ends and tags each episode separately", () => {
+    const { set } = setup(settings({ notifications: true }));
+    set(snap("a", "waiting_permission", { state_since: 10 }));
+    expect(closed).toEqual([]);
+    set(snap("a", "working", { state_since: 20 }));
+    expect(closed).toEqual(["sd-a-10"]);
+    set(snap("a", "waiting_permission", { state_since: 30 }));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.options?.tag).toBe("sd-a-10");
+    expect(calls[1]!.options?.tag).toBe("sd-a-30");
+    expect(calls[1]!.options).not.toHaveProperty("renotify");
+  });
+
+  it("does not re-announce seen episodes after a reload (sessionStorage), but new ones", () => {
+    const first = setup(settings({ notifications: true }));
+    first.set(snap("a", "waiting_permission", { state_since: 10 }), snap("b", "idle"));
+    expect(calls).toHaveLength(1);
+    first.stop();
+    const second = setup(settings({ notifications: true }));
+    second.set(snap("a", "waiting_permission", { state_since: 10 }), snap("b", "idle"));
+    expect(calls).toHaveLength(1);
+    second.set(
+      snap("a", "waiting_permission", { state_since: 10 }),
+      snap("b", "waiting_input", { state_since: 50 }),
+    );
+    expect(calls).toHaveLength(2);
+  });
+
+  it("announces an episode that is new since the reload (state_since differs)", () => {
+    const first = setup(settings({ notifications: true }));
+    first.set(snap("a", "waiting_permission", { state_since: 10 }));
+    first.stop();
+    const second = setup(settings({ notifications: true }));
+    second.set(snap("a", "waiting_permission", { state_since: 99 }));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("puts the tool name in the body for a permission prompt", () => {
+    const s = snap("a", "waiting_permission", { session_name: "refactor", cwd: "/w/proj" });
+    s.tracking = { last_tool: null, permission: { tool: "Bash" } } as never;
+    expect(notificationText({ sessionId: "a", state: "waiting_permission", session: s })).toEqual({
+      title: "proj needs permission",
+      body: "refactor - Tool: Bash",
+    });
   });
 
   it("does nothing when opted out, and opting in later does not announce what already waits", () => {
@@ -217,6 +280,6 @@ describe("startAlerts delivery", () => {
       state: "waiting_input",
       session: snap("a", "waiting_input", { last_assistant_message: "private" }),
     });
-    expect(t).toEqual({ title: "a", body: "Needs input" });
+    expect(t).toEqual({ title: "a needs input", body: "a" });
   });
 });

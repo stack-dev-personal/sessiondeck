@@ -14,7 +14,15 @@ function withCurrent(options: string[], current: string | null): string[] {
  * Host and project filters plus the count. Always rendered with the same controls (the clear
  * button is disabled, not removed), so the toolbar never changes height or shifts the grid.
  */
-export function BoardToolbar({ shown, total }: { shown: number; total: number }) {
+export function BoardToolbar({
+  shown,
+  total,
+  hiddenAttention,
+}: {
+  shown: number;
+  total: number;
+  hiddenAttention: number;
+}) {
   const sessions = useBoard((s) => s.sessions);
   const host = useFilters((s) => s.host);
   const project = useFilters((s) => s.project);
@@ -72,7 +80,17 @@ export function BoardToolbar({ shown, total }: { shown: number; total: number })
       >
         Clear filters
       </button>
-      <span role="status" data-testid="board-count" className="num ml-auto text-fg-muted">
+      {hiddenAttention > 0 ? (
+        <span
+          role="status"
+          data-testid="board-hidden-attention"
+          className="num ml-auto flex items-center gap-s-1 font-medium text-state-waiting"
+        >
+          <span aria-hidden="true">▲</span>
+          {hiddenAttention} hidden {hiddenAttention === 1 ? "needs" : "need"} attention
+        </span>
+      ) : null}
+      <span role="status" data-testid="board-count" className={`num text-fg-muted ${hiddenAttention > 0 ? "" : "ml-auto"}`}>
         {active
           ? `Showing ${shown} of ${total}`
           : `${total} ${total === 1 ? "session" : "sessions"}`}

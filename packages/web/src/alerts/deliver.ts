@@ -1,5 +1,4 @@
-import { displayNameOf } from "../lib/attention";
-import { STATE_VOCAB } from "../lib/state-vocab";
+import { displayNameOf, projectOf } from "../lib/attention";
 import type { AttentionEvent, AttentionState } from "./detect";
 
 /** Env seams so tests can stub the browser APIs. */
@@ -26,23 +25,37 @@ export function browserEnv(): AlertEnv {
 }
 
 /**
- * Title is the session name, body is the state label. Nothing from the transcript, the tool
- * input or the last message ever goes into a notification.
+ * Design system 7 text: title "<project> needs permission|input", body the session name and the
+ * tool name when the snapshot has it. Nothing from the transcript, the tool input or the last
+ * message ever goes into a notification.
  */
 export function notificationText(e: AttentionEvent): { title: string; body: string } {
-  return { title: displayNameOf(e.session), body: STATE_VOCAB[e.state].label };
+  const s = e.session;
+  const need = e.state === "waiting_permission" ? "needs permission" : "needs input";
+  const holder = s.tracking?.permission;
+  const tool = e.state === "waiting_permission" && holder && "tool" in holder ? holder.tool : null;
+  const parts = [displayNameOf(s)];
+  if (tool) parts.push(`Tool: ${tool}`);
+  return { title: `${projectOf(s)} ${need}`, body: parts.join(" - ") };
 }
 
-export function showNotification(env: AlertEnv, e: AttentionEvent): boolean {
+export interface ShownNotification {
+  onclick: unknown;
+  close(): void;
+}
+
+/** The tag includes state_since so each episode is its own notification, never a silent replace. */
+export function showNotification(env: AlertEnv, e: AttentionEvent): ShownNotification | null {
   const N = env.Notification;
-  if (!N || N.permission !== "granted") return false;
+  if (!N || N.permission !== "granted") return null;
   try {
     const { title, body } = notificationText(e);
-    const n = new N(title, { body, tag: `sd-${e.sessionId}`, silent: true });
+    const tag = `sd-${e.sessionId}-${e.session.state_since}`;
+    const n = new N(title, { body, tag, silent: true });
     n.onclick = () => env.focus?.();
-    return true;
+    return n;
   } catch {
-    return false;
+    return null;
   }
 }
 

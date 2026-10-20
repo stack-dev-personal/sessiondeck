@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, loadSettings, useUi } from "../store/ui";
+import { resetAudioForTests } from "../alerts/deliver";
 import { Settings } from "./Settings";
 
 describe("Settings alerts", () => {
@@ -45,5 +46,36 @@ describe("Settings alerts", () => {
       JSON.stringify({ hubUrl: "x", notifications: true }),
     );
     expect(loadSettings().sounds).toEqual({ waiting_permission: false, waiting_input: false });
+  });
+
+  it("previews a tone on enabling, but not while globally muted", async () => {
+    const created: number[] = [];
+    class FakeAudio {
+      currentTime = 0;
+      destination = {};
+      resume = () => Promise.resolve();
+      createOscillator() {
+        return {
+          frequency: { value: 0 },
+          connect: () => undefined,
+          start: () => created.push(1),
+          stop: () => undefined,
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime: () => undefined, linearRampToValueAtTime: () => undefined },
+          connect: () => undefined,
+        };
+      }
+    }
+    vi.stubGlobal("AudioContext", FakeAudio);
+    resetAudioForTests();
+    render(<Settings />);
+    await userEvent.click(screen.getByLabelText(/tone when a session needs input/i));
+    expect(created).toHaveLength(1);
+    await userEvent.click(screen.getByLabelText(/mute all tones/i));
+    await userEvent.click(screen.getByLabelText(/tone when a session needs permission/i));
+    expect(created).toHaveLength(1);
   });
 });

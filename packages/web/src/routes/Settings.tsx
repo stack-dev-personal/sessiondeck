@@ -6,10 +6,12 @@ import { useUi } from "../store/ui";
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /** Warning text when the token would travel unencrypted to a non-loopback host, else null. */
-export function insecureHubWarning(hubUrl: string): string | null {
+export function insecureHubWarning(
+  hubUrl: string,
+  loc: { protocol: string; host: string } = window.location,
+): string | null {
   const raw = hubUrl.trim();
-  if (raw === "") return null;
-  const ws = streamUrl(raw, { protocol: "https:", host: "x" });
+  const ws = streamUrl(raw, raw === "" ? loc : { protocol: "https:", host: "x" });
   if (ws === null) return "Hub URL is not valid. Use http(s):// or ws(s)://.";
   const u = new URL(ws);
   if (u.protocol === "wss:" || LOOPBACK.has(u.hostname)) return null;
@@ -62,7 +64,7 @@ export function Settings() {
     if (on) {
       const env = browserEnv();
       primeAudio(env);
-      playTone(env, state);
+      if (!draft.muted) playTone(env, state);
     }
   };
   const submit = (e: FormEvent) => {

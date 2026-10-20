@@ -87,14 +87,38 @@ describe("Board attention order, accent and filters", () => {
     expect(screen.getByText("No sessions yet.")).toBeInTheDocument();
   });
 
-  it("keeps focus on a card when it is reordered", () => {
+  it("keeps focus on a card when React moves it in a reorder", () => {
     put(snap("a", "working", 30), snap("b", "working", 20));
     render(<Board />);
-    const b = document.querySelector<HTMLElement>('[data-session-id="b"]')!;
-    b.focus();
-    expect(document.activeElement).toBe(b);
+    const a = document.querySelector<HTMLElement>('[data-session-id="a"]')!;
+    a.focus();
+    expect(document.activeElement).toBe(a);
+    // b becomes waiting and moves to the top: keyed reconciliation moves a, which drops focus
     put(snap("a", "working", 30), snap("b", "waiting_input", 40));
     expect(order()).toEqual(["b", "a"]);
-    expect(document.activeElement).toHaveAttribute("data-session-id", "b");
+    expect(document.activeElement).toHaveAttribute("data-session-id", "a");
+  });
+
+  it("says how many waiting sessions the filters hide", async () => {
+    put(snap("a", "idle", 3, "h1"), snap("b", "idle", 2, "h2"));
+    render(<Board />);
+    expect(screen.queryByTestId("board-hidden-attention")).toBeNull();
+    await userEvent.selectOptions(screen.getByLabelText("Host"), "h2");
+    expect(order()).toEqual(["b"]);
+    expect(screen.queryByTestId("board-hidden-attention")).toBeNull();
+    put(snap("a", "waiting_permission", 9, "h1"), snap("b", "idle", 2, "h2"));
+    const hint = screen.getByTestId("board-hidden-attention");
+    expect(hint).toHaveTextContent("1 hidden needs attention");
+    expect(hint).toHaveTextContent("▲");
+    put(
+      snap("a", "waiting_permission", 9, "h1"),
+      snap("b", "waiting_input", 2, "h2"),
+      snap("c", "waiting_input", 2, "h1"),
+    );
+    expect(screen.getByTestId("board-hidden-attention")).toHaveTextContent(
+      "2 hidden need attention",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.queryByTestId("board-hidden-attention")).toBeNull();
   });
 });
