@@ -1,5 +1,5 @@
 // R2.10 bench: /history/* latency on a synthetic transcript_lines table.
-//   node scripts/bench-history.mjs [rows=100000] [bytes=5000]
+//   node --expose-gc scripts/bench-history.mjs [rows=100000] [bytes=5000]
 // Rows are assistant lines (message id, requestId, ~bytes long) spread over 300 sessions and 120
 // days, with 25% streaming repeats of an earlier id. Prints rows, first-call ms (cold index build
 // from the DB), warm-call ms (aggregation only, distinct queries so the result memo is not used),
@@ -74,7 +74,14 @@ const call = async (url: string): Promise<number> => {
 };
 const ms = (n: number): string => n.toFixed(1);
 
+const gc = (globalThis as { gc?: () => void }).gc;
+const heapMb = (): number => {
+  gc?.();
+  return process.memoryUsage().heapUsed / 1048576;
+};
+const heapBefore = heapMb();
 const first = await call("/history/daily?tz=UTC");
+const heapAfter = heapMb();
 const stallCold = maxLag;
 maxLag = 0;
 const warm: number[] = [];
@@ -91,6 +98,10 @@ console.log(
     {
       rows,
       bytes_per_row: bytes,
+      heap_mb_before_cold_build: Number(heapBefore.toFixed(1)),
+      heap_mb_after_cold_build: Number(heapAfter.toFixed(1)),
+      heap_growth_bytes_per_row: Math.round(((heapAfter - heapBefore) * 1048576) / rows),
+      gc_exposed: gc !== undefined,
       first_call_ms: Number(ms(first)),
       warm_daily_ms: warm.map((w) => Number(ms(w))),
       warm_sessions_tokyo_ms: Number(ms(warmSessions)),

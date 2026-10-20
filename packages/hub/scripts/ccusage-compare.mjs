@@ -31,6 +31,7 @@ const opt = (name, dflt) => {
 const pricingArg = opt("--pricing");
 const ccusage = opt("--ccusage", "/tmp/sd-s4-refs/ccusage-npm/package/dist/index.js");
 const tzList = opt("--tz", "UTC").split(",");
+const orders = opt("--order", "file,late").split(",");
 const tolerance = Number(opt("--tolerance", "1"));
 const writeExpected = opt("--write-expected");
 const dir = args[0] ? path.resolve(args[0]) : null;
@@ -98,7 +99,7 @@ try {
     cacheCreation: r.cacheCreationTokens,
     cacheRead: r.cacheReadTokens,
     cost: r.totalCost,
-    models: [...r.modelsUsed].sort(),
+    models: [...r.modelsUsed],
   });
   const normHub = (r, id) => ({
     id,
@@ -107,7 +108,7 @@ try {
     cacheCreation: r.cache_creation_tokens,
     cacheRead: r.cache_read_tokens,
     cost: r.cost_usd,
-    models: [...r.models].sort(),
+    models: [...r.models],
   });
 
   let failures = 0;
@@ -168,25 +169,27 @@ try {
   for (const tz of tzList) {
     const sess = runCcusage("session", tz);
     const daily = runCcusage("daily", tz);
-    const hub = await hubReport({ dir, pricingFile: pricing, tz });
     const cSess = sess.session.map(norm);
     const cDay = daily.daily.map(norm);
-    console.log(`\n=== timezone ${tz}  tolerance ${tolerance}% ===`);
-    compare(
-      "per session: ccusage session vs hub GET /history/sessions",
-      cSess,
-      hub.sessions.map((s) => normHub(s, s.session_id)),
-    );
-    compare(
-      "per session: ccusage session vs hub GET /sessions/:id/cost",
-      cSess,
-      Object.entries(hub.sessionCost).map(([id, s]) => normHub(s, id)),
-    );
-    compare(
-      "per day: ccusage daily vs hub GET /history/daily",
-      cDay,
-      hub.days.map((d) => normHub(d, d.date)),
-    );
+    for (const order of orders) {
+      const hub = await hubReport({ dir, pricingFile: pricing, tz, order });
+      console.log(`\n=== timezone ${tz}  arrival order ${order}  tolerance ${tolerance}% ===`);
+      compare(
+        "per session: ccusage session vs hub GET /history/sessions",
+        cSess,
+        hub.sessions.map((s) => normHub(s, s.session_id)),
+      );
+      compare(
+        "per session: ccusage session vs hub GET /sessions/:id/cost",
+        cSess,
+        Object.entries(hub.sessionCost).map(([id, s]) => normHub(s, id)),
+      );
+      compare(
+        "per day: ccusage daily vs hub GET /history/daily",
+        cDay,
+        hub.days.map((d) => normHub(d, d.date)),
+      );
+    }
     expected[tz] = { sessions: cSess, days: cDay };
   }
 

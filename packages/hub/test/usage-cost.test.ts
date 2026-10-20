@@ -4,9 +4,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { buildServer } from "../src/server.ts";
+import { tempStore } from "./helpers.ts";
 import { loadConfig } from "../src/config.ts";
 import {
   CACHE_FILE_NAME,
+  PricingProvider,
   bundledTable,
   loadPricing,
   refreshPricing,
@@ -59,31 +62,32 @@ function expectRow(got: HubRow | undefined, want: Row) {
     want.cacheRead,
   ]);
   expect(Math.abs(g.cost_usd - want.cost)).toBeLessThanOrEqual(want.cost * 0.01);
-  expect([...g.models].sort()).toEqual(want.models);
+  expect(g.models).toEqual(want.models);
 }
 
 describe("cost history matches ccusage 19.0.3 (R2.10)", () => {
-  for (const tz of Object.keys(expected.byTimezone)) {
-    it(`sessions and days in ${tz}: tokens exact, cost within 1%`, async () => {
-      const want = expected.byTimezone[tz]!;
-      const r = await hubReport({ dir: FX, pricingFile: PRICING, tz });
-      expect(r.sessions.length).toBe(want.sessions.length);
-      for (const w of want.sessions) {
-        expectRow(
-          r.sessions.find((s) => s.session_id === w.id),
-          w,
-        );
-        expectRow(r.sessionCost[w.id], w);
-      }
-      expect(r.days.map((d) => d.date)).toEqual(want.days.map((d) => d.id).sort());
-      for (const w of want.days) {
-        expectRow(
-          r.days.find((d) => d.date === w.id),
-          w,
-        );
-      }
-    }, 60_000);
-  }
+  for (const tz of Object.keys(expected.byTimezone))
+    for (const order of ["file", "late"] as const) {
+      it(`sessions and days in ${tz}, ${order} arrival: tokens exact, cost within 1%, models in order`, async () => {
+        const want = expected.byTimezone[tz]!;
+        const r = await hubReport({ dir: FX, pricingFile: PRICING, tz, order });
+        expect(r.sessions.length).toBe(want.sessions.length);
+        for (const w of want.sessions) {
+          expectRow(
+            r.sessions.find((s) => s.session_id === w.id),
+            w,
+          );
+          expectRow(r.sessionCost[w.id], w);
+        }
+        expect(r.days.map((d) => d.date)).toEqual(want.days.map((d) => d.id).sort());
+        for (const w of want.days) {
+          expectRow(
+            r.days.find((d) => d.date === w.id),
+            w,
+          );
+        }
+      }, 60_000);
+    }
 
   it("fixture covers the intended cases (guards against a silently weakened fixture)", () => {
     const text = readFileSync(
@@ -511,6 +515,105 @@ describe("history index and limits", () => {
       expect(fresh.index.sessions(t, "UTC")).toEqual(svc.index.sessions(t, "UTC"));
     } finally {
       await h.cleanup();
+    }
+  });
+
+  const statusLine = (
+    h: Awaited<ReturnType<typeof makeHub>>,
+    session: string,
+    n: number,
+    projectDir: string,
+  ) =>
+    h.post({
+      host: "h1",
+      envelopes: [
+        {
+          v: 1,
+          id: `01ARZ3NDEKTSV4RRFFQ69G6F${String(n).padStart(2, "0")}`,
+          kind: "statusline",
+          host: "h1",
+          os: "linux",
+          session_id: session,
+          ts: 1_760_000_000_000 + n,
+          seq: n,
+          payload: { session_id: session, cwd: projectDir, workspace: { project_dir: projectDir } },
+        },
+      ],
+    });
+
+  it("project_dir arriving after the lines gives the same result as a cold rebuild (G1)", async () => {
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      const svc = new UsageService(h.store);
+      // A (project /z) is known; B (UUID sorts first, project /a) holds an equal copy of m1 and
+      // is indexed before its project_dir is known. ccusage's file order puts -a/B before -z/A.
+      await statusLine(h, "aaaa-A", 1, "/z");
+      await send(h, "aaaa-A", 2, [usageLine("m1", 50, "2026-03-01T23:30:00.000Z")]);
+      await send(h, "0000-B", 3, [usageLine("m1", 50, "2026-03-02T01:00:00.000Z")]);
+      await svc.refresh();
+      const t = bundledTable();
+      const before = svc.index.sessions(t, "UTC");
+      await statusLine(h, "0000-B", 4, "/a");
+      await svc.refresh();
+      const after = svc.index.sessions(t, "UTC");
+      const cold = new UsageService(h.store);
+      await cold.refresh();
+      expect(after).toEqual(cold.index.sessions(t, "UTC"));
+      expect(svc.index.daily(t, "UTC")).toEqual(cold.index.daily(t, "UTC"));
+      expect(before).not.toEqual(after); // the late project_dir really changed the winner
+      expect(svc.index.sessions(t, "UTC", "0000-B")[0]?.output_tokens).toBe(50);
+      expect(svc.index.sessions(t, "UTC", "aaaa-A")).toEqual([]);
+      expect(svc.index.daily(t, "UTC")[0]?.date).toBe("2026-03-02");
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("HEAD /history/* is limited like GET (G3)", async () => {
+    const t = 1_800_000_000_000;
+    const h = await makeHub({}, () => t);
+    try {
+      const code = async (method: "GET" | "HEAD", u: string) =>
+        (await h.app.inject({ method, url: u, headers: AUTH })).statusCode;
+      expect(await code("HEAD", "/history/daily?tz=UTC&from=2026-01-01")).toBe(200);
+      expect(await code("HEAD", "/history/daily?tz=UTC&from=2026-01-02")).toBe(200);
+      expect(await code("HEAD", "/history/daily?tz=UTC&from=2026-01-03")).toBe(429);
+      expect(await code("GET", "/history/daily?tz=UTC&from=2026-01-04")).toBe(429);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
+  it("swapping the pricing table re-prices without new rows (G6)", async () => {
+    const t = tempStore();
+    t.store.migrate();
+    const config = loadConfig({ HUB_TOKEN: "t".repeat(24), HUB_PRICING_FETCH: "0" });
+    const rate = (n: number) =>
+      new PricingTable(parseLiteLLM({ "claude-sonnet-4-5": { output_cost_per_token: n } }), "t");
+    const provider = new PricingProvider(rate(0.001));
+    const app = buildServer({ config, store: t.store, pricing: provider });
+    try {
+      t.store.insertTranscriptLine({
+        session_id: "s",
+        agent_id: "",
+        line_no: 0,
+        ts: 1_760_000_000_000,
+        raw: usageLine("m1", 1000),
+      });
+      const cost = async () =>
+        (
+          await app.inject({
+            method: "GET",
+            url: "/sessions/s/cost?tz=UTC",
+            headers: AUTH,
+          })
+        ).json() as { cost_usd: number };
+      expect((await cost()).cost_usd).toBeCloseTo(1, 9);
+      provider.set(rate(0.002));
+      expect((await cost()).cost_usd).toBeCloseTo(2, 9);
+    } finally {
+      await app.close();
+      t.store.close();
     }
   });
 

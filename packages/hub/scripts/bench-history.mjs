@@ -21,5 +21,7 @@ await build({
   logLevel: "warning",
   absWorkingDir: path.join(here, ".."),
 });
-const r = spawnSync(process.execPath, [outfile, ...process.argv.slice(2)], { stdio: "inherit" });
+const r = spawnSync(process.execPath, ["--expose-gc", outfile, ...process.argv.slice(2)], {
+  stdio: "inherit",
+});
 process.exit(r.status ?? 1);

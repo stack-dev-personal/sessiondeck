@@ -106,7 +106,10 @@ export function buildServer(opts: {
     if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
       return reply.code(429).header("content-length", "0").send();
     }
-    if (req.method === "GET" && req.url.split("?")[0]?.startsWith("/history/") === true) {
+    if (
+      (req.method === "GET" || req.method === "HEAD") &&
+      req.url.split("?")[0]?.startsWith("/history/") === true
+    ) {
       if (!historyLimiter.take(principal, 1)) {
         return reply.code(429).header("content-length", "0").send();
       }

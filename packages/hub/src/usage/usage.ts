@@ -193,12 +193,17 @@ function add(s: TokenStats, e: Entry, cost: number): void {
 class Summary {
   readonly totals = emptyStats();
   readonly byModel = new Map<string, TokenStats>();
-  readonly models: string[] = [];
+  /** Earliest (file, line) each model was seen at: models list in ccusage's file order, not ingest order. */
+  private readonly firstAt = new Map<string, { file: string; line: number }>();
   add(e: Entry, cost: number): void {
     add(this.totals, e, cost);
     if (e.displayModel === "<synthetic>") return;
     const name = e.displayModel ?? "unknown";
-    if (e.displayModel !== undefined && !this.byModel.has(name)) this.models.push(name);
+    if (e.displayModel !== undefined) {
+      const f = this.firstAt.get(name);
+      if (f === undefined || e.file < f.file || (e.file === f.file && e.line < f.line))
+        this.firstAt.set(name, { file: e.file, line: e.line });
+    }
     let m = this.byModel.get(name);
     if (m === undefined) {
       m = emptyStats();
@@ -206,7 +211,8 @@ class Summary {
     }
     add(m, e, cost);
   }
-  finish(): UsageSummary {
+  /** `sorted`: ccusage `daily` lists models alphabetically; `session` keeps file order. */
+  finish(sorted = false): UsageSummary {
     return {
       ...this.totals,
       total_tokens:
@@ -214,7 +220,11 @@ class Summary {
         this.totals.output_tokens +
         this.totals.cache_creation_tokens +
         this.totals.cache_read_tokens,
-      models: this.models,
+      models: sorted
+        ? [...this.firstAt.keys()].sort()
+        : [...this.firstAt]
+            .sort(([, a], [, b]) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line))
+            .map(([m]) => m),
       model_breakdowns: [...this.byModel]
         .map(([model, s]) => ({ model, ...s }))
         .sort((a, b) => b.cost_usd - a.cost_usd),
@@ -264,6 +274,14 @@ export class UsageCollector {
   private readonly byHash = new Map<string, number>();
   private readonly bySession = new Map<string, Set<number>>();
   private readonly fileKeys = new Map<string, string>();
+  /**
+   * project_dir each session's rows were keyed with. The file key (tie-break) depends on it, and
+   * project_dir arrives with a later statusLine, so the owner rebuilds the index when it changes
+   * (see staleProjects); that makes the result equal to a cold build whatever the arrival order.
+   * Memory bound: one indexed row costs about 250 to 330 bytes measured (bench-history: 248 B/row at 75% unique; strings shared via fileKeys and the
+   * session id), so 1M usage rows is about 300 MB. No eviction.
+   */
+  private readonly projects = new Map<string, string | null>();
   private ver = 0;
 
   /** Bumps whenever a row changes what any read would return. */
@@ -272,6 +290,14 @@ export class UsageCollector {
   }
   get count(): number {
     return this.entries.length;
+  }
+
+  /** True when a session already indexed now has a different project_dir than its rows were keyed with. */
+  staleProjects(current: ReadonlyMap<string, string | null>): boolean {
+    for (const [session, project] of this.projects) {
+      if ((current.get(session) ?? null) !== project) return true;
+    }
+    return false;
   }
 
   private fileKey(session: string, agent: string, project: string | null | undefined): string {
@@ -293,6 +319,7 @@ export class UsageCollector {
     const d = parseUsageLine(row.raw);
     if (d === null) return false;
     const u = d.message.usage;
+    this.projects.set(row.session_id, row.project_dir ?? null);
     const hash = createUniqueHash(d);
     const tokenTotal = sumTokens(u);
     const hasSpeed = u.speed != null;
@@ -430,7 +457,7 @@ export class UsageCollector {
       s.add(e, this.cost(e, pricing));
     }
     return [...groups]
-      .map(([date, s]) => ({ date, ...s.finish() }))
+      .map(([date, s]) => ({ date, ...s.finish(true) }))
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   }
 }

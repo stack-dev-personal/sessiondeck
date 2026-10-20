@@ -298,6 +298,13 @@ export class Store {
     ).all(afterRowid, limit) as UsageFeedRow[];
   }
 
+  /** Current project_dir of every session that has one (usage index staleness check). */
+  listSessionProjects(): { session_id: string; project_dir: string }[] {
+    return this.stmt(
+      "SELECT session_id, project_dir FROM sessions WHERE project_dir IS NOT NULL",
+    ).all() as { session_id: string; project_dir: string }[];
+  }
+
   /** Configured projects plus every project_dir seen on a session. */
   listProjects(limit: number): ProjectRow[] {
     return this.stmt(
