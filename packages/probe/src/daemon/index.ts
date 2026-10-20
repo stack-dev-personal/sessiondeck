@@ -18,7 +18,7 @@ import { ulid } from "../ulid.ts";
 import { Forwarder, MAX_BATCH_ENVELOPES, MAX_BATCH_MS, MAX_BODY_BYTES } from "./forwarder.ts";
 import { createFileLogger } from "./log.ts";
 import { checkHubUrl, INSECURE_HUB_WARNING } from "./hub-url.ts";
-import { LOCK_TOUCH_MS, acquireLock } from "./lock.ts";
+import { LOCK_TOUCH_MS, type Lock, acquireLock } from "./lock.ts";
 import { createOutbox } from "./outbox.ts";
 import type { ComponentContext, DaemonComponent, Logger } from "./types.ts";
 
@@ -51,6 +51,8 @@ export interface DaemonOptions {
   /** Caps for the rejected-batch directory. */
   rejectedMaxFiles?: number;
   rejectedMaxBytes?: number;
+  /** Lock touch interval (default LOCK_TOUCH_MS; tests shorten it). */
+  lockTouchMs?: number;
   /** Called (once) when another process took over the lock; the daemon has already stopped. */
   onLockLost?: () => void;
 }
@@ -93,8 +95,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   const home = opts.home;
   const now = opts.now ?? Date.now;
   mkdirSync(daemonDir(home), { recursive: true, mode: 0o700 });
-  const lock = acquireLock(daemonLockPath(home));
-  if (!lock) return undefined;
+  const acquired = acquireLock(daemonLockPath(home));
+  if (!acquired) return undefined;
+  const lock: Lock = acquired;
+  if (!lock.touch()) return undefined; // taken over at once: not ours, leave it alone
   hardenDirs(home);
   const fileLog = createFileLogger(daemonLogPath(home), now);
   const log: Logger = opts.stderr
@@ -129,6 +133,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     // reported above
   }
 
+  let timer: NodeJS.Timeout | undefined;
+  const timers: { lock?: NodeJS.Timeout } = {};
+  let ended = false;
+  const onLost = (): void => {
+    log("error", "daemon lock was taken over by another process; stopping");
+    void finish(true).then(() => opts.onLockLost?.());
+  };
   const fwd = new Forwarder({
     statePath: daemonStatePath(home),
     spoolDir: spoolDir(home),
@@ -148,6 +159,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     ...(opts.rejectedMaxFiles !== undefined ? { rejectedMaxFiles: opts.rejectedMaxFiles } : {}),
     ...(opts.rejectedMaxBytes !== undefined ? { rejectedMaxBytes: opts.rejectedMaxBytes } : {}),
     ...(opts.backoffCapMs !== undefined ? { backoffCapMs: opts.backoffCapMs } : {}),
+    fence: () => lock.verify(),
+    onFenced: () => {
+      if (!ended) onLost();
+    },
     onSpoolLine: (env: Envelope) => {
       for (const c of components) c.onSpoolLine?.(env);
     },
@@ -181,7 +196,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   await fwd.start();
   const ctx: ComponentContext = { home, host: hostName, log, enqueue: enqueueRaw };
   for (const c of components) await c.start?.(ctx);
-  let timer: NodeJS.Timeout | undefined;
   await heartbeat();
   if ((opts.heartbeatMs ?? HEARTBEAT_MS) > 0) {
     timer = setInterval(
@@ -192,18 +206,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   }
   log("info", `daemon started pid=${process.pid} home=${home}`);
 
-  let ended = false;
   const lockTimer = setInterval(() => {
     if (ended || lock.touch()) return;
-    log("error", "daemon lock was taken over by another process; stopping");
-    void finish(true).then(() => opts.onLockLost?.());
-  }, LOCK_TOUCH_MS);
+    onLost();
+  }, opts.lockTouchMs ?? LOCK_TOUCH_MS);
   lockTimer.unref();
-  const finish = async (graceful: boolean): Promise<void> => {
+  timers.lock = lockTimer;
+  async function finish(graceful: boolean): Promise<void> {
     if (ended) return;
     ended = true;
     if (timer) clearInterval(timer);
-    clearInterval(lockTimer);
+    if (timers.lock) clearInterval(timers.lock);
     await fwd.stop();
     if (graceful) {
       for (const c of components) {
@@ -216,7 +229,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
       log("info", "daemon stopped");
     }
     lock.release();
-  };
+  }
 
   return {
     enqueue: enqueueRaw,

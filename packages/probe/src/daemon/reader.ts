@@ -6,8 +6,8 @@
  * Only complete lines are consumed: a trailing partial line is held back until its newline
  * arrives. Invalid lines are skipped (counted; the log gets file, offset, length and the parse
  * error, never line content) and get no seq. The reader moves to the next day file only when the
- * current one is exhausted, a later one exists, and the current one has not grown for DAY_GRACE_MS:
- * a hook that picked the old day's name just before UTC midnight may still append to it.
+ * current one is exhausted, a later one exists, and the current one has not grown for DAY_GRACE_MS
+ * (counted from the end of its UTC day at the earliest): a hook that picked the old day's name just before UTC midnight may still append to it.
  */
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +23,12 @@ export const SEQ_OVERHEAD = 24;
 const TORN_TAIL_MS = 60_000;
 /** An exhausted day file is left for the next one only after this long without a write. */
 export const DAY_GRACE_MS = 60_000;
+
+/** End (exclusive) of the UTC day a day file is named after, in ms. */
+function dayEnd(file: string): number {
+  const t = Date.parse(`${file.slice(0, 10)}T00:00:00Z`);
+  return Number.isFinite(t) ? t + 86_400_000 : 0;
+}
 
 export interface ReadOutcome {
   items: SpoolLine[];
@@ -122,8 +128,11 @@ export class DayFileReader {
         pos.offset = 0;
       }
       const later = files.find((f) => f > pos.file);
+      // Quiet time counts from the end of the file's UTC day at the earliest: a hook that picked
+      // this name just before midnight may still be on its way to append, however old the mtime.
+      const quietSince = Math.max(st.mtimeMs, dayEnd(pos.file));
       if (st.size === pos.offset) {
-        if (!later || this.now() - st.mtimeMs <= DAY_GRACE_MS) break;
+        if (!later || this.now() - quietSince <= DAY_GRACE_MS) break;
         this.position = { file: later, offset: 0 };
         continue;
       }
@@ -131,7 +140,7 @@ export class DayFileReader {
         path,
         pos,
         st.size,
-        st.mtimeMs,
+        quietSince,
         later !== undefined,
         out,
         maxItems,
@@ -152,7 +161,7 @@ export class DayFileReader {
     path: string,
     pos: Cursor,
     size: number,
-    mtimeMs: number,
+    quietSince: number,
     hasLater: boolean,
     out: ReadOutcome,
     maxItems: number,
@@ -218,7 +227,7 @@ export class DayFileReader {
         !progressed &&
         !stopped &&
         hasLater &&
-        this.now() - mtimeMs > TORN_TAIL_MS &&
+        this.now() - quietSince > TORN_TAIL_MS &&
         buf.length > 0
       ) {
         // A torn final line in a past day file will never be completed.

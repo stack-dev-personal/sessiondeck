@@ -286,32 +286,38 @@ describe("R1.4 single-instance lock", () => {
 });
 
 describe("R1.5 day-file rollover grace", () => {
-  it("does not leave a day file until it has been quiet for the grace period", async () => {
+  const midnight = Date.parse("2026-10-21T00:00:00Z");
+
+  it("the grace counts from UTC midnight even when the old file was last written long before", async () => {
     const dir = join(home, "spool");
-    const t = Date.parse("2026-10-20T23:59:59.000Z");
-    appendSpoolLines(dir, [line(0)], () => t);
-    appendSpoolLines(dir, [line(2)], () => t + 1000); // hook B, next UTC day
+    appendSpoolLines(dir, [line(0)], () => Date.parse("2026-10-20T23:50:00Z"));
+    appendSpoolLines(dir, [line(2)], () => midnight + 50); // hook B, next UTC day
     const f1 = join(dir, "2026-10-20.jsonl");
-    const clock = { now: Date.now() };
+    const old = new Date(midnight - 600_000); // last write 23:50
+    utimesSync(f1, old, old);
+    const clock = { now: midnight + 100 };
     const r = new DayFileReader(dir, undefined, noLog, () => clock.now);
     expect((await r.read(10, 1e6)).items.map(nOf)).toEqual([0]);
     expect(r.position?.file).toBe("2026-10-20.jsonl");
-    // Hook A's delayed write lands in the old file after the daemon has seen it exhausted.
+    // Hook A, slowed after computing the old name at 23:59:59.99, lands its line now.
     appendFileSync(f1, `${JSON.stringify(line(1))}\n`);
+    clock.now = midnight + 5000;
     expect((await r.read(10, 1e6)).items.map(nOf)).toEqual([1]);
     expect(r.position?.file).toBe("2026-10-20.jsonl");
-    clock.now += DAY_GRACE_MS + 1000;
+    const t = new Date(midnight + 5000);
+    utimesSync(f1, t, t); // quiet since the last append
+    clock.now = midnight + 5000 + DAY_GRACE_MS + 1000;
     expect((await r.read(10, 1e6)).items.map(nOf)).toEqual([2]);
     expect(r.position?.file).toBe("2026-10-21.jsonl");
   });
 
-  it("moves on at once when the old file was last written long ago", async () => {
+  it("moves on at once when the old file's day ended long ago", async () => {
     const dir = join(home, "spool");
-    appendSpoolLines(dir, [line(0)], () => Date.parse("2026-10-20T10:00:00Z"));
-    appendSpoolLines(dir, [line(1)], () => Date.parse("2026-10-21T10:00:00Z"));
-    const old = new Date(Date.now() - 3_600_000);
-    utimesSync(join(dir, "2026-10-20.jsonl"), old, old);
-    const r = new DayFileReader(dir, undefined, noLog);
+    appendSpoolLines(dir, [line(0)], () => Date.parse("2026-10-10T10:00:00Z"));
+    appendSpoolLines(dir, [line(1)], () => Date.parse("2026-10-11T10:00:00Z"));
+    const old = new Date(Date.parse("2026-10-10T10:00:00Z"));
+    utimesSync(join(dir, "2026-10-10.jsonl"), old, old);
+    const r = new DayFileReader(dir, undefined, noLog, () => midnight);
     expect((await r.read(10, 1e6)).items.map(nOf)).toEqual([0, 1]);
   });
 });

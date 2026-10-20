@@ -12,13 +12,22 @@ const home = homeIdx >= 0 && argv[homeIdx + 1] ? (argv[homeIdx + 1] as string) :
 // shortens the 30 s retry cap, SESSIONDECK_HEARTBEAT_MS the 30 s heartbeat interval.
 const backoffCapMs = parseBackoffCapMs(process.env["SESSIONDECK_BACKOFF_CAP_MS"]);
 const heartbeatMs = parseHeartbeatMs(process.env["SESSIONDECK_HEARTBEAT_MS"]);
-const daemon = await startDaemon({
-  home,
-  stderr: argv.includes("--stderr"),
-  onLockLost: () => process.exit(0),
-  ...(backoffCapMs !== undefined ? { backoffCapMs } : {}),
-  ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),
-});
+let daemon: Awaited<ReturnType<typeof startDaemon>>;
+try {
+  daemon = await startDaemon({
+    home,
+    stderr: argv.includes("--stderr"),
+    onLockLost: () => process.exit(0),
+    ...(backoffCapMs !== undefined ? { backoffCapMs } : {}),
+    ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),
+  });
+} catch (e) {
+  // E.g. a takeover by another starter that never finished: not "already running", so non-zero.
+  process.stderr.write(
+    `sessiondeck daemon did not start: ${e instanceof Error ? e.message : String(e)}\n`,
+  );
+  process.exit(1);
+}
 if (!daemon) {
   process.stderr.write("sessiondeck daemon already running for this home\n");
   process.exit(0);

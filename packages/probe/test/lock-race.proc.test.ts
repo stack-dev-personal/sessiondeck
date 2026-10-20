@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,14 +22,23 @@ function run(lockPath: string, startAt: number): Promise<string> {
   });
 }
 
+const ROUNDS = 20;
+
 describe("R1.4 concurrent stale-lock takeover", () => {
   it("exactly one of 8 simultaneous starters wins, round after round", async () => {
     const dir = mkdtempSync(join(tmpdir(), "sd-lockrace-"));
     try {
-      for (let round = 0; round < 5; round++) {
+      for (let round = 0; round < ROUNDS; round++) {
         const lockPath = join(dir, `r${round}`, "daemon.lock");
         mkdirSync(join(dir, `r${round}`), { recursive: true });
         writeFileSync(lockPath, JSON.stringify({ pid: 2147483000, boot: 1, token: "dead" }));
+        if (round % 2 === 1) {
+          // A starter crashed holding the takeover mutex a minute ago.
+          const mutex = `${lockPath}.takeover`;
+          writeFileSync(mutex, "dead");
+          const old = new Date(Date.now() - 60_000);
+          utimesSync(mutex, old, old);
+        }
         const startAt = Date.now() + 1500; // node start-up of all children is done by then
         const results = await Promise.all(Array.from({ length: 8 }, () => run(lockPath, startAt)));
         expect(
@@ -41,5 +50,5 @@ describe("R1.4 concurrent stale-lock takeover", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 120_000);
 });

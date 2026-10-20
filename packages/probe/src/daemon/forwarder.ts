@@ -9,11 +9,13 @@
  *
  * One batch in flight. A batch closes at 200 envelopes, 250 ms after its first envelope, or about
  * 900 KiB of body (the hub accepts 1 MiB). A batch the hub still answers 413 to is split in halves
- * and resent (same ids, same seq).
+ * and resent (same ids, same seq). An envelope the hub rejects for good goes to rejected/ and,
+ * when the rest of its batch was delivered, a small `probe` stand-in takes its seq (no gap).
  *
  * Seq order follows `ts`: each batch merges the outbox and the hook spool by ts, and only takes
  * from a source while the other source's next envelope is known (see select()).
  */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
 import type { ProbeConfig } from "../config/config.ts";
@@ -66,6 +68,12 @@ export interface ForwarderOptions {
   /** Caps for the rejected-batch directory (defaults 200 files, 64 MiB). */
   rejectedMaxFiles?: number;
   rejectedMaxBytes?: number;
+  /**
+   * Fencing: checked immediately before every state write and every POST. False means the daemon
+   * lock is foreign; the forwarder then stops without writing or sending and calls onFenced.
+   */
+  fence?: () => boolean;
+  onFenced?: () => void;
   /** Called for each hook-spool envelope of a batch when it is about to be sent. */
   onSpoolLine?: (env: Envelope) => void;
 }
@@ -76,6 +84,29 @@ type Outcome =
   | { kind: "auth"; status: number }
   | { kind: "reject"; status: number; why: string }
   | { kind: "aborted" };
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/**
+ * Small probe envelope that takes the seq of an envelope the hub rejected. The id is derived from
+ * the original's (same timestamp part, hashed random part) so a resend produces the same id.
+ */
+function standIn(env: Envelope, status: number): Envelope {
+  const h = createHash("sha256").update(env.id).digest();
+  let tail = "";
+  for (let i = 0; i < 16; i++) tail += CROCKFORD[(h[i] as number) % 32];
+  return {
+    v: 1,
+    id: env.id.slice(0, 10) + tail,
+    kind: "probe",
+    host: env.host,
+    os: env.os,
+    session_id: null,
+    ts: env.ts,
+    seq: env.seq,
+    payload: { type: "rejected", reason: `HTTP ${status}`, original_id: env.id },
+  };
+}
 
 function range(from: number, to: number): number[] {
   return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
@@ -133,6 +164,21 @@ export class Forwarder {
 
   nextSeq(): number {
     return this.state.next_seq;
+  }
+
+  /** True (and the forwarder is stopped) when the fence says the lock is foreign. */
+  private fenced(): boolean {
+    if (this.dead) return true;
+    if (!this.o.fence || this.o.fence()) return false;
+    this.dead = true;
+    this.ctl.abort();
+    this.o.log("error", "forwarder fenced: the daemon lock is foreign; no further writes or sends");
+    try {
+      this.o.onFenced?.();
+    } catch {
+      // the caller's handler must not break the loop's exit
+    }
+    return true;
   }
 
   /** Stops without flushing: nothing more is written or sent. Whatever is journaled is resent next start. */
@@ -260,7 +306,7 @@ export class Forwarder {
       const cur = this.q[src].length === 0 ? pos : last?.q.end;
       if (cur) pending[src] = { ...cur };
     }
-    if (this.dead) return;
+    if (this.fenced()) return;
     try {
       await saveState(this.o.statePath, { ...this.state, pending });
     } catch (e) {
@@ -300,9 +346,27 @@ export class Forwarder {
     this.authLogged = false;
     const tally = { delivered: 0, rejected: [] as Rejection[] };
     if (!(await this.send(p.envelopes, tally))) return;
-    if (tally.rejected.length > 0) await this.reject(tally.rejected);
+    if (tally.rejected.length > 0) {
+      await this.reject(tally.rejected);
+      // Part of the batch was delivered: keep seq contiguous on the hub with a stand-in per
+      // rejected envelope (the original stays in rejected/).
+      if (tally.delivered > 0 && !(await this.sendStandIns(tally.rejected))) return;
+    }
     // Nothing reached the hub when everything was rejected: reuse the seq, no gap on its side.
     await this.commit(p, tally.delivered === 0);
+  }
+
+  private async sendStandIns(groups: Rejection[]): Promise<boolean> {
+    const standIns = groups.flatMap((g) => g.envs.map((e) => standIn(e, g.status)));
+    const t = { delivered: 0, rejected: [] as Rejection[] };
+    if (!(await this.send(standIns, t))) return false;
+    for (const g of t.rejected) {
+      this.o.log(
+        "error",
+        `hub rejected the stand-ins for seq ${g.envs.map((e) => e.seq).join(",")} (HTTP ${g.status}); the hub will see a seq gap`,
+      );
+    }
+    return true;
   }
 
   /** Sends envelopes until the hub acks, rejects, or the forwarder stops (false). */
@@ -369,6 +433,7 @@ export class Forwarder {
     this.policyLogged = false;
     const base = check.url.href.endsWith("/") ? check.url.href : `${check.url.href}/`;
     const body = JSON.stringify({ host: cfg.host, envelopes: envs });
+    if (this.fenced()) return { kind: "aborted" };
     const signal = AbortSignal.any([this.ctl.signal, AbortSignal.timeout(this.o.requestTimeoutMs)]);
     try {
       const res = await this.o.fetch(new URL("ingest", base), {
@@ -429,7 +494,7 @@ export class Forwarder {
   }
 
   private async commit(p: PendingBatch, rejected: boolean): Promise<void> {
-    if (this.dead) return;
+    if (this.fenced()) return;
     const next: DaemonState = {
       v: 1,
       // A rejected batch never reached the hub, so its seq are reused: no gap on the hub side.
