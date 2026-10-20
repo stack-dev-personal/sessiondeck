@@ -16,7 +16,7 @@ beforeEach(async () => {
   await mkdir(join(stateDir, "sessions"));
 });
 afterEach(async () => {
-  await rm(stateDir, { recursive: true, force: true });
+  await rm(stateDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 const readJson = async (path: string): Promise<Record<string, unknown>> =>
@@ -77,18 +77,21 @@ describe("mergeSprintStatus", () => {
     const base = { sprint: "0", name: "n", branch: "b", state: "running" };
     await mergeSprintStatus(stateDir, base);
     const ids = Array.from({ length: 12 }, (_, i) => `S${i}`);
-    await Promise.all(
+    // allSettled: cleanup must not start while a sibling merge is still in flight.
+    const results = await Promise.allSettled(
       ids.map((id) =>
         mergeSprintStatus(
           stateDir,
           { sessions: { [id]: { state: "running" } } },
-          { lock: { pollMs: 1 } },
+          // waitMs stays below LOCK_STALE_MS (30 s) so a stuck lock fails instead of being taken over.
+          { lock: { pollMs: 1, waitMs: 20_000 } },
         ),
       ),
     );
+    expect(results.filter((r) => r.status === "rejected")).toEqual([]);
     const sessions = (await readJson(sprintStatusPath(stateDir)))["sessions"] as object;
     expect(Object.keys(sessions).sort()).toEqual([...ids].sort());
-  });
+  }, 30_000);
 });
 
 describe("mergeSessionStatus over an existing file", () => {
@@ -132,13 +135,20 @@ describe("mergeSessionStatus over an existing file", () => {
     expect(out).toMatchObject({ state: "running", units_total: 4, units_done: 1 });
   });
 
+  // 15 writers queue on one lock; on a loaded Windows runner each locked merge (read, tmp write,
+  // rename with EPERM retries) takes tens to hundreds of ms, so the default 5 s lock wait and 5 s
+  // test timeout are too tight. Both get headroom; the assertion is unchanged.
   it("loses no update across concurrent merges of distinct keys", async () => {
     const keys = Array.from({ length: 15 }, (_, i) => `k${i}`);
     await mergeSessionStatus(stateDir, "S6", { state: "running" });
-    await Promise.all(
-      keys.map((key) => mergeSessionStatus(stateDir, "S6", { [key]: 1 }, { lock: { pollMs: 1 } })),
+    // allSettled: cleanup must not start while a sibling merge is still in flight.
+    const results = await Promise.allSettled(
+      keys.map((key) =>
+        mergeSessionStatus(stateDir, "S6", { [key]: 1 }, { lock: { pollMs: 1, waitMs: 20_000 } }),
+      ),
     );
+    expect(results.filter((r) => r.status === "rejected")).toEqual([]);
     const file = await readJson(path());
     expect(keys.filter((k) => file[k] !== 1)).toEqual([]);
-  });
+  }, 30_000);
 });
