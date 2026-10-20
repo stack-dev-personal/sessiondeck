@@ -9,7 +9,8 @@
 # deliberately prints both placeholder values, once to stdout and once to
 # stderr, as a session running `env` would. Otherwise the only secret-related
 # output is a yes/no from comparing the git credential helper's answer with
-# GH_TOKEN.
+# GH_TOKEN, plus a yes/no verdict on whether the mirror token variable reached
+# this process (never its value).
 set -euo pipefail
 
 readonly LOG_DIR="/state/${SPRINT_ID}/logs"
