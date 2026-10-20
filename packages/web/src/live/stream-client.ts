@@ -13,6 +13,7 @@ export const BACKOFF_CAP_MS = 10_000;
  * resyncs; a half-open connection is thereby replaced without a banner flicker on a healthy one.
  */
 export const LIVENESS_MS = 60_000;
+export const CONNECT_MS = 10_000;
 
 export type LinkStatus = "connecting" | "open" | "closed";
 
@@ -41,6 +42,8 @@ export interface StreamClientOptions {
   random?: () => number;
   now?: () => number;
   livenessMs?: number;
+  /** A candidate socket that has not delivered `initial` after this long is treated as failed. */
+  connectMs?: number;
 }
 
 export interface StreamClient {
@@ -93,6 +96,16 @@ const strOrNull = (v: unknown): boolean => v === null || typeof v === "string";
 const windowOk = (v: unknown): boolean =>
   v === null || (isObj(v) && numOrNull(v["used_pct"]) && numOrNull(v["resets_at"]));
 
+const subagentOk = (v: unknown): boolean =>
+  isObj(v) &&
+  typeof v["agent_id"] === "string" &&
+  typeof v["agent_type"] === "string" &&
+  typeof v["started_at"] === "number" &&
+  numOrNull(v["ended_at"]) &&
+  numOrNull(v["tokens"]) &&
+  numOrNull(v["context_window"]) &&
+  strOrNull(v["model"]);
+
 /** Ids that would act on the prototype when used as a plain-object key. */
 export const RESERVED_IDS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
 
@@ -121,9 +134,16 @@ export function isSnapshot(v: unknown): v is SessionSnapshot {
     !strOrNull(tasks["last_subject"])
   )
     return false;
-  if (!Array.isArray(v["subagents"]) || !v["subagents"].every(isObj)) return false;
+  if (!Array.isArray(v["subagents"]) || !v["subagents"].every(subagentOk)) return false;
   const git = v["git"];
   if (!isObj(git) || !strOrNull(git["branch"]) || !strOrNull(git["worktree"])) return false;
+  const pr = git["pr"];
+  if (
+    pr !== null &&
+    pr !== undefined &&
+    !(isObj(pr) && typeof pr["number"] === "number" && typeof pr["url"] === "string")
+  )
+    return false;
   const model = v["model"];
   if (
     model !== null &&
@@ -168,6 +188,7 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   const random = opts.random ?? Math.random;
   const now = opts.now ?? Date.now;
   const livenessMs = opts.livenessMs ?? LIVENESS_MS;
+  const connectMs = opts.connectMs ?? CONNECT_MS;
 
   let running = false;
   let current: WebSocketLike | null = null;
@@ -175,6 +196,10 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   let attempt = 0;
   let retryTimer: unknown = null;
   let liveTimer: unknown = null;
+  let connectTimer: unknown = null;
+  /** Counts messages received on `current`; a probe that fails is judged against it. */
+  let msgSeq = 0;
+  let probeSeq = 0;
 
   const detach = (s: WebSocketLike | null): void => {
     if (!s) return;
@@ -188,7 +213,12 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   const clearTimers = (): void => {
     if (retryTimer !== null) clearT(retryTimer);
     if (liveTimer !== null) clearT(liveTimer);
-    retryTimer = liveTimer = null;
+    if (connectTimer !== null) clearT(connectTimer);
+    retryTimer = liveTimer = connectTimer = null;
+  };
+  const clearConnect = (): void => {
+    if (connectTimer !== null) clearT(connectTimer);
+    connectTimer = null;
   };
   const armLiveness = (): void => {
     if (liveTimer !== null) clearT(liveTimer);
@@ -212,13 +242,21 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   /** A socket (current or candidate) failed or closed. */
   const lost = (sock: WebSocketLike): void => {
     detach(sock);
-    if (sock === candidate) candidate = null;
+    if (sock === candidate) {
+      candidate = null;
+      clearConnect();
+    }
     if (sock === current) {
       current = null;
       if (liveTimer !== null) clearT(liveTimer);
       liveTimer = null;
       if (candidate === null) scheduleRetry();
       else opts.onStatus("connecting", null);
+      return;
+    }
+    if (current && msgSeq !== probeSeq) {
+      // The probe was refused or hung, but the old socket delivered data meanwhile: it is alive.
+      armLiveness();
       return;
     }
     if (current) {
@@ -245,14 +283,22 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
       return;
     }
     candidate = sock;
+    probeSeq = msgSeq;
+    clearConnect();
+    connectTimer = setT(() => {
+      connectTimer = null;
+      if (sock === candidate) lost(sock);
+    }, connectMs);
     let ready = false;
     sock.onmessage = (ev) => {
       if (sock !== candidate && sock !== current) return;
       const msg = parseMessage(ev.data);
       if (msg === null) return;
+      if (sock === current) msgSeq += 1;
       if (liveTimer !== null) armLiveness();
       if (msg.type === "initial") {
         if (sock === candidate) {
+          clearConnect();
           const old = current;
           candidate = null;
           current = sock;

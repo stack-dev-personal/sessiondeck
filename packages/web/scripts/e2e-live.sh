@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# One command for the live e2e (R3.1, R3.9): builds the hub image, starts hub + ws-gate + Playwright
-# containers on a private network, runs e2e/R3.1 and R3.9, copies screenshots, removes everything.
+# One command for the live e2e: builds the hub image, starts hub + ws-gate + Playwright containers
+# on a private network, runs every live spec (R3.1, R3.3, R3.9; R3.6 will follow), copies
+# screenshots, removes everything.
 #
 #   packages/web/scripts/e2e-live.sh
 #

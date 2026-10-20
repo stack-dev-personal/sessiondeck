@@ -7,6 +7,7 @@ import {
   backoffDelay,
   base64url,
   createStreamClient,
+  isSnapshot,
   parseMessage,
   protocolsFor,
   streamUrl,
@@ -14,6 +15,8 @@ import {
   type WebSocketLike,
 } from "./stream-client";
 import { wireStream } from "./start";
+import { applyEnvelope } from "../ingest";
+import { buildMockTimeline } from "../mock/timeline";
 
 class FakeWs implements WebSocketLike {
   static all: FakeWs[] = [];
@@ -106,6 +109,40 @@ function setup(over: { random?: () => number } = {}) {
 
 beforeEach(() => {
   FakeWs.all = [];
+});
+
+describe("isSnapshot", () => {
+  it("accepts every snapshot the contract reducers produce from the fixtures", () => {
+    const snaps: Record<string, SessionSnapshot> = {};
+    for (const e of buildMockTimeline(Date.UTC(2026, 0, 1))) {
+      const next = applyEnvelope(snaps[e.session_id ?? ""], e);
+      if (next) snaps[next.session_id] = next;
+    }
+    const all = Object.values(snaps);
+    expect(all.length).toBeGreaterThan(3);
+    expect(all.some((s) => s.subagents.length > 0)).toBe(true);
+    expect(all.some((s) => s.context.used_pct !== null && s.cost.usd !== null)).toBe(true);
+    expect(all.some((s) => s.tasks.total > 0)).toBe(true);
+    for (const s of all) expect(isSnapshot(s)).toBe(true);
+  });
+
+  it("rejects a non-scalar git.pr and malformed subagent rows", () => {
+    const base = snap("a");
+    expect(isSnapshot({ ...base, git: { ...base.git, pr: { number: {}, url: "u" } } })).toBe(false);
+    expect(isSnapshot({ ...base, git: { ...base.git, pr: { number: 4, url: "u" } } })).toBe(true);
+    const row = {
+      agent_id: "x",
+      agent_type: "t",
+      started_at: 1,
+      ended_at: null,
+      tokens: null,
+      context_window: null,
+      model: null,
+    };
+    expect(isSnapshot({ ...base, subagents: [row] })).toBe(true);
+    expect(isSnapshot({ ...base, subagents: [{ ...row, agent_type: {} }] })).toBe(false);
+    expect(isSnapshot({ ...base, subagents: [{ ...row, tokens: "9" }] })).toBe(false);
+  });
 });
 
 describe("stream client", () => {
@@ -249,6 +286,45 @@ describe("stream client", () => {
     expect(FakeWs.all).toHaveLength(3);
   });
 
+  it("a refused probe does not kill a current socket that delivered data meanwhile", () => {
+    const { client, statuses, c } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.send({ type: "initial", sessions: [snap("a")] });
+    c.advance(60_000);
+    first.send({ type: "session", data: snap("a", "idle") });
+    const n = statuses.length;
+    FakeWs.all[1]!.onerror?.({});
+    expect(first.closed).toBe(false);
+    expect(statuses).toHaveLength(n);
+    c.advance(60_000);
+    expect(FakeWs.all).toHaveLength(3);
+  });
+
+  it("a probe that hangs is abandoned after the connect timeout and the silent socket is dropped", () => {
+    const { client, statuses, c } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.send({ type: "initial", sessions: [snap("a")] });
+    c.advance(60_000);
+    const probe = FakeWs.all[1]!;
+    c.advance(9_999);
+    expect(first.closed).toBe(false);
+    c.advance(1);
+    expect(probe.closed).toBe(true);
+    expect(first.closed).toBe(true);
+    expect(statuses.at(-1)![0]).toBe("closed");
+  });
+
+  it("a first connection that never answers is retried after the connect timeout", () => {
+    const { client, c } = setup();
+    client.start();
+    c.advance(10_000);
+    expect(FakeWs.all[0]!.closed).toBe(true);
+    c.advance(10_000);
+    expect(FakeWs.all.length).toBeGreaterThan(1);
+  });
+
   it("current dropping while a candidate is pending keeps connecting, then adopts the candidate", () => {
     const { client, statuses, c, store } = setup();
     client.start();
@@ -258,7 +334,7 @@ describe("stream client", () => {
     const cand = FakeWs.all[1]!;
     first.drop();
     expect(statuses.at(-1)).toEqual(["connecting", null]);
-    expect(c.pending()).toBe(0);
+    expect(c.pending()).toBe(1); // only the candidate connect timer
     cand.send({ type: "initial", sessions: [snap("b")] });
     expect(statuses.at(-1)).toEqual(["open", null]);
     expect(Object.keys(store.getState().sessions)).toEqual(["b"]);

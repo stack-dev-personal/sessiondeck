@@ -90,7 +90,11 @@ export function BoardToolbar({
           {hiddenAttention} hidden {hiddenAttention === 1 ? "needs" : "need"} attention
         </span>
       ) : null}
-      <span role="status" data-testid="board-count" className={`num text-fg-muted ${hiddenAttention > 0 ? "" : "ml-auto"}`}>
+      <span
+        role="status"
+        data-testid="board-count"
+        className={`num text-fg-muted ${hiddenAttention > 0 ? "" : "ml-auto"}`}
+      >
         {active
           ? `Showing ${shown} of ${total}`
           : `${total} ${total === 1 ? "session" : "sessions"}`}

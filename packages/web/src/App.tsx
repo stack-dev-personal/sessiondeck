@@ -47,7 +47,9 @@ export function App() {
         </ErrorBoundary>
       </main>
       <ConnectionBanner />
-      <DrawerHost />
+      <ErrorBoundary>
+        <DrawerHost />
+      </ErrorBoundary>
     </div>
   );
 }
