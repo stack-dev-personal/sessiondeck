@@ -136,3 +136,34 @@ Linux and WSL2:
 tail -n 5 ~/.local/state/sessiondeck/spool/$(date -u +%F).jsonl | jq .
 tail -n 5 ~/.local/state/sessiondeck/spool/$(date -u +%F).jsonl | jq -r '[.ts,.kind,.hook_event_name] | @tsv'
 ```
+
+## Statusline and subagent rows
+
+`dist/statusline.mjs` is the `statusLine` command. It reads bounded stdin (8 MB, 2 s), appends one
+`statusline` line to the spool FIRST (Claude Code cancels an in-flight script when a new tick
+starts), then prints exactly one line and exits 0. It never prints a stack trace. Missing or
+malformed stdin prints the fallback line `sessiondeck`, never a blank bar. Failures are logged to
+`hook-errors.log` (reason only, prefixed `statusline`).
+
+Format: `<model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`
+
+- Model is `model.display_name` (else `model.id`), control characters stripped, 40 chars max.
+  Effort level and `cost.total_cost_usd` are shown when present. "State" in the board sense
+  (working, waiting, idle) is not in the payload; the hub derives it from hook events.
+- `ctx` is `context_window.used_percentage` when it is 0..100, else computed from `current_usage`
+  tokens over `context_window_size`, else `n/a`.
+- `5h` and `7d` come from `rate_limits`. A window is `n/a` when the percentage is outside 0..100
+  (Claude Code bug #52326) or `resets_at` (epoch seconds) is in the past (stale). No
+  `rate_limits` at all (API-key plan) gives `5h n/a | 7d n/a`.
+- Plain ASCII separators, no ANSI.
+
+On Windows the entry runs `chcp.com 65001` (hidden, failures ignored) before printing so
+non-ASCII model names survive; ported from ccstatusline (see `src/win-utf8.ts`). No snapshot file
+is written, so no atomic-write helper is needed.
+
+`dist/subagents.mjs` is the `subagentStatusLine` command: it appends one `subagents` line (the
+whole payload including `tasks`) and prints nothing, so Claude Code keeps its default rows. Exit 0
+under any input.
+
+Latency (informational, `node packages/probe/scripts/bench-statusline.mjs`, 100 runs, Linux/WSL2,
+no chcp): p50 about 86 ms, p95 about 109 ms. On Windows `chcp.com` adds a process spawn per tick.
