@@ -51,3 +51,40 @@ body {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* Card geometry: fixed so values arriving never move the grid (design system principle 3). */
+:root {
+  --card-h: 10rem;
+  --card-compact-h: 36px;
+}
+
+@keyframes sd-glow {
+  0% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 0 0 var(--accent-attention);
+  }
+  40% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 10px 3px var(--accent-attention);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 0 0 transparent;
+  }
+}
+
+/* Attention: steady 1px ring, plus a one-time 400 ms glow on arrival. */
+.sd-attention {
+  border-color: var(--accent-attention);
+  box-shadow: 0 0 0 1px var(--accent-attention);
+  animation: sd-glow 400ms var(--ease) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-attention {
+    animation: none;
+  }
+}

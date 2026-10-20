@@ -85,7 +85,7 @@ describe("shell", () => {
     mount();
     for (const st of SESSION_STATES) {
       const row = screen
-        .getAllByTestId("session-row")
+        .getAllByTestId("session-card")
         .find((r) => r.querySelector(`[data-state="${st}"]`))!;
       expect(row).toHaveTextContent(STATE_VOCAB[st].glyph);
       expect(row).toHaveTextContent(STATE_VOCAB[st].label);
@@ -123,6 +123,6 @@ describe("shell keys and surfaces", () => {
       sessions: { a: createSnapshot({ session_id: "a", host: "h", cwd: "/p/a", ts: 1 }) },
     });
     mount();
-    expect(screen.getByTestId("session-row")).toHaveClass("bg-surface-1");
+    expect(screen.getByTestId("session-card")).toHaveClass("bg-surface-1");
   });
 });

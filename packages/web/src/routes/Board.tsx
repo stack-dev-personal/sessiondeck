@@ -1,32 +1,35 @@
 import { useMemo } from "react";
-import { StateChip } from "../components/StateChip";
+import { CompactCard, SessionCard } from "../components/SessionCard";
+import { useNow } from "../hooks/useNow";
 import { useBoard } from "../store/board";
+import { useUi } from "../store/ui";
 
-/** Plain list for now; U2 replaces each row with the session card. */
+/**
+ * Store order (no attention sorting yet, session S6). Full: responsive grid of 6-row cards.
+ * Compact: a dense single-column list of 36 px rows (the horizontally scrolling strip of design
+ * system 5.4 is a layout pane form, built with layouts in Phase 6).
+ */
 export function Board() {
   const sessions = useBoard((s) => s.sessions);
-  const list = useMemo(
-    () => Object.values(sessions).sort((a, b) => b.last_event_at - a.last_event_at),
-    [sessions],
-  );
+  const compact = useUi((s) => s.compact);
+  const now = useNow();
+  const list = useMemo(() => Object.values(sessions), [sessions]);
   if (list.length === 0) {
     return <p className="p-s-4 text-fg-muted">No sessions yet.</p>;
   }
   return (
-    <ul className="m-0 list-none p-s-4" aria-label="Sessions">
+    <ul
+      className={
+        compact
+          ? "m-0 flex list-none flex-col gap-s-1 p-s-4"
+          : "m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(28rem,1fr))] gap-s-3 p-s-4"
+      }
+      aria-label="Sessions"
+      data-density={compact ? "compact" : "full"}
+    >
       {list.map((s) => (
-        <li
-          key={s.session_id}
-          className="flex items-center gap-s-4 border-b border-border bg-surface-1 py-s-2"
-          data-testid="session-row"
-        >
-          <span className="w-64 shrink-0">
-            <StateChip state={s.state} detail={s.state_detail} />
-          </span>
-          <span className="truncate">
-            {s.session_name ?? s.cwd.split("/").pop() ?? s.session_id}
-          </span>
-          <span className="num ml-auto text-sm text-fg-faint">{s.host}</span>
+        <li key={s.session_id} className="min-w-0">
+          {compact ? <CompactCard s={s} now={now} /> : <SessionCard s={s} now={now} />}
         </li>
       ))}
     </ul>
