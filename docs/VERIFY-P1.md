@@ -58,3 +58,22 @@ Branch p1/probe-daemon, HEAD 7c1f9a7. Verified 2026-10-20T22:21Z to 22:25Z (Linu
 | gates | typecheck, lint (packages/probe) | `pnpm typecheck`; `pnpm lint` | both exit 0 | PASS |
 
 U4b count: 4 pass / 0 fail / 2 unverifiable-now (Windows scheduler and launcher: CI pending; 10 min daemon-process outage: deferred).
+
+## S2 session-close verification (R1.4-R1.7, final evidence)
+
+Branch p1/probe-daemon, code HEAD 830239d (docs commit follows). Verified 2026-10-20T22:43Z to 22:51Z (Linux WSL2, node v22.23.3). One test process at a time, --maxWorkers=2. This section supersedes the S2 rows and U4a/U4b sections above where they differ.
+
+Gates: `pnpm -r typecheck` exit 0; `pnpm -r lint` exit 0; `pnpm format:check` exit 0. `pnpm -r --workspace-concurrency=1 test -- --maxWorkers=2` exit 0: contract 1090 passed / 1 skipped; hub 177 passed (15 files); probe 305 passed / 1 skipped (11 files); scripts 575 passed / 7 skipped. `pnpm -F @sessiondeck/probe test:proc -- --maxWorkers=2` exit 0: 11 files, 146 passed / 4 skipped (Windows-only), 37.6 s.
+
+| ID | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R1.4 | `node scripts/harness-loss.mjs`; `harness-daemon-e2e.mjs`; `test:proc` (lock-race, daemon-e2e, autostart systemd) | `R1.4 kill/restart: sent=500 accepted=500 duplicates=0 gaps=0 order=ok daemon_kills=3 resent_ids=52`; e2e `seq 0..62, conflicts=0, resent_ids=0`, no redelivery after restart; lock-race 3/3 (exactly one winner of 8, 20 rounds); systemd unit proc test passed | PASS (Linux). Windows Task Scheduler and launcher: verified by CI (pending: Actions unavailable) | 2026-10-20T22:47Z |
+| R1.5 | `harness-loss.mjs`; `harness-daemon-outage.mjs` (compressed 15 s); `harness-integration-hub.mjs` | loss: `R1.5 outage 15000ms: sent=500 accepted=500 duplicates=0 gaps=0 order=ok recover_ms=655`; daemon: `sent=600 accepted=600 duplicates=0 gaps=0 order=outage-host=ok resent_ids=0 recover_ms=906`; real hub container killed and restarted: `sent=500 accepted=500 duplicates=0 gaps=0` RESULT pass. Full SD_OUTAGE_MS=600000 run NOT re-run here (exceeds the foreground limit); cited from 0143d8e: `sent=500 accepted=500 duplicates=0 gaps=0 order=ok recover_ms=609` | PASS (10 min at component level from 0143d8e; daemon process compressed only, 10 min through the daemon process not run) | 2026-10-20T22:48Z |
+| R1.6 | `harness-transcript.mjs`; `harness-daemon-e2e.mjs` | `lines_written=209 delivered=209 duplicates=0 resets=2 subagent_lines=50 restarts=3`, order ok, start_line_contiguous=true; e2e main 9/9, subagent 7/7 once, resumes 10/10 after restart, outside-projects path refused | PASS (Linux). Windows real-fs replace: verified by CI (pending: Actions unavailable) | 2026-10-20T22:46Z |
+| R1.7 | `harness-liveness.mjs`; `harness-daemon-e2e.mjs`; `test:proc` liveness | `killed_pid=42207 detected_ms=11553 envelope=alive:false within_15s=true`; e2e `detected_ms=11772`; sessionend_suppressed, same_pid_old_session_silent, no_duplicate_after_restart all true | PASS (Linux). Windows paths: verified by CI (pending: Actions unavailable) | 2026-10-20T22:48Z |
+
+Integration (`node packages/probe/scripts/harness-integration-hub.mjs`): docker build ok in 19 s, hub healthy, `accepted_before_kill=165`, hub log `accepted=501 duplicates=0`, `sent=500 accepted=500 duplicates=0 gaps=0`, RESULT pass, exit 0. The diagnostic line `seq_gaps=1` (heartbeat seq 0 vs 500 events) did not fail the check; final `gaps=0`. `docker ps -a --filter name=sd-1-S2` empty afterwards.
+
+CI: `gh run list --branch p1/probe-daemon -L 3` on 2026-10-20T22:50Z: 39510297500 (830239d, 5 s), 39507270068 (4 s), 39506713349 (6 s) all `failure` in seconds with no runner (Actions unavailable since 22:15Z). Last real windows-latest run with all probe tests passing: 39482860743 (19:22Z); 39486100922 on 4eb9e97 failed only the RunLevel assertion fixed in 9b1ccc7.
+
+Final count (R1.4-R1.7): 4 pass (Linux) / 0 fail / Windows parts verified by CI (pending).
