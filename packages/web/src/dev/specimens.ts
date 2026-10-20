@@ -60,6 +60,8 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
       ...s,
       session_id: id,
       host: "stack-lap",
+      cwd: "/w/bb2dash",
+      project_dir: "/w/bb2dash",
       state,
       state_since: now - 720_000,
       state_detail: state === "working" ? "tool:Edit" : null,

@@ -18,9 +18,7 @@ export function focusCard(id: string): boolean {
 
 /** Id of the card after the given one in DOM order, else the one before it, else null. */
 function neighbourOf(id: string): string | null {
-  const cards = Array.from(
-    document.querySelectorAll<HTMLElement>('[data-testid="session-card"]'),
-  );
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="session-card"]'));
   const i = cards.findIndex((c) => c.dataset["sessionId"] === id);
   if (i === -1) return null;
   return (cards[i + 1] ?? cards[i - 1])?.dataset["sessionId"] ?? null;
