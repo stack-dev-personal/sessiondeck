@@ -21,6 +21,38 @@ export interface SessionRow {
   ended_at: number | null;
 }
 
+export interface EventRow {
+  id: string;
+  host: string;
+  seq: number;
+  kind: string;
+  session_id: string | null;
+  agent_id: string | null;
+  hook_event_name: string | null;
+  ts: number;
+  payload: string;
+  signature: string | null;
+}
+
+export interface SampleRow {
+  session_id: string;
+  ts: number;
+  context_used_pct: number | null;
+  cost_usd: number | null;
+  five_hour_pct: number | null;
+  five_hour_resets: number | null;
+  seven_day_pct: number | null;
+  seven_day_resets: number | null;
+}
+
+export interface TranscriptLineRow {
+  session_id: string;
+  agent_id: string;
+  line_no: number;
+  ts: number;
+  raw: string;
+}
+
 export class Store {
   readonly db: Database.Database;
   private readonly cache = new Map<string, Database.Statement>();
@@ -124,6 +156,56 @@ export class Store {
          project_dir = excluded.project_dir, started_at = excluded.started_at,
          last_event_at = excluded.last_event_at, ended_at = excluded.ended_at`,
     ).run(row);
+  }
+
+  /** An event with this signature and |ts - ts'| < windowMs exists (events_signature index). */
+  hasSignatureWithin(signature: string, ts: number, windowMs: number): boolean {
+    return (
+      this.stmt("SELECT 1 AS x FROM events WHERE signature = ? AND ts > ? AND ts < ? LIMIT 1").get(
+        signature,
+        ts - windowMs,
+        ts + windowMs,
+      ) !== undefined
+    );
+  }
+
+  /** True when a row was inserted; false when id or (host, seq) already exists. */
+  insertEvent(e: EventRow): boolean {
+    return (
+      this.stmt(
+        `INSERT INTO events (id, host, seq, kind, session_id, agent_id, hook_event_name, ts, payload, signature)
+         VALUES (@id, @host, @seq, @kind, @session_id, @agent_id, @hook_event_name, @ts, @payload, @signature)
+         ON CONFLICT DO NOTHING`,
+      ).run(e).changes === 1
+    );
+  }
+
+  /** Latest statusline sample per (session_id, ts) wins. */
+  upsertSample(s: SampleRow): void {
+    this.stmt(
+      `INSERT INTO statusline_samples (session_id, ts, context_used_pct, cost_usd, five_hour_pct, five_hour_resets, seven_day_pct, seven_day_resets)
+       VALUES (@session_id, @ts, @context_used_pct, @cost_usd, @five_hour_pct, @five_hour_resets, @seven_day_pct, @seven_day_resets)
+       ON CONFLICT(session_id, ts) DO UPDATE SET context_used_pct = excluded.context_used_pct, cost_usd = excluded.cost_usd,
+         five_hour_pct = excluded.five_hour_pct, five_hour_resets = excluded.five_hour_resets,
+         seven_day_pct = excluded.seven_day_pct, seven_day_resets = excluded.seven_day_resets`,
+    ).run(s);
+  }
+
+  /** True when the line was new; a re-sent (session, agent, line_no) is ignored. */
+  insertTranscriptLine(l: TranscriptLineRow): boolean {
+    return (
+      this.stmt(
+        `INSERT INTO transcript_lines (session_id, agent_id, line_no, ts, raw)
+         VALUES (@session_id, @agent_id, @line_no, @ts, @raw) ON CONFLICT DO NOTHING`,
+      ).run(l).changes === 1
+    );
+  }
+
+  /** Sessions of a host that are not in state 'ended'; the caller filters by pid. */
+  listOpenSessionsForHost(host: string): SessionRow[] {
+    return this.stmt("SELECT * FROM sessions WHERE host = ? AND state <> 'ended'").all(
+      host,
+    ) as SessionRow[];
   }
 
   close(): void {
