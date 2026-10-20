@@ -1,4 +1,26 @@
-# VERIFY P3 (branch p3/board-mock, HEAD df360b5)
+# VERIFY P3 (branch p3/board-mock, HEAD e816b7c)
+
+Re-verified 2026-10-20T14:33:16Z by sd-verifier after U6 (four tokens raised to 4.5:1). Nothing was fixed. Partial is fail.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R3.2 Card shows all A6 indicators; nulls render "n/a" with no layout shift | `pnpm --filter web test`; Playwright e2e/R3.2.spec.ts | 115/115 unit pass; e2e 3/3 pass (8 states, glyph+label, null card same geometry, 2560x1440, 7 of 8 with context/limits/branch). Screenshot /state/1/screens/S5/R3.2.png | PASS | 2026-10-20T14:33:16Z |
+| R3.4 Compact toggles with `c`; persists in localStorage (guarded) | same unit run (SessionCard.test compact toggle); e2e/R3.4.spec.ts | unit pass; e2e pass. R3.4-compact.png | PASS | 2026-10-20T14:33:16Z |
+| R3.5 Drawer opens with Enter or click, closes with Esc; focus returns to card | same unit run (DetailDrawer.test, 23 tests); e2e/R3.5.spec.ts | unit pass; e2e 2/2 pass. R3.5-drawer.png | PASS | 2026-10-20T14:33:16Z |
+| R3.7 WCAG AA contrast light and dark; no color-only information | `pnpm -F @sessiondeck/web contrast`; e2e/R3.7.spec.ts (5 tests) | contrast report "Text failures (0)"; e2e: 0 of 280 measured elements fail in dark and in light; axe none on /board and /dev/cards both themes; no-color-only test pass. R3.7-dark.png, R3.7-light.png | PASS | 2026-10-20T14:33:16Z |
+| R3.8 Mock mode runs the full UI with no hub | e2e/R3.8.spec.ts; `vite build --outDir /tmp/sd-s5-nomock` then `node scripts/check-bundle.mjs /tmp/sd-s5-nomock nomock` | e2e pass (8 states, no network beyond preview server); "nomock: 1 js files, 262977 bytes, fixture marker absent". R3.8.png | PASS | 2026-10-20T14:33:16Z |
+
+## Evidence at e816b7c
+
+- Unit: `pnpm --filter web test`: Test Files 9 passed (9), Tests 115 passed (115). The earlier run counted 116; the count differs by one, consistent with the contrast test rewrite in U6 (not investigated further).
+- Playwright: `docker run --name sd-1-S5-verify --volumes-from sprint-1 -w /work/wt/S5/packages/web --ipc=host -e HOME=/root -e SCREENS_DIR=/state/1/screens/S5 -e CI=1 mcr.microsoft.com/playwright:v1.63.0-noble node node_modules/@playwright/test/cli.js test` (same invocation as CI job e2e-web, run as root like CI; container removed afterwards). Result: 12 passed (43.3s). A first attempt with `-u 1000` failed on a root-owned packages/web/dist/e2e-mock/assets left by an earlier run; it is not a product failure.
+- Bundle check used a separate outDir because `pnpm build` into dist hits root-owned files under dist/e2e-mock (gitignored, created by the root container run).
+- Contrast: all 20 token rows and 12 other pairs pass; changed tokens: dark state-ended #7f868f 4.75, dark fg-faint 4.78, light state-starting #6e757d 4.66, light fg-faint 4.66.
+- Screenshots in /state/1/screens/S5/: R3.2.png, R3.2-board.png, R3.2-2560.png, R3.4-compact.png, R3.5-drawer.png, R3.7-dark.png, R3.7-light.png, R3.7-board-light.png, R3.8.png, summary.json.
+
+# History: earlier verification at df360b5 (72e7a63 doc), superseded
+
+## (earlier) VERIFY P3 (branch p3/board-mock, HEAD df360b5)
 
 Verified 2026-10-20T02:58:24Z by sd-verifier. Nothing was fixed. Partial is fail.
 
