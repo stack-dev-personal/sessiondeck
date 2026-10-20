@@ -2,7 +2,7 @@
 // write through AutostartFs, so unit tests assert the exact argv and bytes without touching the host.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 
 export interface ExecResult {
   /** Exit code; null when the process could not be started or was killed. */
@@ -26,7 +26,9 @@ export interface AutostartFs {
    */
   write(file: string, data: string | Uint8Array, mode?: number): Promise<void>;
   /** Owner and permission bits of a path, or undefined when it does not exist. */
-  statPath(path: string): Promise<{ uid: number; mode: number } | undefined>;
+  statPath(path: string): Promise<{ uid: number; mode: number; mtimeMs?: number } | undefined>;
+  /** File names (not paths) in a directory; empty when it does not exist. */
+  list(dir: string): Promise<string[]>;
   /** The file's text, or undefined when it does not exist. */
   read(file: string): Promise<string | undefined>;
   /** Removes the file; a missing file is fine. */
@@ -53,6 +55,9 @@ export interface AutostartDeps extends AutostartIo {
   e: AutostartEnv;
   exec: ExecFn;
   fs: AutostartFs;
+  /** Clock and pause seams for the bounded wait after stopping a daemon (tests inject fakes). */
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** What gets started: absolute node, the daemon script and the probe home it runs with. */
@@ -123,9 +128,17 @@ export const realFs: AutostartFs = {
   statPath: async (path) => {
     try {
       const st = await stat(path);
-      return { uid: st.uid, mode: st.mode };
+      return { uid: st.uid, mode: st.mode, mtimeMs: st.mtimeMs };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw e;
+    }
+  },
+  list: async (dir) => {
+    try {
+      return await readdir(dir);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw e;
     }
   },

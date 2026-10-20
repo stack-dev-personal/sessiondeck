@@ -25,6 +25,8 @@ export interface AutostartRun extends AutostartIo {
   nodePath: string;
   exec?: ExecFn;
   fs?: AutostartFs;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export function currentAutostartEnv(): AutostartEnv {
@@ -127,11 +129,15 @@ export async function runAutostart(argv: string[], r: AutostartRun): Promise<num
     err: r.err,
     exec: r.exec ?? realExec,
     fs: r.fs ?? realFs,
+    ...(r.now ? { now: r.now } : {}),
+    ...(r.sleep ? { sleep: r.sleep } : {}),
   };
   // Real runs spell the home as `probe install` does (symlinks and 8.3 names expanded); simulated
   // platforms (tests) keep the flag as given.
   const pe = { platform: p, env: r.e.env, home: r.e.home };
   const real = r.fs === undefined && p === process.platform;
+  // The user's home is os.homedir() (USERPROFILE on Windows), the same source paths.ts and the
+  // hooks use, so the restriction and the default probe home agree.
   const home = homeFlag !== undefined && !real ? homeFlag : probeHome(pe, homeFlag);
   const cmd: DaemonCommand = {
     node: r.nodePath,
@@ -139,12 +145,12 @@ export async function runAutostart(argv: string[], r: AutostartRun): Promise<num
     probeHome: home,
   };
   try {
-    if (verb === "install") {
-      const refusal = await homeRefusal(p, home, r.e, deps, real);
-      if (refusal) {
-        r.err(`probe: ${refusal}`);
-        return 1;
-      }
+    // Same restriction for both verbs: uninstall deletes files under --home, so it must not be
+    // pointed at a folder outside the user's own probe home either.
+    const refusal = await homeRefusal(p, home, r.e, deps, real);
+    if (refusal) {
+      r.err(`probe: ${refusal}`);
+      return 1;
     }
     if (verb === "install") {
       return p === "win32"

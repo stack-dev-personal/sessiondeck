@@ -141,12 +141,26 @@ background process at every logon is a separate decision from adding hooks. Run
   running instance, rewrites the launcher and the task, and starts it. It runs
   `schtasks.exe /Create /TN SessionDeckProbeDaemon /XML <file> /F` (so installing twice leaves one
   task) and then `/Run`; uninstall runs `/End` and `/Delete /F`, and succeeds when the task is absent
-  (any other query failure, such as access denied, exits 1 and keeps the launcher). The schtasks and
-  wscript paths are fixed at `C:\Windows\System32`; a `SystemRoot` or `windir` that names anything
-  else is refused. On Windows `--home` must be the default probe home or a folder beneath it (the
-  launcher runs at every logon and no ACL is set elsewhere); paths containing `%` are refused. On
-  Linux an existing `--home` must be owned by you and not group or world writable. Files are
-  written to a fresh temp name and renamed over the target (mode 0600), never through a symlink.
+  (any other query failure, such as access denied, exits 1 and keeps the launcher).
+  `/End` stops the launcher (wscript) but not necessarily the `node.exe` it started, which would keep
+  the daemon lock. So after `/End`, reinstall and uninstall stop the daemon itself: they read the
+  newest `daemon\daemon.lock[.N]` under the probe home for the pid, act only when that file was
+  touched in the last 60 s (a live daemon touches it every 10 s, so a stale file with a reused pid is
+  ignored) and `tasklist` shows the pid as `node.exe`, then run `taskkill /PID <pid> /F` and wait up to
+  10 s for it to go. The daemon keeps its state in atomic files and the next daemon judges the dead
+  pid's lock stale, so a forced stop loses nothing. If the daemon will not stop, reinstall exits 1
+  before writing anything; uninstall reports it and still removes the task. (The launcher keeps
+  treating exit 0 as "stop", including lock contention; the stop-the-daemon step is what prevents a
+  second launcher from meeting a live old daemon.) The schtasks, wscript, tasklist and taskkill
+  paths are fixed at `C:\Windows\System32` and the Windows directory is never taken from the
+  environment: a `SystemRoot`, `SYSTEMROOT` or `windir` that names anything else (a Windows
+  installed on `D:\Windows`, or a planted value) is refused with a message saying so, and
+  `probe daemon run` remains available there. On Windows `--home` must be the default probe home or a
+  folder beneath it, for install and for uninstall (the launcher runs at every logon and no ACL is
+  set elsewhere); the user's home is `os.homedir()` (`USERPROFILE`), the same source the hooks and the
+  default probe home use. Paths containing `%` are refused. On Linux an existing `--home` must be
+  owned by you and not group or world writable. Files are written to a fresh temp name and renamed
+  over the target (mode 0600), never through a symlink; the temp file is removed if the write fails.
   Check the task:
   ```
   schtasks /Query /TN SessionDeckProbeDaemon /V /FO LIST

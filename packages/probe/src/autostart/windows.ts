@@ -11,6 +11,8 @@
 // All commands are exec form (schtasks.exe with an argv, the task defined by an XML file), so no
 // path is ever interpolated into a shell string.
 import { win32 } from "node:path";
+import { stopDaemonWindows } from "./stop-daemon.ts";
+import { schtasksPath, wscriptPath } from "./windows-paths.ts";
 import {
   type AutostartDeps,
   type AutostartEnv,
@@ -18,6 +20,8 @@ import {
   type ExecResult,
   assertPlain,
 } from "./types.ts";
+
+export { schtasksPath, wscriptPath };
 
 export const DEFAULT_TASK_NAME = "SessionDeckProbeDaemon";
 
@@ -41,31 +45,6 @@ export function currentUserId(e: AutostartEnv): string {
   const domain = e.env["USERDOMAIN"];
   return domain ? `${domain}\\${name}` : name;
 }
-
-const WINDOWS_ROOT = "C:\\Windows";
-
-/**
- * System32 comes from the OS default, never from the environment: a repo-controlled "env" in
- * .claude/settings.json could otherwise point SystemRoot at a directory holding a planted
- * wscript.exe that the task would then run at every logon. An environment value is accepted only
- * when it names C:\\Windows (case-insensitive); anything else is refused.
- */
-function system32(e: AutostartEnv, exe: string): string {
-  for (const key of ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]) {
-    const v = e.env[key];
-    if (v === undefined || v === "") continue;
-    const norm = v.replace(/[\\/]+$/, "").replace(/\//g, "\\");
-    if (norm.toLowerCase() !== WINDOWS_ROOT.toLowerCase()) {
-      throw new Error(
-        `${key} is ${JSON.stringify(v)}, not ${WINDOWS_ROOT}; refusing to register a task that runs a binary from there`,
-      );
-    }
-  }
-  return win32.join(WINDOWS_ROOT, "System32", exe);
-}
-
-export const schtasksPath = (e: AutostartEnv): string => system32(e, "schtasks.exe");
-export const wscriptPath = (e: AutostartEnv): string => system32(e, "wscript.exe");
 
 export function launcherPath(probeHome: string): string {
   return win32.join(probeHome, "launch-daemon.vbs");
@@ -125,6 +104,7 @@ export function launcherScript(cmd: DaemonCommand, opts: LauncherOptions = {}): 
     "  On Error GoTo 0",
     "  If rc = 0 Then WScript.Quit 0",
     "  ran = Timer - started",
+    "  If ran < 0 Then ran = ran + 86400", // Timer wraps at midnight
     "  If ran >= 600 Then delay = first",
     "  WScript.Sleep delay",
     "  delay = delay * 2",
@@ -231,7 +211,9 @@ type TaskState = "absent" | "ours" | "foreign" | "error";
 async function taskState(d: AutostartDeps, name: string): Promise<TaskState> {
   const l = await d.exec(schtasksPath(d.e), listArgs());
   if (l.code !== 0) {
-    d.err(`probe: could not list scheduled tasks: ${detail(l)}`);
+    d.err(
+      `probe: could not list scheduled tasks: ${detail(l)}${l.spawnError ? " (is Windows installed in C:\\Windows?)" : ""}`,
+    );
     return "error";
   }
   const want = `"\\${name}"`.toLowerCase();
@@ -273,8 +255,10 @@ export async function installWindows(
   if (state === "error" || state === "foreign") return 1;
   if (state === "ours") {
     // Stop the running instance first: /Create /F replaces the definition but not the process, and
-    // /Run is a no-op while it runs. The new launcher is written only after the old one is gone.
+    // /Run is a no-op while it runs. /End kills the launcher but not necessarily the node.exe it
+    // started, so the daemon itself is stopped too. The new launcher is written only after both.
     await d.exec(schtasksPath(d.e), endArgs(name));
+    if (!(await stopDaemonWindows(d, cmd.probeHome))) return 1;
   }
   await d.fs.mkdirp(cmd.probeHome);
   await d.fs.write(launcherPath(cmd.probeHome), utf16leBom(script));
@@ -320,15 +304,14 @@ export async function uninstallWindows(
   if (state === "error" || state === "foreign") return 1;
   if (state === "ours") {
     await d.exec(schtasksPath(d.e), endArgs(name)); // best effort: stops the launcher if running
+    // Then the daemon it started; a failure is reported but must not keep the task registered.
+    await stopDaemonWindows(d, probeHome);
     const r = await d.exec(schtasksPath(d.e), deleteArgs(name));
     if (r.code !== 0) {
       d.err(`probe: could not remove the scheduled task ${name}: ${detail(r)}`);
       return 1;
     }
     d.out(`removed the scheduled task ${name}`);
-    d.out(
-      "note: a daemon that is already running keeps running until you log off or stop it (Task Manager: node.exe)",
-    );
   } else {
     d.out(`the scheduled task ${name} is not registered; nothing to remove`);
   }

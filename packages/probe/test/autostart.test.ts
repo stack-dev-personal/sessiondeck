@@ -13,6 +13,7 @@ import {
   realFs,
 } from "../src/autostart/types.ts";
 import { runAutostart } from "../src/autostart/index.ts";
+import { isOurTask } from "../src/autostart/windows.ts";
 import {
   DEFAULT_TASK_NAME,
   createArgs,
@@ -32,15 +33,28 @@ interface Call {
   args: string[];
 }
 
-function memFs(): AutostartFs & { files: Map<string, string | Uint8Array>; dirs: Set<string> } {
+function memFs(): AutostartFs & {
+  files: Map<string, string | Uint8Array>;
+  dirs: Set<string>;
+  mtimes: Map<string, number>;
+} {
   const files = new Map<string, string | Uint8Array>();
   const dirs = new Set<string>();
+  const mtimes = new Map<string, number>();
   return {
     files,
     dirs,
+    mtimes,
+    list: async (dir) =>
+      [...files.keys()]
+        .filter((f) => f.startsWith(`${dir}\\`) && !f.slice(dir.length + 1).includes("\\"))
+        .map((f) => f.slice(dir.length + 1)),
     mkdirp: async (d) => void dirs.add(d),
     write: async (f, data) => void files.set(f, data),
-    statPath: async () => undefined,
+    statPath: async (f) => {
+      const m = mtimes.get(f);
+      return m === undefined ? undefined : { uid: 0, mode: 0o600, mtimeMs: m };
+    },
     read: async (f) => {
       const v = files.get(f);
       return v === undefined ? undefined : typeof v === "string" ? v : Buffer.from(v).toString();
@@ -65,7 +79,11 @@ const linuxEnv: AutostartEnv = {
   userName: "ada",
 };
 
-function harness(e: AutostartEnv, respond: (c: Call, tasks: Set<string>) => ExecResult) {
+function harness(
+  e: AutostartEnv,
+  respond: (c: Call, tasks: Set<string>) => ExecResult,
+  clock: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
+) {
   const calls: Call[] = [];
   const out: string[] = [];
   const err: string[] = [];
@@ -83,15 +101,48 @@ function harness(e: AutostartEnv, respond: (c: Call, tasks: Set<string>) => Exec
       nodePath,
       exec,
       fs,
+      ...clock,
       out: (l) => out.push(l),
       err: (l) => err.push(l),
     });
   return { calls, out, err, fs, tasks, run };
 }
 
-const OURS_XML =
-  "<Task><RegistrationInfo><Description>sessiondeck probe daemon: forwards</Description></RegistrationInfo>" +
-  "<Actions><Exec><Command>C:\\Windows\\System32\\wscript.exe</Command><Arguments>//B x\\launch-daemon.vbs</Arguments></Exec></Actions></Task>";
+// Shaped like a real `schtasks /Query /XML` export (windows-latest run 39485143064): UTF-16
+// declaration, no <RunLevel> (LeastPrivilege is the default and is omitted), Principal UserId as a
+// SID, LogonTrigger UserId as host\\user, InteractiveToken.
+const OURS_XML = [
+  '<?xml version="1.0" encoding="UTF-16"?>',
+  '<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">',
+  "  <RegistrationInfo>",
+  "    <Date>2026-10-20T10:00:00</Date>",
+  "    <Author>LAPTOP\\Ada Lovelace</Author>",
+  "    <Description>sessiondeck probe daemon: forwards Claude Code session events to your hub. Remove with: probe daemon uninstall</Description>",
+  "  </RegistrationInfo>",
+  "  <Triggers>",
+  "    <LogonTrigger>",
+  "      <Enabled>true</Enabled>",
+  "      <UserId>LAPTOP\\Ada Lovelace</UserId>",
+  "    </LogonTrigger>",
+  "  </Triggers>",
+  "  <Principals>",
+  '    <Principal id="Author">',
+  "      <UserId>S-1-5-21-1111111111-2222222222-3333333333-1001</UserId>",
+  "      <LogonType>InteractiveToken</LogonType>",
+  "    </Principal>",
+  "  </Principals>",
+  "  <Settings>",
+  "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+  "  </Settings>",
+  '  <Actions Context="Author">',
+  "    <Exec>",
+  "      <Command>C:\\Windows\\System32\\wscript.exe</Command>",
+  '      <Arguments>//B //Nologo "C:\\Users\\Ada Lovelace\\AppData\\Local\\sessiondeck\\launch-daemon.vbs"</Arguments>',
+  "    </Exec>",
+  "  </Actions>",
+  "</Task>",
+  "",
+].join("\r\n");
 const FOREIGN_XML = "<Task><Actions><Exec><Command>calc.exe</Command></Exec></Actions></Task>";
 
 /** A tiny schtasks: /Create adds, /Delete removes, listing and /XML reflect the store. */
@@ -356,6 +407,189 @@ describe("windows task", () => {
     expect(h.calls.map((c) => c.args[0])).toEqual(["/Query", "/Query", "/End", "/Create", "/Run"]);
   });
 
+  it("the fake export is shaped like a real one and passes the ownership check", () => {
+    expect(OURS_XML).not.toContain("<RunLevel>");
+    expect(isOurTask(OURS_XML)).toBe(true);
+    // the same markers in a UTF-16 stream read as NUL-padded text still count
+    expect(isOurTask(Buffer.from(OURS_XML, "utf16le").toString("latin1"))).toBe(true);
+    expect(isOurTask(FOREIGN_XML)).toBe(false);
+  });
+
+  it("reinstall: /End comes before any file is written, and the daemon is stopped before the write", async () => {
+    const h = harness(winEnv, (c, t) => fakeSchtasks(c, t));
+    await h.run(["install", "--no-start"], DIST_W, NODE_W);
+    const events: string[] = [];
+    const realWrite = h.fs.write;
+    h.fs.write = async (f, d) => {
+      events.push(`write ${f.split("\\").pop() as string}`);
+      await realWrite(f, d);
+    };
+    const realExecCalls = h.calls;
+    realExecCalls.length = 0;
+    // observe exec order interleaved with writes
+    const h2events = events;
+    const origPush = realExecCalls.push.bind(realExecCalls);
+    realExecCalls.push = (...cs: Call[]) => {
+      for (const c of cs) h2events.push(`exec ${c.args[0] as string}`);
+      return origPush(...cs);
+    };
+    expect(await h.run(["install", "--no-start"], DIST_W, NODE_W)).toBe(0);
+    expect(events).toEqual([
+      "exec /Query",
+      "exec /Query",
+      "exec /End",
+      "write launch-daemon.vbs",
+      "write daemon-task.xml",
+      "exec /Create",
+    ]);
+  });
+
+  describe("stopping the running daemon after /End", () => {
+    const LOCK = `${HOME_W}\\daemon\\daemon.lock.7`;
+    const NOW = 1_000_000;
+    /** schtasks plus tasklist/taskkill over a set of live pids (image by pid). */
+    const procs = (live: Map<number, string>, kills: number[], killWorks = true) => {
+      return (c: Call, tasks: Set<string>): ExecResult => {
+        const exe = c.file.split("\\").pop();
+        if (exe === "tasklist.exe") {
+          const pid = Number((c.args[1] as string).replace("PID eq ", ""));
+          const img = live.get(pid);
+          return {
+            code: 0,
+            stdout: img
+              ? `"${img}","${String(pid)}","Console","1","40,000 K"\r\n`
+              : "INFO: No tasks are running which match the specified criteria.\r\n",
+            stderr: "",
+          };
+        }
+        if (exe === "taskkill.exe") {
+          const pid = Number(c.args[1]);
+          kills.push(pid);
+          if (!killWorks) return fail("ERROR: Access is denied.");
+          live.delete(pid);
+          return ok;
+        }
+        return fakeSchtasks(c, tasks);
+      };
+    };
+    const clock = () => {
+      let t = NOW;
+      return { now: () => t, sleep: async (ms: number) => void (t += ms) };
+    };
+    const withLock = (h: ReturnType<typeof harness>, age = 5_000, body?: string) => {
+      h.fs.files.set(LOCK, body ?? JSON.stringify({ pid: 4242, token: "t" }));
+      h.fs.files.set(`${HOME_W}\\daemon\\daemon.lock.6`, JSON.stringify({ pid: 99 }));
+      h.fs.mtimes.set(LOCK, NOW - age);
+    };
+
+    it("reinstall ends the task, then kills the node.exe that holds the lock, then writes", async () => {
+      const kills: number[] = [];
+      const live = new Map([[4242, "node.exe"]]);
+      const h = harness(winEnv, procs(live, kills), clock());
+      await h.run(["install", "--no-start"], DIST_W, NODE_W);
+      withLock(h);
+      h.calls.length = 0;
+      expect(await h.run(["install", "--no-start"], DIST_W, NODE_W)).toBe(0);
+      expect(
+        h.calls.map((c) => `${c.file.split("\\").pop() as string} ${c.args[0] as string}`),
+      ).toEqual([
+        "schtasks.exe /Query",
+        "schtasks.exe /Query",
+        "schtasks.exe /End",
+        "tasklist.exe /FI",
+        "taskkill.exe /PID",
+        "tasklist.exe /FI",
+        "schtasks.exe /Create",
+      ]);
+      expect(kills).toEqual([4242]);
+      expect(h.calls.find((c) => c.file.endsWith("taskkill.exe"))?.args).toEqual([
+        "/PID",
+        "4242",
+        "/F",
+      ]);
+      expect(h.calls.find((c) => c.file.endsWith("tasklist.exe"))?.file).toBe(
+        "C:\\Windows\\System32\\tasklist.exe",
+      );
+    });
+
+    it("uninstall kills the daemon between /End and /Delete", async () => {
+      const kills: number[] = [];
+      const h = harness(winEnv, procs(new Map([[4242, "node.exe"]]), kills), clock());
+      await h.run(["install", "--no-start"], DIST_W, NODE_W);
+      withLock(h);
+      h.calls.length = 0;
+      expect(await h.run(["uninstall"], DIST_W, NODE_W)).toBe(0);
+      const names = h.calls.map(
+        (c) => `${c.file.split("\\").pop() as string} ${c.args[0] as string}`,
+      );
+      expect(names.indexOf("schtasks.exe /End")).toBeLessThan(names.indexOf("taskkill.exe /PID"));
+      expect(names.indexOf("taskkill.exe /PID")).toBeLessThan(
+        names.indexOf("schtasks.exe /Delete"),
+      );
+      expect(kills).toEqual([4242]);
+    });
+
+    it("never kills a stale lock, a non-node pid, a tombstone or an unreadable lock", async () => {
+      const cases: Array<[string, number, string | undefined, string]> = [
+        ["stale", 120_000, undefined, "node.exe"],
+        ["not node", 5_000, undefined, "notepad.exe"],
+        ["tombstone", 5_000, JSON.stringify({ pid: 0 }), "node.exe"],
+        ["garbage", 5_000, "not json", "node.exe"],
+      ];
+      for (const [label, age, body, image] of cases) {
+        const kills: number[] = [];
+        const h = harness(winEnv, procs(new Map([[4242, image]]), kills), clock());
+        await h.run(["install", "--no-start"], DIST_W, NODE_W);
+        withLock(h, age, body);
+        expect(await h.run(["install", "--no-start"], DIST_W, NODE_W), label).toBe(0);
+        expect(kills, label).toEqual([]);
+      }
+    });
+
+    it("a daemon that will not die fails the install before any file is written, within a bounded wait", async () => {
+      const kills: number[] = [];
+      const c = clock();
+      const h = harness(winEnv, procs(new Map([[4242, "node.exe"]]), kills, false), c);
+      await h.run(["install", "--no-start"], DIST_W, NODE_W);
+      withLock(h);
+      h.fs.files.delete(`${HOME_W}\\launch-daemon.vbs`);
+      const t0 = c.now();
+      expect(await h.run(["install", "--no-start"], DIST_W, NODE_W)).toBe(1);
+      expect(h.err.join("\n")).toContain("could not stop the running daemon");
+      expect(h.fs.files.has(`${HOME_W}\\launch-daemon.vbs`)).toBe(false);
+      expect(c.now() - t0).toBeLessThanOrEqual(11_000);
+    });
+
+    it("uninstall still removes the task when the daemon cannot be stopped", async () => {
+      const kills: number[] = [];
+      const h = harness(winEnv, procs(new Map([[4242, "node.exe"]]), kills, false), clock());
+      await h.run(["install", "--no-start"], DIST_W, NODE_W);
+      withLock(h);
+      expect(await h.run(["uninstall"], DIST_W, NODE_W)).toBe(0);
+      expect(h.tasks.size).toBe(0);
+      expect(h.err.join("\n")).toContain("could not stop the running daemon");
+    });
+  });
+
+  it("uninstall applies the same --home restriction as install", async () => {
+    const h = harness(winEnv, fakeSchtasks);
+    h.fs.files.set("C:\\sd\\launch-daemon.vbs", "x");
+    expect(await h.run(["uninstall", "--home", "C:\\sd"], DIST_W, NODE_W)).toBe(1);
+    expect(h.err.join("\n")).toContain("outside");
+    expect(h.calls).toHaveLength(0);
+    expect(h.fs.files.has("C:\\sd\\launch-daemon.vbs")).toBe(true);
+  });
+
+  it("the launcher's elapsed-time check survives the midnight wrap of Timer", () => {
+    const text = launcherScript({
+      node: NODE_W,
+      script: `${DIST_W}\\daemon.mjs`,
+      probeHome: HOME_W,
+    });
+    expect(text).toContain("ran = Timer - started");
+    expect(text).toMatch(/If ran < 0 Then ran = ran \+ 86400/);
+  });
+
   it("will not overwrite or delete a task of that name that is not ours", async () => {
     const tasks = new Set<string>();
     const foreign = new Set(["Backup"]);
@@ -534,6 +768,17 @@ describe("realFs.write", () => {
       if (process.platform !== "win32") expect(statSync(f).mode & 0o777).toBe(0o644);
       const { readdirSync } = await import("node:fs");
       expect(readdirSync(dir)).toEqual(["a.txt"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it("removes its temp file when the write fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sd-fs-"));
+    try {
+      const { mkdirSync, readdirSync } = await import("node:fs");
+      mkdirSync(join(dir, "target")); // renaming a file over a directory fails
+      await expect(realFs.write(join(dir, "target"), "x")).rejects.toThrow();
+      expect(readdirSync(dir)).toEqual(["target"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

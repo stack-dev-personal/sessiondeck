@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { launcherScript, utf16leBom } from "../src/autostart/windows.ts";
 import { probeRoot } from "./helpers.ts";
@@ -48,9 +48,22 @@ describe("windows Task Scheduler (real)", () => {
       expect(q.status, q.stderr).toBe(0);
       const xml = q.stdout;
       const user = `${process.env["USERDOMAIN"]}\\${process.env["USERNAME"]}`;
+      const who = spawnSync(join(dirname(schtasks), "whoami.exe"), ["/user", "/fo", "csv", "/nh"], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      const sid = (/"(S-1-[\d-]+)"\s*$/m.exec(who.stdout.trim()) ?? [])[1] ?? "";
+      expect(sid, who.stdout + who.stderr).not.toBe("");
+      const section = (tag: string): string =>
+        new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`).exec(xml)?.[1] ?? "";
+      const userIdOf = (tag: string): string =>
+        (/<UserId>([^<]*)<\/UserId>/.exec(section(tag)) ?? [])[1]?.toLowerCase() ?? "";
       expect(xml).toContain("<LogonTrigger>");
-      expect(xml.toLowerCase()).toContain(`<userid>${user.toLowerCase()}</userid>`);
-      expect(xml).toContain("<RunLevel>LeastPrivilege</RunLevel>");
+      expect(userIdOf("LogonTrigger")).toBe(user.toLowerCase());
+      // the export shows the principal as a SID (or DOMAIN\user)
+      expect([user.toLowerCase(), sid.toLowerCase()]).toContain(userIdOf("Principal"));
+      // Limited is the default and the export omits <RunLevel> for it; only HighestAvailable is wrong
+      expect(xml).not.toContain("<RunLevel>HighestAvailable</RunLevel>");
       expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
       expect(xml).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
       expect(xml).toContain("<RestartOnFailure>");
