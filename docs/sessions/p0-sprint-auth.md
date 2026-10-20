@@ -42,3 +42,8 @@
 ## Verification
 
 - sd-verifier added the INFRA-1 section to docs/VERIFY-P0.md: 4 pass / 0 fail / 2 unverifiable (real-token nested launch: needs laptop confirmation at the Sprint 1 relaunch; deny rules and guard.mjs in the container: open, same relaunch).
+
+## Close
+
+- Final commit carries the session subject named in the handoff; branch pushed to origin p0/sprint-auth, PR to main opened with gh pr create. CI result and PR number are in the report (.sprint/0/reports/INFRA-1.md).
+- Conductor next: merge the PR, rebuild the sprint image, relaunch Sprint 1 with -Resume; the first relaunch proves the real-token nested launch and the guard check.
