@@ -61,3 +61,7 @@
 - MINOR packages/web/src/alerts/start.ts:63: a toast dismissed while the page is closed is re-created once as a silent same-tag replace on next load (non-persistent notifications cannot report this).
 - MINOR packages/web/src/styles/index.css:113: under prefers-reduced-motion, sd-arrive is never cleared until the card leaves attention; if the user turns reduced motion off meanwhile, the glow plays late. Cosmetic.
 - A11Y: working-dot pulse is infinite with no on-page pause (WCAG 2.2.2); stops under reduced motion; design owner decides whether to cap at 5 s.
+
+## Stop and restart
+- 2026-10-20 19:51Z: subscription usage limit (429) stopped the run during U5 fix iteration 2 (reviewer: 1 MAJOR compact tasks slot unsized, 2 MINOR docs). Uncommitted work at stop: SessionCard.tsx compact state and tasks slots given fixed widths, index.css comment, R3.2.spec compact 320-480 sweep, A11Y-P3.md design-change notes, 4 baselines.
+- 2026-10-20 22:04Z+: resumed (conductor addendum). No stale S6.hb-stop, previous heartbeat pid gone. Kept the uncommitted changes; the web executor verifies and commits them, then U5 re-review continues.
