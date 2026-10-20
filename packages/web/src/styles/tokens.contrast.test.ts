@@ -21,6 +21,8 @@ const KNOWN_TEXT_FAILURES = [
   "dark fg-faint #6b7784",
   "light fg-faint #8c959f",
 ];
+// Ended and exited cards dim surface-only (.sd-dim: border and meter bars, never text opacity), so
+// the surface-1 ratios below hold unchanged for those cards. SessionCard.test.tsx enforces it.
 // Measured on --surface-1 only (design system rule). State-colored or faint TEXT must therefore
 // sit on bg-surface-1, never on --bg or --surface-2; do not add those ratios to the pinned set.
 

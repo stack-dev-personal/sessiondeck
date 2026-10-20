@@ -88,3 +88,15 @@ body {
     animation: none;
   }
 }
+
+/*
+ * Ended and exited cards dim the surface layer only: a quieter border and fainter meter bars.
+ * Text, badges and glyphs keep full opacity on surface-1 so every token keeps its measured
+ * contrast (R3.7). Never put opacity or color on this class.
+ */
+.sd-dim {
+  border-color: color-mix(in srgb, var(--border) 50%, var(--bg));
+}
+.sd-dim [data-slot="bar"] {
+  opacity: 0.5;
+}

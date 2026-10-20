@@ -26,7 +26,7 @@ export function stateClasses(state: SessionState): string {
   const v = STATE_VOCAB[state];
   const cls: string[] = [];
   if (v.attention) cls.push("sd-attention");
-  if (state === "ended" || state === "exited") cls.push("opacity-60");
+  if (state === "ended" || state === "exited") cls.push("sd-dim");
   return cls.join(" ");
 }
 
@@ -35,8 +35,16 @@ function ariaName(s: SessionSnapshot): string {
   return `${name}, ${vocab.label}`;
 }
 
+/** Active subagents first so ended ones never push them into "+n". */
+export function dotOrder(s: SessionSnapshot) {
+  return [
+    ...s.subagents.filter((a) => a.ended_at === null),
+    ...s.subagents.filter((a) => a.ended_at !== null),
+  ];
+}
+
 function SubagentDots({ s }: { s: SessionSnapshot }) {
-  const shown = s.subagents.slice(0, MAX_DOTS);
+  const shown = dotOrder(s).slice(0, MAX_DOTS);
   const extra = s.subagents.length - shown.length;
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5" data-slot="dots">
@@ -97,15 +105,24 @@ const ROW = "flex min-w-0 items-center gap-s-2 overflow-hidden whitespace-nowrap
  * explicit height and every row and slot renders for null data too ("n/a"), so values arriving
  * never move anything.
  */
-function SessionCardImpl({ s, now }: { s: SessionSnapshot; now: number }) {
+function SessionCardImpl({
+  s,
+  now,
+  exceeds200k = null,
+}: {
+  s: SessionSnapshot;
+  now: number;
+  exceeds200k?: boolean | null;
+}) {
   const { project, name, active, vocab } = cardInfo(s);
-  const meters = metersFor(s, now);
+  const meters = metersFor(s, now, exceeds200k);
   const badge = BADGE[s.state];
   const activity = s.last_assistant_message?.replace(/\s+/g, " ").trim() || null;
   const modelText = s.model
     ? `${shortModel(s.model.display_name)}${s.effort ? `·${s.effort}` : ""}`
     : "n/a";
-  const sinceLabel = s.state === "working" ? "since prompt" : "in state";
+  const wt = s.git.worktree;
+  const where = `${project} · ${s.git.branch ?? "n/a"}${wt && wt !== project ? ` (${wt})` : ""}`;
   return (
     <article
       tabIndex={0}
@@ -128,9 +145,7 @@ function SessionCardImpl({ s, now }: { s: SessionSnapshot; now: number }) {
             </span>
           ) : null}
         </span>
-        <span className="num min-w-0 truncate text-fg-muted">
-          {project} · {s.git.branch ?? "n/a"}
-        </span>
+        <span className="num min-w-0 truncate text-fg-muted">{where}</span>
       </div>
       <div data-row="2" className={`${ROW} justify-between`}>
         <span data-slot="name" className="min-w-0 flex-1 truncate">
@@ -179,7 +194,7 @@ function SessionCardImpl({ s, now }: { s: SessionSnapshot; now: number }) {
       </div>
       <div data-row="6" className={`${ROW} text-xs text-fg-faint`}>
         <span data-slot="elapsed" className="num">
-          {formatDuration(now - s.state_since)} {sinceLabel}
+          {formatDuration(now - s.state_since)} in state
         </span>
         <span aria-hidden="true">·</span>
         <span data-slot="started" className="num">
@@ -193,9 +208,17 @@ function SessionCardImpl({ s, now }: { s: SessionSnapshot; now: number }) {
 export const SessionCard = memo(SessionCardImpl);
 
 /** One-row form (design system 5.1 compact): state, project, name, three numbers, agents, tasks. */
-function CompactCardImpl({ s, now }: { s: SessionSnapshot; now: number }) {
+function CompactCardImpl({
+  s,
+  now,
+  exceeds200k = null,
+}: {
+  s: SessionSnapshot;
+  now: number;
+  exceeds200k?: boolean | null;
+}) {
   const { project, name, active, vocab } = cardInfo(s);
-  const meters = metersFor(s, now);
+  const meters = metersFor(s, now, exceeds200k);
   return (
     <article
       tabIndex={0}

@@ -11,6 +11,7 @@ import { useUi } from "../store/ui";
  */
 export function Board() {
   const sessions = useBoard((s) => s.sessions);
+  const flags = useBoard((s) => s.exceeds200k);
   const compact = useUi((s) => s.compact);
   const now = useNow();
   const list = useMemo(() => Object.values(sessions), [sessions]);
@@ -29,7 +30,11 @@ export function Board() {
     >
       {list.map((s) => (
         <li key={s.session_id} className="min-w-0">
-          {compact ? <CompactCard s={s} now={now} /> : <SessionCard s={s} now={now} />}
+          {compact ? (
+            <CompactCard s={s} now={now} exceeds200k={flags[s.session_id] ?? null} />
+          ) : (
+            <SessionCard s={s} now={now} exceeds200k={flags[s.session_id] ?? null} />
+          )}
         </li>
       ))}
     </ul>

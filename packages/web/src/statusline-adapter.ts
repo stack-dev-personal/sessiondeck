@@ -20,6 +20,13 @@ export function windowAt(w: Window | null | undefined, now: number): Window {
   return w;
 }
 
+/** The payload's exceeds_200k_tokens; null when absent or not a boolean (unknown, no tag). */
+export function exceeds200kOf(raw: unknown): boolean | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const v = (raw as Record<string, unknown>)["exceeds_200k_tokens"];
+  return typeof v === "boolean" ? v : null;
+}
+
 function pickNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }

@@ -42,6 +42,7 @@ function build(
   pct: number | null,
   extra: string,
   title: string,
+  spoken = "",
 ): MeterModel {
   if (pct === null) {
     return {
@@ -54,8 +55,8 @@ function build(
       title,
     };
   }
-  const level = levelFor(kind, pct);
   const rounded = Math.round(pct);
+  const level = levelFor(kind, rounded);
   const word = level === "ok" ? "" : `, ${LEVEL_WORD[level]}`;
   return {
     kind,
@@ -63,17 +64,22 @@ function build(
     pct,
     level,
     text: `${rounded}%${extra}`,
-    aria: `${METER_NAME[kind]} ${rounded} percent${word}`,
+    aria: `${METER_NAME[kind]} ${rounded} percent${word}${spoken}`,
     title,
   };
 }
 
-export function contextModel(s: SessionSnapshot): MeterModel {
+/**
+ * `exceeds200k` is the statusLine payload's exceeds_200k_tokens, kept beside the snapshot in the
+ * board store (the contract snapshot has no field for it). null means unknown: no tag.
+ */
+export function contextModel(s: SessionSnapshot, exceeds200k: boolean | null = null): MeterModel {
   const win = s.context.window;
-  const over = (s.context.input ?? 0) > 200_000;
+  const over = exceeds200k === true;
   const extra = over ? " · 200k+" : win !== null ? ` of ${formatTokens(win)}` : "";
+  const spoken = `${over ? ", 200k+" : ""}${win !== null ? `, of ${formatTokens(win)}` : ""}`;
   const title = win !== null ? `context window ${formatTokens(win)}` : "context window n/a";
-  return build("context", "ctx", s.context.used_pct, extra, title);
+  return build("context", "ctx", s.context.used_pct, extra, title, spoken);
 }
 
 /** Rate-limit meters always read through windowAt so a past resets_at renders n/a. */
@@ -94,9 +100,13 @@ export function windowModel(
   return stale ? { ...m, aria: `${m.aria}, stale` } : m;
 }
 
-export function metersFor(s: SessionSnapshot, now: number): MeterModel[] {
+export function metersFor(
+  s: SessionSnapshot,
+  now: number,
+  exceeds200k: boolean | null = null,
+): MeterModel[] {
   return [
-    contextModel(s),
+    contextModel(s, exceeds200k),
     windowModel("five_hour", s.rate_limits.five_hour, now),
     windowModel("seven_day", s.rate_limits.seven_day, now),
   ];

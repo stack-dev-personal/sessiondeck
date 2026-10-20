@@ -1,11 +1,17 @@
 import type { Envelope, SessionSnapshot } from "@sessiondeck/contract";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { applyEnvelope } from "../ingest";
+import { exceeds200kOf } from "../statusline-adapter";
 
 export type ConnectionStatus = "mock" | "connecting" | "open" | "closed";
 
 export interface BoardState {
   sessions: Record<string, SessionSnapshot>;
+  /**
+   * exceeds_200k_tokens per session from the last statusLine payload. Web-side only: the contract
+   * snapshot has no field for it (deferred to the contract owner). Missing key means unknown.
+   */
+  exceeds200k: Record<string, boolean | null>;
   connection: ConnectionStatus;
   setConnection: (c: ConnectionStatus) => void;
   /** Queue an envelope; applied with every other queued update in the next animation frame. */
@@ -29,6 +35,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
   let scheduled = false;
   return create<BoardState>()((set, get) => ({
     sessions: {},
+    exceeds200k: {},
     connection: "closed",
     setConnection: (connection) => set({ connection }),
     enqueue: (e) => {
@@ -39,7 +46,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     },
     replaceAll: (list) => {
       queue = [];
-      set({ sessions: Object.fromEntries(list.map((s) => [s.session_id, s])) });
+      set({ sessions: Object.fromEntries(list.map((s) => [s.session_id, s])), exceeds200k: {} });
     },
     flush: () => {
       scheduled = false;
@@ -47,12 +54,17 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       const batch = queue;
       queue = [];
       const next = { ...get().sessions };
+      let flags = get().exceeds200k;
       for (const e of batch) {
         if (e.session_id === null) continue;
         const updated = applyEnvelope(next[e.session_id], e);
         if (updated) next[e.session_id] = updated;
+        if (e.kind === "statusline") {
+          const f = exceeds200kOf(e.payload);
+          if (flags[e.session_id] !== f) flags = { ...flags, [e.session_id]: f };
+        }
       }
-      set({ sessions: next });
+      set({ sessions: next, exceeds200k: flags });
     },
   }));
 }

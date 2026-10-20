@@ -12,6 +12,9 @@ for (const r of rows) {
   );
 }
 const tokens = parseTokens();
+console.log(
+  "\nNote: ended/exited cards dim the surface only (border, meter bars); text keeps full opacity, so the ratios above apply to them unchanged.",
+);
 console.log("\nOther pairs");
 for (const theme of ["dark", "light"]) {
   const t = tokens[theme];
