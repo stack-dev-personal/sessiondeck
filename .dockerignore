@@ -3,6 +3,9 @@
 # so without this file `docker build -f packages/hub/Dockerfile .` would send
 # gitignored local files (unscrubbed fixtures/raw, .env*, probe.json, sqlite data)
 # into the build context. Deny everything, allow only what the hub build needs.
+# This file is deny-all for every Docker build whose context is the repo root.
+# Any future image built from the root (e.g. web in later sessions, S4 compose)
+# must add its paths to the allow-list here.
 # Keep in sync with packages/hub/Dockerfile.dockerignore.
 *
 !package.json
@@ -15,8 +18,7 @@
 !packages/hub/package.json
 !packages/hub/tsconfig.json
 !packages/hub/src
-!packages/hub/scripts
-!packages/hub/Dockerfile
+!packages/hub/scripts/bundle.mjs
 
 # Re-exclude sensitive material even inside allowed directories (last match wins).
 **/.env*
