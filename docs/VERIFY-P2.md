@@ -1,6 +1,6 @@
 # Verification, Phase 2 (hub)
 
-- Branch: p2/hub-core (HEAD d3b4f88; R2.1 to R2.3 rows verified at 337e5d2)
+- Branch: p2/hub-core (final S3 evidence section below verified at HEAD fab329c; earlier rows kept as prior evidence at their stated commits)
 - Date: 2026-10-20
 - Machine: Linux sprint container (WSL2 kernel 6.18.33.2, AMD Ryzen AI 9 465, node v22.23.3)
 
@@ -28,3 +28,25 @@ R2.5 to R2.8 (new routes) rows verified at HEAD ba15e04 on node v22.23.3, same m
 | R2.7 Rate-limit windows past `resets_at` render as null; `used_percentage` outside 0..100 is nulled and logged | `pnpm -F @sessiondeck/hub test` | read-routes.test.ts "R2.7 read-time staleness on REST" (/sessions/:id and /sessions); stream.test.ts "R2.7 staleness over WS" (initial and deltas nulled, storage keeps 77); ingest-reduce.test.ts "R2.7: used_percentage -5 and 140 are nulled and logged with the envelope id" (plus a past resets_at test). | pass | 2026-10-20T02:37:34Z |
 | R2.7 (live) | same hub; ingest statusline (fixture statusLine/04-mid.json) with five_hour resets_at = now-1h, used_percentage 55; another with five_hour used_percentage 140; GET /sessions/:id | rl-past: five_hour {"used_pct":null,"resets_at":<past>}, seven_day used_pct 17 kept. rl-140: five_hour {"used_pct":null,...}. Hub log line: level 40 "used_percentage out of range, nulled", field rate_limits.five_hour.used_percentage, envelope_id; token not present in log. | pass | 2026-10-20T02:37:34Z |
 | R2.8 (re-run on new routes: GET /sessions, /hosts, /projects, /sessions/x/events, WS upgrade) | `pnpm -F @sessiondeck/hub test` and live curl against same hub, no token | tests: read-routes.test.ts "R2.8 on the new REST routes", stream.test.ts "R2.8 WS upgrade authentication" (6 tests), auth.test.ts 13 tests, read-limit.test.ts (6 tests, D-S3-14 429 empty body and refused-upgrade socket release). Live no token: /sessions 401 len=0, /hosts 401 len=0, /projects 401 len=0, /sessions/x/events 401 len=0, wrong token 401 len=0, valid token on missing session 404, /health 200. WS upgrade without token: raw `HTTP/1.1 401 Unauthorized`, Content-Length: 0. | pass | 2026-10-20T02:37:34Z |
+
+## Final S3 evidence at HEAD fab329c
+
+Machine: Linux 6.18.33.2-microsoft-standard-WSL2, AMD Ryzen AI 9 465 w/ Radeon 880M, node v22.23.3, Docker available. Run 2026-10-20 (05:06Z to 05:09Z).
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| Full repo tests | `pnpm -r test` | contract: 28 files, 1090 passed, 1 skipped. scripts: 28 files passed, 1 skipped; 575 passed, 7 skipped. hub: 15 files, 204 passed, 0 failed. No failures. | pass | 2026-10-20T05:06:07Z |
+| Full repo typecheck | `pnpm -r typecheck` | contract, scripts, hub: tsc --noEmit Done, no errors | pass | 2026-10-20T05:06Z |
+| Full repo lint | `pnpm -r lint` | contract, scripts, hub: eslint Done, no errors | pass | 2026-10-20T05:06Z |
+| R2.1 | `pnpm -F @sessiondeck/hub test` | ingest-validation.test.ts 14 passed ("R2.1 validation", incl. exact 1 MiB accepted, 1 byte more 413); ingest-hardening.test.ts "D-S3-8 bounds" 5001 envelopes 400 | pass | 2026-10-20T05:06Z |
+| R2.2 | same | ingest-dedup.test.ts 10 passed ("R2.2 dedup": same id, same (host, seq), signature 4.9 s vs 5.1 s) | pass | 2026-10-20T05:06Z |
+| R2.3 | same | ingest-golden.test.ts 52 passed ("R2.3 golden replay over HTTP", 5 golden files, timeline match) | pass | 2026-10-20T05:06Z |
+| R2.5 | `pnpm -F @sessiondeck/hub ws:harness` | in-process, 5 clients: fan-out 200 deltas p50 3.59 p95 7.39 max 82.54 ms (gate 100), dup 0, missing 0 PASS; reconnect 20 deltas dup 0 missing 0, stale in new initial 0, replayed old deltas 0 PASS; exit 0. Max varies run to run (prior run 29.49 ms); this run is within 18 ms of the gate. Unit: stream.test.ts "R2.5 stream" | pass | 2026-10-20T05:07Z |
+| R2.6 | `pnpm -F @sessiondeck/hub test` | read-routes.test.ts "R2.6 GET /sessions?live=1 > keeps ended and exited sessions for 10 minutes, and every other state"; stream.test.ts "D-S3-12" REST/WS agreement | pass | 2026-10-20T05:06Z |
+| R2.7 | same | read-routes.test.ts "R2.7 read-time staleness on REST"; stream.test.ts "R2.7 staleness over WS"; ingest-reduce.test.ts "R2.7: used_percentage -5 and 140 are nulled and logged" | pass | 2026-10-20T05:06Z |
+| R2.8 | same | auth.test.ts 13 passed; read-routes.test.ts "R2.8 on the new REST routes"; stream.test.ts "R2.8 WS upgrade authentication > refuses unauthenticated upgrades with 401 and an empty body"; read-limit.test.ts 7 passed | pass | 2026-10-20T05:06Z |
+| R2.8, container build and run (stand-in for sprint integration check: GET /health 200; ingest fixture spool; GET /sessions?live=1 returns sessions) | `pnpm -F @sessiondeck/hub container:smoke` | image sd-1-s3-hub:dev 358.2 MiB amd64; legacy-builder canary check clean; HEALTHCHECK declared; USER 10001:10001; healthy after 576 ms; /health 200; /sessions no token 401 content-length 0; wrong token 401; WS upgrade no token 401 len 0, with token 101; ingest 817/817 accepted (5 fixture sequences); `GET /sessions?live=1` returned 14 sessions; re-POST accepted 0 (dedup); restart: healthy again in 540 ms, 14 sessions persist, dedup survives; PID 1 uid 10001; DB mode 0600; /data owner 10001; docker health healthy; ws-harness against container PASS (fan-out p50 5.25 p95 8.32 max 66.04 ms, dup 0, missing 0; reconnect PASS). SMOKE PASS, exit 0. | pass | 2026-10-20T05:08Z |
+| Handoff stop condition: no outbound network calls in hub src | `grep -rnEi` for fetch(, http(s).request/get, net.connect, dns, undici, axios, WebSocket client, child_process, tls over packages/hub/src; plus listing of all non-relative imports | Zero call hits. Only type import `IncomingMessage` from node:http (stream.ts, server side). External imports: @sessiondeck/contract, better-sqlite3, fastify, ws (server), zod, node:crypto/events/fs/http/path/stream. The only URL in src is a licence-attribution comment (signature.ts). The `fetch(` to 127.0.0.1 is in the Dockerfile HEALTHCHECK (local loopback), not in src. | pass | 2026-10-20T05:08Z |
+| R2.4, R2.9, R2.10 | not in S3 scope | | S4 | |
+
+Caveats: arm64 image build was skipped by the smoke (no buildx and no qemu binfmt on this host); it is not part of R2.1 to R2.8. The ws:harness runs the hub in-process; the container run covers the real network path. Compose is S4.
