@@ -119,3 +119,12 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 ### Usage-limit stop and restart 2026-10-20 19:51Z / 2026-10-20T22:04:17Z
 - The subscription usage limit (429) stopped the run at 19:51Z after the U4b iteration-2 review was logged (0862a5f, not pushed); no executor call was in flight. Not a session failure (conductor addendum 22:04Z). Resumed 2026-10-20T22:04:17Z: tree clean, no stale S2.hb-stop, no heartbeat or vitest processes left.
 - windows-latest CI on 4eb9e97 (run 39486100922) fails only test/autostart.proc.test.ts "registers a logon task ... Limited" on the RunLevel assertion (iteration-2 MAJOR 1). Next: U4b iteration 3 (last) with the iteration-2 findings.
+- 9b1ccc7 fixes iteration-2 findings 1-9 (proc test asserts no HighestAvailable, InteractiveToken, trigger UserId, Principal UserId or SID; stop-daemon.ts kills a fresh-lock node.exe daemon after /End, reinstall refuses if it will not die; order test; real-shaped fake export; VBS midnight wrap; refuse non-C:\Windows clearly; uninstall --home checked; .tmp cleanup test). 305 unit pass, 1 skip.
+- Iteration 3 (last): sd-reviewer merge (4 MINOR), sd-security-reviewer gate pass (2 LOW). Review loop for U4b closed.
+- Deferred from U4b iteration 3:
+  - [MINOR] autostart/index.ts:150: uninstall --home check also runs on Linux, where uninstallSystemd ignores the home; a later group-writable home blocks uninstall. Fix: apply homeRefusal on uninstall only on win32.
+  - [MINOR] autostart/windows.ts:261,308: the stop step reads the lock under the --home given now, not the home in the registered task's Arguments; install/uninstall with a different --home leaves the old daemon running. Fix: take the home from the owned task's Arguments or refuse a differing home.
+  - [MINOR] autostart/stop-daemon.ts:83: a failing first tasklist call is treated as "no daemon". Fix: return false with a message when the probe exits non-zero.
+  - [MINOR] autostart/stop-daemon.ts:72-79: a non-ENOENT read error aborts uninstall before /Delete. Fix: try around the stop step in uninstallWindows.
+  - [LOW, security] stop-daemon.ts:81-84: kill target checked only by fresh lock mtime + node.exe image; a same-user planted lock can get another node.exe killed (crosses a boundary only if the CLI runs elevated). Fix: check CommandLine for daemon.mjs and --home, or lock boot time.
+  - [LOW, security] systemd.ts:374: systemctl resolved through PATH (a repo-controlled env.PATH could plant one; no boundary crossed). Fix: /usr/bin/systemctl then /bin/systemctl.
