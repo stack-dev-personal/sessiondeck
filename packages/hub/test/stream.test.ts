@@ -318,16 +318,28 @@ describe("D-S3-12 live set limits", () => {
     const restIds = (rest.json() as SessionSnapshot[]).map((s) => s.session_id);
     expect(restIds).toHaveLength(250);
     expect(c.msgs[0]).toEqual({ type: "initial", sessions: rest.json() });
-    // a limit equal to the available count is reported as truncation
+    // a small client-chosen limit is not the server cap: no warning
     const capped = await h.app.inject({
       method: "GET",
       url: "/sessions?live=1&limit=100",
       headers: AUTH,
     });
     expect(capped.statusCode).toBe(200);
-    expect(
-      h.logLines().some((l) => l["msg"] === "live session set truncated" && l["count"] === 100),
-    ).toBe(true);
+    expect((capped.json() as unknown[]).length).toBe(100);
+    expect(h.logLines().some((l) => l["msg"] === "live session set truncated")).toBe(false);
+  });
+
+  it("warns only when the server cap truncates; exactly the cap does not warn", async () => {
+    await boot();
+    for (let i = 0; i < 1000; i++) seedSession(h.store, `cap${i}`, { started_at: NOW - i });
+    const exact = await h.app.inject({ method: "GET", url: "/sessions?live=1", headers: AUTH });
+    expect((exact.json() as unknown[]).length).toBe(1000);
+    const warned = () => h.logLines().some((l) => l["msg"] === "live session set truncated");
+    expect(warned()).toBe(false);
+    seedSession(h.store, "cap-extra", { started_at: NOW - 5000 });
+    const over = await h.app.inject({ method: "GET", url: "/sessions?live=1", headers: AUTH });
+    expect((over.json() as unknown[]).length).toBe(1000);
+    expect(warned()).toBe(true);
   });
 });
 

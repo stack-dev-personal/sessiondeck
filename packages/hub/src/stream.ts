@@ -21,10 +21,12 @@ export interface StreamDeps {
   store: Store;
   events: HubEmitter;
   now: () => number;
-  /** True when the upgrade request carries a valid bearer (header) or protocol token. */
-  authenticate: (req: IncomingMessage) => boolean;
+  /** Principal key (digest of the credential that matched), or null when unauthenticated. */
+  authenticate: (req: IncomingMessage) => string | null;
   /** D-S3-14: false when the principal is over its read rate (upgrade refused with 429). */
-  allowRead: (req: IncomingMessage) => boolean;
+  allowRead: (principal: string) => boolean;
+  /** Test hook: ms before a refused socket is destroyed if 'finish' never fires. */
+  refuseFallbackMs?: number;
   maxClients: number;
   allowedOrigins: string[];
   heartbeatMs?: number;
@@ -56,8 +58,8 @@ export function tokenFromProtocols(header: string | string[] | undefined): strin
  * half-open, so a refused socket must be destroyed by us: once the refusal is flushed, or after a
  * short deadline when the peer never reads.
  */
-function refuse(socket: Duplex, status: string): void {
-  const t = setTimeout(() => socket.destroy(), 2000);
+function refuseSocket(socket: Duplex, status: string, fallbackMs = 2000): void {
+  const t = setTimeout(() => socket.destroy(), fallbackMs);
   t.unref();
   socket.once("close", () => clearTimeout(t));
   socket.once("finish", () => socket.destroy());
@@ -93,9 +95,11 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
   const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     socket.on("error", () => undefined);
     const url = (req.url ?? "").split("?")[0];
-    if (!deps.authenticate(req)) return refuse(socket, "401 Unauthorized");
-    if (url !== "/stream") return refuse(socket, "404 Not Found");
-    if (!deps.allowRead(req)) return refuse(socket, "429 Too Many Requests");
+    const refuse = (status: string): void => refuseSocket(socket, status, deps.refuseFallbackMs);
+    const principal = deps.authenticate(req);
+    if (principal === null) return refuse("401 Unauthorized");
+    if (url !== "/stream") return refuse("404 Not Found");
+    if (!deps.allowRead(principal)) return refuse("429 Too Many Requests");
     const origin = req.headers.origin;
     if (
       deps.allowedOrigins.length > 0 &&
@@ -103,11 +107,11 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
       !deps.allowedOrigins.includes(origin)
     ) {
       app.log.warn("ws upgrade refused: origin not allowed");
-      return refuse(socket, "403 Forbidden");
+      return refuse("403 Forbidden");
     }
     if (clients.size >= deps.maxClients) {
       app.log.warn({ max: deps.maxClients }, "ws upgrade refused: client cap reached");
-      return refuse(socket, "503 Service Unavailable");
+      return refuse("503 Service Unavailable");
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       // One synchronous block (handleUpgrade invokes this callback synchronously; better-sqlite3

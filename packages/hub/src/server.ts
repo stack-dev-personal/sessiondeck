@@ -26,6 +26,7 @@ export function buildServer(opts: {
   /** Test hooks for WS /stream. */
   heartbeatMs?: number;
   maxBufferedBytes?: number;
+  refuseFallbackMs?: number;
 }): FastifyInstance {
   const expected = digest(opts.config.token);
 
@@ -33,7 +34,15 @@ export function buildServer(opts: {
     const m = typeof header === "string" ? header.match(/^bearer (.+)$/i) : null;
     return m?.[1] !== undefined && timingSafeEqual(digest(m[1]), expected);
   };
-  const isToken = (t: string | null): boolean => t !== null && timingSafeEqual(digest(t), expected);
+  /** Digest (hex) of the credential that authenticated, else null; the limiter key (trusted value). */
+  const principalOf = (header: string | string[] | undefined): string | null => {
+    const m = typeof header === "string" ? header.match(/^bearer (.+)$/i) : null;
+    return m?.[1] !== undefined && timingSafeEqual(digest(m[1]), expected)
+      ? digest(m[1]).toString("hex")
+      : null;
+  };
+  const principalOfToken = (t: string | null): string | null =>
+    t !== null && timingSafeEqual(digest(t), expected) ? digest(t).toString("hex") : null;
   const deny = (reply: FastifyReply) => reply.code(401).header("content-length", "0").send();
 
   const logging = opts.logger === true || opts.logStream !== undefined;
@@ -79,19 +88,12 @@ export function buildServer(opts: {
   // D-S3-14: reads and upgrades share one per-principal bucket, separate from ingest's.
   const now = opts.now ?? Date.now;
   const readLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 16, now);
-  const readKey = (header: string | string[] | undefined): string =>
-    createHash("sha256")
-      .update(typeof header === "string" ? (header.match(/^bearer (.+)$/i)?.[1] ?? "") : "")
-      .digest("hex");
-
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
-    if (!isAuthed(req.headers.authorization)) return deny(reply);
-    if (
-      (req.method === "GET" || req.method === "HEAD") &&
-      !readLimiter.take(readKey(req.headers.authorization), 1)
-    ) {
+    const principal = principalOf(req.headers.authorization);
+    if (principal === null) return deny(reply);
+    if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
       return reply.code(429).header("content-length", "0").send();
     }
   });
@@ -128,23 +130,15 @@ export function buildServer(opts: {
     events: ingestor.events,
     now,
     // Upgrade requests never pass through onRequest: header bearer, or the browser subprotocol.
+    // The limiter key is the digest of whichever credential actually authenticated.
     authenticate: (req) =>
-      isAuthed(req.headers.authorization) ||
-      isToken(tokenFromProtocols(req.headers["sec-websocket-protocol"])),
-    allowRead: (req) => {
-      const h = req.headers.authorization;
-      if (h !== undefined) return readLimiter.take(readKey(h), 1);
-      // Browser clients authenticate with the subprotocol token; one principal in the MVP.
-      return readLimiter.take(
-        createHash("sha256")
-          .update(tokenFromProtocols(req.headers["sec-websocket-protocol"]) ?? "")
-          .digest("hex"),
-        1,
-      );
-    },
+      principalOf(req.headers.authorization) ??
+      principalOfToken(tokenFromProtocols(req.headers["sec-websocket-protocol"])),
+    allowRead: (principal) => readLimiter.take(principal, 1),
     maxClients: opts.config.maxWsClients,
     allowedOrigins: opts.config.allowedOrigins,
     ...(opts.heartbeatMs !== undefined ? { heartbeatMs: opts.heartbeatMs } : {}),
+    ...(opts.refuseFallbackMs !== undefined ? { refuseFallbackMs: opts.refuseFallbackMs } : {}),
     ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
   });
 

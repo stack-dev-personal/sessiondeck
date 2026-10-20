@@ -36,11 +36,13 @@ export function liveSnapshots(
   limit = MAX_LIMIT,
   log?: { warn: (obj: object, msg: string) => void },
 ) {
-  const out = store
-    .listLiveSessions(nowMs - LIVE_GRACE_MS, limit)
-    .map((r) => readSnapshot(r, nowMs));
-  if (out.length >= limit) log?.warn({ count: out.length, limit }, "live session set truncated");
-  return out;
+  // Fetch one extra row to detect real truncation; warn only when the server cap is what cut it.
+  const rows = store.listLiveSessions(nowMs - LIVE_GRACE_MS, limit + 1);
+  const truncated = rows.length > limit;
+  if (truncated && limit === MAX_LIMIT) {
+    log?.warn({ count: limit, limit }, "live session set truncated");
+  }
+  return rows.slice(0, limit).map((r) => readSnapshot(r, nowMs));
 }
 
 export function registerRead(app: FastifyInstance, store: Store, now: () => number): void {
