@@ -13,7 +13,10 @@ export const BACKOFF_CAP_MS = 10_000;
  * resyncs; a half-open connection is thereby replaced without a banner flicker on a healthy one.
  */
 export const LIVENESS_MS = 60_000;
+/** Time for the socket to open (TCP, TLS, upgrade). */
 export const CONNECT_MS = 10_000;
+/** Time, after the socket opened, for the `initial` message: a big board on a slow link needs longer. */
+export const INITIAL_MS = 30_000;
 
 export type LinkStatus = "connecting" | "open" | "closed";
 
@@ -42,8 +45,10 @@ export interface StreamClientOptions {
   random?: () => number;
   now?: () => number;
   livenessMs?: number;
-  /** A candidate socket that has not delivered `initial` after this long is treated as failed. */
+  /** A candidate socket that has not opened after this long is treated as failed. */
   connectMs?: number;
+  /** After it opened, a candidate that has not delivered `initial` after this long is failed. */
+  initialMs?: number;
 }
 
 export interface StreamClient {
@@ -189,6 +194,7 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
   const now = opts.now ?? Date.now;
   const livenessMs = opts.livenessMs ?? LIVENESS_MS;
   const connectMs = opts.connectMs ?? CONNECT_MS;
+  const initialMs = opts.initialMs ?? INITIAL_MS;
 
   let running = false;
   let current: WebSocketLike | null = null;
@@ -285,10 +291,18 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
     candidate = sock;
     probeSeq = msgSeq;
     clearConnect();
-    connectTimer = setT(() => {
-      connectTimer = null;
-      if (sock === candidate) lost(sock);
-    }, connectMs);
+    const arm = (ms: number): void => {
+      clearConnect();
+      connectTimer = setT(() => {
+        connectTimer = null;
+        if (sock === candidate) lost(sock);
+      }, ms);
+    };
+    arm(connectMs);
+    // Opened: the wait for `initial` gets its own, longer budget (it can be a large payload).
+    sock.onopen = () => {
+      if (sock === candidate && connectTimer !== null) arm(initialMs);
+    };
     let ready = false;
     sock.onmessage = (ev) => {
       if (sock !== candidate && sock !== current) return;

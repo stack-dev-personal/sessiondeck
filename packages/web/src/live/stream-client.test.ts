@@ -325,6 +325,31 @@ describe("stream client", () => {
     expect(FakeWs.all.length).toBeGreaterThan(1);
   });
 
+  it("an opened socket gets a longer budget for the initial message than the open itself", () => {
+    const { client, c, statuses } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    c.advance(9_000);
+    first.open();
+    c.advance(20_000); // 29 s after start, past the 10 s connect budget
+    expect(first.closed).toBe(false);
+    first.send({ type: "initial", sessions: [snap("a")] });
+    expect(statuses.at(-1)![0]).toBe("open");
+    c.advance(1_000);
+    expect(first.closed).toBe(false);
+  });
+
+  it("an opened socket that never delivers initial is failed after the initial budget", () => {
+    const { client, c } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.open();
+    c.advance(29_999);
+    expect(first.closed).toBe(false);
+    c.advance(1);
+    expect(first.closed).toBe(true);
+  });
+
   it("current dropping while a candidate is pending keeps connecting, then adopts the candidate", () => {
     const { client, statuses, c, store } = setup();
     client.start();
