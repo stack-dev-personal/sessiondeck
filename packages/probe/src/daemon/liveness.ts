@@ -251,6 +251,7 @@ export class LivenessMonitor implements DaemonComponent {
       this.reader = new SessionsReader(this.o.sessionsDir ?? sessionsDir(), this.log);
     }
     this.stopped = false;
+    this.abandoned = false;
     if (this.timer) clearInterval(this.timer);
     await this.run(() => this.load());
     // A pid that died while the daemon was down is found by this first tick.
@@ -280,6 +281,7 @@ export class LivenessMonitor implements DaemonComponent {
     ]);
     clearTimeout(cap);
     if (this.inflight > 0) this.abandoned = true;
+    this.pendingEnd.clear();
   }
 
   /** Hook-spool envelope tap (at-least-once; every handler here is idempotent by ts). */

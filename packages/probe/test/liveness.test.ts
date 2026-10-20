@@ -1347,6 +1347,39 @@ describe("U3-fix iteration 4 (review iteration 3 findings 1-5)", () => {
     expect(looked).toEqual([200]); // 300 never started
   });
 
+  it("start() after a stop() that gave up works again and stop() drops pending SessionEnds", async () => {
+    const p = spawnProcs({
+      200: { ppid: 1, name: "claude" },
+      300: { ppid: 1, name: "claude" },
+    });
+    let release: () => void = () => undefined;
+    const hang = new Promise<undefined>((r) => (release = () => r(undefined)));
+    const looked: number[] = [];
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: (pid) => {
+        looked.push(pid);
+        return pid === 200 ? hang : p.procs.lookup(pid);
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 200, 1000));
+    await flush();
+    const stopped = m.stop();
+    await vi.advanceTimersByTimeAsync(3000);
+    await stopped;
+    release();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect((m as unknown as { pendingEnd: Map<string, number> }).pendingEnd.size).toBe(0);
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_B, 300, 2000));
+    await flush();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(looked).toContain(300);
+    await m.stop();
+  });
+
   it("5: a forced re-check flag is dropped on an entry with no recorded OS start", async () => {
     const p = spawnProcs({ 100: { ppid: 1, name: "claude" } }); // no start token
     const store = await shiftedStore(p.procs, p.isAlive);
