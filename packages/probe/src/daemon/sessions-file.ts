@@ -74,10 +74,16 @@ export function sameIdentity(
   return a.dev === b.dev && a.ino === b.ino;
 }
 
-/** Claude Code config dir: CLAUDE_CONFIG_DIR when set, else ~/.claude. The daemon only reads from it. */
+/**
+ * Claude Code config dir: CLAUDE_CONFIG_DIR when set, else ~/.claude. A leading ~ is expanded and the
+ * result is made absolute (under a scheduled task the cwd is System32, so a relative value would
+ * quietly point somewhere else). The daemon only reads from it.
+ */
 export function claudeConfigDir(env: Record<string, string | undefined> = process.env): string {
   const base = env["CLAUDE_CONFIG_DIR"];
-  return base !== undefined && base !== "" ? base : path.join(homedir(), ".claude");
+  if (base === undefined || base === "") return path.join(homedir(), ".claude");
+  const expanded = /^~(?=$|[\\/])/.test(base) ? path.join(homedir(), base.slice(1)) : base;
+  return path.resolve(expanded);
 }
 
 export function sessionsDir(env: Record<string, string | undefined> = process.env): string {

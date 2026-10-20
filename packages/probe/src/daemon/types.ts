@@ -19,7 +19,7 @@ export interface ComponentContext {
 }
 
 /**
- * Hook point for later units (transcript tailer, liveness). Components are started after the
+ * Hook point for later units (transcript tailer, liveness). Components are started before the forwarder, after the
  * daemon state is loaded and stopped before it exits. onSpoolLine sees every hook-spool envelope
  * when its batch is closed, and again if a pending batch is resent after a restart; it is
  * at-least-once, so implementations must be idempotent.

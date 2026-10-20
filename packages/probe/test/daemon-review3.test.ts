@@ -121,3 +121,32 @@ describe("U4a review: components start before they see spool lines (R2)", () => 
     expect(order[0]).toBe("start");
   });
 });
+
+describe("U4a review: Claude config dir resolution (R5)", () => {
+  it("expands ~ and makes the path absolute", async () => {
+    const { homedir } = await import("node:os");
+    const { isAbsolute, resolve } = await import("node:path");
+    const sf = await import("../src/daemon/sessions-file.ts");
+    expect(sf.claudeConfigDir({ CLAUDE_CONFIG_DIR: "~/cfg" })).toBe(join(homedir(), "cfg"));
+    expect(sf.claudeConfigDir({ CLAUDE_CONFIG_DIR: "~" })).toBe(homedir());
+    expect(sf.claudeConfigDir({ CLAUDE_CONFIG_DIR: "rel/cfg" })).toBe(resolve("rel/cfg"));
+    expect(isAbsolute(sf.projectsDir({ CLAUDE_CONFIG_DIR: "rel" }))).toBe(true);
+    expect(sf.claudeConfigDir({})).toBe(join(homedir(), ".claude"));
+  });
+
+  it("logs both directories at startup and warns about a missing one", async () => {
+    const { defaultComponents } = await import("../src/daemon/components.ts");
+    const cfgDir = join(home, "claude");
+    mkdirSync(join(cfgDir, "projects"), { recursive: true }); // sessions is missing
+    const logs: string[] = [];
+    const comps = defaultComponents(home, { CLAUDE_CONFIG_DIR: cfgDir });
+    await comps[0]!.start?.({
+      home,
+      host: "h",
+      log: (l, m) => logs.push(`${l} ${m}`),
+      enqueue: () => undefined,
+    });
+    expect(logs).toContain(`info projectsDir=${join(cfgDir, "projects")}`);
+    expect(logs.some((l) => l.startsWith("warn sessionsDir=") && l.includes("missing"))).toBe(true);
+  });
+});
