@@ -79,3 +79,42 @@ Integration (`node packages/probe/scripts/harness-integration-hub.mjs`): docker 
 CI: `gh run list --branch p1/probe-daemon -L 3` on 2026-10-20T22:50Z: 39510297500 (830239d, 5 s), 39507270068 (4 s), 39506713349 (6 s) all `failure` in seconds with no runner (Actions unavailable since 22:15Z). Last real windows-latest run with all probe tests passing: 39482860743 (19:22Z); 39486100922 on 4eb9e97 failed only the RunLevel assertion fixed in 9b1ccc7.
 
 Final count (R1.4-R1.7): 4 pass (Linux) / 0 fail / Windows parts verified by CI (pending).
+
+## S2 final verification (R1.4-R1.7, after CI robustness and R1.7 retry changes)
+
+Branch p1/probe-daemon, HEAD 4753a69 (this docs commit follows). Local re-run 2026-10-20T23:36Z to 23:42Z (Linux WSL2, node v22.23.3), one test process at a time, foreground, --maxWorkers=2. Supersedes the "S2 session-close verification" section where they differ (that section was at code 830239d, before a7ff744, 057a3d8, 552b53f test-only changes and the R1.7 source changes 127e7e6, 410ad80).
+
+Local results:
+
+| Check | Command | Key output | Result |
+|---|---|---|---|
+| Probe unit suite | `pnpm -F @sessiondeck/probe test -- --maxWorkers=2` | 11 files passed, 311 passed / 1 skipped (312), 3.47 s | PASS |
+| Probe process suite | `pnpm -F @sessiondeck/probe test:proc -- --maxWorkers=2` | 11 files passed, 146 passed / 4 skipped (Windows-only), 37.5 s | PASS |
+| R1.7 liveness harness | `node packages/probe/scripts/harness-liveness.mjs` | `killed_pid=105434 detected_ms=11460 envelope=alive:false within_15s=true`, sessionend_suppressed, same_pid_old_session_silent, no_duplicate_after_restart all true, `RESULT pass` | PASS |
+| Daemon e2e harness | `node packages/probe/scripts/harness-daemon-e2e.mjs` | 11 PASS lines: seq 0..62 conflicts=0 resent_ids=0; transcript main 9/9 and subagent 7/7 once; outside-projects path refused; `detected_ms=11796`; no redelivery after restart; `RESULT pass` | PASS |
+| Typecheck, lint, format | `pnpm -F @sessiondeck/probe typecheck`; `... lint`; `pnpm format:check` | all exit 0; "All matched files use Prettier code style!" | PASS |
+
+Windows CI evidence: run 39514897145 on 4753a69, jobs check (windows-latest, node 22) 118944841232, check (windows-latest, node 24) 118944840857, check (ubuntu-latest, node 22/24) 118944841300 and 118944841182, all `success`. Logs read with `gh run view --job <id> --log`. The probe process suite ran in the "test probe processes (outside R0.5)" step on both Windows jobs (Windows lines below are node 22; node 24 shows the same tests passing).
+
+| Windows-only item | Test and pass line (windows-latest, node 22) | Status |
+|---|---|---|
+| Real Task Scheduler registration (R1.4) | `autostart.proc.test.ts (3 tests \| 1 skipped)`; `windows Task Scheduler (real) > registers a logon task for the current user, Limited, and removes it  9229ms` (node 24: 3333 ms) | verified by CI (run 39514897145) |
+| Launcher restart (R1.4) | `windows launcher restart (real wscript) > restarts a daemon that exits non-zero and stops when it exits 0  1355ms` (node 24: 1069 ms) | verified by CI (run 39514897145) |
+| Lock race (R1.4) | `lock-race.proc.test.ts (3 tests) 60731ms`: stale lock, no lock: exactly one winner of 8 over 20 rounds; live lock: no winner (node 24: 3 tests, 47987 ms) | verified by CI (run 39514897145) |
+| Transcript Windows real-fs replace (R1.6) | `transcript.test.ts (58 tests \| 3 skipped)` passed in the unit step on both Windows jobs. The `windows real filesystem > replace-by-rename with a larger file resets under the default strategy` test is `describe.skipIf(platform !== "win32")`; it is skipped on Linux (1 skipped locally) and the Windows skip count of 3 is the posix-only tests, so it ran. The log is non-verbose and prints no per-test line for it | verified by CI (run 39514897145), by file-level pass and skip accounting, not by a named line |
+| Liveness real process (R1.7) | `liveness.proc.test.ts (1 test) 21542ms`: `R1.7 real process > detects a killed pid and queues alive:false within 15 s`. Printed line: `R1.7 proc: tracking after 0 ms (first snapshot succeeded)` (identical on node 24). The retry tick was NOT needed in this run | verified by CI (run 39514897145) for the first-snapshot-succeeds path |
+
+Skipped on Windows too: none of the five items above. Not exercised by any run: the retry-tick path on a real Windows host (the snapshot never failed in CI, so the 127e7e6/410ad80 retry is covered only by unit tests with an injected failing table), and the 10 minute daemon-process outage.
+
+Final status per requirement:
+
+| ID | Evidence | Result |
+|---|---|---|
+| R1.4 | Local: unit, proc (lock-race 3/3, daemon-loss 500 envelopes 0 duplicates 0 gaps across 3 daemon kills), e2e harness. Windows: Task Scheduler, launcher restart, lock race in run 39514897145 | PASS (Linux); Windows verified by CI (run 39514897145) |
+| R1.5 | Local: daemon-loss.proc outage test and e2e; compressed outage and real hub container from the prior section remain valid (no R1.5 source change since). Full 10 min through the daemon process still not run | PASS at component level (10 min cited from 0143d8e); daemon-process outage compressed only |
+| R1.6 | Local: unit 58 transcript tests, e2e main 9/9, subagent 7/7 once, resume after restart. Windows real-fs replace in run 39514897145 | PASS (Linux); Windows verified by CI (run 39514897145) |
+| R1.7 | Local: liveness harness `detected_ms=11460`, e2e `detected_ms=11796`, liveness.proc pass. Windows: liveness.proc real process pass in run 39514897145 | PASS with accepted degraded mode D-S2-13 (unreadable first Windows snapshot: tracking starts about 26 s late, up to about 70 s, and a death in that window sends no envelope; see docs/PROBE.md "Liveness: known gaps") |
+
+Needs laptop confirmation: the 10 minute outage through the real daemon process; Windows behaviour when the process table is unreadable (retry path, D-S2-13), which CI did not trigger. Everything else Windows-specific is verified by CI.
+
+Final count (R1.4-R1.7): 4 pass / 0 fail / 0 unverifiable (R1.5 10 minute daemon-process outage and R1.7 retry path on a real Windows host remain laptop-only extras, not counted as failures).
