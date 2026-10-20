@@ -77,19 +77,3 @@ compact event-loop: max timer lag 577.45 ms, histogram max 578.81 ms, peak RSS 1
 Definition of typical volume (from the header of packages/hub/scripts/bench-replay.ts): 2 hosts, 300 sessions (150 per host), 3,400 envelopes per session = 1,020,000 events spread over 30 days (about 34,000/day, 0.4/s average; bursts of 5-20/s with idle gaps, per the phase doc). Mix per session: 80% hook (golden session's non-lifecycle hooks cycled), 12% statusline (20 captured fixtures cycled), 3% liveness, 5% transcript (5 lines of 400-800 bytes); every session has a SessionStart and SessionEnd. Payloads are the captured fixtures' (avg 898 B here). The work-unit floor is 1,000,000 events across at least 2 hosts and 300 sessions.
 
 Note: compaction max batch is 578 ms (event-loop lag 577 ms), a stall on the hub if compaction runs on the serving process; no threshold is stated for it.
-
-
-## R2.4 ingest load
-
-Requirement: ingest p95 < 20 ms per batch of 100 at 1k envelopes/s. Tool: `pnpm -F @sessiondeck/hub load` (docs/HUB.md "Load harness"; open loop, latency from scheduled send time). 60 s sustained after a 5 s warm-up, 659 measured batches, 65,900 envelopes, 0 failed requests. Machine: WSL2 Linux sprint container, 20 vCPU, not the Windows laptop; the host was shared with other sprint sessions.
-
-| Run | p50 ms | p95 ms | p99 ms | max ms | Result |
-|---|---|---|---|---|---|
-| Sustained, in-process hub, `--verify-live` | 7.82 | 13.70 | 24.35 | 52.90 | PASS |
-| Sustained, in-process, rerun | 8.03 | 12.01 | 17.09 | 37.16 | PASS |
-| Sustained, compose hub container via `--url` | 9.15 | 12.77 | 15.80 | 19.96 | PASS |
-| `--with-retention`, 600k backlog compacted during the load | 8.34 | 15.92 | 40.73 | 57.01 | PASS |
-| ... batches during compaction (319) | 10.04 | 19.64 | 42.69 | 57.01 | |
-| ... batches outside compaction (340) | 6.68 | 10.53 | 19.26 | 38.62 | |
-
-Failing runs, kept for honesty: `--with-retention` with the 600k backlog gave p95 21.25 ms once (during compaction 25.6 ms, outside 12.0); with `COMPACT_REST_FACTOR` 4 it gave 27.13 ms (the pass then spanned the whole window, 72 s); with a 150k backlog 26.59 ms and then 15.81 ms; one sustained run gave p95 215 ms while another session's `tsc` held the host at load average 16. Conclusion: the sustained requirement holds with margin (p95 12 to 14 ms) on a quiet host; a compaction pass over a large backlog adds roughly 10 ms at p95 to the batches it overlaps and can push a short window over 20 ms. Retention normally runs hourly over the events of that hour, far below the 600k backlog used here.
