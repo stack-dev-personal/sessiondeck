@@ -1,7 +1,8 @@
 import { memo, useId, type KeyboardEvent } from "react";
 import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
+import { displayNameOf, projectOf } from "../lib/attention";
 import { STATE_VOCAB } from "../lib/state-vocab";
-import { basename, formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
+import { formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
 import { Meter, MeterValue, metersFor } from "./Meter";
 import { StateChip } from "./StateChip";
 
@@ -34,8 +35,8 @@ const BADGE: Partial<Record<SessionState, string>> = {
 
 /** Derived, display-ready fields shared by the full and compact card. */
 export function cardInfo(s: SessionSnapshot) {
-  const project = basename(s.project_dir) ?? basename(s.cwd) ?? s.session_id;
-  const name = s.session_name ?? project;
+  const project = projectOf(s);
+  const name = displayNameOf(s);
   const active = s.subagents.filter((a) => a.ended_at === null).length;
   return { project, name, active, vocab: STATE_VOCAB[s.state] };
 }
@@ -151,6 +152,7 @@ function SessionCardImpl({
       data-testid="session-card"
       {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
+      data-attention={vocab.attention ? "true" : undefined}
       data-density="full"
       style={{ height: "var(--card-h)" }}
       className={`sd-card flex flex-col justify-between overflow-hidden rounded-lg border border-border bg-surface-1 px-s-3 py-s-2 text-sm ${stateClasses(s.state)}`}
@@ -260,6 +262,7 @@ function CompactCardImpl({
       data-testid="session-card"
       {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
+      data-attention={vocab.attention ? "true" : undefined}
       data-density="compact"
       style={{ height: "var(--card-compact-h)" }}
       className={`sd-card ${ROW} gap-s-3 rounded border border-border bg-surface-1 px-s-3 text-sm ${stateClasses(s.state)}`}

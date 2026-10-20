@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
+import { startAlerts } from "./alerts/start";
 import { App } from "./App";
 import { startLive } from "./live/start";
 import { useBoard } from "./store/board";
@@ -14,6 +15,8 @@ if (import.meta.env.VITE_MOCK === "1") {
 } else {
   startLive(useBoard, useUi);
 }
+
+startAlerts(useBoard, useUi);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

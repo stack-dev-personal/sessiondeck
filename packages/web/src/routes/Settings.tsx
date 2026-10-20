@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { browserEnv, playTone, primeAudio } from "../alerts/deliver";
 import { streamUrl } from "../live/stream-client";
 import { useUi } from "../store/ui";
 
@@ -17,12 +18,53 @@ export function insecureHubWarning(hubUrl: string): string | null {
 
 const input = "w-96 rounded border border-border bg-surface-2 px-s-2 py-s-1 text-fg";
 
-/** Hub URL, token, notification opt-in. Saved to localStorage only; nothing uses it yet. */
+type Perm = NotificationPermission | "unsupported";
+
+function currentPermission(): Perm {
+  return browserEnv().Notification?.permission ?? "unsupported";
+}
+
+const PERM_TEXT: Record<Perm, string> = {
+  default: "Browser permission: not asked yet. It is requested when you turn this on.",
+  granted: "Browser permission: granted.",
+  denied:
+    "Browser permission: blocked. Allow notifications for this site in the browser, then turn this on again.",
+  unsupported: "Browser permission: this browser has no Notification support.",
+};
+
+/** Hub URL, token, and the alert opt-ins (browser notification, one tone per attention state). */
 export function Settings() {
   const { settings, saveSettings } = useUi();
   const [draft, setDraft] = useState(settings);
   const [saved, setSaved] = useState(false);
+  const [perm, setPerm] = useState<Perm>(currentPermission);
   const warning = insecureHubWarning(draft.hubUrl);
+  /** The change handler is a user gesture, which is what requestPermission needs. */
+  const toggleNotifications = (on: boolean) => {
+    setDraft({ ...draft, notifications: on });
+    setSaved(false);
+    const N = browserEnv().Notification as
+      | {
+          permission: NotificationPermission;
+          requestPermission?: () => Promise<NotificationPermission>;
+        }
+      | undefined;
+    if (on && N?.permission === "default" && N.requestPermission) {
+      void N.requestPermission().then(
+        (p) => setPerm(p),
+        () => setPerm(currentPermission()),
+      );
+    }
+  };
+  const toggleSound = (state: "waiting_permission" | "waiting_input", on: boolean) => {
+    setDraft({ ...draft, sounds: { ...draft.sounds, [state]: on } });
+    setSaved(false);
+    if (on) {
+      const env = browserEnv();
+      primeAudio(env);
+      playTone(env, state);
+    }
+  };
   const submit = (e: FormEvent) => {
     e.preventDefault();
     saveSettings(draft);
@@ -62,17 +104,47 @@ export function Settings() {
           }}
         />
       </label>
-      <label className="flex items-center gap-s-2">
-        <input
-          type="checkbox"
-          checked={draft.notifications}
-          onChange={(e) => {
-            setDraft({ ...draft, notifications: e.target.checked });
-            setSaved(false);
-          }}
-        />
-        Browser notifications when a session needs me
-      </label>
+      <fieldset className="flex flex-col gap-s-2 border-0 p-0">
+        <legend className="mb-s-1">Alerts</legend>
+        <label className="flex items-center gap-s-2">
+          <input
+            type="checkbox"
+            checked={draft.notifications}
+            onChange={(e) => toggleNotifications(e.target.checked)}
+          />
+          Browser notifications when a session needs me
+        </label>
+        <p className="m-0 text-sm text-fg-muted" data-testid="notification-permission">
+          {PERM_TEXT[perm]} A notification shows the session name and its state only.
+        </p>
+        <label className="flex items-center gap-s-2">
+          <input
+            type="checkbox"
+            checked={draft.sounds.waiting_permission}
+            onChange={(e) => toggleSound("waiting_permission", e.target.checked)}
+          />
+          Play a tone when a session needs permission
+        </label>
+        <label className="flex items-center gap-s-2">
+          <input
+            type="checkbox"
+            checked={draft.sounds.waiting_input}
+            onChange={(e) => toggleSound("waiting_input", e.target.checked)}
+          />
+          Play a tone when a session needs input
+        </label>
+        <label className="flex items-center gap-s-2">
+          <input
+            type="checkbox"
+            checked={draft.muted}
+            onChange={(e) => {
+              setDraft({ ...draft, muted: e.target.checked });
+              setSaved(false);
+            }}
+          />
+          Mute all tones
+        </label>
+      </fieldset>
       <div className="flex items-center gap-s-3">
         <button
           type="submit"

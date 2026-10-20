@@ -64,24 +64,33 @@ body {
   0% {
     box-shadow:
       0 0 0 1px var(--accent-attention),
+      inset 4px 0 0 0 var(--accent-attention),
       0 0 0 0 var(--accent-attention);
   }
   40% {
     box-shadow:
       0 0 0 1px var(--accent-attention),
+      inset 4px 0 0 0 var(--accent-attention),
       0 0 10px 3px var(--accent-attention);
   }
   100% {
     box-shadow:
       0 0 0 1px var(--accent-attention),
+      inset 4px 0 0 0 var(--accent-attention),
       0 0 0 0 transparent;
   }
 }
 
-/* Attention: steady 1px ring, plus a one-time 400 ms glow on arrival. */
+/*
+ * Attention: steady 1px ring plus a 4 px inset stripe on the left edge (a shape cue that survives
+ * grayscale; the badge and the state word are the other cues), and a one-time 400 ms glow on
+ * arrival. Shadows only, so the card box never changes size.
+ */
 .sd-attention {
   border-color: var(--accent-attention);
-  box-shadow: 0 0 0 1px var(--accent-attention);
+  box-shadow:
+    0 0 0 1px var(--accent-attention),
+    inset 4px 0 0 0 var(--accent-attention);
   animation: sd-glow 400ms var(--ease) 1;
 }
 

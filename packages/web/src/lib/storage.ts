@@ -19,4 +19,5 @@ export const STORAGE_KEYS = {
   theme: "sd.theme",
   compact: "sd.compact",
   settings: "sd.settings",
+  filters: "sd.filters",
 } as const;
