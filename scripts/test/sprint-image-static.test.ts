@@ -10,7 +10,7 @@ import { findPosixShell, runShellCases, type ShellCaseResult } from "./helpers-s
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const sprintDir = join(repoRoot, "infra", "sprint");
 
-const TOKEN_NAMES = ["CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN"];
+const TOKEN_NAMES = ["CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "SPRINT_CLAUDE_OAUTH_TOKEN"];
 const TOKEN_ALTERNATION = TOKEN_NAMES.join("|");
 
 function read(...parts: string[]): string {
@@ -228,6 +228,15 @@ describe("sprint entrypoint", () => {
       expect(line).not.toContain(">");
     }
     expect(precheck).not.toContain("SPRINT_CLAUDE_OAUTH_TOKEN");
+  });
+
+  it("keeps the mirror export top-level and unconditional so a .sprint/env value is always overwritten", () => {
+    const exportLine = 'export SPRINT_CLAUDE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"';
+    const mirrorLines = entrypoint.split("\n").filter((l) => l.includes("SPRINT_CLAUDE_OAUTH_TOKEN"));
+    expect(mirrorLines).toEqual([exportLine]);
+    const [line] = mirrorLines;
+    expect(line).toBe(line?.trimStart());
+    expect(line).not.toMatch(/&&|\|\||\[|:-|\bif\b/);
   });
 
   it("states that the non-root user is not a security boundary", () => {
@@ -684,8 +693,14 @@ describe("PROMPT-BOOK.md section 2 launch command", () => {
   it("sets the OAuth token from the mirror directly before claude -p and reads no stdin", () => {
     expect(launch).toContain("claude -p");
     expect(launch).toContain(
-      'CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)"',
+      'CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" env -u SPRINT_CLAUDE_OAUTH_TOKEN claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)"',
     );
+    // The assignment is a shell prefix; env -u must never come first, and the value must never be env's argv.
+    expect(launch.indexOf('CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN"')).toBeLessThan(
+      launch.indexOf("env -u"),
+    );
+    expect(launch).not.toMatch(/env -u \S+ CLAUDE_CODE_OAUTH_TOKEN=/);
+    expect(launch).not.toMatch(/env\s[^\n]*CLAUDE_CODE_OAUTH_TOKEN=/);
     expect(launch).toContain("</dev/null");
     expect(launch.indexOf("</dev/null")).toBeLessThan(launch.indexOf("| tee"));
   });

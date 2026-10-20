@@ -39,13 +39,13 @@ One per `docs/handoffs/S*.md`. The mini-sprint orchestrator runs it as:
 ```
 git worktree add /work/wt/{SESSION_ID} -b {SESSION_BRANCH} sprint/{SPRINT_ID}-{SPRINT_SLUG}
 cd /work/wt/{SESSION_ID}
-CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)" \
+CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" env -u SPRINT_CLAUDE_OAUTH_TOKEN claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)" \
   --agent sd-orchestrator --dangerously-skip-permissions \
   --output-format stream-json --verbose </dev/null \
   | tee /state/{SPRINT_ID}/logs/{SESSION_ID}.jsonl
 ```
 
-(`--dangerously-skip-permissions` only inside the container; the project `.claude/settings.json` deny rules and `guard.mjs` still apply.) Claude Code strips CLAUDE_CODE_OAUTH_TOKEN from the environment of Bash tool subprocesses, so the launch sets it from the mirror SPRINT_CLAUDE_OAUTH_TOKEN that infra/sprint/entrypoint.sh exports; the same prefix (and stdin from /dev/null) applies to the resume launch (section 5) and to fix sessions (section 7).
+(`--dangerously-skip-permissions` only inside the container; the project `.claude/settings.json` deny rules and `guard.mjs` still apply.) Claude Code strips CLAUDE_CODE_OAUTH_TOKEN from Bash tool subprocesses, so the launch sets it from the mirror SPRINT_CLAUDE_OAUTH_TOKEN that infra/sprint/entrypoint.sh exports, as a shell prefix so the value never appears on a command line; `env -u` keeps the mirror out of the phase manager and its tools, whose log is not redacted. The resume launch (section 5) and fix sessions (section 7) use the section 2 command with only the prompt path changed.
 
 The prompt file `/state/{SPRINT_ID}/prompts/{SESSION_ID}.md` is:
 
