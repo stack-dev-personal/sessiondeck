@@ -23,6 +23,8 @@ export interface StreamDeps {
   now: () => number;
   /** True when the upgrade request carries a valid bearer (header) or protocol token. */
   authenticate: (req: IncomingMessage) => boolean;
+  /** D-S3-14: false when the principal is over its read rate (upgrade refused with 429). */
+  allowRead: (req: IncomingMessage) => boolean;
   maxClients: number;
   allowedOrigins: string[];
   heartbeatMs?: number;
@@ -49,7 +51,16 @@ export function tokenFromProtocols(header: string | string[] | undefined): strin
   return Buffer.from(b64, "base64url").toString("utf8");
 }
 
+/**
+ * After the `upgrade` event Node no longer applies header/request timeouts and keeps the socket
+ * half-open, so a refused socket must be destroyed by us: once the refusal is flushed, or after a
+ * short deadline when the peer never reads.
+ */
 function refuse(socket: Duplex, status: string): void {
+  const t = setTimeout(() => socket.destroy(), 2000);
+  t.unref();
+  socket.once("close", () => clearTimeout(t));
+  socket.once("finish", () => socket.destroy());
   socket.end(`HTTP/1.1 ${status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
 }
 
@@ -84,6 +95,7 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
     const url = (req.url ?? "").split("?")[0];
     if (!deps.authenticate(req)) return refuse(socket, "401 Unauthorized");
     if (url !== "/stream") return refuse(socket, "404 Not Found");
+    if (!deps.allowRead(req)) return refuse(socket, "429 Too Many Requests");
     const origin = req.headers.origin;
     if (
       deps.allowedOrigins.length > 0 &&
@@ -106,7 +118,7 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
       // or duplicated across connect, and a reconnect never replays older deltas.
       const initial: StreamMessage = {
         type: "initial",
-        sessions: liveSnapshots(deps.store, deps.now(), MAX_LIMIT),
+        sessions: liveSnapshots(deps.store, deps.now(), MAX_LIMIT, app.log),
       };
       clients.set(ws, { alive: true });
       send(ws, JSON.stringify(initial));

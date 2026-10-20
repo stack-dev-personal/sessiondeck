@@ -1,11 +1,15 @@
 // WS fan-out harness (R2.5). 5 clients on /stream; N ingest batches synthesized from contract
 // fixtures with fresh ids; every delta must reach every client exactly once, max latency < 100 ms
-// from the ingest HTTP response; then one client reconnects and must resync without duplicates.
+// from request start to receipt at each client; then one client reconnects and must resync without duplicates.
 //
 //   HUB_URL=http://host:8787 HUB_TOKEN=... node scripts/ws-harness.mjs [N]
 //   node scripts/ws-harness.mjs            (no HUB_URL: starts an in-process hub on a temp DB)
 //
 // Exit code 0 on PASS, 1 on FAIL.
+//
+//   node scripts/ws-harness.mjs --negative [N]
+// Negative self-test (in-process hub only): injects a 150 ms stall before the broadcast and exits 0
+// only if the harness reports FAIL because of latency, proving the gate can fail.
 import { build } from "esbuild";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -16,7 +20,10 @@ import { WebSocket } from "ws";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = path.resolve(root, "../contract/fixtures");
-const N = Number(process.argv[2] ?? process.env.HUB_HARNESS_N ?? 200);
+const NEGATIVE = process.argv.includes("--negative");
+const posArg = process.argv.slice(2).find((a) => !a.startsWith("--"));
+const N = Number(posArg ?? process.env.HUB_HARNESS_N ?? (NEGATIVE ? 10 : 200));
+const INJECT_DELAY_MS = NEGATIVE ? 150 : 0;
 const CLIENTS = 5;
 const SESSIONS = 20;
 const LIMIT_MS = 100;
@@ -38,6 +45,7 @@ const PROMPT = fixture("UserPromptSubmit/01-sample.json");
 let url = process.env.HUB_URL;
 let token = process.env.HUB_TOKEN;
 let stopHub = async () => {};
+if (NEGATIVE && process.env.HUB_URL) throw new Error("--negative needs the in-process hub");
 if (!url) {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "hub-harness-"));
   const out = path.join(root, "dist", "harness-hub.mjs");
@@ -64,6 +72,14 @@ if (!url) {
   const store = Store.open(path.join(tmp, "hub.sqlite"));
   store.migrate();
   const app = buildServer({ config: loadConfig({ HUB_TOKEN: token }), store });
+  if (INJECT_DELAY_MS > 0) {
+    // Runs before the stream's own batch listener: stalls the event loop, so the broadcast (and
+    // the HTTP response) are late by this much.
+    app.hub.events.prependListener("batch", () => {
+      const end = performance.now() + INJECT_DELAY_MS;
+      while (performance.now() < end);
+    });
+  }
   await app.listen({ port: 0, host: "127.0.0.1" });
   url = `http://127.0.0.1:${app.server.address().port}`;
   stopHub = async () => {
@@ -167,8 +183,8 @@ try {
   const clients = [];
   for (let i = 0; i < CLIENTS; i++) clients.push(await connect(`c${i}`));
 
-  const lat = []; // response -> receipt, per delta per client (clamped at 0)
-  const e2e = []; // request start -> receipt
+  const lat = []; // informational: response -> receipt (clamped at 0)
+  const e2e = []; // gated: request start -> receipt, an upper bound of ingest -> receipt
   let missing = 0;
   const expected = [];
   for (let i = 0; i < N; i++) {
@@ -203,7 +219,7 @@ try {
     missing,
     e2eMax: e2e.at(-1) ?? 0,
   };
-  const mainOk = main.dup === 0 && main.missing === 0 && strays === 0 && main.max < LIMIT_MS;
+  const mainOk = main.dup === 0 && main.missing === 0 && strays === 0 && main.e2eMax < LIMIT_MS;
 
   // ---- reconnect ----
   const victim = clients[0];
@@ -235,7 +251,7 @@ try {
   const row = (name, d, c, p50, p95, max, dupN, miss, ok) =>
     `${name.padEnd(12)} ${String(d).padStart(7)} ${String(c).padStart(7)} ${p50.padStart(8)} ${p95.padStart(8)} ${max.padStart(8)} ${String(dupN).padStart(4)} ${String(miss).padStart(8)}  ${ok ? "PASS" : "FAIL"}`;
   console.log(
-    `hub: ${process.env.HUB_URL ? "remote" : "in-process"}  sessions=${SESSIONS}  limit=${LIMIT_MS} ms (ingest response -> receipt)`,
+    `hub: ${process.env.HUB_URL ? "remote" : "in-process"}  sessions=${SESSIONS}  limit=${LIMIT_MS} ms (request start -> receipt, max gated)`,
   );
   console.log(
     `${"phase".padEnd(12)} ${"deltas".padStart(7)} ${"clients".padStart(7)} ${"p50 ms".padStart(8)} ${"p95 ms".padStart(8)} ${"max ms".padStart(8)} ${"dup".padStart(4)} ${"missing".padStart(8)}  result`,
@@ -245,9 +261,9 @@ try {
       "fan-out",
       main.deltas,
       main.clients,
-      f(main.p50),
-      f(main.p95),
-      f(main.max),
+      f(pct(e2e, 50)),
+      f(pct(e2e, 95)),
+      f(main.e2eMax),
       main.dup,
       main.missing,
       mainOk,
@@ -255,9 +271,16 @@ try {
   );
   console.log(row("reconnect", M, 1, "-", "-", "-", reDup + replayed, reMissing + stale, reOk));
   console.log(
-    `(fan-out from request start: p50 ${f(pct(e2e, 50))} p95 ${f(pct(e2e, 95))} max ${f(main.e2eMax)} ms; deltas that arrived before the HTTP response was read count as 0 ms; stray deltas: ${strays}; stale sessions in new initial: ${stale}; replayed old deltas: ${replayed})`,
+    `(informational, response -> receipt clamped at 0: p50 ${f(main.p50)} p95 ${f(main.p95)} max ${f(main.max)} ms; stray deltas: ${strays}; stale sessions in new initial: ${stale}; replayed old deltas: ${replayed})`,
   );
   failed = !(mainOk && reOk);
+  if (NEGATIVE) {
+    const latencyFail = main.e2eMax >= LIMIT_MS && main.dup === 0 && main.missing === 0;
+    console.log(
+      `negative self-test: injected ${INJECT_DELAY_MS} ms stall, harness ${failed ? "FAILED" : "PASSED"}, ${latencyFail ? "failure is the latency gate" : "failure is NOT the latency gate"}`,
+    );
+    failed = !(failed && latencyFail); // success of the self-test = the harness failed on latency
+  }
   for (const c of clients) c.ws.terminate();
 } catch (err) {
   failed = true;
@@ -265,5 +288,5 @@ try {
 }
 await stopHub();
 for (const n of notes) console.error(`FAIL: ${n}`);
-console.log(failed ? "FAIL" : "PASS");
+console.log(NEGATIVE ? (failed ? "SELFTEST FAIL" : "SELFTEST PASS") : failed ? "FAIL" : "PASS");
 process.exit(failed ? 1 : 0);

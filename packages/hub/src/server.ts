@@ -76,10 +76,24 @@ export function buildServer(opts: {
 
   app.decorate("store", opts.store);
 
+  // D-S3-14: reads and upgrades share one per-principal bucket, separate from ingest's.
+  const now = opts.now ?? Date.now;
+  const readLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 16, now);
+  const readKey = (header: string | string[] | undefined): string =>
+    createHash("sha256")
+      .update(typeof header === "string" ? (header.match(/^bearer (.+)$/i)?.[1] ?? "") : "")
+      .digest("hex");
+
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
     if (!isAuthed(req.headers.authorization)) return deny(reply);
+    if (
+      (req.method === "GET" || req.method === "HEAD") &&
+      !readLimiter.take(readKey(req.headers.authorization), 1)
+    ) {
+      return reply.code(429).header("content-length", "0").send();
+    }
   });
 
   // The default 404 handler logs "Route GET:<url with query> not found"; reply without it.
@@ -87,7 +101,6 @@ export function buildServer(opts: {
 
   app.get("/health", async () => ({ ok: true }));
 
-  const now = opts.now ?? Date.now;
   const ingestor = new Ingestor(opts.store, app.log, now, {
     maxOpenSessionsPerHost: opts.config.maxOpenSessionsPerHost,
   });
@@ -118,6 +131,17 @@ export function buildServer(opts: {
     authenticate: (req) =>
       isAuthed(req.headers.authorization) ||
       isToken(tokenFromProtocols(req.headers["sec-websocket-protocol"])),
+    allowRead: (req) => {
+      const h = req.headers.authorization;
+      if (h !== undefined) return readLimiter.take(readKey(h), 1);
+      // Browser clients authenticate with the subprotocol token; one principal in the MVP.
+      return readLimiter.take(
+        createHash("sha256")
+          .update(tokenFromProtocols(req.headers["sec-websocket-protocol"]) ?? "")
+          .digest("hex"),
+        1,
+      );
+    },
     maxClients: opts.config.maxWsClients,
     allowedOrigins: opts.config.allowedOrigins,
     ...(opts.heartbeatMs !== undefined ? { heartbeatMs: opts.heartbeatMs } : {}),

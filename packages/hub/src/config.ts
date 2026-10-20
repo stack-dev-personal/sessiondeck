@@ -16,6 +16,9 @@ export interface HubConfig {
   hostBurst: number;
   /** Hosts not yet in the hosts table are refused (429) once the table holds this many. */
   maxHosts: number;
+  /** D-S3-14. Per-principal read limit (GET routes and WS upgrades), requests per second and burst. */
+  readRate: number;
+  readBurst: number;
   /** Concurrent WS /stream clients; further upgrades get 503. */
   maxWsClients: number;
   /** HUB_ALLOWED_ORIGINS; when non-empty, an upgrade with any other Origin is refused (403). */
@@ -64,6 +67,8 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     ingestBurst,
     hostRate,
     hostBurst,
+    readRate: posInt(env, "HUB_READ_RATE", 50),
+    readBurst: posInt(env, "HUB_READ_BURST", 100),
     maxWsClients: posInt(env, "HUB_MAX_WS_CLIENTS", 64),
     allowedOrigins: (env["HUB_ALLOWED_ORIGINS"] ?? "")
       .split(",")

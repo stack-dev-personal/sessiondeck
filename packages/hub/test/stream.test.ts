@@ -269,7 +269,11 @@ describe("R2.5 stream", () => {
     for (let i = 0; i < 15; i++) {
       const id = `race${i}`;
       const [c] = await Promise.all([connect(), h.post(batch([mkEnv({ session_id: id })]))]);
-      await sleep(20);
+      const initial = (): boolean =>
+        (c.msgs[0] as { sessions: SessionSnapshot[] }).sessions.some((s) => s.session_id === id);
+      // Wait with a deadline until the batch is visible in the initial or as a delta.
+      await waitFor(() => initial() || sessionsOf(c).some((s) => s.session_id === id));
+      await sleep(30); // then give a (wrong) duplicate time to show up
       const inInitial = (c.msgs[0] as { sessions: SessionSnapshot[] }).sessions.some(
         (s) => s.session_id === id,
       );
@@ -305,15 +309,68 @@ describe("R2.7 staleness over WS", () => {
   });
 });
 
+describe("D-S3-12 live set limits", () => {
+  it("REST ?live=1 default and the WS initial agree beyond 200 sessions, and truncation warns", async () => {
+    await boot();
+    for (let i = 0; i < 250; i++) seedSession(h.store, `lv${i}`, { started_at: NOW - i });
+    const c = await connect();
+    const rest = await h.app.inject({ method: "GET", url: "/sessions?live=1", headers: AUTH });
+    const restIds = (rest.json() as SessionSnapshot[]).map((s) => s.session_id);
+    expect(restIds).toHaveLength(250);
+    expect(c.msgs[0]).toEqual({ type: "initial", sessions: rest.json() });
+    // a limit equal to the available count is reported as truncation
+    const capped = await h.app.inject({
+      method: "GET",
+      url: "/sessions?live=1&limit=100",
+      headers: AUTH,
+    });
+    expect(capped.statusCode).toBe(200);
+    expect(
+      h.logLines().some((l) => l["msg"] === "live session set truncated" && l["count"] === 100),
+    ).toBe(true);
+  });
+});
+
+describe("slow client", () => {
+  it("terminates a client whose send buffer exceeds the cap; others keep receiving", async () => {
+    await boot({}, { maxBufferedBytes: 1000 });
+    const slow = await connect();
+    const good = await connect();
+    // A stalled peer: its socket is paused, and the server-side socket reports a backed-up send
+    // buffer (loopback kernel buffers are too large to fill quickly in a test).
+    const sock = (w: WebSocket) =>
+      (w as unknown as { _socket: { pause(): void; localPort: number; remotePort: number } })
+        ._socket;
+    sock(slow.ws).pause();
+    const slowPort = sock(slow.ws).localPort;
+    const real = Object.getOwnPropertyDescriptor(WebSocket.prototype, "bufferedAmount")!;
+    Object.defineProperty(WebSocket.prototype, "bufferedAmount", {
+      configurable: true,
+      get(this: WebSocket) {
+        return sock(this).remotePort === slowPort ? 5_000_000 : (real.get!.call(this) as number);
+      },
+    });
+    try {
+      expect((await h.post(batch([mkEnv({ session_id: "sl1" })]))).statusCode).toBe(200);
+      await waitFor(() => slow.ws.readyState === WebSocket.CLOSED, 5000);
+      expect((await h.post(batch([mkEnv({ session_id: "sl2" })]))).statusCode).toBe(200);
+      await waitFor(() => sessionsOf(good).length === 2);
+      expect(sessionsOf(good).map((s) => s.session_id)).toEqual(["sl1", "sl2"]);
+      expect(good.ws.readyState).toBe(WebSocket.OPEN);
+      expect(h.logs.join("\n")).toContain("ws client too slow, terminated");
+    } finally {
+      Object.defineProperty(WebSocket.prototype, "bufferedAmount", real);
+    }
+  });
+});
+
 describe("heartbeat", () => {
   it("terminates a client that stops answering pings; a healthy one stays", async () => {
-    await boot({}, { heartbeatMs: 40 });
+    await boot({}, { heartbeatMs: 150 });
     const dead = await connect({ autoPong: false });
     const live = await connect();
-    const closed = new Promise<void>((r) => dead.ws.once("close", () => r()));
-    await closed;
-    expect(dead.ws.readyState).toBe(WebSocket.CLOSED);
-    await sleep(120);
+    await waitFor(() => dead.ws.readyState === WebSocket.CLOSED, 5000);
+    await sleep(300);
     expect(live.ws.readyState).toBe(WebSocket.OPEN);
   });
 });

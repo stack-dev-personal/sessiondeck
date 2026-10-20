@@ -10,7 +10,12 @@ const uint = z
 const limitOf = (dflt: number) =>
   uint.pipe(z.number().int().min(1).max(MAX_LIMIT)).default(String(dflt));
 
-const ListQuery = z.object({ limit: limitOf(200), live: z.enum(["0", "1"]).optional() });
+// D-S3-12: the live set uses the same default (and maximum) as the WS initial message.
+const ListQuery = z.object({
+  limit: uint.pipe(z.number().int().min(1).max(MAX_LIMIT)).optional(),
+  live: z.enum(["0", "1"]).optional(),
+});
+const DEFAULT_LIST_LIMIT = 200;
 const EventsQuery = z.object({ after: uint.optional(), limit: limitOf(MAX_LIMIT) });
 const TranscriptQuery = z.object({
   after: uint.optional(),
@@ -25,8 +30,17 @@ function badQuery(reply: FastifyReply, err: z.ZodError) {
 }
 
 /** The live set shared by GET /sessions?live=1 and the WS initial message. */
-export function liveSnapshots(store: Store, nowMs: number, limit = MAX_LIMIT) {
-  return store.listLiveSessions(nowMs - LIVE_GRACE_MS, limit).map((r) => readSnapshot(r, nowMs));
+export function liveSnapshots(
+  store: Store,
+  nowMs: number,
+  limit = MAX_LIMIT,
+  log?: { warn: (obj: object, msg: string) => void },
+) {
+  const out = store
+    .listLiveSessions(nowMs - LIVE_GRACE_MS, limit)
+    .map((r) => readSnapshot(r, nowMs));
+  if (out.length >= limit) log?.warn({ count: out.length, limit }, "live session set truncated");
+  return out;
 }
 
 export function registerRead(app: FastifyInstance, store: Store, now: () => number): void {
@@ -36,8 +50,8 @@ export function registerRead(app: FastifyInstance, store: Store, now: () => numb
     if (!q.success) return badQuery(reply, q.error);
     const t = now();
     return q.data.live === "1"
-      ? liveSnapshots(store, t, q.data.limit)
-      : store.listSessions(q.data.limit).map((r) => readSnapshot(r, t));
+      ? liveSnapshots(store, t, q.data.limit ?? MAX_LIMIT, app.log)
+      : store.listSessions(q.data.limit ?? DEFAULT_LIST_LIMIT).map((r) => readSnapshot(r, t));
   });
 
   app.get<{ Params: { id: string } }>("/sessions/:id", async (req, reply) => {
@@ -46,6 +60,9 @@ export function registerRead(app: FastifyInstance, store: Store, now: () => numb
     return readSnapshot(row, now());
   });
 
+  // D-S3-11: an authenticated audit view of the raw stored envelopes. The R2.7 staleness rule
+  // applies to rendered snapshots (REST snapshot reads and WS), not to raw event payloads, so a
+  // statusLine payload here may carry an out-of-range or expired used_percentage as received.
   app.get<{ Params: { id: string } }>("/sessions/:id/events", async (req, reply) => {
     const q = EventsQuery.safeParse(req.query);
     if (!q.success) return badQuery(reply, q.error);
@@ -68,11 +85,15 @@ export function registerRead(app: FastifyInstance, store: Store, now: () => numb
     };
   });
 
-  // Raw stored lines, no normalization (the normalizer is S7). Cursor `after` is a line_no, so
-  // when several agents are returned together it applies to each agent's own numbering.
+  // Raw stored lines, no normalization (the normalizer is S7). `after` is a line_no in one agent's
+  // numbering, so it requires agent_id (D-S3-13); agent_id '' (`agent_id=`) is the main session.
+  // Without either, all agents' lines are returned up to limit, ordered (agent_id, line_no).
   app.get<{ Params: { id: string } }>("/sessions/:id/transcript", async (req, reply) => {
     const q = TranscriptQuery.safeParse(req.query);
     if (!q.success) return badQuery(reply, q.error);
+    if (q.data.after !== undefined && q.data.agent_id === undefined) {
+      return reply.code(400).send({ error: "invalid_query", reason: "after requires agent_id" });
+    }
     if (store.getSession(req.params.id) === undefined) {
       return reply.code(404).header("content-length", "0").send();
     }

@@ -49,6 +49,7 @@ describe("loadConfig bucket sizes and WS settings", () => {
   it("defaults and parses WS settings", () => {
     const d = loadConfig(base);
     expect([d.maxWsClients, d.allowedOrigins]).toEqual([64, []]);
+    expect([d.readRate, d.readBurst]).toEqual([50, 100]);
     const c = loadConfig({
       ...base,
       HUB_MAX_WS_CLIENTS: "3",

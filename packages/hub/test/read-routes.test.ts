@@ -180,6 +180,48 @@ describe("REST reads", () => {
     expect(((await get("/sessions/tr/transcript")).json() as L).lines).toHaveLength(4);
   });
 
+  it("transcript: after requires agent_id; paging per agent loses nothing (D-S3-13)", async () => {
+    const t = (agent: string | undefined, start: number, lines: string[]) =>
+      mkEnv({
+        kind: "transcript",
+        session_id: "pg",
+        hook_event_name: undefined,
+        ...(agent ? { agent_id: agent } : {}),
+        payload: { start_line: start, lines },
+      });
+    await h.post(
+      batch([
+        mkEnv({ session_id: "pg" }),
+        t(undefined, 0, ['{"a":1}', '{"a":2}', '{"a":3}']),
+        t("sub", 0, ['{"b":1}']),
+      ]),
+    );
+    const r = await get("/sessions/pg/transcript?after=1");
+    expect([r.statusCode, r.json()]).toEqual([
+      400,
+      { error: "invalid_query", reason: "after requires agent_id" },
+    ]);
+    type L = { lines: { agent_id: string; line_no: number }[] };
+    // page through every agent with an explicit agent_id and a cursor
+    const seen: string[] = [];
+    for (const agent of ["", "sub"]) {
+      let after = -1;
+      for (;;) {
+        const q = after < 0 ? "" : `&after=${after}`;
+        const page = (
+          await get(`/sessions/pg/transcript?agent_id=${agent}&limit=2${q}`)
+        ).json() as L;
+        if (page.lines.length === 0) break;
+        for (const l of page.lines) seen.push(`${l.agent_id}:${l.line_no}`);
+        after = page.lines.at(-1)!.line_no;
+      }
+    }
+    expect(seen).toEqual([":0", ":1", ":2", "sub:0"]);
+    // no after, no agent_id: all agents ordered (agent_id, line_no)
+    const all = (await get("/sessions/pg/transcript")).json() as L;
+    expect(all.lines.map((l) => `${l.agent_id}:${l.line_no}`)).toEqual(seen);
+  });
+
   it("projects and hosts", async () => {
     seedSession(h.store, "p1", { project_dir: "/proj/a" });
     h.store.db
