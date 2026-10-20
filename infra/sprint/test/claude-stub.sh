@@ -57,6 +57,15 @@ yes_no() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
   else
     echo "credential_helper_matches_env=no"
   fi
+  # The nested-launch mirror must carry the same value as the canonical name.
+  # Only the verdict is recorded, never either value.
+  if [ -z "${SPRINT_CLAUDE_OAUTH_TOKEN:-}" ]; then
+    echo "mirror-token=missing"
+  elif [ "$SPRINT_CLAUDE_OAUTH_TOKEN" = "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    echo "mirror-token=equal"
+  else
+    echo "mirror-token=differs"
+  fi
 } >"$FACTS" 2>&1
 
 mkdir -p "$SMOKE_DIR"
