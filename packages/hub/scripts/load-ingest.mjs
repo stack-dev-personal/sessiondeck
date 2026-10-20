@@ -16,8 +16,11 @@
 //   --with-retention   in-process only: pre-seed `--seed-events` (default 600000) events older than
 //        the retention window, run a compaction pass concurrently with the load, and report ingest
 //        latency during and outside the pass separately
+//   --hot-session      sustained mode: send every envelope of a host as ONE session (worst case for the
+//        dedup index walk; the sessions-per-host count is 1)
 //   --verify-live      afterwards GET /sessions?live=1 and compare with the sessions created
-//   --url http://host:8787 --token-file <path>   test a running hub (never prints the token)
+//   --url http://host:8787 --token-file <path>   test a running hub (never prints the token); http: only,
+//        and loopback unless --allow-insecure (the bearer token is sent in clear text)
 //   --p95-limit 20     exit 1 when batch p95 (ms) exceeds this or any request failed
 //
 // Default target: a real Fastify server on loopback and a real SQLite file under --dir
@@ -50,6 +53,7 @@ const DURATION = num("duration", 60);
 const WARMUP = Number(opt("warmup", "5")); // seconds of load before the measured window (JIT, caches)
 const P95_LIMIT = num("p95-limit", 20);
 const WITH_RETENTION = flag("with-retention");
+const HOT_SESSION = flag("hot-session");
 const SEED_EVENTS = num("seed-events", 600000);
 const URL_ARG = opt("url", null);
 const DIR = opt("dir", "/tmp/sd-1-S4-load");
@@ -68,8 +72,9 @@ await build({
       'export { loadConfig } from "./src/config.ts";',
       'export { Store } from "./src/db/store.ts";',
       'export { Ingestor } from "./src/ingest/ingestor.ts";',
+      'export { IngestActivity } from "./src/ingest/activity.ts";',
       'export { runRetention } from "./src/retention.ts";',
-      'export { startCheckpointer } from "./src/checkpoint.ts";',
+      'export { startCheckpointer, CHECKPOINT_INTERVAL_MS } from "./src/checkpoint.ts";',
       'export { synthSessions } from "./scripts/synth-spool.ts";',
     ].join("\n"),
     resolveDir: root,
@@ -86,8 +91,17 @@ await build({
   },
   logLevel: "warning",
 });
-const { buildServer, loadConfig, Store, Ingestor, runRetention, startCheckpointer, synthSessions } =
-  await import(pathToFileURL(out).href);
+const {
+  IngestActivity,
+  buildServer,
+  loadConfig,
+  Store,
+  Ingestor,
+  runRetention,
+  startCheckpointer,
+  CHECKPOINT_INTERVAL_MS,
+  synthSessions,
+} = await import(pathToFileURL(out).href);
 
 // ---------- synthesize the spool ----------
 const runStart = Date.now();
@@ -135,6 +149,16 @@ for (const list of perHost.values()) {
   }
 }
 for (const [k, v] of sessionEnds) sessionEnds.set(k, v + shift);
+if (HOT_SESSION) {
+  // R3: every envelope of a host goes to ONE session, so the (session_id, ts, signature) dup check
+  // walks the whole 10 s window of that session (about 5k entries at 500/s per host).
+  sessionEnds.clear();
+  for (const [host, list] of perHost) {
+    const sid = `hot-${sidPrefix}-${host}`;
+    for (const e of list) e.session_id = sid;
+    sessionEnds.set(sid, list.at(-1).ts);
+  }
+}
 
 // Batches: { at (ms after start), host, envelopes }.
 const batches = [];
@@ -167,6 +191,7 @@ if (SPEED !== null) {
 const sentEnvelopes = batches.reduce((n, b) => n + b.envelopes.length, 0);
 
 // ---------- target ----------
+const activity = new IngestActivity();
 let baseUrl = URL_ARG;
 let token = "";
 let stopHub = async () => {};
@@ -257,7 +282,7 @@ if (URL_ARG) {
         store,
         dbFile,
         { info() {}, warn: (o, m) => console.error(m, o) },
-        Number(opt("ckpt-ms", "1000")),
+        Number(opt("ckpt-ms", String(CHECKPOINT_INTERVAL_MS))),
       );
   info.pragmas = {
     journal_mode: store.db.pragma("journal_mode", { simple: true }),
@@ -270,6 +295,7 @@ if (URL_ARG) {
   const app = buildServer({
     config,
     store,
+    activity,
     // Real pino logging as in production (one line per batch plus request lines), counted not printed.
     logStream: {
       write(m) {
@@ -292,6 +318,16 @@ if (URL_ARG) {
   info.seeded = seeded;
 }
 const target = new URL(baseUrl);
+// The client speaks plain node:http: refuse anything else so a bearer token is never sent in clear
+// to a host the operator believes is behind TLS (S2). Non-loopback http needs --allow-insecure.
+if (target.protocol !== "http:") {
+  throw new Error(`--url must be http: (got ${target.protocol}); TLS targets are not supported`);
+}
+if (!["127.0.0.1", "localhost", "[::1]"].includes(target.hostname) && !flag("allow-insecure")) {
+  throw new Error(
+    `--url ${target.hostname} is not loopback: the token would cross the network in clear text; pass --allow-insecure to do it anyway`,
+  );
+}
 const agent = new http.Agent({ keepAlive: true, maxSockets: 128 });
 
 function request(method, p, body) {
@@ -324,6 +360,7 @@ const health = await fetch(`${baseUrl}/health`);
 if (health.status !== 200) throw new Error(`/health returned ${health.status}`);
 
 let results = []; // { at, done, ms (from scheduled), svc (from actual send), status, accepted, expired, n }
+let compactionP95 = null; // p95 of batches overlapping the pass (--with-retention)
 let compaction = null; // { start, end, result } relative to load start
 const t0 = performance.now();
 let inflight = 0;
@@ -349,6 +386,9 @@ if (WITH_RETENTION) {
         maxClockSkewMs: cfg.maxClockSkewMs,
         compactBatchSize: cfg.compactBatchSize,
         compactBatchBudgetMs: cfg.compactBatchBudgetMs,
+        compactMaxEvents: cfg.compactMaxEvents,
+        // As serve() wires it: compaction yields to the ingest requests under test.
+        activity,
       },
     );
     compaction = { start: startC, end: performance.now() - t0, result: r };
@@ -487,6 +527,13 @@ if (WITH_RETENTION) {
   console.log(
     `compaction:        ${r.events} events, ${r.batches} batches, ${r.elapsedMs} ms (load t=${(c.start / 1000).toFixed(1)}..${(c.end / 1000).toFixed(1)} s), batch p50 ${r.p50BatchMs} p99 ${r.p99BatchMs} max ${r.maxBatchMs} ms, samples deleted ${c.result.samples}`,
   );
+  const left = store.db
+    .prepare("SELECT COUNT(*) AS n FROM events WHERE ts < ?")
+    .get(Date.now() - info.config.eventRetentionDays * DAY_MS).n;
+  console.log(
+    `compaction yield:  waited ${Math.round(r.yieldedMs)} ms for quiet, ${r.forcedBatches} forced batches, capped ${r.capped}, ${r.events} of ${info.seeded?.events ?? "?"} seeded events compacted (${(r.events / (r.elapsedMs / 1000)).toFixed(0)}/s), ${left} old events left`,
+  );
+  compactionP95 = pct(during, 0.95);
   console.log(
     `ingest during compaction (${during.length} batches): p50 ${f(pct(during, 0.5))}  p95 ${f(pct(during, 0.95))}  p99 ${f(pct(during, 0.99))}  max ${f(Math.max(...during))}`,
   );
@@ -561,8 +608,9 @@ const p95 = pct(lat, 0.95);
 let failed = false;
 if (Object.keys(errors).length > 0) failed = true;
 if (!(p95 <= P95_LIMIT)) failed = true;
+if (compactionP95 !== null && !(compactionP95 <= P95_LIMIT)) failed = true; // R2.4 holds during compaction too
 if (live && (live.status !== 200 || live.mine !== live.expectedLive)) failed = true;
 console.log(
-  `R2.4 ingest p95 < ${P95_LIMIT} ms per batch of ${BATCH}: ${p95 <= P95_LIMIT ? "PASS" : "FAIL"} (p95 ${f(p95)} ms)`,
+  `R2.4 ingest p95 < ${P95_LIMIT} ms per batch of ${BATCH}: ${p95 <= P95_LIMIT ? "PASS" : "FAIL"} (p95 ${f(p95)} ms${compactionP95 !== null ? `, during compaction ${f(compactionP95)} ms` : ""})`,
 );
 process.exitCode = failed ? 1 : 0;
