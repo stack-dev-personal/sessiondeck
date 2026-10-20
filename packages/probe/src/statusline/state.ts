@@ -202,13 +202,12 @@ export function deriveState(spool: string, sessionId: unknown, now: number = Dat
     if (typeof sessionId !== "string" || sessionId === "") return NO_STATE;
     const today = readTailInfo(join(spool, dayFileName(now)));
     const events = today ? sessionEvents(today.text, sessionId) : [];
-    const s = replay(events);
-    if (s !== null) return s;
-    // Yesterday only when today's file is absent or was read whole: a file larger than the tail
-    // has earlier lines of today that we did not see, so yesterday is not the next thing back.
-    if (today && !today.whole) return NO_STATE;
+    // A file larger than the tail has earlier lines of today that we did not see, so yesterday is
+    // not the next thing back: replay today alone. Otherwise (absent or read whole) today starts
+    // from yesterday's state, because a Stop or similar line alone is a guess without it.
+    if (today && !today.whole) return replay(events) ?? NO_STATE;
     const y = readTailInfo(join(spool, dayFileName(now - 86_400_000)));
-    if (!y) return NO_STATE;
+    if (!y) return replay(events) ?? NO_STATE;
     return replay([...sessionEvents(y.text, sessionId), ...events]) ?? NO_STATE;
   } catch {
     return NO_STATE;

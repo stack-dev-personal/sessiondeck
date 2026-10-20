@@ -30,6 +30,7 @@ describe("windows ACL helpers are pinned to System32 (review round 3)", () => {
     expect(calls.map((c) => c.file)).toEqual([
       "D:\\Win\\System32\\whoami.exe",
       "D:\\Win\\System32\\icacls.exe",
+      "D:\\Win\\System32\\icacls.exe",
     ]);
     for (const c of calls) {
       expect(c.cwd).toBe("D:\\Win\\System32");
@@ -40,6 +41,13 @@ describe("windows ACL helpers are pinned to System32 (review round 3)", () => {
       "/inheritance:r",
       "/grant:r",
       `*${SID}:F`,
+    ]);
+    expect(calls[2]?.args).toEqual([
+      "C:\\h\\probe.json",
+      "/remove:g",
+      "*S-1-5-18",
+      "*S-1-5-32-544",
+      "*S-1-3-4",
     ]);
   });
 
@@ -66,7 +74,7 @@ describe("windows ACL helpers are pinned to System32 (review round 3)", () => {
     const { d, calls } = deps({ whoami: `"AzureAD\\Ann","${entra}"\r\n` });
     expect(currentUserSid(d)).toBe(entra);
     restrictWindowsAcl("C:\\h\\probe.json", d);
-    expect(calls.at(-1)?.args).toContain(`*${entra}:F`);
+    expect(calls.at(-2)?.args).toContain(`*${entra}:F`);
     for (const sid of ["S-1-12-1-", "S-1-12-2-1-2", "S-1-5-21-abc", "S-1-12-1", "S-1-5-21-1--2"]) {
       expect(() => validateUserSid(sid), sid).toThrow();
     }

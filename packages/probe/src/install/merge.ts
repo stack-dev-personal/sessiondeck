@@ -223,8 +223,14 @@ export function applyUninstall(
     out = drop ? omit(settings, "hooks") : { ...settings, hooks };
   }
   for (const key of STATUS_KEYS) {
-    if (!isOurStatus(out[key])) continue;
     const prev = entry?.previous[key];
+    // Ours was removed by a later install that could not vouch for its path: the user's recorded
+    // value still goes back, once verified, as long as the key is empty.
+    if (out[key] === undefined && prev?.present && verified.has(key)) {
+      out = { ...out, [key]: prev.value };
+      continue;
+    }
+    if (!isOurStatus(out[key])) continue;
     out = prev?.present && verified.has(key) ? { ...out, [key]: prev.value } : omit(out, key);
   }
   return out;

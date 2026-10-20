@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { applyInstall, type Ctx, type InstallEntry } from "../src/install/merge.ts";
+import { applyInstall, applyUninstall, type Ctx, type InstallEntry } from "../src/install/merge.ts";
 import { buildCtx, isShellSafe } from "../src/install/run.ts";
 import { realResolve, realSlash } from "../src/install/real-path.ts";
 
@@ -60,6 +60,24 @@ describe("install skips unsafe status commands without leaving a stale entry (re
     const foreign = { type: "command", command: "bash /home/u/line.sh" };
     const r = applyInstall({ statusLine: foreign }, ctxFor(undefined), undefined, true, none);
     expect(r.settings["statusLine"]).toEqual(foreign);
+  });
+});
+
+describe("uninstall restores the user's statusLine after an unsafe reinstall (final review)", () => {
+  const mine = { type: "command", command: "bash ~/line.sh" };
+  const replace = { replaceStatus: true };
+  const safe = ctxFor("node /safe/statusline.mjs --sessiondeck-probe");
+  it("install-safe (replace), install-unsafe, uninstall puts theirs back", () => {
+    const a = applyInstall({ statusLine: mine }, safe, undefined, true, replace);
+    const b = applyInstall(a.settings, ctxFor(undefined), a.entry, true, none);
+    expect(b.settings["statusLine"]).toBeUndefined();
+    const out = applyUninstall(b.settings, b.entry, new Set(["statusLine"]));
+    expect(out["statusLine"]).toEqual(mine);
+  });
+  it("an unverified record is still dropped, never written back", () => {
+    const a = applyInstall({ statusLine: mine }, safe, undefined, true, replace);
+    const b = applyInstall(a.settings, ctxFor(undefined), a.entry, true, none);
+    expect(applyUninstall(b.settings, b.entry, new Set())["statusLine"]).toBeUndefined();
   });
 });
 

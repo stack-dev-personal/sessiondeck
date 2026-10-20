@@ -235,6 +235,14 @@ describe("state derivation", () => {
     seedHook(h, sid, "UserPromptSubmit", {}, Date.now() - 86_400_000);
     expect(deriveState(join(h, "spool"), sid)).toBe("working");
   });
+  it("replays yesterday then today when today is read whole (final review)", () => {
+    const h = mk();
+    const y = Date.now() - 86_400_000;
+    seedHook(h, sid, "UserPromptSubmit", {}, y);
+    seedHook(h, sid, "PreToolUse", { payload: { tool_name: "AskUserQuestion" } }, y + 1);
+    seedHook(h, sid, "Stop");
+    expect(deriveState(join(h, "spool"), sid)).toBe("waiting_input");
+  });
   it("only looks at the last 64 KB and survives garbage and a missing file", () => {
     const h = mk();
     seedHook(h, sid, "Stop");

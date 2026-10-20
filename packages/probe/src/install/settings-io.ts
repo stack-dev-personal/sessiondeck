@@ -1,7 +1,8 @@
 import { constants } from "node:fs";
-import { open, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { open, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ensurePrivateDir, writeFileAtomic } from "./atomic.ts";
+import { realResolve } from "./real-path.ts";
 import { type Json, isRecord } from "./merge.ts";
 
 const BOM = String.fromCharCode(0xfeff);
@@ -33,7 +34,9 @@ function detectIndent(text: string): string | number {
 }
 
 export async function loadSettings(path: string): Promise<LoadedSettings> {
-  const real = await realpath(path).catch(() => path);
+  // Same spelling whether or not the file exists yet (Windows 8.3 short names, symlinks): the
+  // install record is keyed by this path, and install may run before the file exists.
+  const real = realResolve(path);
   let raw: string;
   try {
     raw = await readFile(real, "utf8");

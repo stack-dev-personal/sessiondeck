@@ -190,7 +190,7 @@ describe("D2/D3 paths and host come from argv, not env", () => {
       });
       expect(r.code).toBe(0);
       const spool = win32
-        ? join(fake, "lad", "sessiondeck", "spool")
+        ? join(fake, "AppData", "Local", "sessiondeck", "spool")
         : join(fake, ".local", "state", "sessiondeck", "spool");
       expect(readSpoolLines(spool)).toHaveLength(1);
       expect(existsSync(decoy)).toBe(false);

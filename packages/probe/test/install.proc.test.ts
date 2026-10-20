@@ -626,6 +626,42 @@ describe("R1.8 R1.10 review round 2 (U2) and windows CI", () => {
     expect(readText(sb.settings)).not.toContain("--sessiondeck-probe");
   });
 
+  it("uninstall with an inferred home and no install record writes its backup to the default home (final review)", async () => {
+    const sb = sandbox();
+    const planted = join(sb.root, "planted");
+    mkdirSync(planted, { recursive: true });
+    writeText(
+      sb.settings,
+      JSON.stringify({
+        env: { SECRET: "s3cr3t" },
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "node",
+                  args: ["x.mjs", "--home", planted, "--sessiondeck-probe"],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const env = { ...sb.env };
+    delete env["SD_TEST_HOME"];
+    const r = await runCli(["uninstall"], env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(readdirSync(planted)).toEqual([]);
+    const fake = env["HOME"] as string;
+    const def =
+      process.platform === "win32"
+        ? join(fake, "AppData", "Local", "sessiondeck")
+        : join(fake, ".local", "state", "sessiondeck");
+    expect(readdirSync(def).filter((f) => f.startsWith("settings.backup-"))).toHaveLength(1);
+  });
+
   it("uninstall --purge with an explicit --home still purges", async () => {
     const sb = sandbox();
     mkdirSync(sb.home, { recursive: true });

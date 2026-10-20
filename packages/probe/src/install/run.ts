@@ -359,7 +359,10 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
       io.out(`nothing to remove in ${loaded.path}`);
     } else {
       const removeFile = entry?.createdFile === true && Object.keys(next).length === 0;
-      const backup = await commitSettings(loaded, removeFile ? undefined : next, home);
+      // A home inferred from a hook entry with no install record there is not trusted with a
+      // copy of settings.json: the backup goes to the CLI default home.
+      const backupHome = inferred && !entry ? probeHome(e) : home;
+      const backup = await commitSettings(loaded, removeFile ? undefined : next, backupHome);
       if (backup) io.out(`backed up the previous settings to ${backup}`);
       io.out(`removed the probe entries from ${loaded.path}`);
     }

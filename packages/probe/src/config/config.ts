@@ -125,12 +125,17 @@ export function currentUserSid(d: SysDeps = defaultDeps): string {
   return validateUserSid(m[1]);
 }
 
+const EXTRA_PRINCIPALS = ["*S-1-5-18", "*S-1-5-32-544", "*S-1-3-4"];
+
 /** Windows: drop inherited ACEs and grant only the current user, by SID. Throws on failure. */
 export function restrictWindowsAcl(path: string, d: SysDeps = defaultDeps): void {
   try {
     const sid = currentUserSid(d);
     const { exe, dir } = resolveSystemExe("icacls.exe", d);
     d.run(exe, [path, "/inheritance:r", "/grant:r", `*${sid}:F`], { cwd: dir, timeout: 10000 });
+    // The creating process's default DACL can add explicit ACEs that /inheritance:r keeps
+    // (SYSTEM, Administrators, Owner Rights). Remove every principal but the user.
+    d.run(exe, [path, "/remove:g", ...EXTRA_PRINCIPALS], { cwd: dir, timeout: 10000 });
   } catch {
     throw new ConfigError(
       `could not restrict permissions on ${path} with icacls; nothing was written (the token stays out of the file)`,
