@@ -93,3 +93,31 @@ jobs:
           name: e2e-web-results
           path: /tmp/sd-pw-results
           if-no-files-found: warn
+
+  e2e-web-live:
+    name: e2e-web-live (Playwright, live hub)
+    # Not inside a container: packages/web/scripts/e2e-live.sh drives docker itself (builds the hub
+    # image, starts hub, ws-gate and the pinned Playwright image on a private network, removes them).
+    # Budget (minutes): install 3 + hub image build 4 + suite 5 = 12; 20 leaves a margin.
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    env:
+      SD_E2E_SCREENS_OUT: ${{ github.workspace }}/e2e-live-screens
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: live playwright specs (R3.1, R3.9; R3.3 and R3.6 specs join the same script)
+        # The script generates its own random hub token; nothing secret is passed in.
+        run: bash packages/web/scripts/e2e-live.sh
+      - name: upload live screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-screens
+          path: e2e-live-screens
+          if-no-files-found: warn
