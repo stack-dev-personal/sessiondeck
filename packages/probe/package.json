@@ -12,6 +12,7 @@
     "test:proc": "vitest run -c vitest.proc.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "harness:outage": "node scripts/harness-daemon-outage.mjs",
     "bench:hook": "node scripts/bench-hook.mjs",
     "bench:statusline": "node scripts/bench-statusline.mjs"
   }
