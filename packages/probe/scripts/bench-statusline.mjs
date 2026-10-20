@@ -1,7 +1,7 @@
 // Statusline latency (informational, not under R1.1): spawns `node dist/statusline.mjs` 100 times
 // with a fixture on stdin. Prints p50/p95/max wall ms. Always exits 0.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,18 @@ const fixture = readFileSync(
   join(root, "..", "contract", "fixtures", "statusLine", "16-max-five-hour.json"),
 );
 const home = mkdtempSync(join(tmpdir(), "sd-bench-sl-"));
+// Worst case for the state lookup: a full 64 KB tail of lines for other sessions (no match).
+const day = new Date().toISOString().slice(0, 10) + ".jsonl";
+mkdirSync(join(home, "spool"), { recursive: true });
+const filler =
+  JSON.stringify({
+    v: 1,
+    kind: "hook",
+    session_id: "other",
+    hook_event_name: "Stop",
+    payload: {},
+  }) + "\n";
+writeFileSync(join(home, "spool", day), filler.repeat(Math.ceil(70000 / filler.length)));
 const times = [];
 let bad = 0;
 for (let i = 0; i < RUNS; i++) {

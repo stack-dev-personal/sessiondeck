@@ -152,11 +152,18 @@ starts), then prints exactly one line and exits 0. It never prints a stack trace
 malformed stdin prints the fallback line `sessiondeck`, never a blank bar. Failures are logged to
 `hook-errors.log` (reason only, prefixed `statusline`).
 
-Format: `<model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`
+Format: `<state> | <model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`
 
 - Model is `model.display_name` (else `model.id`), control characters stripped, 40 chars max.
-  Effort level and `cost.total_cost_usd` are shown when present. "State" in the board sense
-  (working, waiting, idle) is not in the payload; the hub derives it from hook events.
+  Effort level and `cost.total_cost_usd` are shown when present. Model text is cut by code point;
+  escape sequences, control, bidi and zero-width characters are removed.
+- `<state>` is not in the payload. The entry reads at most the last 64 KB of today's spool day file
+  (UTC; yesterday's if today's has no line for the session), finds the last `hook` line with the
+  payload's `session_id`, and maps its event to a contract state (`working`, `waiting_permission`,
+  `idle`, `error`, `ended`, `starting`). Subagent events and events that do not change state are
+  skipped. No line, or any read error (the file is opened without following symlinks and must be a
+  regular file): `n/a`. The hub remains the authority; this is a local hint (it cannot see
+  `waiting_input` after AskUserQuestion or ExitPlanMode, which need the last tool).
 - `ctx` is `context_window.used_percentage` when it is 0..100, else computed from `current_usage`
   tokens over `context_window_size`, else `n/a`.
 - `5h` and `7d` come from `rate_limits`. A window is `n/a` when the percentage is outside 0..100
@@ -164,13 +171,20 @@ Format: `<model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`
   `rate_limits` at all (API-key plan) gives `5h n/a | 7d n/a`.
 - Plain ASCII separators, no ANSI.
 
-On Windows the entry runs `chcp.com 65001` (hidden, failures ignored) before printing so
-non-ASCII model names survive; ported from ccstatusline (see `src/win-utf8.ts`). No snapshot file
-is written, so no atomic-write helper is needed.
+On Windows, only when the line contains non-ASCII and `MSYSTEM` is unset (Git Bash passes bytes
+through), the entry runs `chcp.com 65001` so PowerShell decodes the output as UTF-8. Claude Code
+runs the statusLine with the project directory as cwd, and Windows searches the cwd before PATH, so
+the command is never resolved by name: it is `<SystemRoot>\System32\chcp.com` (SystemRoot from the
+environment only if it is an absolute drive path, else `C:\Windows`), checked to be an existing
+file, run with cwd System32, a 1 s timeout, a hidden window, ignored stdio and an environment of
+only `SystemRoot`. Failures are ignored. Ported from ccstatusline (see `src/win-utf8.ts`). No
+snapshot file is written, so no atomic-write helper is needed.
 
 `dist/subagents.mjs` is the `subagentStatusLine` command: it appends one `subagents` line (the
 whole payload including `tasks`) and prints nothing, so Claude Code keeps its default rows. Exit 0
 under any input.
 
 Latency (informational, `node packages/probe/scripts/bench-statusline.mjs`, 100 runs, Linux/WSL2,
-no chcp): p50 about 86 ms, p95 about 109 ms. On Windows `chcp.com` adds a process spawn per tick.
+no chcp). Before the state lookup, empty spool: p50 72.9 ms, p95 90.8 ms. After, spool day file
+pre-filled with 70 KB of non-matching lines (worst case for the 64 KB tail read): p50 76.3 ms, p95
+95.5 ms. On Windows a non-ASCII line adds one `chcp.com` spawn (at most 1 s, normally a few ms).

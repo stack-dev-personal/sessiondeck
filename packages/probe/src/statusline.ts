@@ -4,9 +4,13 @@ import { parseProbeArgs } from "./args.ts";
 import { resolveHostName } from "./host.ts";
 import { defaultProbeHome, hookErrorsLog, spoolDir } from "./paths.ts";
 import { readStdin } from "./stdin.ts";
+import { deriveState } from "./statusline/state.ts";
 import { FALLBACK_LINE, renderStatusLine } from "./statusline/render.ts";
 import { recordPayload } from "./statusline/record.ts";
 import { setWindowsUtf8 } from "./win-utf8.ts";
+
+// eslint-disable-next-line no-control-regex
+const NON_ASCII = /[^\x00-\x7f]/;
 
 function exit0(): never {
   process.exit(0);
@@ -41,11 +45,14 @@ async function main(): Promise<void> {
       host: args.host ?? resolveHostName(),
       errorLog: hookErrorsLog(home),
     });
-    if (res.ok) line = renderStatusLine(res.payload);
+    if (res.ok) {
+      const state = deriveState(spoolDir(home), res.payload["session_id"]);
+      line = renderStatusLine(res.payload, Date.now(), state);
+    }
   } catch {
     line = FALLBACK_LINE;
   }
-  setWindowsUtf8();
+  if (NON_ASCII.test(line)) setWindowsUtf8();
   print(line);
 }
 

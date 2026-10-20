@@ -15,14 +15,23 @@ function num(v: unknown): number | null {
   return null;
 }
 
-// C0, DEL, C1 controls and the Unicode line/paragraph separators.
+// Whole escape sequences first (CSI, then OSC ended by BEL or ST), so no tail text is left behind.
 // eslint-disable-next-line no-control-regex
-const CONTROL = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+", "g");
+const CSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+// eslint-disable-next-line no-control-regex
+const OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?/g;
+// C0, DEL, C1 controls, line/paragraph separators, zero-width and bidi controls, BOM.
+const CONTROL = new RegExp(
+  // eslint-disable-next-line no-control-regex
+  "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ufeff]+",
+  "g",
+);
 
-/** Single-line, printable text: control characters and line breaks become spaces. */
+/** Single-line, printable text: escape sequences dropped, control characters become spaces. */
 export function oneLine(s: string, max = 40): string {
-  const t = s.replace(CONTROL, " ").trim();
-  return t.length > max ? t.slice(0, max) : t;
+  const t = s.replace(CSI, "").replace(OSC, "").replace(CONTROL, " ").trim();
+  const cps = Array.from(t);
+  return cps.length > max ? cps.slice(0, max).join("") : t;
 }
 
 const pct = (n: number): string => `${Math.round(n)}%`;
@@ -70,10 +79,14 @@ export function windowPct(w: unknown, nowMs: number): number | null {
 }
 
 /**
- * `<model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`. Fields Claude does not give us show
+ * `<state> | <model> [effort] | ctx 38% | 5h 78% | 7d 35% [| $1.23]`. Fields Claude does not give us show
  * `n/a` (ctx, 5h, 7d always appear); absent rate_limits (API-key plan) shows `5h n/a | 7d n/a`.
  */
-export function renderStatusLine(payload: unknown, nowMs: number = Date.now()): string {
+export function renderStatusLine(
+  payload: unknown,
+  nowMs: number = Date.now(),
+  state: string = "n/a",
+): string {
   try {
     if (!isObj(payload)) return FALLBACK_LINE;
     const rl = isObj(payload["rate_limits"]) ? payload["rate_limits"] : {};
@@ -86,6 +99,7 @@ export function renderStatusLine(payload: unknown, nowMs: number = Date.now()): 
     const f = windowPct(rl["five_hour"], nowMs);
     const s = windowPct(rl["seven_day"], nowMs);
     const parts = [
+      oneLine(state, 20) || "n/a",
       head,
       `ctx ${c === null ? "n/a" : pct(c)}`,
       `5h ${f === null ? "n/a" : pct(f)}`,
