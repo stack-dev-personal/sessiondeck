@@ -18,20 +18,30 @@ export interface TestHub {
   postRaw: (payload: string, headers?: Record<string, string>) => Promise<LightMyRequestResponse>;
   logLines: () => Record<string, unknown>[];
   eventCount: () => number;
+  /** Starts listening on an ephemeral loopback port; returns ws:// and http:// base URLs. */
+  listen: () => Promise<{ ws: string; http: string }>;
 }
 
 export async function makeHub(
   env: Record<string, string> = {},
   now?: () => number,
+  extra: { heartbeatMs?: number; maxBufferedBytes?: number } = {},
 ): Promise<TestHub> {
   const t = tempStore();
   t.store.migrate();
   const logs: string[] = [];
+  // loadConfig refuses burst sizes below the max batch; tests that exercise the limiter with tiny
+  // buckets set them on the config object after validation.
+  const { HUB_INGEST_BURST: ib, HUB_HOST_BURST: hb, ...rest } = env;
+  const config = loadConfig({ HUB_TOKEN: TOKEN, ...rest });
+  if (ib !== undefined) config.ingestBurst = Number(ib);
+  if (hb !== undefined) config.hostBurst = Number(hb);
   const app = buildServer({
-    config: loadConfig({ HUB_TOKEN: TOKEN, ...env }),
+    config,
     store: t.store,
     logStream: { write: (m) => void logs.push(m) },
     ...(now ? { now } : {}),
+    ...extra,
   });
   await app.ready();
   return {
@@ -64,6 +74,11 @@ export async function makeHub(
           return [];
         }
       }),
+    listen: async () => {
+      await app.listen({ port: 0, host: "127.0.0.1" });
+      const port = (app.server.address() as { port: number }).port;
+      return { ws: `ws://127.0.0.1:${port}`, http: `http://127.0.0.1:${port}` };
+    },
     eventCount: () =>
       (t.store.db.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n,
   };
@@ -89,3 +104,20 @@ export function mkEnv(over: Partial<Envelope> = {}): Envelope {
 }
 
 export const batch = (envelopes: Envelope[], host = "h1") => ({ host, envelopes });
+
+import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
+import { rowOf } from "../../src/ingest/ingestor.ts";
+
+/** Stores a snapshot directly (bypassing ingest) and returns it. */
+export function seedSession(
+  store: Store,
+  id: string,
+  over: Partial<SessionSnapshot> = {},
+): SessionSnapshot {
+  const snap = {
+    ...createSnapshot({ session_id: id, host: "h1", cwd: "/w", ts: BASE_TS }),
+    ...over,
+  };
+  store.upsertSession(rowOf(snap));
+  return snap;
+}

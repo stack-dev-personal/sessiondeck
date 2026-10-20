@@ -23,6 +23,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
+    "ws:harness": "node scripts/ws-harness.mjs",
     "bundle": "node scripts/bundle.mjs src/main.ts dist/main.mjs",
     "gen:golden": "node scripts/bundle.mjs scripts/gen-golden.ts dist/gen-golden.mjs && node dist/gen-golden.mjs"
   }

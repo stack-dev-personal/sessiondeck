@@ -166,7 +166,13 @@ export class Ingestor {
     const hostIndex = (h: string): Map<number, Set<string>> => {
       let idx = pidIndex.get(h);
       if (idx === undefined) {
-        for (const row of store.listOpenSessionsForHost(h)) load(row.session_id);
+        // The listed rows already carry the snapshot: no per-session point SELECT.
+        for (const row of store.listOpenSessionsForHost(h)) {
+          if (cache.has(row.session_id)) continue;
+          const snap = JSON.parse(row.snapshot) as SessionSnapshot;
+          cache.set(row.session_id, snap);
+          original.set(row.session_id, snap);
+        }
         idx = new Map();
         pidIndex.set(h, idx);
         for (const sn of cache.values())

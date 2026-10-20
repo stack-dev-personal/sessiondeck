@@ -506,7 +506,7 @@
       "state_since": 1760000054000,
       "state_detail": null,
       "started_at": 1760000054000,
-      "last_event_at": 1760000144000,
+      "last_event_at": 1760000156000,
       "ended_reason": null,
       "pid": null,
       "context": {
@@ -532,7 +532,26 @@
         "lines_added": 13844,
         "lines_removed": 1274
       },
-      "subagents": [],
+      "subagents": [
+        {
+          "agent_id": "761860c3540b0fa46",
+          "agent_type": "general-purpose",
+          "started_at": 1760000126000,
+          "ended_at": null,
+          "tokens": 148290,
+          "context_window": 1000000,
+          "model": "claude-opus-5-5"
+        },
+        {
+          "agent_id": "ecbdc44c75303c77b",
+          "agent_type": "general-purpose",
+          "started_at": 1760000132000,
+          "ended_at": null,
+          "tokens": 165628,
+          "context_window": 1000000,
+          "model": "claude-opus-5-5"
+        }
+      ],
       "tasks": {
         "total": 0,
         "completed": 0,
@@ -570,7 +589,7 @@
       "state_since": 1760000090000,
       "state_detail": null,
       "started_at": 1760000090000,
-      "last_event_at": 1760000150000,
+      "last_event_at": 1760000168000,
       "ended_reason": null,
       "pid": null,
       "context": {
@@ -590,7 +609,17 @@
         "lines_added": 0,
         "lines_removed": 0
       },
-      "subagents": [],
+      "subagents": [
+        {
+          "agent_id": "750bc48c804160940",
+          "agent_type": "general-purpose",
+          "started_at": 1760000162000,
+          "ended_at": null,
+          "tokens": 0,
+          "context_window": 1000000,
+          "model": "claude-fable-5-1"
+        }
+      ],
       "tasks": {
         "total": 0,
         "completed": 0,

@@ -187,11 +187,30 @@ export function supersede(): Seq {
   return { name: "supersede", host: b.host, envelopes: b.envelopes };
 }
 
-/** Every statusLine (20) and subagentStatusLine (5) fixture, each under its own session_id (R2.3). */
+/**
+ * Every statusLine (20) and subagentStatusLine (5) fixture (R2.3). Each fixture keeps the
+ * session_id it carries, so the 25 fixtures fold into 10 sessions. A SubagentStart hook for each
+ * task id precedes the first subagents fixture that names it, so applySubagents has rows to update.
+ */
 export function allStatusLines(): Seq {
   const b = new Builder("status-host");
   for (const f of listJson("statusLine")) b.push("statusline", readJson(f));
-  for (const f of listJson("subagentStatusLine")) b.push("subagents", readJson(f));
+  const started = new Set<string>();
+  for (const f of listJson("subagentStatusLine")) {
+    const fx = readJson(f) as { session_id: string; cwd?: string; tasks: { id: string }[] };
+    for (const t of fx.tasks) {
+      if (started.has(`${fx.session_id}/${t.id}`)) continue;
+      started.add(`${fx.session_id}/${t.id}`);
+      b.push("hook", {
+        session_id: fx.session_id,
+        cwd: fx.cwd ?? "",
+        agent_id: t.id,
+        agent_type: "general-purpose",
+        hook_event_name: "SubagentStart",
+      });
+    }
+    b.push("subagents", fx);
+  }
   return { name: "all-statuslines", host: b.host, envelopes: b.envelopes };
 }
 

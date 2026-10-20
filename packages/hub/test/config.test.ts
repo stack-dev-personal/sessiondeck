@@ -38,3 +38,25 @@ describe("loadConfig", () => {
     expect(loadConfig({ HUB_TOKEN: t, HUB_PORT: "65535" }).port).toBe(65535);
   });
 });
+
+describe("loadConfig bucket sizes and WS settings", () => {
+  const base = { HUB_TOKEN: "a".repeat(16) };
+  it("refuses burst sizes below the max batch size", () => {
+    expect(() => loadConfig({ ...base, HUB_INGEST_BURST: "4999" })).toThrow(/HUB_INGEST_BURST/);
+    expect(() => loadConfig({ ...base, HUB_HOST_BURST: "10" })).toThrow(/HUB_HOST_BURST/);
+    expect(loadConfig({ ...base, HUB_INGEST_BURST: "5000" }).ingestBurst).toBe(5000);
+  });
+  it("defaults and parses WS settings", () => {
+    const d = loadConfig(base);
+    expect([d.maxWsClients, d.allowedOrigins]).toEqual([64, []]);
+    const c = loadConfig({
+      ...base,
+      HUB_MAX_WS_CLIENTS: "3",
+      HUB_ALLOWED_ORIGINS: "https://a.example, https://b.example,",
+    });
+    expect([c.maxWsClients, c.allowedOrigins]).toEqual([
+      3,
+      ["https://a.example", "https://b.example"],
+    ]);
+  });
+});

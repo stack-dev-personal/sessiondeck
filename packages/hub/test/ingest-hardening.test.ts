@@ -117,7 +117,9 @@ describe("D-S3-5 rate limiting", () => {
       HUB_MAX_OPEN_SESSIONS: "7",
       HUB_HOST_RATE: "9",
     });
-    expect([c.maxHosts, c.maxOpenSessionsPerHost, c.hostRate, c.hostBurst]).toEqual([5, 7, 9, 18]);
+    expect([c.maxHosts, c.maxOpenSessionsPerHost, c.hostRate, c.hostBurst]).toEqual([
+      5, 7, 9, 5000,
+    ]);
     const d = loadConfig({ HUB_TOKEN: "a".repeat(16) });
     expect([d.ingestRate, d.ingestBurst, d.maxHosts]).toEqual([5000, 10000, 32]);
   });

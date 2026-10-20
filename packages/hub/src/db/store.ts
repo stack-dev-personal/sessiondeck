@@ -21,6 +21,13 @@ export interface SessionRow {
   ended_at: number | null;
 }
 
+export interface ProjectRow {
+  project_dir: string;
+  name: string | null;
+  color: string | null;
+  vault_collection: string | null;
+}
+
 export interface EventRow {
   id: string;
   host: string;
@@ -222,6 +229,65 @@ export class Store {
 
   countHosts(): number {
     return (this.stmt("SELECT COUNT(*) AS n FROM hosts").get() as { n: number }).n;
+  }
+
+  /** Newest first (started_at, falling back to last_event_at); session_id breaks ties stably. */
+  listSessions(limit: number): SessionRow[] {
+    return this.stmt(
+      `SELECT * FROM sessions ORDER BY COALESCE(started_at, last_event_at, 0) DESC, session_id LIMIT ?`,
+    ).all(limit) as SessionRow[];
+  }
+
+  /**
+   * R2.6. Every session except those in state ended or exited whose end time (ended_at, else
+   * last_event_at) is older than cutoffMs. A session with no end time at all counts as old.
+   */
+  listLiveSessions(cutoffMs: number, limit: number): SessionRow[] {
+    return this.stmt(
+      `SELECT * FROM sessions
+       WHERE state IS NULL OR state NOT IN ('ended', 'exited')
+          OR COALESCE(ended_at, last_event_at, 0) >= ?
+       ORDER BY COALESCE(started_at, last_event_at, 0) DESC, session_id LIMIT ?`,
+    ).all(cutoffMs, limit) as SessionRow[];
+  }
+
+  /** Events of one session ordered by seq (a session lives on one host), seq > after. */
+  listSessionEvents(sessionId: string, after: number, limit: number): EventRow[] {
+    return this.stmt(
+      "SELECT * FROM events WHERE session_id = ? AND seq > ? ORDER BY seq LIMIT ?",
+    ).all(sessionId, after, limit) as EventRow[];
+  }
+
+  /** Raw stored lines, line_no > after; agentId null means every agent (ordered agent, line). */
+  listTranscriptLines(
+    sessionId: string,
+    agentId: string | null,
+    after: number,
+    limit: number,
+  ): TranscriptLineRow[] {
+    return agentId === null
+      ? (this.stmt(
+          "SELECT * FROM transcript_lines WHERE session_id = ? AND line_no > ? ORDER BY agent_id, line_no LIMIT ?",
+        ).all(sessionId, after, limit) as TranscriptLineRow[])
+      : (this.stmt(
+          "SELECT * FROM transcript_lines WHERE session_id = ? AND agent_id = ? AND line_no > ? ORDER BY line_no LIMIT ?",
+        ).all(sessionId, agentId, after, limit) as TranscriptLineRow[]);
+  }
+
+  /** Configured projects plus every project_dir seen on a session. */
+  listProjects(limit: number): ProjectRow[] {
+    return this.stmt(
+      `SELECT project_dir, name, color, vault_collection FROM projects
+       UNION
+       SELECT DISTINCT s.project_dir, NULL, NULL, NULL FROM sessions s
+         WHERE s.project_dir IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.project_dir = s.project_dir)
+       ORDER BY 1 LIMIT ?`,
+    ).all(limit) as ProjectRow[];
+  }
+
+  listHosts(limit: number): HostRow[] {
+    return this.stmt("SELECT * FROM hosts ORDER BY host LIMIT ?").all(limit) as HostRow[];
   }
 
   close(): void {

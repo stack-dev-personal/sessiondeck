@@ -10,6 +10,8 @@ import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
+import { registerRead } from "./routes/read.ts";
+import { registerStream, tokenFromProtocols } from "./stream.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
 
@@ -21,6 +23,9 @@ export function buildServer(opts: {
   logStream?: { write(msg: string): void };
   /** Test hook: clock for the rate limiter and the hosts.last_seen column. */
   now?: () => number;
+  /** Test hooks for WS /stream. */
+  heartbeatMs?: number;
+  maxBufferedBytes?: number;
 }): FastifyInstance {
   const expected = digest(opts.config.token);
 
@@ -28,6 +33,7 @@ export function buildServer(opts: {
     const m = typeof header === "string" ? header.match(/^bearer (.+)$/i) : null;
     return m?.[1] !== undefined && timingSafeEqual(digest(m[1]), expected);
   };
+  const isToken = (t: string | null): boolean => t !== null && timingSafeEqual(digest(t), expected);
   const deny = (reply: FastifyReply) => reply.code(401).header("content-length", "0").send();
 
   const logging = opts.logger === true || opts.logStream !== undefined;
@@ -102,6 +108,20 @@ export function buildServer(opts: {
     ),
     maxHosts: opts.config.maxHosts,
     sanitize,
+  });
+  registerRead(app, opts.store, now);
+  registerStream(app, {
+    store: opts.store,
+    events: ingestor.events,
+    now,
+    // Upgrade requests never pass through onRequest: header bearer, or the browser subprotocol.
+    authenticate: (req) =>
+      isAuthed(req.headers.authorization) ||
+      isToken(tokenFromProtocols(req.headers["sec-websocket-protocol"])),
+    maxClients: opts.config.maxWsClients,
+    allowedOrigins: opts.config.allowedOrigins,
+    ...(opts.heartbeatMs !== undefined ? { heartbeatMs: opts.heartbeatMs } : {}),
+    ...(opts.maxBufferedBytes !== undefined ? { maxBufferedBytes: opts.maxBufferedBytes } : {}),
   });
 
   return app;
