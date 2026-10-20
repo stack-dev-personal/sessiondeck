@@ -46,3 +46,20 @@ export function hookErrorsLog(e: PathEnv = currentPathEnv()): string {
 export function dayFileName(ts: number): string {
   return `${new Date(ts).toISOString().slice(0, 10)}.jsonl`;
 }
+
+/** Probe config file (hub URL, token, host). Never inside the Claude settings directory. */
+export function probeConfigPath(e: PathEnv = currentPathEnv()): string {
+  return child(e, "probe.json");
+}
+
+/** Records what `probe install` changed, so `probe uninstall` can restore it exactly. */
+export function installStatePath(e: PathEnv = currentPathEnv()): string {
+  return child(e, "install-state.json");
+}
+
+/** Claude Code settings file: CLAUDE_CONFIG_DIR/settings.json if set, else the default user dir. */
+export function claudeSettingsPath(e: PathEnv = currentPathEnv()): string {
+  const dir = e.env["CLAUDE_CONFIG_DIR"];
+  if (dir) return join(dir, "settings.json");
+  return join(e.home, ".claude", "settings.json");
+}
