@@ -62,6 +62,8 @@
 - MINOR packages/web/src/alerts/start.ts:63: a toast dismissed while the page is closed is re-created once as a silent same-tag replace on next load (non-persistent notifications cannot report this).
 - MINOR packages/web/src/styles/index.css:113: under prefers-reduced-motion, sd-arrive is never cleared until the card leaves attention; if the user turns reduced motion off meanwhile, the glow plays late. Cosmetic.
 - A11Y: working-dot pulse is infinite with no on-page pause (WCAG 2.2.2); stops under reduced motion; design owner decides whether to cap at 5 s.
+- Open: the Windows R0.5 margin is 1 to 5 s. Merging S1, S2 and S4 test growth into the sprint branch will likely exceed it. That is a budget decision for the user, not an S6 code fix.
+- Deferred: App.test "c toggles compact" fails under full test-level shuffle (seeds 2, 3). It is an intra-file order dependence that predates U8.
 
 ## Stop and restart
 - 2026-10-20 19:51Z: subscription usage limit (429) stopped the run during U5 fix iteration 2 (reviewer: 1 MAJOR compact tasks slot unsized, 2 MINOR docs). Uncommitted work at stop: SessionCard.tsx compact state and tasks slots given fixed widths, index.css comment, R3.2.spec compact 320-480 sweep, A11Y-P3.md design-change notes, 4 baselines.
@@ -75,3 +77,10 @@
 - origin/sprint/1-mvp (78b3ba8) is already an ancestor; no merge needed. Pushed p3/board-live; PR #10 against sprint/1-mvp.
 - CI: every job fails in 2 to 5 s with 0 steps and no runner, repo-wide since about 22:15Z (p1/probe-daemon too). Account-level, not code. Rerun refused (token 403). Blocked: /state/1/questions/S6.md.
 - 2026-10-20 23:00Z: resumed with answer A. Rerun 39507132891 (65aaec5) in progress with runners and steps. This log commit pushes a fresh CI run on the branch head.
+### U8 Windows CI budget (R0.5)
+- With runners back (run 39511481197 on e75da81), both windows check jobs failed. `pnpm -r test` hit the 60 s step cap: the web suite took 33 s on ubuntu and ran past 60 s on Windows. On node 22, App.test "/dev/cards" also failed with a 1000 ms findBy timeout on the lazy route.
+- Iteration 1: 2d6a6a2 put 8 pure-logic files on the node environment, switched to the threads pool, and set RTL asyncUtilTimeout 5000. 1ca5cd3 set testTimeout 10000 (reviewer MINOR). sd-reviewer: merge. CI run 39512766631: all tests passed, but the Windows step still timed out by under 1 s (web 50.4 s).
+- Iteration 2: f987e0c split vitest into projects, dom (12 files, isolate:false) and node (8). 4ab2297 adds restoreAllMocks, settings reset in App.test, and config comments (4 reviewer MINORs). sd-reviewer: merge. CI run 39514323713: all 6 jobs green. The Windows R0.5 step took 55 s on node 24 and 59 s on node 22.
+- sd-verifier 5d5bb54: R0.5 and the R3.x regression pass, 12/0/0 (docs/VERIFY-P3.md addendum).
+- Open: the Windows R0.5 margin is 1 to 5 s. Merging S1, S2 and S4 test growth into the sprint branch will likely exceed it. That is a budget decision for the user, not an S6 code fix.
+- Deferred: App.test "c toggles compact" fails under full test-level shuffle (seeds 2, 3). It is an intra-file order dependence that predates U8.
