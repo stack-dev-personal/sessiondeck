@@ -48,6 +48,7 @@ const newTailer = () =>
     enqueue: createOutbox(outbox),
     host: "harness",
     pollMs: 0,
+    projectsDir: proj,
   });
 
 let t = newTailer();

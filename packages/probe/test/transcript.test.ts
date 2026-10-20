@@ -3,6 +3,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
+  linkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -46,7 +48,7 @@ import { fixturesDir } from "./helpers.ts";
 let dir: string;
 let out: SpoolLine[];
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "sd-transcript-"));
+  dir = realpathSync(mkdtempSync(join(tmpdir(), "sd-transcript-")));
   out = [];
 });
 afterEach(() => {
@@ -56,6 +58,16 @@ afterEach(() => {
 const S = "sess-1";
 const statePath = (): string => join(dir, "offsets.json");
 const mk = (extra: Partial<TranscriptTailerOptions> = {}): TranscriptTailer =>
+  new TranscriptTailer({
+    statePath: statePath(),
+    enqueue: (l) => out.push(l),
+    host: "h",
+    pollMs: 0,
+    projectsDir: dir,
+    ...extra,
+  });
+/** A tailer with no projects dir configured: it must refuse everything. */
+const noProjects = (extra: Partial<TranscriptTailerOptions> = {}): TranscriptTailer =>
   new TranscriptTailer({
     statePath: statePath(),
     enqueue: (l) => out.push(l),
@@ -340,13 +352,17 @@ describe("transcript tailer", () => {
   });
 
   it("dispatches contract fixtures through onSpoolLine", async () => {
-    const start = JSON.parse(
-      readFileSync(join(fixturesDir, "SessionStart", "01-startup.json"), "utf8"),
-    );
-    const sub = JSON.parse(
-      readFileSync(join(fixturesDir, "SubagentStart", "01-subagent.json"), "utf8"),
-    );
-    const t = mk();
+    // The fixtures carry "<HOME>" placeholders; point them into the temp dir (the trusted root).
+    const fx = (d: string, n: string): Record<string, string> =>
+      JSON.parse(
+        readFileSync(join(fixturesDir, d, n), "utf8").replaceAll(
+          "<HOME>",
+          dir.replaceAll("\\", "/"),
+        ),
+      );
+    const start = fx("SessionStart", "01-startup.json");
+    const sub = fx("SubagentStart", "01-subagent.json");
+    const t = mk({ projectsDir: join(dir, ".claude", "projects") });
     const env = (p: Record<string, unknown>, name: string, agent?: string): Envelope =>
       ({
         v: 1,
@@ -370,7 +386,7 @@ describe("transcript tailer", () => {
     expect(es[0]!.path).toBe(start.transcript_path);
     expect(es[1]!.agent_id).toBe(sub.agent_id);
     expect(es[1]!.path).toBe(
-      `${sub.transcript_path.replace(/\/[^/]+$/, "")}/${sub.session_id}/subagents/agent-${sub.agent_id}.jsonl`,
+      `${sub.transcript_path!.replace(/\/[^/]+$/, "")}/${sub.session_id}/subagents/agent-${sub.agent_id}.jsonl`,
     );
     t.onSpoolLine(env({ session_id: start.session_id }, "SessionEnd"));
     await t.poll();
@@ -470,7 +486,7 @@ describe("transcript tailer review fixes", () => {
     const secret = join(dir, "secret.jsonl");
     writeFileSync(secret, nl(gen(0, 2, "X")));
     const logs: string[] = [];
-    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    const t = mk({ projectsDir: proj, log: (lv, m) => logs.push(`${lv} ${m}`) });
     await t.onSessionStart(S, join(proj, `${S}.jsonl`));
     await t.onSubagentStart(S, "../../secret", join(proj, `${S}.jsonl`));
     await t.onSubagentStop(S, "ok1", secret);
@@ -523,7 +539,7 @@ describe("transcript tailer review fixes", () => {
     mkdirSync(join(proj, S, "subagents"), { recursive: true });
     writeFileSync(sub, nl(gen(0, 2, "S")));
     const logs: string[] = [];
-    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) }); // no projectsDir
+    const t = noProjects({ log: (lv, m) => logs.push(`${lv} ${m}`) });
     await t.onSubagentStop(S, "a1", sub);
     await t.poll();
     expect(out).toHaveLength(0);
@@ -534,15 +550,14 @@ describe("transcript tailer review fixes", () => {
     expect(flat("a1")).toEqual(gen(0, 2, "S"));
   });
 
-  it.skipIf(process.platform === "win32")(
-    "SubagentStop path that reaches outside projectsDir through a symlink is refused",
-    async () => {
+  it("SubagentStop path that reaches outside projectsDir through a symlink is refused", async () => {
+    {
       const proj = join(dir, "proj");
       const outside = join(dir, "outside");
       mkdirSync(join(outside, "subagents"), { recursive: true });
       mkdirSync(proj, { recursive: true });
       writeFileSync(join(outside, "subagents", "agent-a1.jsonl"), nl(gen(0, 2, "X")));
-      symlinkSync(outside, join(proj, S));
+      symlinkSync(outside, join(proj, S), process.platform === "win32" ? "junction" : undefined);
       const sub = join(proj, S, "subagents", "agent-a1.jsonl");
       const logs: string[] = [];
       const t = mk({ projectsDir: proj, log: (lv, m) => logs.push(`${lv} ${m}`) });
@@ -551,8 +566,8 @@ describe("transcript tailer review fixes", () => {
       expect(out).toHaveLength(0);
       expect(t.entries()).toHaveLength(0);
       expect(logs.some((l) => l.includes("outside projects dir"))).toBe(true);
-    },
-  );
+    }
+  });
 
   it("re-tracking after a prune never reuses numbers, even if the clock steps back", async () => {
     const f = join(dir, "t.jsonl");
@@ -766,3 +781,160 @@ function readFileSyncOrEmpty(p: string): string {
     return "";
   }
 }
+
+// D-S2-10: the daemon only tails files under its own <config>/projects; the spool is untrusted.
+describe("transcript containment (D-S2-10)", () => {
+  const junction = process.platform === "win32" ? ("junction" as const) : undefined;
+  const logs: string[] = [];
+  let proj: string;
+  let outside: string;
+  beforeEach(() => {
+    logs.length = 0;
+    proj = join(dir, "proj");
+    outside = join(dir, "outside");
+    mkdirSync(proj, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+  });
+  const tail = (extra: Partial<TranscriptTailerOptions> = {}): TranscriptTailer =>
+    mk({ projectsDir: proj, log: (lv, m) => logs.push(`${lv} ${m}`), ...extra });
+  const hookEnv = (name: string, sid: string, p: Record<string, unknown>): Envelope =>
+    ({
+      v: 1,
+      id: "x",
+      kind: "hook",
+      host: "h",
+      os: "linux",
+      session_id: sid,
+      hook_event_name: name,
+      ts: 1,
+      seq: 0,
+      payload: p,
+    }) as Envelope;
+
+  it("S1: a SessionStart transcript_path outside projects is refused and logged once", async () => {
+    const secret = join(outside, "id_ed25519");
+    writeFileSync(secret, nl(gen(0, 3, "SECRET")));
+    const t = tail();
+    for (let i = 0; i < 3; i++)
+      t.onSpoolLine(hookEnv("SessionStart", S, { transcript_path: secret }));
+    await t.poll();
+    await t.onSessionStart(S, secret);
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+    expect(logs.filter((l) => l.includes("outside the projects dir"))).toHaveLength(1);
+  });
+
+  it("S1: with no projects dir configured everything is refused", async () => {
+    const f = join(proj, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const t = noProjects({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+    expect(logs.some((l) => l.startsWith("warn"))).toBe(true);
+  });
+
+  it("S1: a path inside projects is still tailed", async () => {
+    const f = join(proj, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const t = tail();
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(flat()).toEqual(gen(0, 2));
+  });
+
+  it("S2: a bogus main path does not become a trust root for SubagentStop", async () => {
+    const sub = join(outside, "subagents", "agent-a1.jsonl");
+    mkdirSync(join(outside, "subagents"), { recursive: true });
+    writeFileSync(sub, nl(gen(0, 2, "X")));
+    const t = tail();
+    await t.onSessionStart(S, join(outside, "main.jsonl")); // refused
+    await t.onSubagentStop(S, "a1", sub);
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+  });
+
+  it("S3: a traversing session id or an outside base path never derives an agent file", async () => {
+    mkdirSync(join(outside, "x", "subagents"), { recursive: true });
+    writeFileSync(join(outside, "x", "subagents", "agent-a1.jsonl"), nl(gen(0, 2, "X")));
+    const t = tail();
+    await t.onSubagentStart("../outside/x", "a1", join(proj, "m.jsonl"));
+    await t.onSubagentStart("x", "a1", join(outside, "m.jsonl")); // derived path is outside
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+    expect(logs.filter((l) => l.startsWith("warn")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("S4: a file swapped for a link to an outside file after tracking is not followed", async () => {
+    const f = join(proj, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const secret = join(outside, "secret.jsonl");
+    writeFileSync(secret, nl(gen(0, 10, "SECRET")));
+    const t = tail();
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(flat()).toEqual(gen(0, 2));
+    rmSync(f);
+    symlinkSync(secret, f, process.platform === "win32" ? "file" : undefined);
+    await t.poll();
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    expect(logs.some((l) => l.includes("now resolves outside"))).toBe(true);
+  });
+
+  it("S4: a parent directory swapped for a junction/symlink is not followed", async () => {
+    const d = join(proj, "d");
+    mkdirSync(d);
+    const f = join(d, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 1)));
+    writeFileSync(join(outside, "t.jsonl"), nl(gen(0, 9, "SECRET")));
+    const t = tail();
+    await t.onSessionStart(S, f);
+    await t.poll();
+    rmSync(d, { recursive: true });
+    symlinkSync(outside, d, junction);
+    await t.poll();
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+  });
+
+  it("S4: saved entries that point outside projects are dropped on load", async () => {
+    const secret = join(outside, "secret.jsonl");
+    writeFileSync(secret, nl(gen(0, 3, "SECRET")));
+    const good = join(proj, "g.jsonl");
+    writeFileSync(good, nl(gen(0, 1)));
+    const sig = { ino: 0, birthtimeMs: 0, ctimeMs: 0, mtimeMs: 0, head: "" };
+    const ent = (sid: string, p: string): object => ({
+      session_id: sid,
+      path: p,
+      offset: 0,
+      next_line: 0,
+      resets: 0,
+      sig,
+    });
+    writeFileSync(
+      statePath(),
+      JSON.stringify({ v: 1, files: { "bad|": ent("bad", secret), "good|": ent("good", good) } }),
+    );
+    const t = tail();
+    await t.start();
+    await t.poll();
+    expect(t.entries().map((e) => e.session_id)).toEqual(["good"]);
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    await t.stop();
+  });
+
+  it("S5: a hard link inside projects to an outside file is refused", async () => {
+    const secret = join(outside, "secret.jsonl");
+    writeFileSync(secret, nl(gen(0, 3, "SECRET")));
+    const l = join(proj, "linked.jsonl");
+    linkSync(secret, l);
+    const t = tail();
+    await t.onSessionStart(S, l);
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+  });
+});

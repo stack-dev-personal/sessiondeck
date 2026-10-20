@@ -10,7 +10,8 @@
 //                (inode on POSIX; birthtime plus a head-bytes fingerprint on Windows, where inode is
 //                unreliable); lines are emitted as `transcript` envelopes into the daemon outbox
 //                with a start_line counter that survives resets; oversize lines become a marker.
-import { open, readFile, realpath, rename, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, realpath, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { hostOs } from "../envelope.ts";
 import { writeFileAtomic } from "../install/atomic.ts";
@@ -158,6 +159,13 @@ export function highMark(nowMs: number): number {
 }
 
 const AGENT_ID_RE = /^[A-Za-z0-9_-]+$/;
+/** Same alphabet as the liveness component's session ids; ".." is rejected on top (path segment). */
+const SESSION_ID_RE = /^[A-Za-z0-9._:@-]+$/;
+const MAX_SESSION_ID_CHARS = 200;
+const validSessionId = (s: string): boolean =>
+  s.length <= MAX_SESSION_ID_CHARS && SESSION_ID_RE.test(s) && !s.includes("..");
+/** Distinct refusals remembered for log rate limiting. */
+const MAX_REFUSALS = 1000;
 
 const key = (session: string, agent?: string): string => `${session}|${agent ?? ""}`;
 
@@ -327,7 +335,13 @@ export class TranscriptTailer implements DaemonComponent {
 
   onSessionStart(sessionId: string, transcriptPath: string): Promise<void> {
     return this.run(async () => {
-      this.track(sessionId, undefined, transcriptPath);
+      // D-S2-10: the path comes from the spool; only files under the daemon's own projects dir count.
+      const real = validSessionId(sessionId) ? await this.trusted(transcriptPath) : undefined;
+      if (!real) {
+        this.refuse(sessionId, "SessionStart transcript_path outside the projects dir");
+        return;
+      }
+      this.track(sessionId, undefined, real);
       await this.persist();
     });
   }
@@ -345,7 +359,16 @@ export class TranscriptTailer implements DaemonComponent {
         this.log("warn", `transcript: SubagentStart ${agentId} without a known transcript path`);
         return;
       }
-      this.track(sessionId, agentId, subagentTranscriptPath(base, sessionId, agentId));
+      if (!validSessionId(sessionId)) {
+        this.refuse(sessionId, "SubagentStart with an invalid session id");
+        return;
+      }
+      const real = await this.trusted(subagentTranscriptPath(base, sessionId, agentId));
+      if (!real) {
+        this.refuse(`${sessionId}|${agentId}`, "SubagentStart path outside the projects dir");
+        return;
+      }
+      this.track(sessionId, agentId, real);
       await this.persist();
     });
   }
@@ -359,18 +382,8 @@ export class TranscriptTailer implements DaemonComponent {
       let e = this.files.get(key(sessionId, agentId));
       let ok: string | undefined;
       if (agentPath) {
-        // The payload's own transcript_path is not a trust anchor (attacker-chosen siblings).
-        const mainPath = this.files.get(key(sessionId))?.path;
-        const roots = [
-          ...(mainPath ? [path.dirname(mainPath)] : []),
-          ...(this.o.projectsDir ? [this.o.projectsDir] : []),
-        ];
-        for (const r of roots) {
-          if (await isUnderReal(agentPath, r)) {
-            ok = agentPath;
-            break;
-          }
-        }
+        // The payload's own transcript_path is not a trust anchor; only the projects dir is.
+        ok = await this.trusted(agentPath);
         if (!ok)
           this.log("warn", "transcript: SubagentStop agent_transcript_path outside projects dir");
       }
@@ -398,6 +411,39 @@ export class TranscriptTailer implements DaemonComponent {
       }
       await this.persist();
     });
+  }
+
+  /**
+   * The resolved path of p when it is a file under the (resolved) projects dir, else undefined.
+   * Refuses when no projects dir is configured, and files with more than one hard link.
+   */
+  private async trusted(p: string): Promise<string | undefined> {
+    const root = this.o.projectsDir;
+    if (!root || !(await isUnderReal(p, root))) return undefined;
+    const rp = await realpathLoose(p);
+    try {
+      const st = await lstat(rp);
+      if (st.isFile() && st.nlink > 1) return undefined;
+    } catch {
+      // not there yet: the tailer waits for it
+    }
+    return rp;
+  }
+
+  /** Containment check of an already resolved path, repeated before every read. */
+  private async stillTrusted(rp: string): Promise<string | undefined> {
+    const root = this.o.projectsDir;
+    if (!root) return undefined;
+    const now = await realpathLoose(rp);
+    return isUnder(now, await realpathLoose(root)) ? now : undefined;
+  }
+
+  private readonly refused = new Set<string>();
+  /** Logs a refusal once per subject. */
+  private refuse(subject: string, what: string): void {
+    if (this.refused.has(`${subject}|${what}`) || this.refused.size >= MAX_REFUSALS) return;
+    this.refused.add(`${subject}|${what}`);
+    this.log("warn", `transcript: ${what}; not tailing (session ${subject.slice(0, 80)})`);
   }
 
   /** One pass over every active file; resolves with the number of lines delivered. */
@@ -453,7 +499,17 @@ export class TranscriptTailer implements DaemonComponent {
       const parsed = JSON.parse(text) as Partial<TailState>;
       if (parsed.v === 1 && typeof parsed.files === "object" && parsed.files !== null) {
         for (const [k, v] of Object.entries(parsed.files)) {
-          if (validEntry(v)) this.files.set(k, v);
+          if (!validEntry(v)) continue;
+          const real = validSessionId(v.session_id) ? await this.trusted(v.path) : undefined;
+          if (!real) {
+            this.refuse(v.session_id, "saved transcript path outside the projects dir");
+            this.pruned.set(k, this.now()); // keep its numbering clear of what it already issued
+            this.maxIssued = Math.max(this.maxIssued, v.next_line);
+            this.dirty = true;
+            continue;
+          }
+          v.path = real;
+          this.files.set(k, v);
         }
         const pr = parsed.pruned;
         if (typeof pr === "object" && pr !== null && !Array.isArray(pr)) {
@@ -563,7 +619,7 @@ export class TranscriptTailer implements DaemonComponent {
   }
 
   private async readHead(p: string, len: number): Promise<Buffer | undefined> {
-    const fh = await open(p, "r");
+    const fh = await open(p, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       const b = Buffer.alloc(len);
       const { bytesRead } = await fh.read(b, 0, len, 0);
@@ -575,9 +631,15 @@ export class TranscriptTailer implements DaemonComponent {
 
   /** Reads what is new in one file, enqueues it, and only then commits the offset. */
   private async drain(e: TailEntry): Promise<void> {
+    // Re-resolve every time: a link or junction swapped in after tracking began must not be followed.
+    const rp = await this.stillTrusted(e.path);
+    if (!rp) {
+      this.refuse(e.session_id, "tracked transcript now resolves outside the projects dir");
+      return;
+    }
     let st: StatLike;
     try {
-      st = await this.statFn(e.path);
+      st = await this.statFn(rp);
     } catch (err) {
       const c = (err as NodeJS.ErrnoException).code;
       if (c !== "ENOENT" && c !== "ENOTDIR") this.log("warn", `transcript stat ${e.path}: ${c}`);
@@ -594,7 +656,7 @@ export class TranscriptTailer implements DaemonComponent {
     if (e.offset > 0 && e.sig.head !== "" && st.size >= e.offset) {
       const want = Buffer.from(e.sig.head, "base64");
       try {
-        const got = await this.readHead(e.path, want.length);
+        const got = await this.readHead(rp, want.length);
         headMatches = got !== undefined && got.equals(want);
       } catch {
         return; // vanished between stat and open; next poll
@@ -614,7 +676,7 @@ export class TranscriptTailer implements DaemonComponent {
     if (avail > 0) {
       let fh;
       try {
-        fh = await open(e.path, "r");
+        fh = await open(rp, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       } catch {
         return;
       }
@@ -654,13 +716,14 @@ export class TranscriptTailer implements DaemonComponent {
       birthtimeMs: st.birthtimeMs,
       ctimeMs: st.ctimeMs,
       mtimeMs: st.mtimeMs,
-      head: await this.headFor(e, newOffset, reset, headMatches),
+      head: await this.headFor(e, rp, newOffset, reset, headMatches),
     };
     this.dirty = true;
   }
 
   private async headFor(
     e: TailEntry,
+    rp: string,
     offset: number,
     reset: boolean,
     headMatches: boolean | undefined,
@@ -671,7 +734,7 @@ export class TranscriptTailer implements DaemonComponent {
       return headMatches === false ? "" : e.sig.head;
     }
     try {
-      const b = await this.readHead(e.path, want);
+      const b = await this.readHead(rp, want);
       return b && b.length === want ? b.toString("base64") : "";
     } catch {
       return "";
