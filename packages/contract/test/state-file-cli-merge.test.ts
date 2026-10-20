@@ -78,7 +78,10 @@ describe("smoke package and merging over odd files", () => {
   it("reports a lock that stays held, without sleeping for real", async () => {
     await writeFile(join(stateDir, "status.json.lock"), "");
     let at = Date.now();
+    // A large poll step keeps the loop at 5 iterations. At the default 25 ms it is 200 rounds of
+    // real stat/open/rm on the lock, which exceeded the 5 s test limit on a loaded Windows runner (R0.5).
     const lock = {
+      pollMs: 1_000,
       now: () => at,
       sleep: (ms: number): Promise<void> => {
         at += ms;

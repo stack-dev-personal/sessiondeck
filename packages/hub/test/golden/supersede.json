@@ -1,0 +1,171 @@
+{
+  "snapshots": {
+    "sess-A": {
+      "session_id": "sess-A",
+      "host": "super-host",
+      "cwd": "<HOME>",
+      "project_dir": null,
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "claude-fable-5-1"
+      },
+      "effort": null,
+      "state": "ended",
+      "state_since": 1760000024000,
+      "state_detail": "superseded",
+      "started_at": 1760000006000,
+      "last_event_at": 1760000012000,
+      "ended_reason": "superseded",
+      "pid": 77,
+      "context": {
+        "used_pct": null,
+        "window": null,
+        "input": null,
+        "output": null
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": null,
+        "duration_ms": null,
+        "lines_added": null,
+        "lines_removed": null
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "sess-B": {
+      "session_id": "sess-B",
+      "host": "super-host",
+      "cwd": "<HOME>",
+      "project_dir": null,
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "claude-fable-5-1"
+      },
+      "effort": null,
+      "state": "starting",
+      "state_since": 1760000018000,
+      "state_detail": "source:startup",
+      "started_at": 1760000018000,
+      "last_event_at": 1760000024000,
+      "ended_reason": null,
+      "pid": 77,
+      "context": {
+        "used_pct": null,
+        "window": null,
+        "input": null,
+        "output": null
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": null,
+        "duration_ms": null,
+        "lines_added": null,
+        "lines_removed": null
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "sess-C": {
+      "session_id": "sess-C",
+      "host": "super-host",
+      "cwd": "<HOME>",
+      "project_dir": null,
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "claude-fable-5-1"
+      },
+      "effort": null,
+      "state": "starting",
+      "state_since": 1760000030000,
+      "state_detail": "source:startup",
+      "started_at": 1760000030000,
+      "last_event_at": 1760000036000,
+      "ended_reason": null,
+      "pid": 88,
+      "context": {
+        "used_pct": null,
+        "window": null,
+        "input": null,
+        "output": null
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": null,
+        "duration_ms": null,
+        "lines_added": null,
+        "lines_removed": null
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    }
+  },
+  "samples": [],
+  "transcript_lines": []
+}
