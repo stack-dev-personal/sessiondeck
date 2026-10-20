@@ -384,8 +384,8 @@ if (WITH_RETENTION) {
         sampleRetentionDays: cfg.sampleRetentionDays,
         maxOpenSessionsPerHost: cfg.maxOpenSessionsPerHost,
         maxClockSkewMs: cfg.maxClockSkewMs,
-        compactBatchSize: cfg.compactBatchSize,
-        compactBatchBudgetMs: cfg.compactBatchBudgetMs,
+        compactBatchSize: Number(opt("compact-batch", String(cfg.compactBatchSize))),
+        compactBatchBudgetMs: Number(opt("compact-batch-ms", String(cfg.compactBatchBudgetMs))),
         compactMaxEvents: cfg.compactMaxEvents,
         // As serve() wires it: compaction yields to the ingest requests under test.
         activity,
@@ -525,7 +525,7 @@ if (WITH_RETENTION) {
   const outside = okRes.filter((r) => !(r.at <= c.end && r.done >= c.start)).map((r) => r.ms);
   const r = c.result.compact;
   console.log(
-    `compaction:        ${r.events} events, ${r.batches} batches, ${r.elapsedMs} ms (load t=${(c.start / 1000).toFixed(1)}..${(c.end / 1000).toFixed(1)} s), batch p50 ${r.p50BatchMs} p99 ${r.p99BatchMs} max ${r.maxBatchMs} ms, samples deleted ${c.result.samples}`,
+    `compaction:        ${r.events} events, ${r.batches} batches, ${r.elapsedMs} ms (load t=${(c.start / 1000).toFixed(1)}..${(c.end / 1000).toFixed(1)} s), batch p50 ${r.p50BatchMs} p99 ${r.p99BatchMs} max ${r.maxBatchMs} ms (${r.slowBatches} over 10 ms), samples deleted ${c.result.samples}`,
   );
   const left = store.db
     .prepare("SELECT COUNT(*) AS n FROM events WHERE ts < ?")
@@ -611,6 +611,6 @@ if (!(p95 <= P95_LIMIT)) failed = true;
 if (compactionP95 !== null && !(compactionP95 <= P95_LIMIT)) failed = true; // R2.4 holds during compaction too
 if (live && (live.status !== 200 || live.mine !== live.expectedLive)) failed = true;
 console.log(
-  `R2.4 ingest p95 < ${P95_LIMIT} ms per batch of ${BATCH}: ${p95 <= P95_LIMIT ? "PASS" : "FAIL"} (p95 ${f(p95)} ms${compactionP95 !== null ? `, during compaction ${f(compactionP95)} ms` : ""})`,
+  `R2.4 ingest p95 < ${P95_LIMIT} ms per batch of ${BATCH}: ${failed ? "FAIL" : "PASS"} (p95 ${f(p95)} ms${compactionP95 !== null ? `, during compaction ${f(compactionP95)} ms` : ""})`,
 );
 process.exitCode = failed ? 1 : 0;

@@ -55,11 +55,24 @@ export const DEFAULT_COMPACT_MAX_EVENTS = 1_000_000;
 /** After a pass stopped at its cap the next one is scheduled this soon instead of a full interval. */
 export const CAPPED_FOLLOW_UP_MS = 60_000;
 
+/**
+ * While serving, compaction pauses for COMPACT_BREATH_MS after every COMPACT_BREATH_BATCHES batches.
+ * The checkpoint worker (checkpoint.ts, every 100 ms) can only let SQLite restart the WAL when it
+ * has copied every frame before the next write begins; compaction writes every few milliseconds, so
+ * without a gap the WAL grew to the writer's safety-net threshold and the commit that crossed it
+ * ran the checkpoint inline (23 batches of 20 to 90 ms per 600k events, measured; docs/HUB.md "Load
+ * harness"), which is exactly the ingest p95 it was meant to protect.
+ */
+export const COMPACT_BREATH_BATCHES = 100;
+export const COMPACT_BREATH_MS = 150;
+
 export interface CompactResult {
   /** True when the pass stopped at maxEvents with more left to compact. */
   capped: boolean;
   /** Time spent waiting for ingest to go quiet, and batches that ran only because the wait hit its cap. */
   yieldedMs: number;
+  /** Time spent in the periodic pause that lets the WAL restart. */
+  breathMs: number;
   forcedBatches: number;
   events: number;
   batches: number;
@@ -70,6 +83,8 @@ export interface CompactResult {
   elapsedMs: number;
   /** Longest single synchronous batch: the worst time the event loop was held. */
   maxBatchMs: number;
+  /** Batches that held the event loop for more than 10 ms. */
+  slowBatches: number;
   p50BatchMs: number;
   p99BatchMs: number;
 }
@@ -89,6 +104,9 @@ export async function compactEvents(
     activity?: Pick<IngestActivity, "waitMs">;
     quietMs?: number;
     maxYieldMs?: number;
+    /** Pause breathMs after every breathBatches batches (only with `activity`); 0 disables. */
+    breathBatches?: number;
+    breathMs?: number;
     /** Stop after this many events (0 or absent: no cap). */
     maxEvents?: number;
     sleep?: (ms: number) => Promise<void>;
@@ -101,10 +119,13 @@ export async function compactEvents(
   const quietMs = opts.quietMs ?? COMPACT_QUIET_MS;
   const maxYieldMs = opts.maxYieldMs ?? COMPACT_MAX_YIELD_MS;
   const maxEvents = opts.maxEvents !== undefined && opts.maxEvents > 0 ? opts.maxEvents : Infinity;
+  const breathBatches = Math.max(1, opts.breathBatches ?? COMPACT_BREATH_BATCHES);
+  const breathMs = opts.breathMs ?? COMPACT_BREATH_MS;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const res: CompactResult = {
     capped: false,
     yieldedMs: 0,
+    breathMs: 0,
     forcedBatches: 0,
     events: 0,
     batches: 0,
@@ -113,6 +134,7 @@ export async function compactEvents(
     futureEvents: 0,
     elapsedMs: 0,
     maxBatchMs: 0,
+    slowBatches: 0,
     p50BatchMs: 0,
     p99BatchMs: 0,
   };
@@ -184,6 +206,10 @@ export async function compactEvents(
       res.capped = next !== undefined && compactable(next.ts);
       break;
     }
+    if (opts.activity !== undefined && res.batches % breathBatches === 0 && breathMs > 0) {
+      await sleep(breathMs);
+      res.breathMs += breathMs;
+    }
     await rest(took);
   }
   res.sessions = touched.size;
@@ -194,6 +220,7 @@ export async function compactEvents(
       "compacted events stamped beyond the allowed clock skew",
     );
   }
+  res.slowBatches = times.filter((t) => t > 10).length;
   times.sort((a, b) => a - b);
   const q = (p: number): number =>
     Math.round((times[Math.min(times.length - 1, Math.floor(times.length * p))] ?? 0) * 100) / 100;
@@ -206,11 +233,13 @@ export async function compactEvents(
       events: res.events,
       capped: res.capped,
       yielded_ms: Math.round(res.yieldedMs),
+      breath_ms: res.breathMs,
       forced_batches: res.forcedBatches,
       batches: res.batches,
       sessions: res.sessions,
       ms: res.elapsedMs,
       max_batch_ms: res.maxBatchMs,
+      slow_batches: res.slowBatches,
       p99_batch_ms: res.p99BatchMs,
     },
     "event compaction",

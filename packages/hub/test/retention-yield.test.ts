@@ -83,6 +83,26 @@ describe("compaction yields to ingest", () => {
   });
 });
 
+describe("compaction breath (WAL restart gap)", () => {
+  it("pauses every breathBatches batches while serving, never offline", async () => {
+    const sleeps: number[] = [];
+    const sleep = async (ms: number): Promise<void> => void sleeps.push(ms);
+    const r = await compactEvents(seeded(20), quiet, {
+      ...base,
+      activity: { waitMs: () => 0 },
+      breathBatches: 2,
+      breathMs: 7,
+      sleep,
+    });
+    expect(r.batches).toBe(4);
+    expect(sleeps).toEqual([7, 7]);
+    expect(r.breathMs).toBe(14);
+    sleeps.length = 0;
+    await compactEvents(seeded(20), quiet, { ...base, breathBatches: 2, breathMs: 7, sleep });
+    expect(sleeps).toEqual([]);
+  });
+});
+
 describe("compaction cap", () => {
   it("stops at maxEvents with capped set, and the next pass continues where it stopped", async () => {
     const store = seeded(40);
