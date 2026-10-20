@@ -72,6 +72,16 @@
 - Review: iteration 1 fix-then-merge (1 MAJOR hookTimeout, 3 MINOR). Iteration 2 merge (1 optional MINOR, heartbeat check could pass vacuously; fixed in 6e80da6).
 - CI at dde6b3d: hub green on all four jobs; windows node 22 failed on contract state-file-merge timeout (U6).
 
+### U6 (e84e7ec, 7425f9e) contract state-file-merge test under concurrent load
+- Files: packages/contract/test/state-file-merge.test.ts (test only, no src change).
+- Executor: sd-executor-contract. Root cause: 15 writers queued on one lock exceeded the 5 s lock wait and the 5 s test timeout on a loaded Windows runner; Promise.all rejected early and afterEach removed the directory under in-flight merges (ENOTEMPTY).
+- Review: iteration 1 fix-then-merge (MAJOR sprint test still Promise.all; MINOR waitMs above LOCK_STALE_MS). Iteration 2 merge, no findings.
+- CI run 39439735050 at 7425f9e: 4/4 jobs success; Windows R0.5 step 49 s (node 24), 52 s (node 22).
+
+### Session close
+- sd-verifier final at 7425f9e (d749719): R2.1, R2.2, R2.3, R2.5, R2.6, R2.7, R2.8 pass, R0.5 pass by CI; pnpm -r test 17 s, typecheck and lint clean; ws-harness and container smoke pass. R2.4 and R2.10 are S4.
+- Notes: hub tests 204 -> 177 from the U5 golden-matrix trim (each golden still replayed in three modes; U5 reviewer accepted). Windows R0.5 headroom is 8 s.
+
 ## Deferred findings
 
 - U4 security MEDIUM: base image node:22-bookworm-slim pinned by tag only; pin by digest before Phase 7 (documented in Dockerfile and docs/HUB.md).
