@@ -43,16 +43,21 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   await page.addInitScript(() => {
     const w = window as unknown as Record<string, unknown>;
     w["__notifs"] = [];
+    w["__closed"] = [];
     class FakeNotification {
       static permission = "granted";
       static requestPermission() {
         return Promise.resolve("granted");
       }
       onclick: unknown = null;
-      constructor(title: string, o?: { body?: string; tag?: string }) {
+      tag = "";
+      constructor(title: string, o?: { body?: string; tag?: string; renotify?: boolean }) {
+        this.tag = o?.tag ?? "";
         (w["__notifs"] as unknown[]).push({ title, body: o?.body, tag: o?.tag });
       }
-      close() {}
+      close() {
+        (w["__closed"] as unknown[]).push(this.tag);
+      }
     }
     w["Notification"] = FakeNotification;
     const Native = window.WebSocket;
@@ -165,8 +170,9 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   await expect(card(page, b)).not.toHaveAttribute("data-attention", "true");
   let n = (await notifs()) as { title: string; body: string; tag: string }[];
   expect(n).toHaveLength(1);
-  expect(n[0]!.body).toBe("Needs permission");
-  expect(n[0]!.tag).toBe(`sd-${a}`);
+  expect(n[0]!.title).toBe(`${ALPHA} needs permission`);
+  expect(n[0]!.body).toContain("Tool: Bash");
+  expect(n[0]!.tag).toMatch(new RegExp(`^sd-${a}-\\d+$`));
   await page.screenshot({ path: shot("R3.3.png") });
 
   // More deltas while still waiting: no new notification, the card stays on top.
@@ -184,10 +190,30 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   await expect(card(page, b)).toContainText("Needs input");
   n = (await notifs()) as typeof n;
   expect(n).toHaveLength(2);
-  expect(n[1]!.body).toBe("Needs input");
+  expect(n[1]!.title).toBe(`${ALPHA} needs input`);
   await ingest([idlePrompt(b, cwdA)]);
   await sleep(300);
   expect(await notifs()).toHaveLength(2);
+
+  // Second episode for a: the first ends (its notification is closed), the new one is a new
+  // notification with its own tag, not a silent replacement.
+  const closed = () => page.evaluate(() => (window as never as { __closed: string[] }).__closed);
+  await ingest([hookEnvelope(a, "PostToolUse", "PostToolUse/04-bash.json", { cwd: cwdA })]);
+  await expect(card(page, a)).toHaveAttribute("data-state", "working");
+  expect(await closed()).toEqual([n[0]!.tag]);
+  // A different tool_input: the hub drops an identical event within 5 s as a duplicate.
+  await ingest([
+    hookEnvelope(a, "PermissionRequest", "PermissionRequest/03-bash.json", {
+      cwd: cwdA,
+      tool_input: { command: "echo second episode" },
+    }),
+  ]);
+  await expect(card(page, a)).toHaveAttribute("data-state", "waiting_permission");
+  n = (await notifs()) as typeof n;
+  expect(n).toHaveLength(3);
+  expect(n[2]!.title).toBe(`${ALPHA} needs permission`);
+  expect(n[2]!.tag).not.toBe(n[0]!.tag);
+  expect(n[2]!.tag).toMatch(new RegExp(`^sd-${a}-\\d+$`));
 
   // Filters: host, project, both; persisted across a reload; no layout shift in the toolbar.
   const toolbar = page.getByTestId("board-toolbar");
@@ -196,17 +222,25 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   await expect(page.getByTestId("session-card")).toHaveCount(1);
   await expect(card(page, d)).toBeVisible();
   expect(await toolbar.boundingBox()).toEqual(box);
+  // a and b wait on the other host: the filter must say so.
+  await expect(page.getByTestId("board-hidden-attention")).toHaveText(/2 hidden need attention/);
+  await page.screenshot({ path: shot("R3.3-hidden-attention.png") });
   await page.getByLabel("Host", { exact: true }).selectOption("");
+  await expect(page.getByTestId("board-hidden-attention")).toHaveCount(0);
   await page.getByLabel("Project", { exact: true }).selectOption(ALPHA);
   await expect(page.getByTestId("session-card")).toHaveCount(3);
   await expect(card(page, c)).toHaveCount(0);
   await page.getByLabel("Host", { exact: true }).selectOption(HOST);
   await expect(page.getByTestId("session-card")).toHaveCount(2);
-  expect(await order(page)).toEqual([b, a]);
+  expect(await order(page)).toEqual([a, b]);
   await expect(page.getByTestId("board-count")).toContainText("Showing 2 of");
   await page.screenshot({ path: shot("R3.3-filters.png") });
   await page.reload();
   await waitConnected(page);
+  // The reload did not make the two waiting sessions new: no notification for them.
+  await expect(card(page, a)).toHaveAttribute("data-state", "waiting_permission");
+  await sleep(300);
+  expect(await notifs()).toHaveLength(0);
   await expect(page.getByLabel("Host", { exact: true })).toHaveValue(HOST);
   await expect(page.getByLabel("Project", { exact: true })).toHaveValue(ALPHA);
   await expect(page.getByTestId("session-card")).toHaveCount(2);
