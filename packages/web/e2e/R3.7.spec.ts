@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { fullShot, gotoDevCards, setTheme, shot, waitForCards, type Theme } from "./helpers";
+import { fullShot, gotoDevCards, openSettledBoard, setTheme, shot, type Theme } from "./helpers";
 
 /**
  * Pending-decision tokens (docs/planning/00-open-decisions.md, contrast): they fail 4.5:1 by
@@ -157,7 +157,7 @@ for (const theme of ["dark", "light"] as const) {
     // The set of failing tokens is exactly the pinned pending-decision ones.
     expect(failingTokens).toEqual(PINNED[theme]);
     writeFileSync(shot(`R3.7-contrast-${theme}.json`), JSON.stringify({ recs, failing }, null, 2));
-    await fullShot(page, `R3.7-${theme}.png`);
+    await fullShot(page, `R3.7-${theme}.png`, { baseline: theme === "light" });
   });
 
   test(`R3.7 ${theme}: axe on /board and /dev/cards`, async ({ page }) => {
@@ -166,9 +166,7 @@ for (const theme of ["dark", "light"] as const) {
     const out: Record<string, unknown> = {};
     for (const path of ["/board", "/dev/cards"]) {
       if (path === "/board") {
-        await page.goto(path);
-        await waitForCards(page, 8);
-        await page.waitForTimeout(1500);
+        await openSettledBoard(page);
       } else {
         await gotoDevCards(page);
       }
@@ -197,7 +195,7 @@ for (const theme of ["dark", "light"] as const) {
         passes: results.passes.length,
       };
       if (path === "/board" && theme === "light") {
-        await fullShot(page, "R3.7-board-light.png");
+        await fullShot(page, "R3.7-board-light.png", { baseline: true });
       }
       const bad: string[] = [];
       for (const v of results.violations) {

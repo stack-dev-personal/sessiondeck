@@ -88,4 +88,42 @@ describe("mock replay", () => {
     vi.advanceTimersByTime(5000);
     expect(got).toHaveLength(n);
   });
+
+  it("settles populated: ctx and both windows on at least 6 sessions, agents, tasks, no placeholders", () => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+    });
+    const store = createBoardStore();
+    playTimeline(buildMockTimeline(NOW), store.getState().enqueue);
+    vi.advanceTimersByTime(10 * 60_000);
+    const list = Object.values(store.getState().sessions);
+    const full = list.filter(
+      (s) =>
+        s.context.used_pct !== null &&
+        s.rate_limits.five_hour?.used_pct != null &&
+        s.rate_limits.seven_day?.used_pct != null,
+    );
+    expect(full.length).toBeGreaterThanOrEqual(6);
+    expect(list.filter((s) => s.subagents.length > 0).length).toBeGreaterThanOrEqual(2);
+    expect(list.filter((s) => s.tasks.total > 0).length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(list)).not.toMatch(/<TEXT|<HOME>|<PROJECT/);
+  });
+
+  it("?replay=fast delivers quickly and sets data-replay=done", () => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+    });
+    window.history.pushState({}, "", "/board?replay=fast");
+    try {
+      const store = createBoardStore();
+      startMock(store);
+      expect(document.documentElement.dataset["replay"]).toBe("running");
+      vi.advanceTimersByTime(3000);
+      expect(document.documentElement.dataset["replay"]).toBe("done");
+      expect(Object.keys(store.getState().sessions)).toHaveLength(8);
+    } finally {
+      window.history.pushState({}, "", "/");
+      delete document.documentElement.dataset["replay"];
+    }
+  });
 });

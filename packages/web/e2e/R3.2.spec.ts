@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { STATES, fullShot, gotoDevCards, setTheme, waitForCards } from "./helpers";
+import { STATES, fullShot, gotoDevCards, openSettledBoard, setTheme, settledMix } from "./helpers";
 
 test("R3.2 every state shows glyph and label; null card has the same geometry", async ({
   page,
@@ -53,13 +53,29 @@ test("R3.2 every state shows glyph and label; null card has the same geometry", 
     .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
   expect(new Set(heights).size).toBe(1);
 
-  await fullShot(page, "R3.2.png");
+  await fullShot(page, "R3.2.png", { baseline: true });
 });
 
-test("R3.2 board after the mock replay has run", async ({ page }) => {
+test("R3.2 /dev/cards at 2560x1440 keeps the card geometry", async ({ page }) => {
+  await page.setViewportSize({ width: 2560, height: 1440 });
   await setTheme(page, "dark");
-  await page.goto("/board");
-  await waitForCards(page, 8);
-  await page.waitForTimeout(5000);
-  await fullShot(page, "R3.2-board.png");
+  await gotoDevCards(page);
+  const heights = await page
+    .locator('[data-testid="session-card"][data-density="full"]')
+    .evaluateAll((els) => els.map((e) => e.getBoundingClientRect().height));
+  expect(new Set(heights).size).toBe(1);
+  await fullShot(page, "R3.2-2560.png", { baseline: true });
+});
+
+test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({ page }) => {
+  await setTheme(page, "dark");
+  await openSettledBoard(page);
+  const mix = await settledMix(page);
+  console.log(`R3.2 settled board: ${JSON.stringify(mix)}`);
+  expect(mix.withContext).toBeGreaterThanOrEqual(6);
+  expect(mix.withLimits).toBeGreaterThanOrEqual(6);
+  expect(mix.withDots).toBeGreaterThanOrEqual(2);
+  expect(mix.withTasks).toBeGreaterThanOrEqual(2);
+  expect(Object.keys(mix.states).sort()).toEqual(STATES.map(([st]) => st).sort());
+  await fullShot(page, "R3.2-board.png", { baseline: true });
 });

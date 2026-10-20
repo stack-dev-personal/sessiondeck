@@ -13,6 +13,9 @@ const vite = "node ./node_modules/vite/bin/vite.js";
 export default defineConfig({
   testDir: "e2e",
   testMatch: "**/*.spec.ts",
+  // One platform only (the pinned Linux image), so baselines have no platform suffix.
+  // Regenerate all of them with: node node_modules/@playwright/test/cli.js test --update-snapshots
+  snapshotPathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
   outputDir: join(tmpdir(), "sd-pw-results"),
   timeout: 60_000,
   fullyParallel: false,
@@ -20,6 +23,7 @@ export default defineConfig({
   forbidOnly: !!process.env["CI"],
   retries: 0,
   reporter: [["list"], ["./e2e/summary-reporter.ts"]],
+  expect: { toHaveScreenshot: { animations: "disabled", caret: "hide" } },
   use: {
     baseURL: "http://localhost:5173",
     viewport: { width: 1440, height: 900 },

@@ -7,8 +7,8 @@ const golden = import.meta.glob("../../../contract/fixtures/sessions/golden-sess
 
 const json = import.meta.glob(
   [
-    "../../../contract/fixtures/{SessionStart,UserPromptSubmit,PreToolUse,PostToolUse,PermissionRequest,Stop,statusLine}/*.json",
-    "../../../contract/fixtures/synthetic/StopFailure/*.json",
+    "../../../contract/fixtures/{SessionStart,UserPromptSubmit,PreToolUse,PostToolUse,PermissionRequest,Stop,SubagentStart,statusLine}/*.json",
+    "../../../contract/fixtures/synthetic/{StopFailure,TaskCreated,TaskCompleted}/*.json",
   ],
   { eager: true, import: "default" },
 ) as Record<string, Record<string, unknown>>;
@@ -30,6 +30,9 @@ export const fx = {
   askPreTool: byName(/PreToolUse\/04-askuserquestion\.json$/),
   stopAfterAsk: byName(/Stop\/01-after-ask\.json$/),
   stopFailure: byName(/synthetic\/StopFailure\/01-synthetic\.json$/),
+  subagentStart: byName(/SubagentStart\/01-subagent\.json$/),
+  taskCreated: byName(/synthetic\/TaskCreated\/01-synthetic\.json$/),
+  taskCompleted: byName(/synthetic\/TaskCompleted\/01-synthetic\.json$/),
 };
 
 export const statusLines: Record<string, unknown>[] = Object.entries(json)

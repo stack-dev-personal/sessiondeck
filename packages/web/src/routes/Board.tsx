@@ -34,38 +34,46 @@ export function Board() {
   useShortcuts(keys);
   const list = useMemo(() => Object.values(sessions), [sessions]);
   if (list.length === 0) {
-    return <p className="p-s-4 text-fg-muted">No sessions yet.</p>;
+    return (
+      <>
+        <h1 className="sr-only">Board</h1>
+        <p className="p-s-4 text-fg-muted">No sessions yet.</p>
+      </>
+    );
   }
   return (
-    <ul
-      ref={listRef}
-      className={
-        compact
-          ? "m-0 flex list-none flex-col gap-s-1 p-s-4"
-          : "m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(28rem,1fr))] gap-s-3 p-s-4"
-      }
-      aria-label="Sessions"
-      data-density={compact ? "compact" : "full"}
-    >
-      {list.map((s) => (
-        <li key={s.session_id} className="min-w-0">
-          {compact ? (
-            <CompactCard
-              s={s}
-              now={now}
-              exceeds200k={flags[s.session_id] ?? null}
-              onOpen={openSession}
-            />
-          ) : (
-            <SessionCard
-              s={s}
-              now={now}
-              exceeds200k={flags[s.session_id] ?? null}
-              onOpen={openSession}
-            />
-          )}
-        </li>
-      ))}
-    </ul>
+    <>
+      <h1 className="sr-only">Board</h1>
+      <ul
+        ref={listRef}
+        className={
+          compact
+            ? "m-0 flex list-none flex-col gap-s-1 p-s-4"
+            : "m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(28rem,1fr))] gap-s-3 p-s-4"
+        }
+        aria-label="Sessions"
+        data-density={compact ? "compact" : "full"}
+      >
+        {list.map((s) => (
+          <li key={s.session_id} className="min-w-0">
+            {compact ? (
+              <CompactCard
+                s={s}
+                now={now}
+                exceeds200k={flags[s.session_id] ?? null}
+                onOpen={openSession}
+              />
+            ) : (
+              <SessionCard
+                s={s}
+                now={now}
+                exceeds200k={flags[s.session_id] ?? null}
+                onOpen={openSession}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }

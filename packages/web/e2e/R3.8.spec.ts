@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fullShot, setTheme, waitForCards } from "./helpers";
+import { fullShot, gotoDevCards, openSettledBoard, setTheme, settledMix } from "./helpers";
 
 /**
  * R3.8, mock build: the suite serves a VITE_MOCK=1 build, so the board fills from bundled
@@ -32,21 +32,24 @@ test("R3.8 mock build runs the full board with no network beyond the preview ser
   });
 
   await setTheme(page, "dark");
-  await page.goto("/board");
-  await waitForCards(page, 8);
+  await openSettledBoard(page);
   await expect(page.getByRole("list", { name: "Hosts" }).getByRole("listitem")).toHaveCount(2);
-  await expect
-    .poll(
-      async () =>
-        new Set(
-          await page
-            .getByTestId("session-card")
-            .evaluateAll((els) => els.map((e) => e.getAttribute("data-state"))),
-        ).size,
-      { timeout: 90_000 },
-    )
-    .toBeGreaterThanOrEqual(4);
+  const mix = await settledMix(page);
+  console.log(`R3.8 settled board: ${JSON.stringify(mix)}`);
+  expect(Object.keys(mix.states).length).toBeGreaterThanOrEqual(6);
+  expect(mix.withContext).toBeGreaterThanOrEqual(6);
   await expect(page.getByTestId("connection")).toContainText("mock");
-  await fullShot(page, "R3.8.png");
+  await fullShot(page, "R3.8.png", { baseline: true });
+
+  // The rest of the app stays offline too: the drawer, /settings and /dev/cards.
+  await page.getByTestId("session-card").first().click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.goto("/settings");
+  await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  await gotoDevCards(page);
+  await page.goto("/board?replay=fast");
+  await expect(page.locator("html")).toHaveAttribute("data-replay", "done", { timeout: 30_000 });
   expect(violations).toEqual([]);
 });

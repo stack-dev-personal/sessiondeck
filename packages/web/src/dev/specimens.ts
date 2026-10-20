@@ -49,11 +49,31 @@ function agents(n: number, ended = 0): SubagentSnapshot[] {
   }));
 }
 
+/** Fixture payload with the rate-limit resets moved to the future relative to `now`. */
+function futureResets(raw: Record<string, unknown>, now: number): Record<string, unknown> {
+  const rl = raw["rate_limits"] as
+    { five_hour?: Record<string, unknown>; seven_day?: Record<string, unknown> } | null | undefined;
+  if (!rl) return raw;
+  const sec = Math.floor(now / 1000);
+  return {
+    ...raw,
+    rate_limits: {
+      ...rl,
+      five_hour: rl.five_hour && { ...rl.five_hour, resets_at: sec + 7_800 },
+      seven_day: rl.seven_day && { ...rl.seven_day, resets_at: sec + 3 * 86_400 },
+    },
+  };
+}
+
 export function buildSpecimens(now: number): SpecimenGroup[] {
+  /**
+   * The adapter output for fixture 04-mid is kept as is (model, effort, context, rate limits,
+   * cost); only identity, state and the fields no statusLine carries are set here.
+   */
   const base = (id: string, state: SessionState = "working"): SessionSnapshot => {
     const s = applyStatusLine(
       createSnapshot({ session_id: id, host: "stack-lap", cwd: "/w/bb2dash", ts: now - 720_000 }),
-      fixture(/04-mid/),
+      futureResets(fixture(/04-mid/), now),
       now,
     );
     return {
@@ -67,15 +87,6 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
       state_detail: state === "working" ? "tool:Edit" : null,
       started_at: now - 3_600_000,
       session_name: "Validate harvest against catalog",
-      model: { id: "claude-opus", display_name: "Claude Opus 4.7" },
-      effort: "high",
-      context: { used_pct: 42, window: 200_000, input: 84_000, output: 1000 },
-      rate_limits: {
-        five_hour: { used_pct: 41, resets_at: now + 7_800_000 },
-        seven_day: { used_pct: 30, resets_at: now + 3 * 86_400_000 },
-        captured_at: now,
-      },
-      cost: { usd: 1.84, duration_ms: 1, lines_added: 1, lines_removed: 1 },
       subagents: agents(2),
       tasks: { total: 7, completed: 3, last_subject: "t" },
       git: { branch: "feat/phase-3", worktree: null, pr: null },
