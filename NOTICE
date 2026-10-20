@@ -32,3 +32,5 @@ Actual borrowings (update as code lands):
 - appaquet/ccmon src/status-writer.ts → packages/contract/src/transitions.ts (MIT, Copyright (c) 2026 Andre-Philippe Paquet, commit 0758fa2)
 - DeanLa/cctop plugin/scripts/cctop-hook.sh → packages/contract/src/transitions.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256)
 - martinwickman/ccmonitor internal/hook/hook.go, internal/session/session.go → packages/contract/src/state.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a)
+- simple10/agents-observe hooks/scripts/hook.sh → packages/probe/src/hook.ts (MIT, Copyright (c) 2025 Joe Johnston, commit b3a7238; pattern only: minimal work, never print, always exit 0)
+- sirmalloc/ccstatusline src/utils/windows-code-page.ts → packages/probe/src/win-utf8.ts (MIT, Copyright (c) 2025 Matthew Breedlove, commit 3d94211; chcp 65001 made absolute-path, conditional, time-bounded)
