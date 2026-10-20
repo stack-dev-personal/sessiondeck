@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { migrations } from "./migrations.ts";
 
@@ -28,7 +28,7 @@ export class Store {
   private constructor(db: Database.Database) {
     this.db = db;
     db.exec(
-      "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at BIGINT NOT NULL)",
     );
   }
 
@@ -43,9 +43,21 @@ export class Store {
   }
 
   static open(dbPath: string): Store {
-    if (dbPath !== ":memory:") mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+    const file = dbPath !== ":memory:";
+    if (file) mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true, mode: 0o700 });
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
+    if (file && process.platform !== "win32") {
+      // Payloads and raw transcript lines may hold secrets: owner-only.
+      try {
+        chmodSync(path.dirname(path.resolve(dbPath)), 0o700);
+      } catch {
+        // directory not owned by us (e.g. a shared mount); leave it
+      }
+      for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+        if (existsSync(f)) chmodSync(f, 0o600);
+      }
+    }
     db.pragma("foreign_keys = ON");
     db.pragma("busy_timeout = 5000");
     return new Store(db);

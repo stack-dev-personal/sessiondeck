@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Store } from "../src/db/store.ts";
+import { migrations } from "../src/db/migrations.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { tempStore } from "./helpers.ts";
 
@@ -72,5 +77,59 @@ describe("migrations", () => {
     t.store.upsertSession(s);
     expect(t.store.getSession("s")).toEqual(s);
     expect(t.store.getSession("nope")).toBeUndefined();
+  });
+
+  it("main-session transcript lines dedup on ('' agent_id); NULL agent_id is rejected", () => {
+    const t = tempStore();
+    cleanup = t.cleanup;
+    t.store.migrate();
+    const ins = t.store.db.prepare(
+      "INSERT INTO transcript_lines (session_id, agent_id, line_no, ts, raw) VALUES (?, ?, 1, 0, 'x')",
+    );
+    ins.run("s", "");
+    expect(() => ins.run("s", "")).toThrow(/UNIQUE/);
+    expect(() => ins.run("s", null)).toThrow(/NOT NULL/);
+    const s = t.store.db.prepare("INSERT INTO statusline_samples (session_id, ts) VALUES (?, ?)");
+    expect(() => s.run("s", null)).toThrow(/NOT NULL/);
+    expect(() => s.run(null, 1)).toThrow(/NOT NULL/);
+  });
+
+  it("DDL uses BIGINT for ms columns and no 32-bit INTEGER time columns", () => {
+    const ddl = migrations.map((m) => m.sql).join("\n");
+    for (const col of [
+      "last_seen",
+      "started_at",
+      "last_event_at",
+      "ended_at",
+      "five_hour_resets",
+      "seven_day_resets",
+    ]) {
+      expect(ddl, col).toMatch(new RegExp(`${col} BIGINT`));
+    }
+    expect(ddl).toMatch(/ts BIGINT NOT NULL/);
+    expect(ddl).not.toMatch(/\b(ts|last_seen|started_at|ended_at|last_event_at) INTEGER/);
+    const t = tempStore();
+    cleanup = t.cleanup;
+    t.store.migrate();
+    t.store.upsertHost({ host: "h", os: null, last_seen: 1_760_000_000_000, last_seq: 1 });
+    expect(t.store.getHost("h")?.last_seen).toBe(1_760_000_000_000);
+  });
+
+  it.skipIf(process.platform === "win32")("db dir is 0700, db and sidecars are 0600", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "hub-mode-"));
+    const sub = path.join(dir, "nested", "data");
+    const store = Store.open(path.join(sub, "hub.sqlite"));
+    try {
+      store.migrate();
+      store.upsertHost({ host: "h", os: null, last_seen: 1, last_seq: 1 });
+      const mode = (p: string) => statSync(p).mode & 0o777;
+      expect(mode(sub)).toBe(0o700);
+      for (const f of ["hub.sqlite", "hub.sqlite-wal", "hub.sqlite-shm"]) {
+        expect(mode(path.join(sub, f)), f).toBe(0o600);
+      }
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

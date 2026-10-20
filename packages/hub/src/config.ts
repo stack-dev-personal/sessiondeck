@@ -14,10 +14,11 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
   if (token === undefined || token.length < MIN_TOKEN_LENGTH) {
     throw new Error(`HUB_TOKEN is required and must be at least ${MIN_TOKEN_LENGTH} characters`);
   }
-  const portRaw = env["HUB_PORT"] ?? "8787";
-  const port = Number(portRaw);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error("HUB_PORT must be an integer between 0 and 65535");
+  const rawPort = env["HUB_PORT"];
+  const portRaw = rawPort === undefined || rawPort === "" ? "8787" : rawPort;
+  const port = /^\d+$/.test(portRaw) ? Number(portRaw) : NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("HUB_PORT must be an integer between 1 and 65535");
   }
   return {
     token,

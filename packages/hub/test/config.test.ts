@@ -29,4 +29,12 @@ describe("loadConfig", () => {
     expect([c.port, c.bind, c.dbPath]).toEqual([9000, "0.0.0.0", "x.db"]);
     expect(() => loadConfig({ HUB_TOKEN: "a".repeat(16), HUB_PORT: "abc" })).toThrow(/HUB_PORT/);
   });
+  it("treats empty HUB_PORT as unset and rejects 0, negatives, decimals, overflow", () => {
+    const t = "a".repeat(16);
+    expect(loadConfig({ HUB_TOKEN: t, HUB_PORT: "" }).port).toBe(8787);
+    for (const p of ["0", "-1", "1.5", "65536", " 80", "1e3", "0x10"]) {
+      expect(() => loadConfig({ HUB_TOKEN: t, HUB_PORT: p }), p).toThrow(/HUB_PORT/);
+    }
+    expect(loadConfig({ HUB_TOKEN: t, HUB_PORT: "65535" }).port).toBe(65535);
+  });
 });
