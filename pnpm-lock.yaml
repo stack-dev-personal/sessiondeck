@@ -206,6 +206,12 @@ importers:
         specifier: ^3.0.0
         version: 3.25.76
 
+  packages/probe:
+    dependencies:
+      '@sessiondeck/contract':
+        specifier: workspace:*
+        version: link:../contract
+
   scripts:
     dependencies:
       yaml:
