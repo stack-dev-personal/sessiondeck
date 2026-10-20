@@ -1,10 +1,10 @@
 import { readFile, rm } from "node:fs/promises";
-import { hostname } from "node:os";
 import { resolve } from "node:path";
 import {
   ConfigError,
   maskedConfig,
   readConfig,
+  validateHostName,
   validateHubUrl,
   validateToken,
   writeConfig,
@@ -15,7 +15,8 @@ import {
   installStatePath,
   probeConfigPath,
   probeHome,
-} from "../paths.ts";
+} from "../cli-paths.ts";
+import { resolveHostName } from "../host.ts";
 import { ensurePrivateDir } from "./atomic.ts";
 import { HOOK_EVENTS, MARKER } from "./events.ts";
 import {
@@ -40,7 +41,7 @@ export interface RunIo {
 const HELP = `probe: sessiondeck laptop probe
 
 usage:
-  probe install [--hub <url>] [--token-file <path> | --token-stdin] [--host <name>]
+  probe install [--hub <url>] [--token-file <path> | --token-stdin] [--host-name <name>]
                 [--settings <path>] [--statusline=replace]
   probe uninstall [--purge] [--settings <path>]
   probe config show
@@ -56,7 +57,7 @@ interface Args {
   flags: Map<string, string | true>;
 }
 
-const VALUE_FLAGS = ["--hub", "--token-file", "--host", "--settings", "--statusline"];
+const VALUE_FLAGS = ["--hub", "--token-file", "--host-name", "--settings", "--statusline"];
 const BOOL_FLAGS = ["--token-stdin", "--purge", "--help", "-h"];
 
 class UsageError extends Error {}
@@ -98,20 +99,26 @@ const toSlash = (p: string): string => p.replace(/\\/g, "/");
 /** Characters that would break out of a double-quoted Git Bash string. */
 const SHELL_UNSAFE = /["$`\\!\n\r]/;
 
-function shellCommand(script: string): string {
-  if (SHELL_UNSAFE.test(script)) {
-    throw new SettingsShapeError(`path contains characters unsafe for a shell command: ${script}`);
+function shellWord(word: string): string {
+  if (SHELL_UNSAFE.test(word)) {
+    throw new SettingsShapeError(`path contains characters unsafe for a shell command: ${word}`);
   }
-  const quoted = /\s/.test(script) ? `"${script}"` : script;
-  return `node ${quoted} ${MARKER}`;
+  return /[^A-Za-z0-9_./:@=+,-]/.test(word) ? `"${word}"` : word;
 }
 
-export function buildCtx(distDir: string): Ctx {
+function shellCommand(script: string, home: string, host: string): string {
+  return ["node", script, "--home", home, "--host", host, MARKER].map(shellWord).join(" ");
+}
+
+export function buildCtx(distDir: string, homeDir: string, host: string): Ctx {
   const dir = toSlash(resolve(distDir));
+  const home = toSlash(resolve(homeDir));
   return {
     hookPath: `${dir}/hook.mjs`,
-    statuslineCommand: shellCommand(`${dir}/statusline.mjs`),
-    subagentsCommand: shellCommand(`${dir}/subagents.mjs`),
+    home,
+    host,
+    statuslineCommand: shellCommand(`${dir}/statusline.mjs`, home, host),
+    subagentsCommand: shellCommand(`${dir}/subagents.mjs`, home, host),
   };
 }
 
@@ -141,10 +148,23 @@ async function install(args: Args, io: RunIo): Promise<number> {
   const e = io.pathEnv;
   const home = probeHome(e);
   const settingsPath = str(args.flags, "--settings") ?? claudeSettingsPath(e);
-  const ctx = buildCtx(io.distDir);
   const hubFlag = str(args.flags, "--hub");
   const hubUrl = hubFlag === undefined ? undefined : validateHubUrl(hubFlag);
   const token = await resolveToken(args, io);
+
+  // Config values, read-only until the settings are known good. Keep what exists unless given.
+  const cfgPath = probeConfigPath(e);
+  const existing = await readConfig(cfgPath);
+  const hostFlag = str(args.flags, "--host-name");
+  const cfg = {
+    hubUrl: hubUrl ?? existing?.hubUrl,
+    token: token ?? existing?.token,
+    host:
+      (hostFlag === undefined ? undefined : validateHostName(hostFlag)) ??
+      existing?.host ??
+      resolveHostName(),
+  };
+  const ctx = buildCtx(io.distDir, home, validateHostName(cfg.host));
 
   // Settings first, read-only: a malformed file aborts before anything is written.
   const loaded = await loadSettings(settingsPath);
@@ -153,14 +173,6 @@ async function install(args: Args, io: RunIo): Promise<number> {
   const prior = await getEntry(stateFile, loaded.path);
   const result = applyInstall(loaded.settings, ctx, prior, loaded.existed, { replaceStatus });
 
-  // Config: keep what exists unless a new value is given.
-  const cfgPath = probeConfigPath(e);
-  const existing = await readConfig(cfgPath);
-  const cfg = {
-    hubUrl: hubUrl ?? existing?.hubUrl,
-    token: token ?? existing?.token,
-    host: str(args.flags, "--host") ?? existing?.host ?? hostname(),
-  };
   const sameCfg =
     existing !== undefined &&
     existing.hubUrl === cfg.hubUrl &&

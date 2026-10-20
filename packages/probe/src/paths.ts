@@ -1,5 +1,9 @@
+// Hook-safe paths. This module is bundled into dist/hook.mjs, so it must not read SESSIONDECK_HOME
+// or XDG_STATE_HOME: the probe home comes from `--home` in argv (written by `probe install`), else
+// from the platform default below. Env vars in a repo's settings.local.json must not be able to
+// redirect where the hook writes.
 import { homedir } from "node:os";
-import { join, posix, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 export interface PathEnv {
   platform: NodeJS.Platform;
@@ -12,54 +16,36 @@ export function currentPathEnv(): PathEnv {
 }
 
 /**
- * Probe home directory. SESSIONDECK_HOME wins (tests). Windows: %LOCALAPPDATA%\sessiondeck.
- * Elsewhere (including hooks inside WSL2, which see Linux paths): $XDG_STATE_HOME/sessiondeck or
+ * Platform default probe home. Windows: %LOCALAPPDATA%\sessiondeck (fallback
+ * <home>\AppData\Local). Elsewhere, including WSL2 (which sees Linux paths):
  * ~/.local/state/sessiondeck.
  */
-export function probeHome(e: PathEnv = currentPathEnv()): string {
-  const override = e.env["SESSIONDECK_HOME"];
-  if (override) return override;
+export function defaultProbeHome(e: PathEnv = currentPathEnv()): string {
   if (e.platform === "win32") {
     const base = e.env["LOCALAPPDATA"] || win32.join(e.home, "AppData", "Local");
     return win32.join(base, "sessiondeck");
   }
-  const state = e.env["XDG_STATE_HOME"] || posix.join(e.home, ".local", "state");
-  return posix.join(state, "sessiondeck");
+  return posix.join(e.home, ".local", "state", "sessiondeck");
 }
 
-/** Child of the probe home, joined in the style the home itself was resolved in. */
-function child(e: PathEnv, name: string): string {
-  const home = probeHome(e);
-  if (e.env["SESSIONDECK_HOME"]) return join(home, name);
-  return (e.platform === "win32" ? win32 : posix).join(home, name);
+/** Child of a probe home, joined in the style of the given platform. */
+export function homeChild(
+  home: string,
+  name: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return (platform === "win32" ? win32 : posix).join(home, name);
 }
 
-export function spoolDir(e: PathEnv = currentPathEnv()): string {
-  return child(e, "spool");
+export function spoolDir(home: string, platform?: NodeJS.Platform): string {
+  return homeChild(home, "spool", platform);
 }
 
-export function hookErrorsLog(e: PathEnv = currentPathEnv()): string {
-  return child(e, "hook-errors.log");
+export function hookErrorsLog(home: string, platform?: NodeJS.Platform): string {
+  return homeChild(home, "hook-errors.log", platform);
 }
 
 /** Day file name, by UTC date: yyyy-mm-dd.jsonl. */
 export function dayFileName(ts: number): string {
   return `${new Date(ts).toISOString().slice(0, 10)}.jsonl`;
-}
-
-/** Probe config file (hub URL, token, host). Never inside the Claude settings directory. */
-export function probeConfigPath(e: PathEnv = currentPathEnv()): string {
-  return child(e, "probe.json");
-}
-
-/** Records what `probe install` changed, so `probe uninstall` can restore it exactly. */
-export function installStatePath(e: PathEnv = currentPathEnv()): string {
-  return child(e, "install-state.json");
-}
-
-/** Claude Code settings file: CLAUDE_CONFIG_DIR/settings.json if set, else the default user dir. */
-export function claudeSettingsPath(e: PathEnv = currentPathEnv()): string {
-  const dir = e.env["CLAUDE_CONFIG_DIR"];
-  if (dir) return join(dir, "settings.json");
-  return join(e.home, ".claude", "settings.json");
 }

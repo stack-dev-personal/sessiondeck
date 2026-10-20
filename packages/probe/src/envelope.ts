@@ -1,5 +1,5 @@
-import { hostname } from "node:os";
-import type { Envelope, EventKind, HostOs } from "@sessiondeck/contract";
+import type { EventKind, HostOs } from "@sessiondeck/contract";
+import type { SpoolLine } from "./spool-format.ts";
 import { ulid } from "./ulid.ts";
 
 export function hostOs(platform: NodeJS.Platform = process.platform): HostOs {
@@ -9,28 +9,26 @@ export function hostOs(platform: NodeJS.Platform = process.platform): HostOs {
 
 export interface BuildInput {
   kind: EventKind;
-  seq: number;
+  host: string;
   payload: unknown;
   session_id: string | null;
   agent_id?: string;
   hook_event_name?: string;
   ts?: number;
-  host?: string;
   id?: string;
 }
 
-/** Builds a contract Envelope. The payload is stored as given, untouched. */
-export function buildEnvelope(input: BuildInput): Envelope {
+/** Builds a spool line (a contract Envelope without seq). The payload is stored as given. */
+export function buildEnvelope(input: BuildInput): SpoolLine {
   const ts = input.ts ?? Date.now();
-  const env: Envelope = {
+  const env: SpoolLine = {
     v: 1, // ENVELOPE_VERSION; a literal so the hook bundle needs no runtime import of the contract
     id: input.id ?? ulid(ts),
     kind: input.kind,
-    host: input.host ?? hostname(),
+    host: input.host,
     os: hostOs(),
     session_id: input.session_id,
     ts,
-    seq: input.seq,
     payload: input.payload,
   };
   if (input.agent_id !== undefined) env.agent_id = input.agent_id;
@@ -42,19 +40,19 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
 }
 
-/** Envelope of kind hook from a parsed hook payload; null when session_id or event name is missing. */
+/** Spool line of kind hook from a parsed hook payload; null when session_id or event name is missing. */
 export function hookEnvelopeFromPayload(
   payload: Record<string, unknown>,
-  seq: number,
+  host: string,
   ts?: number,
-): Envelope | null {
+): SpoolLine | null {
   const session_id = str(payload["session_id"]);
   const hook_event_name = str(payload["hook_event_name"]);
   if (!session_id || !hook_event_name) return null;
   const agent_id = str(payload["agent_id"]);
   return buildEnvelope({
     kind: "hook",
-    seq,
+    host,
     payload,
     session_id,
     hook_event_name,

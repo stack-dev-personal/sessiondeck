@@ -1,5 +1,5 @@
 // Latency harness (R1.1): spawns `node dist/hook.mjs` 200 times, sequentially, with a fixture on
-// stdin and a temp SESSIONDECK_HOME. Prints p50/p95/max wall ms and machine info. Always exits 0.
+// stdin and `--home <tmp>` (the way `probe install` registers the hook). Prints p50/p95/max wall ms and machine info. Always exits 0.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { cpus, tmpdir, platform, release, arch } from "node:os";
@@ -19,11 +19,14 @@ const times = [];
 let bad = 0;
 for (let i = 0; i < RUNS; i++) {
   const t0 = performance.now();
-  const r = spawnSync(process.execPath, [hook], {
-    input: fixture,
-    env: { ...process.env, SESSIONDECK_HOME: home },
-    windowsHide: true,
-  });
+  const r = spawnSync(
+    process.execPath,
+    [hook, "--home", home, "--host", "bench", "--sessiondeck-probe"],
+    {
+      input: fixture,
+      windowsHide: true,
+    },
+  );
   times.push(performance.now() - t0);
   if (r.status !== 0 || r.stdout.length > 0) bad++;
 }

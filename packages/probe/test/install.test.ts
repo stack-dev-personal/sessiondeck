@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveHostName } from "../src/host.ts";
 import { probeRoot } from "./helpers.ts";
 import {
   type Doc,
@@ -70,11 +71,32 @@ describe("probe install (R1.8)", () => {
       expect(ours[0]).toEqual({
         type: "command",
         command: "node",
-        args: [`${distDir}/hook.mjs`, "--sessiondeck-probe"],
+        args: [
+          `${distDir}/hook.mjs`,
+          "--home",
+          sb.home.replace(/\\/g, "/"),
+          "--host",
+          resolveHostName(),
+          "--sessiondeck-probe",
+        ],
         timeout: 5,
       });
     }
     expect(readText(sb.settings)).not.toContain("\\\\");
+  });
+
+  it("--host-name is stored in probe.json and passed as --host to hook and statusline; bad names are refused", async () => {
+    const sb = sandbox(harnessFixture);
+    const r = await runCli(["install", "--host-name", "desk-wsl", "--statusline=replace"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(readJson(join(sb.home, "probe.json")).host).toBe("desk-wsl");
+    const after = readJson(sb.settings);
+    const ours = after.hooks.Stop.flatMap((g: Doc) => g.hooks).find(isOurs);
+    expect(ours.args.slice(3, 5)).toEqual(["--host", "desk-wsl"]);
+    expect(after.statusLine.command).toContain("--host desk-wsl ");
+    expect(after.subagentStatusLine.command).toContain("--host desk-wsl ");
+    const bad = await runCli(["install", "--host-name", "a b;c"], sandbox(harnessFixture).env);
+    expect(bad.code).toBe(1);
   });
 
   it("is idempotent: a second and third run leave a byte-identical file and no new backup", async () => {
@@ -137,7 +159,7 @@ describe("probe install (R1.8)", () => {
     expect(readJson(sb.settings).statusLine).toEqual(before);
     // The subagent status line was absent, so ours is set.
     expect(readJson(sb.settings).subagentStatusLine.command).toMatch(
-      /^node .*subagents\.mjs --sessiondeck-probe$/,
+      /^node .*subagents\.mjs --home .+ --host .+ --sessiondeck-probe$/,
     );
   });
 
@@ -148,7 +170,9 @@ describe("probe install (R1.8)", () => {
     const r = await runCli(["install", "--statusline=replace"], sb.env);
     expect(r.code, r.stderr).toBe(0);
     const sl = readJson(sb.settings).statusLine;
-    expect(sl.command).toBe(`node ${distDir}/statusline.mjs --sessiondeck-probe`);
+    expect(sl.command).toBe(
+      `node ${distDir}/statusline.mjs --home ${sb.home.replace(/\\/g, "/")} --host ${resolveHostName()} --sessiondeck-probe`,
+    );
     expect(sl.command).not.toContain("\\");
     // Re-running install must not record our own entry as the "previous" one.
     await runCli(["install", "--statusline=replace"], sb.env);
@@ -221,10 +245,12 @@ describe("probe install (R1.8)", () => {
 
   it("statusLine path with spaces is quoted", async () => {
     const { buildCtx } = await import("../src/install/run.ts");
-    const c = buildCtx("/tmp/with space/dist");
+    const c = buildCtx("/tmp/with space/dist", "/tmp/my home/sd", "box-wsl");
     expect(c.statuslineCommand).toBe(
-      'node "/tmp/with space/dist/statusline.mjs" --sessiondeck-probe',
+      'node "/tmp/with space/dist/statusline.mjs" --home "/tmp/my home/sd" --host box-wsl --sessiondeck-probe',
     );
-    expect(() => buildCtx('/tmp/we"ird')).toThrow(/unsafe/);
+    expect(c.home).toBe("/tmp/my home/sd");
+    expect(() => buildCtx('/tmp/we"ird', "/tmp/h", "h")).toThrow(/unsafe/);
+    expect(() => buildCtx("/tmp/d", "/tmp/$HOME", "h")).toThrow(/unsafe/);
   });
 });

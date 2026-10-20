@@ -14,14 +14,31 @@ export interface HookRun {
   stderr: Buffer;
 }
 
+export interface HookOpts {
+  /** Probe home passed as `--home` (the way `probe install` registers the hook). */
+  home?: string;
+  host?: string;
+  env?: Record<string, string>;
+  args?: string[];
+}
+
+export function hookArgs(o: HookOpts): string[] {
+  return [
+    ...(o.home !== undefined ? ["--home", o.home] : []),
+    ...(o.host !== undefined ? ["--host", o.host] : []),
+    "--sessiondeck-probe",
+    ...(o.args ?? []),
+  ];
+}
+
 export function runHook(
   stdin: Buffer | string | null,
-  env: Record<string, string>,
+  opts: HookOpts,
   script: string = hookPath,
 ): Promise<HookRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script], {
-      env: { ...process.env, ...env },
+    const child = spawn(process.execPath, [script, ...hookArgs(opts)], {
+      env: { ...process.env, ...opts.env },
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });

@@ -1,33 +1,74 @@
-import { appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  constants,
+  closeSync,
+  fstatSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  writeSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import { buildEnvelope, hookEnvelopeFromPayload } from "./envelope.ts";
-import { hookErrorsLog, spoolDir } from "./paths.ts";
-import { appendEnvelopes, type EnvelopeFactory } from "./spool.ts";
+import type { SpoolLine } from "./spool-format.ts";
+import { appendSpoolLines, notRegular } from "./spool-writer.ts";
 import type { StdinResult } from "./stdin.ts";
 
 export const ERROR_LOG_MAX_BYTES = 64 * 1024;
+/** session_id, hook_event_name and agent_id longer than this are rejected up front. */
+export const MAX_ID_CHARS = 256;
 
 export type HookOutcome = { ok: true; lines: number } | { ok: false; reason: string };
 
-/** One short line, no payload content. Size-capped: past the cap the log restarts. */
-export function logHookError(reason: string, logPath: string = hookErrorsLog()): void {
+export interface HookContext {
+  /** Spool directory. */
+  spool: string;
+  /** Host name stamped on every envelope (from --host, else os.hostname()). */
+  host: string;
+}
+
+/**
+ * One short line, no payload content. Size-capped: past the cap the log restarts. The file is
+ * created 0600, never opened through a symlink, and a non-regular file is left alone.
+ */
+export function logHookError(reason: string, logPath: string): void {
   try {
     const line = `${new Date().toISOString()} ${reason}\n`;
-    let size = 0;
+    const flags =
+      constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0);
+    const open = (): number => {
+      if (constants.O_NOFOLLOW === undefined) {
+        try {
+          if (!lstatSync(logPath).isFile()) throw notRegular();
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+        }
+      }
+      return openSync(logPath, flags, 0o600);
+    };
+    let fd: number;
     try {
-      size = statSync(logPath).size;
-    } catch {
-      mkdirSync(dirname(logPath), { recursive: true });
+      fd = open();
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+      fd = open();
     }
-    if (size > ERROR_LOG_MAX_BYTES) writeFileSync(logPath, line);
-    else appendFileSync(logPath, line);
+    try {
+      const st = fstatSync(fd);
+      if (!st.isFile()) return;
+      if (st.size > ERROR_LOG_MAX_BYTES) ftruncateSync(fd, 0);
+      writeSync(fd, line);
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     // Nowhere to report to; the hook must still exit 0.
   }
 }
 
 /** Turns raw stdin into spool lines. Returns the outcome; never throws. */
-export function processHookInput(input: StdinResult, dir: string = spoolDir()): HookOutcome {
+export function processHookInput(input: StdinResult, ctx: HookContext): HookOutcome {
   try {
     if (!input.ok) return { ok: false, reason: input.reason };
     if (input.data.length === 0) return { ok: false, reason: "empty-stdin" };
@@ -41,29 +82,32 @@ export function processHookInput(input: StdinResult, dir: string = spoolDir()): 
       return { ok: false, reason: "not-an-object" };
     }
     const payload = parsed as Record<string, unknown>;
-    if (hookEnvelopeFromPayload(payload, 0) === null) {
-      return { ok: false, reason: "missing-session-id-or-event-name" };
+    const env = hookEnvelopeFromPayload(payload, ctx.host);
+    if (env === null) return { ok: false, reason: "missing-session-id-or-event-name" };
+    if (
+      (env.session_id?.length ?? 0) > MAX_ID_CHARS ||
+      (env.hook_event_name?.length ?? 0) > MAX_ID_CHARS ||
+      (env.agent_id?.length ?? 0) > MAX_ID_CHARS
+    ) {
+      return { ok: false, reason: "id-too-long" };
     }
-    const factories: EnvelopeFactory[] = [
-      (seq) => {
-        const env = hookEnvelopeFromPayload(payload, seq);
-        if (!env) throw new Error("unreachable");
-        return env;
-      },
-    ];
-    if (payload["hook_event_name"] === "SessionStart") {
-      // The exec-form hook's parent is claude itself.
-      factories.push((seq) =>
+    const lines: SpoolLine[] = [env];
+    if (env.hook_event_name === "SessionStart") {
+      // The exec-form hook's parent is normally claude itself, but a node shim (Volta, a version
+      // manager) can sit in between. The daemon (S2) must confirm this pid against
+      // ~/.claude/sessions/*.json before trusting it.
+      lines.push(
         buildEnvelope({
           kind: "liveness",
-          seq,
+          host: ctx.host,
           payload: { pid: process.ppid, alive: true },
-          session_id: payload["session_id"] as string,
+          session_id: env.session_id,
         }),
       );
     }
-    const res = appendEnvelopes(dir, factories);
-    return { ok: true, lines: res.lines };
+    const res = appendSpoolLines(ctx.spool, lines);
+    if (res.dropped > 0 && res.written === 0) return { ok: false, reason: "line-too-large" };
+    return { ok: true, lines: res.written };
   } catch (e) {
     return { ok: false, reason: `spool-error ${(e as NodeJS.ErrnoException)?.code ?? "unknown"}` };
   }

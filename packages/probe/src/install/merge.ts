@@ -22,6 +22,10 @@ export interface InstallEntry {
 export interface Ctx {
   /** Absolute, forward-slash path of dist/hook.mjs. */
   hookPath: string;
+  /** Resolved probe home (forward slashes), passed as `--home`. */
+  home: string;
+  /** Host name, passed as `--host`. */
+  host: string;
   statuslineCommand: string;
   subagentsCommand: string;
 }
@@ -66,7 +70,7 @@ function buildGroup(ctx: Ctx): Json {
       {
         type: "command",
         command: "node",
-        args: [ctx.hookPath, MARKER],
+        args: [ctx.hookPath, "--home", ctx.home, "--host", ctx.host, MARKER],
         timeout: HOOK_TIMEOUT_SECONDS,
       },
     ],

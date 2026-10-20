@@ -1,17 +1,15 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EnvelopeSchema, ULID_PATTERN } from "@sessiondeck/contract";
+import { ULID_PATTERN } from "@sessiondeck/contract";
 import { buildEnvelope, hookEnvelopeFromPayload, hostOs } from "../src/envelope.ts";
-import { dayFileName, probeHome, spoolDir, hookErrorsLog } from "../src/paths.ts";
-import {
-  appendEnvelopes,
-  LOCK_NAME,
-  MAX_LINE_BYTES,
-  SEQ_NAME,
-  serializeLine,
-} from "../src/spool.ts";
+import { dayFileName, defaultProbeHome, spoolDir, hookErrorsLog } from "../src/paths.ts";
+import { probeHome } from "../src/cli-paths.ts";
+import { parseProbeArgs } from "../src/args.ts";
+import { isWsl } from "../src/host.ts";
+import { MAX_LINE_BYTES, parseSpoolLine } from "../src/spool.ts";
+import { appendSpoolLines, serializeLine } from "../src/spool-writer.ts";
 import { createUlidGenerator } from "../src/ulid.ts";
 import { logHookError, processHookInput, ERROR_LOG_MAX_BYTES } from "../src/hook-core.ts";
 
@@ -55,26 +53,27 @@ describe("envelope builder", () => {
     agent_id: "a1",
     x: [1, { y: 2 }],
   };
-  it("builds a schema-valid hook envelope with agent_id and untouched payload", () => {
-    const env = hookEnvelopeFromPayload(payload, 7, 1_760_000_000_000)!;
-    expect(EnvelopeSchema.parse(env)).toBeTruthy();
+  it("builds a schema-valid seq-less hook line with agent_id and untouched payload", () => {
+    const env = hookEnvelopeFromPayload(payload, "h1", 1_760_000_000_000)!;
+    expect("seq" in env).toBe(false);
+    expect(parseSpoolLine(JSON.stringify(env)).ok).toBe(true);
     expect(env).toMatchObject({
       v: 1,
       kind: "hook",
+      host: "h1",
       session_id: "s1",
       agent_id: "a1",
       hook_event_name: "PreToolUse",
       ts: 1_760_000_000_000,
-      seq: 7,
     });
     expect(env.payload).toBe(payload);
     expect(["win32", "linux", "darwin"]).toContain(env.os);
   });
   it("omits agent_id when absent; null for missing session or event", () => {
-    const env = hookEnvelopeFromPayload({ session_id: "s", hook_event_name: "Stop" }, 1)!;
+    const env = hookEnvelopeFromPayload({ session_id: "s", hook_event_name: "Stop" }, "h")!;
     expect("agent_id" in env).toBe(false);
-    expect(hookEnvelopeFromPayload({ hook_event_name: "Stop" }, 1)).toBeNull();
-    expect(hookEnvelopeFromPayload({ session_id: "s" }, 1)).toBeNull();
+    expect(hookEnvelopeFromPayload({ hook_event_name: "Stop" }, "h")).toBeNull();
+    expect(hookEnvelopeFromPayload({ session_id: "s" }, "h")).toBeNull();
   });
   it("maps platforms", () => {
     expect(hostOs("win32")).toBe("win32");
@@ -84,7 +83,6 @@ describe("envelope builder", () => {
   it("buildEnvelope honours explicit id, host, session null", () => {
     const e = buildEnvelope({
       kind: "probe",
-      seq: 0,
       payload: null,
       session_id: null,
       id: "X",
@@ -95,6 +93,40 @@ describe("envelope builder", () => {
   });
 });
 
+describe("parseSpoolLine", () => {
+  const good = JSON.stringify(
+    hookEnvelopeFromPayload({ session_id: "s", hook_event_name: "Stop" }, "h"),
+  );
+  it("accepts a valid line and drops any seq", () => {
+    const r = parseSpoolLine(good);
+    expect(r.ok).toBe(true);
+    const withSeq = parseSpoolLine(JSON.stringify({ ...JSON.parse(good), seq: 9 }));
+    expect(withSeq.ok && "seq" in withSeq.line).toBe(false);
+  });
+  it("rejects bad json, non-objects and schema violations", () => {
+    expect(parseSpoolLine("{")).toEqual({ ok: false, error: "invalid-json" });
+    expect(parseSpoolLine("[]")).toEqual({ ok: false, error: "not-an-object" });
+    expect(parseSpoolLine(JSON.stringify({ ...JSON.parse(good), id: "nope" })).ok).toBe(false);
+    expect(parseSpoolLine("{}").ok).toBe(false);
+  });
+});
+
+describe("args", () => {
+  it("reads --home and --host in both forms, ignores the rest", () => {
+    expect(parseProbeArgs(["--home", "C:/a b", "--host", "h", "--sessiondeck-probe"])).toEqual({
+      home: "C:/a b",
+      host: "h",
+    });
+    expect(parseProbeArgs(["--home=/x", "--host=y", "--other"])).toEqual({ home: "/x", host: "y" });
+    expect(parseProbeArgs(["--home"])).toEqual({});
+    expect(parseProbeArgs([])).toEqual({});
+  });
+  it("isWsl is false off Linux", () => {
+    expect(isWsl("win32")).toBe(false);
+    expect(isWsl("darwin")).toBe(false);
+  });
+});
+
 describe("paths", () => {
   it("windows: LOCALAPPDATA", () => {
     const e = {
@@ -102,36 +134,37 @@ describe("paths", () => {
       env: { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local" },
       home: "C:\\Users\\u",
     };
-    expect(probeHome(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck");
-    expect(spoolDir(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck\\spool");
-    expect(hookErrorsLog(e)).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck\\hook-errors.log");
+    const home = defaultProbeHome(e);
+    expect(home).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck");
+    expect(spoolDir(home, "win32")).toBe("C:\\Users\\u\\AppData\\Local\\sessiondeck\\spool");
+    expect(spoolDir("C:/Users/u/sd", "win32")).toBe("C:\\Users\\u\\sd\\spool");
+    expect(hookErrorsLog(home, "win32")).toBe(
+      "C:\\Users\\u\\AppData\\Local\\sessiondeck\\hook-errors.log",
+    );
   });
   it("windows without LOCALAPPDATA falls back under the home dir", () => {
-    expect(probeHome({ platform: "win32", env: {}, home: "C:\\Users\\u" })).toBe(
+    expect(defaultProbeHome({ platform: "win32", env: {}, home: "C:\\Users\\u" })).toBe(
       "C:\\Users\\u\\AppData\\Local\\sessiondeck",
     );
   });
-  it("linux: XDG_STATE_HOME, then ~/.local/state (WSL2 never gets Windows paths)", () => {
+  it("linux and macOS: ~/.local/state/sessiondeck; XDG_STATE_HOME and LOCALAPPDATA ignored", () => {
     expect(
-      probeHome({
+      defaultProbeHome({
         platform: "linux",
         env: { XDG_STATE_HOME: "/x/state", LOCALAPPDATA: "C:\\no" },
         home: "/home/u",
       }),
-    ).toBe("/x/state/sessiondeck");
-    expect(probeHome({ platform: "linux", env: {}, home: "/home/u" })).toBe(
-      "/home/u/.local/state/sessiondeck",
-    );
-    expect(probeHome({ platform: "darwin", env: {}, home: "/Users/u" })).toBe(
+    ).toBe("/home/u/.local/state/sessiondeck");
+    expect(defaultProbeHome({ platform: "darwin", env: {}, home: "/Users/u" })).toBe(
       "/Users/u/.local/state/sessiondeck",
     );
   });
-  it("SESSIONDECK_HOME overrides on every platform", () => {
+  it("SESSIONDECK_HOME overrides for the CLI only", () => {
     for (const platform of ["win32", "linux"] as const) {
       expect(probeHome({ platform, env: { SESSIONDECK_HOME: "/t/h" }, home: "/h" })).toBe("/t/h");
     }
-    expect(spoolDir({ platform: "linux", env: { SESSIONDECK_HOME: "/t/h" }, home: "/h" })).toBe(
-      join("/t/h", "spool"),
+    expect(probeHome({ platform: "linux", env: {}, home: "/h" })).toBe(
+      "/h/.local/state/sessiondeck",
     );
   });
   it("day file by UTC date", () => {
@@ -141,12 +174,12 @@ describe("paths", () => {
 });
 
 describe("spool", () => {
-  const mk = (payload: unknown) => (seq: number) =>
-    buildEnvelope({ kind: "hook", seq, payload, session_id: "s", hook_event_name: "Stop" });
+  const mk = (payload: unknown, session_id = "s") =>
+    buildEnvelope({ kind: "hook", host: "h", payload, session_id, hook_event_name: "Stop" });
 
   it("replaces an oversized payload with the truncated marker, keeps the line under the cap", () => {
-    const env = mk({ big: "x".repeat(200_000) })(1);
-    const { line, truncated } = serializeLine(env);
+    const env = mk({ big: "x".repeat(200_000) });
+    const { line, truncated } = serializeLine(env)!;
     expect(truncated).toBe(true);
     expect(Buffer.byteLength(line)).toBeLessThanOrEqual(MAX_LINE_BYTES);
     const parsed = JSON.parse(line);
@@ -157,60 +190,34 @@ describe("spool", () => {
     });
     expect(parsed.payload.original_bytes).toBeGreaterThan(200_000);
     expect(parsed.session_id).toBe("s");
-    expect(EnvelopeSchema.safeParse(parsed).success).toBe(true);
+    expect(parseSpoolLine(line.trimEnd()).ok).toBe(true);
   });
   it("small envelopes pass through unchanged", () => {
-    const env = mk({ a: 1 })(1);
-    const { line, truncated } = serializeLine(env);
+    const env = mk({ a: 1 });
+    const { line, truncated } = serializeLine(env)!;
     expect(truncated).toBe(false);
     expect(line).toBe(JSON.stringify(env) + "\n");
   });
-  it("assigns increasing seq from the persisted counter, recovers from a torn counter", () => {
+  it("a line that is still over the cap after truncation is dropped, not written", () => {
+    const env = mk({ a: 1 }, "z".repeat(100_000));
+    expect(serializeLine(env)).toBeNull();
     const dir = join(mkdtempSync(join(tmpdir(), "sd-spool-")), "spool");
     try {
-      appendEnvelopes(dir, [mk(1), mk(2)], () => 1_000);
-      appendEnvelopes(dir, [mk(3)], () => 1_000);
-      expect(readFileSync(join(dir, SEQ_NAME), "utf8")).toBe("0000000000001003");
-      writeFileSync(join(dir, SEQ_NAME), "");
-      appendEnvelopes(dir, [mk(4)], () => 5_000);
-      const seqs = readFileSync(join(dir, "1970-01-01.jsonl"), "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l).seq);
-      expect(seqs).toEqual([1001, 1002, 1003, 5001]);
+      expect(appendSpoolLines(dir, [env])).toEqual({ written: 0, dropped: 1 });
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(join(dir, ".."), { recursive: true, force: true });
     }
   });
-  it("breaks a stale lock and releases its own", () => {
+  it("appends lines in order to the UTC day file, no side files", () => {
     const dir = join(mkdtempSync(join(tmpdir(), "sd-spool-")), "spool");
     try {
-      mkdirSync(dir, { recursive: true });
-      const lock = join(dir, LOCK_NAME);
-      writeFileSync(lock, "");
-      const old = new Date(Date.now() - 60_000);
-      utimesSync(lock, old, old);
-      const r = appendEnvelopes(dir, [mk(1)]);
-      expect(r.locked).toBe(true);
-      expect(() => readFileSync(lock)).toThrow();
+      appendSpoolLines(dir, [mk(1), mk(2)], () => 1_000);
+      appendSpoolLines(dir, [mk(3)], () => 1_000);
+      const lines = readFileSync(join(dir, "1970-01-01.jsonl"), "utf8").split("\n").filter(Boolean);
+      expect(lines.map((l) => JSON.parse(l).payload)).toEqual([1, 2, 3]);
+      expect(readdirSync(dir)).toEqual(["1970-01-01.jsonl"]);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-  it("a live lock is waited for within bounds, then the line is appended anyway", () => {
-    const dir = join(mkdtempSync(join(tmpdir(), "sd-spool-")), "spool");
-    try {
-      mkdirSync(dir, { recursive: true });
-      const lock = join(dir, LOCK_NAME);
-      writeFileSync(lock, "");
-      // Keep refreshing is not possible synchronously; a fresh lock younger than stale age
-      // outlasts the wait only if stale > wait, so only assert the append happened and was fast.
-      const t0 = Date.now();
-      const r = appendEnvelopes(dir, [mk(1)]);
-      expect(r.lines).toBe(1);
-      expect(Date.now() - t0).toBeLessThan(3_000);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(join(dir, ".."), { recursive: true, force: true });
     }
   });
 });
@@ -229,12 +236,17 @@ describe("hook core", () => {
   it("reports failures for every bad input class", () => {
     const d = "/nonexistent-dir-for-test/never-created-" + process.pid;
     const bad = (data: string, ok = true) =>
-      processHookInput({ ok, data: Buffer.from(data) } as never, d);
+      processHookInput({ ok, data: Buffer.from(data) } as never, { spool: d, host: "h" });
     expect(bad("")).toEqual({ ok: false, reason: "empty-stdin" });
     expect(bad("{")).toEqual({ ok: false, reason: "invalid-json" });
     expect(bad("[]")).toEqual({ ok: false, reason: "not-an-object" });
     expect(bad("{}")).toEqual({ ok: false, reason: "missing-session-id-or-event-name" });
-    expect(processHookInput({ ok: false, reason: "timeout", data: Buffer.alloc(0) }, d)).toEqual({
+    expect(
+      processHookInput(
+        { ok: false, reason: "timeout", data: Buffer.alloc(0) },
+        { spool: d, host: "h" },
+      ),
+    ).toEqual({
       ok: false,
       reason: "timeout",
     });

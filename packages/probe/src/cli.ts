@@ -2,7 +2,7 @@
 // non-zero on errors.
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentPathEnv } from "./paths.ts";
+import { currentPathEnv } from "./cli-paths.ts";
 import { readProcessStdin, run } from "./install/run.ts";
 
 const code = await run(process.argv.slice(2), {

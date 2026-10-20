@@ -28,14 +28,20 @@ node packages/probe/dist/probe.mjs install --hub http://192.168.1.20:8787 --toke
 - Hooks: one exec-form group per event (17 events: SessionStart, UserPromptSubmit, PreToolUse,
   PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDenied, Notification, SubagentStart,
   SubagentStop, TaskCreated, TaskCompleted, Stop, StopFailure, PreCompact, PostCompact, SessionEnd),
-  `"command": "node"`, `"args": ["<abs forward-slash path>/dist/hook.mjs", "--sessiondeck-probe"]`,
-  `"timeout": 5`. The trailing `--sessiondeck-probe` argument is the marker that lets install and
-  uninstall recognise the probe's own entries; the scripts ignore it.
+  `"command": "node"`, `"args": ["<abs forward-slash path>/dist/hook.mjs", "--home", "<probe home>",
+  "--host", "<host>", "--sessiondeck-probe"]`, `"timeout": 5`. The probe home and host are
+  resolved at install time and passed as arguments: the hook never reads `SESSIONDECK_HOME`,
+  `XDG_STATE_HOME` or any other env var for its location, so an env block in a repo's
+  `.claude/settings.local.json` cannot redirect where it writes. Without `--home` the hook uses
+  the platform default (below). The trailing `--sessiondeck-probe` argument is the marker that
+  lets install and uninstall recognise the probe's own entries.
 - Existing hooks, matchers, `permissions`, `env` and every other key are left as they are. Our
   group is appended after yours (or, on a re-run, stays where it was). Re-running install changes
   nothing (byte-identical file, no new backup).
 - `statusLine` and `subagentStatusLine` are set only if absent or already ours. If you have your
-  own, install leaves it and prints a notice. `--statusline=replace` takes over; the previous value
+  own, install leaves it and prints a notice. When set by us, their commands carry the same
+  `--home` and `--host` (`node <script> --home <home> --host <host> --sessiondeck-probe`, tokens
+  double-quoted when they contain spaces). `--statusline=replace` takes over; the previous value
   is saved in `install-state.json` and `uninstall` puts it back exactly.
 - Before the first write the original is copied to `<probe home>/settings.backup-<timestamp>.json`.
   Writes are atomic (temp file, fsync, rename, with retry for Windows sharing violations).
@@ -46,7 +52,11 @@ node packages/probe/dist/probe.mjs install --hub http://192.168.1.20:8787 --toke
 
 ### Token and config
 
-`probe.json` in the probe home holds `hubUrl`, `token`, `host` (default: this machine's hostname).
+`probe.json` in the probe home holds `hubUrl`, `token`, `host`. Host defaults to `os.hostname()`,
+plus a `-wsl` suffix inside WSL2 (`/proc/version` mentions "microsoft") so Windows and WSL2 on one
+laptop are different hosts; `--host-name <name>` overrides (letters, digits, `.`, `_`, `-`). The
+host is passed to the hook and statusline as `--host`; the hook falls back to the same
+hostname rule only when `--host` is absent.
 It never lives in `settings.json`, and the token is never on the command line: argv is visible to
 other processes, so `--token <value>` is rejected. Use `--token-file <path>` or `--token-stdin`.
 Re-running install keeps the existing token unless a new one is given. `probe config show` prints
@@ -77,23 +87,41 @@ returns to its original bytes. `probe.json` stays unless `--purge`. The spool is
 
 ## Where files live
 
-Probe home: Windows `%LOCALAPPDATA%\sessiondeck`; Linux and WSL2 `$XDG_STATE_HOME/sessiondeck`,
-default `~/.local/state/sessiondeck`. `SESSIONDECK_HOME` overrides. WSL2 has its own home inside
-the distro; install there separately.
+Probe home: Windows `%LOCALAPPDATA%\sessiondeck`; Linux and WSL2 `~/.local/state/sessiondeck`.
+`probe install` records the resolved path in the hook arguments (`--home`). `SESSIONDECK_HOME`
+overrides it for the CLI only (tests); the hook ignores it. WSL2 has its own home inside the
+distro; install there separately. Directories are created `0700` and files `0600` on POSIX (the
+spool holds raw prompts and tool inputs); the hook opens day files with `O_NOFOLLOW` (lstat on
+Windows) and refuses anything that is not a regular file.
 
 | File | Purpose |
 |------|---------|
 | `probe.json` | hub URL, token, host (user-only) |
 | `install-state.json` | what install changed, per settings file, for exact uninstall |
 | `settings.backup-<ts>.json` | copy of settings.json taken before a write |
-| `spool/<yyyy-mm-dd>.jsonl` | one Envelope per line, day file by UTC date |
-| `spool/.lock` | advisory append lock |
-| `spool/.seq` | per-host sequence counter |
+| `spool/<yyyy-mm-dd>.jsonl` | one spool line per hook call, day file by UTC date |
 | `hook-errors.log` | hook failures (the hook itself never prints or fails) |
+
+## The spool format
+
+A spool line is a contract Envelope **without `seq`** (`SpoolLine`, `src/spool.ts`, with
+`parseSpoolLine`). The hook takes no lock and keeps no counter: it appends each line with one
+write on an `O_APPEND` descriptor, and every line is under 64 KB, so concurrent hooks cannot
+interleave inside a line. A line over the cap has its payload replaced by
+`{"truncated":true,"original_bytes":N,"limit_bytes":65536}`; `session_id`, `hook_event_name` and
+`agent_id` longer than 256 characters make the hook drop the event (reason `id-too-long` in
+`hook-errors.log`). The daemon (S2) is the single reader: it assigns `seq` in file order and
+persists it with its cursor, so seq has no gaps or duplicates. The daemon ignores anything in
+the spool directory that is not `*.jsonl`.
+
+On `SessionStart` the hook also appends a `liveness` line `{pid, alive: true}` where `pid` is the
+hook's parent process. Normally that is `claude`, but a node shim (Volta, a version manager) can
+sit in between, so the daemon must confirm the pid against `~/.claude/sessions/*.json` before
+trusting it.
 
 ## Reading the spool by hand
 
-One Envelope (JSON) per line.
+One SpoolLine (JSON) per line; there is no `seq` field.
 
 PowerShell:
 
@@ -106,5 +134,5 @@ Linux and WSL2:
 
 ```
 tail -n 5 ~/.local/state/sessiondeck/spool/$(date -u +%F).jsonl | jq .
-tail -n 5 ~/.local/state/sessiondeck/spool/$(date -u +%F).jsonl | jq -r '[.seq,.kind,.hook_event_name] | @tsv'
+tail -n 5 ~/.local/state/sessiondeck/spool/$(date -u +%F).jsonl | jq -r '[.ts,.kind,.hook_event_name] | @tsv'
 ```

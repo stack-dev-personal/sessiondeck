@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, statSync, writeFileSync } from "node:fs";
-import { hostname, userInfo } from "node:os";
+import { userInfo } from "node:os";
+import { resolveHostName } from "../src/host.ts";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { harnessFixture, readJson, readText, runCli, sandbox } from "./fixtures/sandbox.ts";
@@ -27,7 +28,7 @@ describe("probe config (R1.10)", () => {
     expect(readJson(cfgPath)).toEqual({
       hubUrl: "http://127.0.0.1:8787",
       token: TOKEN,
-      host: hostname(),
+      host: resolveHostName(),
     });
     expect(readText(sb.settings)).not.toContain(TOKEN);
     expect(readText(join(sb.home, "install-state.json"))).not.toContain(TOKEN);

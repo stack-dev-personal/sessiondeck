@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { hostname, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { dirname } from "node:path";
+import { resolveHostName } from "../host.ts";
 import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
 
 /** probe.json: hub URL, token, host name. Lives in the probe home, never in settings.json. */
@@ -32,11 +33,19 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   }
   const r = raw as Record<string, unknown>;
   const cfg: ProbeConfig = {
-    host: typeof r["host"] === "string" && r["host"] ? r["host"] : hostname(),
+    host: typeof r["host"] === "string" && r["host"] ? r["host"] : resolveHostName(),
   };
   if (typeof r["hubUrl"] === "string") cfg.hubUrl = r["hubUrl"];
   if (typeof r["token"] === "string") cfg.token = r["token"];
   return cfg;
+}
+
+/** Host names end up in hook and statusline command lines: keep them to plain characters. */
+export function validateHostName(name: string): string {
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(name)) {
+    throw new ConfigError("--host-name may contain only letters, digits, '.', '_' and '-'");
+  }
+  return name;
 }
 
 export function validateHubUrl(url: string): string {
