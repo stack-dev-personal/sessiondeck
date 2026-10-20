@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
+import * as prettier from "prettier";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -195,24 +196,25 @@ try {
 
   if (writeExpected) {
     const sha = (f) => createHash("sha256").update(readFileSync(f)).digest("hex");
-    writeFileSync(
-      writeExpected,
-      JSON.stringify(
-        {
-          provenance: {
-            generator: "packages/hub/scripts/ccusage-compare.mjs --write-expected",
-            ccusage: "ccusage 19.0.3 (npm), `session --json` and `daily --json --timezone <tz>`",
-            ccusage_license: "MIT, Copyright (c) 2025 ryoppippi",
-            pricing_file: path.basename(pricing),
-            pricing_sha256: sha(pricing),
-            generated: new Date().toISOString(),
-          },
-          byTimezone: expected,
+    const json = JSON.stringify(
+      {
+        provenance: {
+          generator: "packages/hub/scripts/ccusage-compare.mjs --write-expected",
+          ccusage: "ccusage 19.0.3 (npm), `session --json` and `daily --json --timezone <tz>`",
+          ccusage_license: "MIT, Copyright (c) 2025 ryoppippi",
+          pricing_file: path.basename(pricing),
+          pricing_sha256: sha(pricing),
+          generated: new Date().toISOString(),
         },
-        null,
-        1,
-      ) + "\n",
+        byTimezone: expected,
+      },
+      null,
+      1,
     );
+    // Format with the repo's prettier config so `pnpm format:check` passes on the output.
+    const target = path.resolve(writeExpected);
+    const cfg = (await prettier.resolveConfig(target)) ?? {};
+    writeFileSync(target, await prettier.format(json, { ...cfg, filepath: target }));
     console.log(`\nwrote ${writeExpected}`);
   }
   console.log(

@@ -164,7 +164,16 @@ export class Store {
       SessionRow | undefined;
   }
 
+  /** Bumped whenever a write changes some session's project_dir (usage index staleness signal). */
+  projectsVersion = 0;
+  /** Number of listSessionProjects() scans (test observability). */
+  projectScans = 0;
+
   upsertSession(row: SessionRow): void {
+    const prev = this.stmt("SELECT project_dir FROM sessions WHERE session_id = ?").get(
+      row.session_id,
+    ) as { project_dir: string | null } | undefined;
+    if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
     this.stmt(
       `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at)
        VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at)
@@ -300,6 +309,7 @@ export class Store {
 
   /** Current project_dir of every session that has one (usage index staleness check). */
   listSessionProjects(): { session_id: string; project_dir: string }[] {
+    this.projectScans++;
     return this.stmt(
       "SELECT session_id, project_dir FROM sessions WHERE project_dir IS NOT NULL",
     ).all() as { session_id: string; project_dir: string }[];

@@ -569,6 +569,27 @@ describe("history index and limits", () => {
     }
   });
 
+  it("scans session projects only when a project_dir changed", async () => {
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      const svc = new UsageService(h.store);
+      await statusLine(h, "aaaa-A", 1, "/z");
+      await send(h, "aaaa-A", 2, [usageLine("m1", 50, "2026-03-01T23:30:00.000Z")]);
+      await svc.refresh();
+      await svc.refresh(); // first check after a build records the version
+      const scans = h.store.projectScans;
+      await svc.refresh();
+      await send(h, "aaaa-A", 3, [usageLine("m2", 5, "2026-03-01T23:31:00.000Z")]);
+      await svc.refresh();
+      expect(h.store.projectScans).toBe(scans); // new rows, no project change: no scan
+      await statusLine(h, "aaaa-A", 4, "/y");
+      await svc.refresh();
+      expect(h.store.projectScans).toBe(scans + 1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+
   it("HEAD /history/* is limited like GET (G3)", async () => {
     const t = 1_800_000_000_000;
     const h = await makeHub({}, () => t);

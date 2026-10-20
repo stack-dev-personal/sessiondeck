@@ -19,6 +19,7 @@ export class UsageService {
   index = new UsageCollector();
   private epoch = 0;
   private hwm = 0;
+  private projectsSeen = -1;
   private inflight: Promise<void> | null = null;
   private closed = false;
   private results = new Map<string, unknown>();
@@ -79,10 +80,15 @@ export class UsageService {
    */
   private rebuildIfProjectsChanged(): void {
     if (this.index.count === 0 && this.hwm === 0) return;
+    // Scan only when some session's project_dir changed since the last check.
+    if (this.store.projectsVersion === this.projectsSeen) return;
+    this.projectsSeen = this.store.projectsVersion;
     const current = new Map<string, string | null>();
     for (const r of this.store.listSessionProjects()) current.set(r.session_id, r.project_dir);
     if (!this.index.staleProjects(current)) return;
     this.log?.info({ entries: this.index.count }, "usage index rebuilt: project_dir changed");
+    // Cost: one full rebuild per session whose usage rows were indexed before its first
+    // statusLine; re-keying only the changed session is deferred.
     this.epoch++;
     this.index = new UsageCollector();
     this.hwm = 0;

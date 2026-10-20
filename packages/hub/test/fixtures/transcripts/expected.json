@@ -1,193 +1,168 @@
 {
- "provenance": {
-  "generator": "packages/hub/scripts/ccusage-compare.mjs --write-expected",
-  "ccusage": "ccusage 19.0.3 (npm), `session --json` and `daily --json --timezone <tz>`",
-  "ccusage_license": "MIT, Copyright (c) 2025 ryoppippi",
-  "pricing_file": "pricing.json",
-  "pricing_sha256": "481f46c9aa9ec0490005e9d1b80c9d52d1b038cedd0cf263bc8a5d5d88b5ad2e",
-  "generated": "2026-10-20T17:13:10.755Z"
- },
- "byTimezone": {
-  "UTC": {
-   "sessions": [
-    {
-     "id": "00000000-aaaa-4bbb-8ccc-000000000003",
-     "input": 251,
-     "output": 5440,
-     "cacheCreation": 3600,
-     "cacheRead": 11000,
-     "cost": 0.085251,
-     "models": [
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-5-20250929"
-     ]
-    },
-    {
-     "id": "11111111-aaaa-4bbb-8ccc-000000000001",
-     "input": 250795,
-     "output": 7628,
-     "cacheCreation": 217500,
-     "cacheRead": 270700,
-     "cost": 2.003925,
-     "models": [
-      "claude-sonnet-4-5-20250929",
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-5-20250929-v1:0",
-      "claude-opus-5-fast",
-      "acme-unpriced-1",
-      "claude-opus-5"
-     ]
-    },
-    {
-     "id": "22222222-aaaa-4bbb-8ccc-000000000002",
-     "input": 15,
-     "output": 55,
-     "cacheCreation": 20,
-     "cacheRead": 900,
-     "cost": 0.002025,
-     "models": [
-      "claude-opus-5"
-     ]
-    }
-   ],
-   "days": [
-    {
-     "id": "2026-01-01",
-     "input": 250386,
-     "output": 6888,
-     "cacheCreation": 217400,
-     "cacheRead": 249200,
-     "cost": 1.9830550000000002,
-     "models": [
-      "acme-unpriced-1",
-      "claude-haiku-4-5-20251001",
-      "claude-opus-5",
-      "claude-opus-5-fast",
-      "claude-sonnet-4-5-20250929",
-      "claude-sonnet-4-5-20250929-v1:0"
-     ]
-    },
-    {
-     "id": "2026-01-02",
-     "input": 630,
-     "output": 5680,
-     "cacheCreation": 3100,
-     "cacheRead": 24500,
-     "cost": 0.09388099999999999,
-     "models": [
-      "claude-haiku-4-5-20251001",
-      "claude-opus-5",
-      "claude-sonnet-4-5-20250929"
-     ]
-    },
-    {
-     "id": "2026-01-03",
-     "input": 45,
-     "output": 555,
-     "cacheCreation": 620,
-     "cacheRead": 8900,
-     "cost": 0.014265,
-     "models": [
-      "claude-opus-5",
-      "claude-sonnet-4-5-20250929"
-     ]
-    }
-   ]
+  "provenance": {
+    "generator": "packages/hub/scripts/ccusage-compare.mjs --write-expected",
+    "ccusage": "ccusage 19.0.3 (npm), `session --json` and `daily --json --timezone <tz>`",
+    "ccusage_license": "MIT, Copyright (c) 2025 ryoppippi",
+    "pricing_file": "pricing.json",
+    "pricing_sha256": "481f46c9aa9ec0490005e9d1b80c9d52d1b038cedd0cf263bc8a5d5d88b5ad2e",
+    "generated": "2026-10-20T17:16:44.933Z"
   },
-  "Asia/Tokyo": {
-   "sessions": [
-    {
-     "id": "00000000-aaaa-4bbb-8ccc-000000000003",
-     "input": 251,
-     "output": 5440,
-     "cacheCreation": 3600,
-     "cacheRead": 11000,
-     "cost": 0.085251,
-     "models": [
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-5-20250929"
-     ]
+  "byTimezone": {
+    "UTC": {
+      "sessions": [
+        {
+          "id": "00000000-aaaa-4bbb-8ccc-000000000003",
+          "input": 251,
+          "output": 5440,
+          "cacheCreation": 3600,
+          "cacheRead": 11000,
+          "cost": 0.085251,
+          "models": ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"]
+        },
+        {
+          "id": "11111111-aaaa-4bbb-8ccc-000000000001",
+          "input": 250795,
+          "output": 7628,
+          "cacheCreation": 217500,
+          "cacheRead": 270700,
+          "cost": 2.003925,
+          "models": [
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929-v1:0",
+            "claude-opus-5-fast",
+            "acme-unpriced-1",
+            "claude-opus-5"
+          ]
+        },
+        {
+          "id": "22222222-aaaa-4bbb-8ccc-000000000002",
+          "input": 15,
+          "output": 55,
+          "cacheCreation": 20,
+          "cacheRead": 900,
+          "cost": 0.002025,
+          "models": ["claude-opus-5"]
+        }
+      ],
+      "days": [
+        {
+          "id": "2026-01-01",
+          "input": 250386,
+          "output": 6888,
+          "cacheCreation": 217400,
+          "cacheRead": 249200,
+          "cost": 1.9830550000000002,
+          "models": [
+            "acme-unpriced-1",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-5",
+            "claude-opus-5-fast",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-5-20250929-v1:0"
+          ]
+        },
+        {
+          "id": "2026-01-02",
+          "input": 630,
+          "output": 5680,
+          "cacheCreation": 3100,
+          "cacheRead": 24500,
+          "cost": 0.09388099999999999,
+          "models": ["claude-haiku-4-5-20251001", "claude-opus-5", "claude-sonnet-4-5-20250929"]
+        },
+        {
+          "id": "2026-01-03",
+          "input": 45,
+          "output": 555,
+          "cacheCreation": 620,
+          "cacheRead": 8900,
+          "cost": 0.014265,
+          "models": ["claude-opus-5", "claude-sonnet-4-5-20250929"]
+        }
+      ]
     },
-    {
-     "id": "11111111-aaaa-4bbb-8ccc-000000000001",
-     "input": 250795,
-     "output": 7628,
-     "cacheCreation": 217500,
-     "cacheRead": 270700,
-     "cost": 2.003925,
-     "models": [
-      "claude-sonnet-4-5-20250929",
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-5-20250929-v1:0",
-      "claude-opus-5-fast",
-      "acme-unpriced-1",
-      "claude-opus-5"
-     ]
-    },
-    {
-     "id": "22222222-aaaa-4bbb-8ccc-000000000002",
-     "input": 15,
-     "output": 55,
-     "cacheCreation": 20,
-     "cacheRead": 900,
-     "cost": 0.002025,
-     "models": [
-      "claude-opus-5"
-     ]
+    "Asia/Tokyo": {
+      "sessions": [
+        {
+          "id": "00000000-aaaa-4bbb-8ccc-000000000003",
+          "input": 251,
+          "output": 5440,
+          "cacheCreation": 3600,
+          "cacheRead": 11000,
+          "cost": 0.085251,
+          "models": ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929"]
+        },
+        {
+          "id": "11111111-aaaa-4bbb-8ccc-000000000001",
+          "input": 250795,
+          "output": 7628,
+          "cacheCreation": 217500,
+          "cacheRead": 270700,
+          "cost": 2.003925,
+          "models": [
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5-20250929-v1:0",
+            "claude-opus-5-fast",
+            "acme-unpriced-1",
+            "claude-opus-5"
+          ]
+        },
+        {
+          "id": "22222222-aaaa-4bbb-8ccc-000000000002",
+          "input": 15,
+          "output": 55,
+          "cacheCreation": 20,
+          "cacheRead": 900,
+          "cost": 0.002025,
+          "models": ["claude-opus-5"]
+        }
+      ],
+      "days": [
+        {
+          "id": "2026-01-01",
+          "input": 250377,
+          "output": 6768,
+          "cacheCreation": 216900,
+          "cacheRead": 248200,
+          "cost": 1.9763850000000003,
+          "models": [
+            "acme-unpriced-1",
+            "claude-haiku-4-5-20251001",
+            "claude-opus-5-fast",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-5-20250929-v1:0"
+          ]
+        },
+        {
+          "id": "2026-01-02",
+          "input": 639,
+          "output": 5800,
+          "cacheCreation": 3600,
+          "cacheRead": 25500,
+          "cost": 0.100551,
+          "models": ["claude-haiku-4-5-20251001", "claude-opus-5", "claude-sonnet-4-5-20250929"]
+        },
+        {
+          "id": "2026-01-03",
+          "input": 30,
+          "output": 500,
+          "cacheCreation": 600,
+          "cacheRead": 8000,
+          "cost": 0.012240000000000001,
+          "models": ["claude-sonnet-4-5-20250929"]
+        },
+        {
+          "id": "2026-01-04",
+          "input": 15,
+          "output": 55,
+          "cacheCreation": 20,
+          "cacheRead": 900,
+          "cost": 0.002025,
+          "models": ["claude-opus-5"]
+        }
+      ]
     }
-   ],
-   "days": [
-    {
-     "id": "2026-01-01",
-     "input": 250377,
-     "output": 6768,
-     "cacheCreation": 216900,
-     "cacheRead": 248200,
-     "cost": 1.9763850000000003,
-     "models": [
-      "acme-unpriced-1",
-      "claude-haiku-4-5-20251001",
-      "claude-opus-5-fast",
-      "claude-sonnet-4-5-20250929",
-      "claude-sonnet-4-5-20250929-v1:0"
-     ]
-    },
-    {
-     "id": "2026-01-02",
-     "input": 639,
-     "output": 5800,
-     "cacheCreation": 3600,
-     "cacheRead": 25500,
-     "cost": 0.100551,
-     "models": [
-      "claude-haiku-4-5-20251001",
-      "claude-opus-5",
-      "claude-sonnet-4-5-20250929"
-     ]
-    },
-    {
-     "id": "2026-01-03",
-     "input": 30,
-     "output": 500,
-     "cacheCreation": 600,
-     "cacheRead": 8000,
-     "cost": 0.012240000000000001,
-     "models": [
-      "claude-sonnet-4-5-20250929"
-     ]
-    },
-    {
-     "id": "2026-01-04",
-     "input": 15,
-     "output": 55,
-     "cacheCreation": 20,
-     "cacheRead": 900,
-     "cost": 0.002025,
-     "models": [
-      "claude-opus-5"
-     ]
-    }
-   ]
   }
- }
 }
