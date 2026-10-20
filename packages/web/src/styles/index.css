@@ -52,6 +52,21 @@ body {
   }
 }
 
+/*
+ * Narrow viewports (single-column board, WCAG 1.4.10 reflow at 320 px): the three meters no longer
+ * fit with their bars, so the bars go and the numbers and cues stay in full. Wide layouts unchanged.
+ */
+@media (max-width: 30rem) {
+  .sd-card [data-slot="meters"] {
+    grid-template-columns: auto auto auto;
+    justify-content: space-between;
+  }
+  .sd-card [data-slot="bar"],
+  .sd-card [data-slot="task-bar"] {
+    display: none;
+  }
+}
+
 /* Card geometry: fixed so values arriving never move the grid (design system principle 3). */
 :root {
   --card-h: 10rem;

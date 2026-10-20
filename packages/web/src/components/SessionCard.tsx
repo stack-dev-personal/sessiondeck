@@ -117,6 +117,7 @@ function TaskProgress({ s, bar }: { s: SessionSnapshot; bar: boolean }) {
       {bar ? (
         <span
           aria-hidden="true"
+          data-slot="task-bar"
           className={`h-1.5 w-10 overflow-hidden rounded-sm ${
             none
               ? "border border-dashed border-border-strong"
@@ -210,6 +211,7 @@ function SessionCardImpl({
       </div>
       <div
         data-row="3"
+        data-slot="meters"
         className="grid grid-cols-[1.7fr_1fr_1fr] gap-s-2 overflow-hidden whitespace-nowrap"
       >
         {meters.map((m) => (

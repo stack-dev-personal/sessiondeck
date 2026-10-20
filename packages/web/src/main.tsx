@@ -12,6 +12,8 @@ applyTheme(useUi.getState().theme);
 
 if (import.meta.env.VITE_MOCK === "1") {
   void import("./mock/start").then((m) => m.startMock(useBoard));
+  // e2e drives connection states and sessions through the stores; mock builds only (constant-folded away otherwise).
+  (window as unknown as { __sd: unknown }).__sd = { board: useBoard, ui: useUi };
 } else {
   startLive(useBoard, useUi);
 }

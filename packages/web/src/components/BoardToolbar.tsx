@@ -3,7 +3,8 @@ import { selectProjects } from "../lib/attention";
 import { selectHosts, useBoard } from "../store/board";
 import { useFilters } from "../store/filters";
 
-const select = "w-48 rounded border border-border bg-surface-2 px-s-2 py-s-1 text-sm text-fg";
+const select =
+  "w-48 max-w-full rounded border border-border bg-surface-2 px-s-2 py-s-1 text-sm text-fg";
 
 /** A persisted filter value that no session has right now stays selectable so it can be undone. */
 function withCurrent(options: string[], current: string | null): string[] {
@@ -38,7 +39,7 @@ export function BoardToolbar({
       role="group"
       aria-label="Board filters"
       data-testid="board-toolbar"
-      className="flex items-center gap-s-3 border-b border-border px-s-4 py-s-2 text-sm"
+      className="flex flex-wrap items-center gap-x-s-3 gap-y-s-2 border-b border-border px-s-4 py-s-2 text-sm"
     >
       <span className="flex items-center gap-s-2 text-fg-muted">
         <label htmlFor="board-filter-host">Host</label>
@@ -80,16 +81,21 @@ export function BoardToolbar({
       >
         Clear filters
       </button>
-      {hiddenAttention > 0 ? (
-        <span
-          role="status"
-          data-testid="board-hidden-attention"
-          className="num ml-auto flex items-center gap-s-1 font-medium text-state-waiting"
-        >
-          <span aria-hidden="true">▲</span>
-          {hiddenAttention} hidden {hiddenAttention === 1 ? "needs" : "need"} attention
-        </span>
-      ) : null}
+      <span
+        role="status"
+        data-testid="board-hidden-attention-region"
+        className={hiddenAttention > 0 ? "ml-auto" : ""}
+      >
+        {hiddenAttention > 0 ? (
+          <span
+            data-testid="board-hidden-attention"
+            className="num flex items-center gap-s-1 font-medium text-state-waiting"
+          >
+            <span aria-hidden="true">▲</span>
+            {hiddenAttention} hidden {hiddenAttention === 1 ? "needs" : "need"} attention
+          </span>
+        ) : null}
+      </span>
       <span
         role="status"
         data-testid="board-count"

@@ -18,7 +18,7 @@ export function insecureHubWarning(
   return "This URL is not encrypted. The token is sent in clear text; use https unless the network is trusted.";
 }
 
-const input = "w-96 rounded border border-border bg-surface-2 px-s-2 py-s-1 text-fg";
+const input = "w-96 max-w-full rounded border border-border bg-surface-2 px-s-2 py-s-1 text-fg";
 
 type Perm = NotificationPermission | "unsupported";
 

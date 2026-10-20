@@ -109,7 +109,7 @@ export function Board() {
           className={
             compact
               ? "m-0 flex list-none flex-col gap-s-1 p-s-4"
-              : "m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(28rem,1fr))] gap-s-3 p-s-4"
+              : "m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(min(28rem,100%),1fr))] gap-s-3 p-s-4"
           }
           aria-label="Sessions"
           data-density={compact ? "compact" : "full"}

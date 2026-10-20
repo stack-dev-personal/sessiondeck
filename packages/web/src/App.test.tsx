@@ -64,6 +64,14 @@ describe("shell", () => {
     expect(hosts.textContent).toBe("alphazeta");
   });
 
+  it("header connection glyph is decorative, the word carries the status", () => {
+    useBoard.setState({ connection: "open" });
+    mount();
+    const el = screen.getByTestId("connection");
+    expect(el).toHaveTextContent("● connected");
+    expect(el.querySelector("[aria-hidden='true']")?.textContent).toBe("●");
+  });
+
   it("settings save to localStorage and survive a reload of the store", async () => {
     mount("/settings");
     await userEvent.type(screen.getByLabelText("Hub URL"), "http://hub:8787");

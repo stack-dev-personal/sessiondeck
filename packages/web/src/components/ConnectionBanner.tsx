@@ -32,7 +32,7 @@ export function ConnectionBanner() {
     <div className="pointer-events-none fixed inset-x-0 bottom-s-4 z-30 flex justify-center">
       <div role="status" aria-live="polite" data-testid="connection-banner">
         {text !== null ? (
-          <p className="num pointer-events-auto flex items-center gap-s-2 rounded border border-state-error bg-surface-2 px-s-3 py-s-1 text-sm text-fg shadow-lg">
+          <p className="num pointer-events-auto mx-s-4 flex max-w-full items-center gap-s-2 rounded border border-state-error bg-surface-2 px-s-3 py-s-1 text-sm text-fg shadow-lg">
             <span aria-hidden="true">
               {connection === "closed" || connection === "invalid" ? "✖" : "◌"}
             </span>

@@ -132,4 +132,16 @@ describe("Board attention order, accent and filters", () => {
     await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(screen.queryByTestId("board-hidden-attention")).toBeNull();
   });
+
+  it("keeps the hidden-attention live region mounted so the hint is announced when it appears", async () => {
+    put(snap("a", "idle", 3, "h1"), snap("b", "idle", 2, "h2"));
+    render(<Board />);
+    await userEvent.selectOptions(screen.getByLabelText("Host"), "h2");
+    const region = screen.getByTestId("board-hidden-attention-region");
+    expect(region).toHaveAttribute("role", "status");
+    expect(region).toBeEmptyDOMElement();
+    put(snap("a", "waiting_permission", 9, "h1"), snap("b", "idle", 2, "h2"));
+    expect(screen.getByTestId("board-hidden-attention-region")).toBe(region);
+    expect(region).toHaveTextContent("1 hidden needs attention");
+  });
 });
