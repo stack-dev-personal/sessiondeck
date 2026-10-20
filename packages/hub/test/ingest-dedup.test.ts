@@ -107,6 +107,18 @@ describe("R2.2 dedup", () => {
     expect(r.json().accepted).toBe(5);
   });
 
+  it("two identical null-session envelopes 1 s apart dedup", async () => {
+    const t = BASE_TS;
+    const probe = { kind: "probe" as const, session_id: null, hook_event_name: undefined };
+    const r = await h.post(
+      batch([
+        mkEnv({ ...probe, ts: t, payload: { n: 1 } }),
+        mkEnv({ ...probe, ts: t + 1000, payload: { n: 1 } }),
+      ]),
+    );
+    expect(r.json().accepted).toBe(1);
+  });
+
   it("payload key order does not change the signature", async () => {
     const t = BASE_TS;
     const r = await h.post(
