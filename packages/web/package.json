@@ -10,7 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "check:bundle": "node scripts/check-bundle.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs dist nomock",
     "contrast": "node scripts/contrast-report.mjs",
     "e2e": "playwright test"
   },
