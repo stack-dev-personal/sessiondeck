@@ -8,6 +8,6 @@ describe("daemon end to end (R1.4-R1.7)", () => {
     const r = await runDaemonE2E();
     const failed = r.checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`);
     expect(failed).toEqual([]);
-    expect(r.checks.length).toBeGreaterThanOrEqual(8);
-  });
+    expect(r.checks.length).toBeGreaterThanOrEqual(10);
+  }, 150_000);
 });

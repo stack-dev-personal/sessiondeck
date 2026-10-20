@@ -34,6 +34,7 @@ async function until(cond, timeoutMs) {
 }
 
 const SID = "e2e00000-0000-4000-8000-000000000001";
+const OUT_SID = "e2e00000-0000-4000-8000-0000000000ff"; // a session whose transcript is outside projects
 const AGENT = "750bc48c804160940"; // the SubagentStart fixture's agent_id
 const HOST = "loss-host"; // makeHome's host
 
@@ -112,9 +113,9 @@ export async function runDaemonE2E({ log = () => undefined } = {}) {
       transcript_path: mainPath,
     };
     const hookIds = [];
-    const hookLine = (payload) => {
+    const hookLine = (payload, sid = SID) => {
       const l = env1("hook", {
-        session_id: SID,
+        session_id: sid,
         hook_event_name: payload.hook_event_name,
         ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
         payload,
@@ -131,6 +132,17 @@ export async function runDaemonE2E({ log = () => undefined } = {}) {
     await sleep(300);
     addLines(mainPath, mainLines, 4, "main");
     appendSpoolLines(spool, [hookLine(subStart)]);
+    // D-S2-10: a SessionStart whose transcript_path is outside <config>/projects must be refused.
+    const secretPath = join(claudeDir, "outside", "secret.jsonl");
+    mkdirSync(dirname(secretPath), { recursive: true });
+    writeFileSync(secretPath, `${JSON.stringify({ secret: "SECRETMARK-do-not-ship" })}\n`);
+    const outStart = {
+      ...fixture("SessionStart", "01-startup.json"),
+      session_id: OUT_SID,
+      transcript_path: secretPath,
+    };
+    const outHook = hookLine(outStart, OUT_SID);
+    appendSpoolLines(spool, [outHook]);
     await sleep(700);
     addLines(subPath, subLines, 5, "sub");
     await sleep(400);
@@ -190,6 +202,19 @@ export async function runDaemonE2E({ log = () => undefined } = {}) {
       );
     }
 
+    await until(() => hub.accepted.has(outHook.id), 15_000);
+    await sleep(1500); // several tail polls
+    const leaked = [...hub.accepted.values()].filter(
+      (a) =>
+        (a.kind === "transcript" && a.session_id === OUT_SID) ||
+        (JSON.stringify(a.payload).includes("SECRETMARK") && a.kind === "transcript"),
+    );
+    check(
+      "SessionStart with transcript_path outside projects is refused",
+      hub.accepted.has(outHook.id) && leaked.length === 0,
+      `hook_forwarded=${hub.accepted.has(outHook.id)} transcript_envelopes_from_outside=${leaked.length}`,
+    );
+
     // Liveness: wait out the probation (a node child is not named claude), kill without SessionEnd.
     const livenessFile = join(home, "daemon", "liveness.json");
     const confirmed = await until(() => {
@@ -247,6 +272,16 @@ export async function runDaemonE2E({ log = () => undefined } = {}) {
       "daemon resumes tailing after restart",
       byLine.size === mainLines.length && [...byLine.values()].every((v) => v.length === 1),
       `main_lines=${byLine.size}/${mainLines.length}`,
+    );
+    // Contiguity and duplicates over everything accepted, restart included.
+    const finalSeqs = [...hub.accepted.values()].map((a) => a.seq).sort((a, b) => a - b);
+    const finalLeak = [...hub.accepted.values()].some(
+      (a) => a.kind === "transcript" && a.session_id === OUT_SID,
+    );
+    check(
+      "seq contiguous, no duplicates, nothing from outside projects (whole run)",
+      finalSeqs.every((x, i) => x === i) && hub.conflicts === 0 && !finalLeak,
+      `${finalSeqs.length} envelopes, seq 0..${finalSeqs.length - 1}, conflicts=${hub.conflicts}, resent_ids=${hub.resentIds}, leaked=${finalLeak}`,
     );
   } finally {
     if (checks.some((c) => !c.ok)) {
