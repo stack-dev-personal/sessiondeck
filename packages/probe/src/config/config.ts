@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { userInfo } from "node:os";
+import { chmod, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { resolveHostName } from "../host.ts";
 import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
@@ -68,27 +67,58 @@ export function validateToken(token: string): string {
   return t;
 }
 
-/** Windows: drop inherited ACEs and grant only the current user. Returns a warning on failure. */
-export function restrictWindowsAcl(path: string): string | undefined {
-  const user = process.env["USERNAME"] || userInfo().username;
+/** The current user's SID (S-1-5-...) from `whoami /user`, so the grant does not depend on names. */
+export function currentUserSid(): string {
+  const out = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], {
+    windowsHide: true,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const m = /"(S-1-[0-9-]+)"/.exec(out);
+  if (!m?.[1]) throw new Error("no SID in whoami output");
+  return m[1];
+}
+
+/** Windows: drop inherited ACEs and grant only the current user, by SID. Throws on failure. */
+export function restrictWindowsAcl(path: string): void {
   try {
-    execFileSync("icacls", [path, "/inheritance:r", "/grant:r", `${user}:F`], {
+    execFileSync("icacls", [path, "/inheritance:r", "/grant:r", `*${currentUserSid()}:F`], {
       windowsHide: true,
       stdio: "ignore",
     });
-    return undefined;
   } catch {
-    return `could not restrict permissions on ${path} with icacls; restrict it to your user by hand`;
+    throw new ConfigError(
+      `could not restrict permissions on ${path} with icacls; nothing was written (the token stays out of the file)`,
+    );
   }
+}
+
+/**
+ * Makes sure an existing probe.json is user-only (POSIX 0600, Windows user-only ACL). Used on
+ * reruns that do not rewrite the file.
+ */
+export async function ensureConfigPrivate(path: string): Promise<void> {
+  if (process.platform === "win32") {
+    if (
+      await stat(path).then(
+        () => true,
+        () => false,
+      )
+    )
+      restrictWindowsAcl(path);
+    return;
+  }
+  const s = await stat(path).catch(() => undefined);
+  if (s && (s.mode & 0o777) !== 0o600) await chmod(path, 0o600);
 }
 
 /**
  * Writes probe.json with user-only permissions. POSIX: file 0o600 (set and verified on the open
  * descriptor before any data is written), directory 0o700. Windows: ACL restricted to the current
- * user before the token is written. Returns warnings.
+ * user by SID before the token is written; if that fails the temp file is removed, nothing is
+ * written and a ConfigError is thrown.
  */
-export async function writeConfig(path: string, cfg: ProbeConfig): Promise<string[]> {
-  const warnings: string[] = [];
+export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void> {
   await ensurePrivateDir(dirname(path));
   const body: Record<string, unknown> = {};
   if (cfg.hubUrl !== undefined) body["hubUrl"] = cfg.hubUrl;
@@ -97,12 +127,9 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<strin
   await writeFileAtomic(path, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
     beforeWrite: async (tmp) => {
-      if (process.platform !== "win32") return;
-      const w = restrictWindowsAcl(tmp);
-      if (w) warnings.push(w);
+      if (process.platform === "win32") restrictWindowsAcl(tmp);
     },
   });
-  return warnings;
 }
 
 /** Config for display: the token is never shown. */

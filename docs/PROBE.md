@@ -42,7 +42,7 @@ node packages/probe/dist/probe.mjs install --hub http://192.168.1.20:8787 --toke
   own, install leaves it and prints a notice. When set by us, their commands carry the same
   `--home` and `--host` (`node <script> --home <home> --host <host> --sessiondeck-probe`, tokens
   double-quoted when they contain spaces). `--statusline=replace` takes over; the previous value
-  is saved in `install-state.json` and `uninstall` puts it back exactly.
+  is saved in `install-state.json` and `uninstall` puts it back exactly. Paths in the command may use only `[A-Za-z0-9 _./:=+-]`; anything else (curly quotes, `%`, `$`, `,`, `@`, non-ASCII) makes install refuse.
 - Before the first write the original is copied to `<probe home>/settings.backup-<timestamp>.json`.
   Writes are atomic (temp file, fsync, rename, with retry for Windows sharing violations).
 - A settings file that is not valid JSON (or has a wrongly shaped `hooks`) is refused: non-zero
@@ -83,13 +83,20 @@ node packages/probe/dist/probe.mjs uninstall [--purge]
 
 Removes only the probe's entries, restores a replaced `statusLine`/`subagentStatusLine`, and drops
 arrays, the `hooks` object, or the whole file only where install created them. A 2-space file
-returns to its original bytes. `probe.json` stays unless `--purge`. The spool is never deleted.
+returns to its original bytes. `probe.json` and the settings backups stay unless `--purge`, which deletes both (backups can hold
+env secrets from settings.json). The spool is never deleted.
+
+A replaced `statusLine`/`subagentStatusLine` is restored only if the recorded value deep-equals the
+one in the backup taken at install; otherwise the key is removed and the backup path is printed.
+`install-state.json` entries that do not fit the schema are ignored.
 
 ## Where files live
 
 Probe home: Windows `%LOCALAPPDATA%\sessiondeck`; Linux and WSL2 `~/.local/state/sessiondeck`.
-`probe install` records the resolved path in the hook arguments (`--home`). `SESSIONDECK_HOME`
-overrides it for the CLI only (tests); the hook ignores it. WSL2 has its own home inside the
+`probe install` records the resolved path in the hook arguments (`--home`). Only an explicit `--home <dir>`
+moves it; no environment variable does (a repo's `.claude/settings.json` can set env). Install
+prints the resolved home, refuses a default home inside a git work tree (pass `--home` to
+override), and refuses to run when `CLAUDECODE` is set unless `--allow-inside-claude`. WSL2 has its own home inside the
 distro; install there separately. Directories are created `0700` and files `0600` on POSIX (the
 spool holds raw prompts and tool inputs); the hook opens day files with `O_NOFOLLOW` (lstat on
 Windows) and refuses anything that is not a regular file.
@@ -98,7 +105,7 @@ Windows) and refuses anything that is not a regular file.
 |------|---------|
 | `probe.json` | hub URL, token, host (user-only) |
 | `install-state.json` | what install changed, per settings file, for exact uninstall |
-| `settings.backup-<ts>.json` | copy of settings.json taken before a write |
+| `settings.backup-<ts>.json` | copy of settings.json taken before a write (0600, created exclusively) |
 | `spool/<yyyy-mm-dd>.jsonl` | one spool line per hook call, day file by UTC date |
 | `hook-errors.log` | hook failures (the hook itself never prints or fails) |
 

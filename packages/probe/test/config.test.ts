@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { resolveHostName } from "../src/host.ts";
 import { join } from "node:path";
@@ -44,6 +44,14 @@ describe("probe config (R1.10)", () => {
   it.skipIf(win32)("a rewrite keeps 0600", async () => {
     const { sb } = await installWithToken();
     await runCli(["install", "--hub", "http://127.0.0.1:9999"], sb.env);
+    expect(statSync(join(sb.home, "probe.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(win32)("a rerun that changes nothing still fixes a 0644 probe.json", async () => {
+    const { sb } = await installWithToken();
+    chmodSync(join(sb.home, "probe.json"), 0o644);
+    const r = await runCli(["install"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
     expect(statSync(join(sb.home, "probe.json")).mode & 0o777).toBe(0o600);
   });
 

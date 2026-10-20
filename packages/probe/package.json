@@ -11,6 +11,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "bench:hook": "node scripts/bench-hook.mjs"
+    "bench:hook": "node scripts/bench-hook.mjs",
+    "bench:statusline": "node scripts/bench-statusline.mjs"
   }
 }

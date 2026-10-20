@@ -159,10 +159,13 @@ describe("paths", () => {
       "/Users/u/.local/state/sessiondeck",
     );
   });
-  it("SESSIONDECK_HOME overrides for the CLI only", () => {
+  it("only an explicit --home moves the CLI home; SESSIONDECK_HOME is ignored", () => {
     for (const platform of ["win32", "linux"] as const) {
-      expect(probeHome({ platform, env: { SESSIONDECK_HOME: "/t/h" }, home: "/h" })).toBe("/t/h");
+      expect(probeHome({ platform, env: {}, home: "/h" }, "/t/h")).toMatch(/[\\/]t[\\/]h$/);
     }
+    expect(probeHome({ platform: "linux", env: { SESSIONDECK_HOME: "/t/h" }, home: "/h" })).toBe(
+      "/h/.local/state/sessiondeck",
+    );
     expect(probeHome({ platform: "linux", env: {}, home: "/h" })).toBe(
       "/h/.local/state/sessiondeck",
     );

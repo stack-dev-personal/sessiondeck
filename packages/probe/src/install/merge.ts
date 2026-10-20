@@ -17,6 +17,8 @@ export interface InstallEntry {
   createdEvents: string[];
   createdHooksKey: boolean;
   createdFile: boolean;
+  /** Settings backup taken when a previous status value was captured (verifies the restore). */
+  backups?: Partial<Record<StatusKey, string>>;
 }
 
 export interface Ctx {
@@ -173,7 +175,15 @@ function omit(obj: Json, key: string): Json {
   return Object.fromEntries(Object.entries(obj).filter(([k]) => k !== key));
 }
 
-export function applyUninstall(settings: Json, entry: InstallEntry | undefined): Json {
+/**
+ * `verified` names the status keys whose recorded previous value was confirmed against the install
+ * backup; only those are restored. Any other recorded value is dropped, never written back.
+ */
+export function applyUninstall(
+  settings: Json,
+  entry: InstallEntry | undefined,
+  verified: ReadonlySet<StatusKey> = new Set(),
+): Json {
   const created = new Set(entry?.createdEvents ?? []);
   const oldHooks = isRecord(settings["hooks"]) ? settings["hooks"] : undefined;
   let out: Json = settings;
@@ -196,7 +206,7 @@ export function applyUninstall(settings: Json, entry: InstallEntry | undefined):
   for (const key of STATUS_KEYS) {
     if (!isOurStatus(out[key])) continue;
     const prev = entry?.previous[key];
-    out = prev?.present ? { ...out, [key]: prev.value } : omit(out, key);
+    out = prev?.present && verified.has(key) ? { ...out, [key]: prev.value } : omit(out, key);
   }
   return out;
 }

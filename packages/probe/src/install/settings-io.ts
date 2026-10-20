@@ -1,6 +1,7 @@
-import { copyFile, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { writeFileAtomic } from "./atomic.ts";
+import { ensurePrivateDir, writeFileAtomic } from "./atomic.ts";
 import { type Json, isRecord } from "./merge.ts";
 
 const BOM = String.fromCharCode(0xfeff);
@@ -69,22 +70,43 @@ export function serialize(settings: Json, layout: Layout): string {
   return layout.bom ? `${BOM}${text}` : text;
 }
 
-/** Copies the current file into the probe home as settings.backup-<ts>.json (user-only). */
+const BACKUP_RE = /^settings\.backup-.*\.json$/;
+
+/**
+ * Copies the current file into the probe home as settings.backup-<ts>.json. Created exclusively
+ * (never through a planted symlink or over an existing file) at 0600: settings can hold secrets.
+ */
 export async function backupSettings(path: string, homeDir: string): Promise<string> {
+  await ensurePrivateDir(homeDir);
+  const bytes = await readFile(path);
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const flags =
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0);
   for (let n = 0; ; n += 1) {
     const dest = join(homeDir, `settings.backup-${ts}${n ? `-${n}` : ""}.json`);
-    if (
-      await stat(dest).then(
-        () => true,
-        () => false,
-      )
-    )
-      continue;
-    await writeFile(dest, "", { mode: 0o600 });
-    await copyFile(path, dest);
+    let handle;
+    try {
+      handle = await open(dest, flags, 0o600);
+    } catch (e) {
+      if (typeof e === "object" && e !== null && "code" in e && e.code === "EEXIST") continue;
+      throw e;
+    }
+    try {
+      if (process.platform !== "win32") await handle.chmod(0o600);
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     return dest;
   }
+}
+
+/** Deletes every settings backup in the probe home (used by uninstall --purge). */
+export async function removeBackups(homeDir: string): Promise<number> {
+  const names = (await readdir(homeDir).catch(() => [])).filter((f) => BACKUP_RE.test(f));
+  for (const f of names) await rm(join(homeDir, f), { force: true });
+  return names.length;
 }
 
 export async function commitSettings(

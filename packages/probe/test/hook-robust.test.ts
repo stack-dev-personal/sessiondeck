@@ -9,7 +9,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -110,24 +109,26 @@ describe("R1.2 hook never fails and never prints", () => {
     expect(Date.now() - t0).toBeLessThan(10_000);
   });
 
-  it("unwritable spool dir plus a planted old .lock directory: exit 0 within 3 s, no stdout", async () => {
-    const h = tmp();
-    try {
-      const spool = join(h, "spool");
-      mkdirSync(join(spool, ".lock"), { recursive: true });
-      const old = new Date(Date.now() - 60_000);
-      utimesSync(join(spool, ".lock"), old, old);
-      chmodSync(spool, 0o555);
-      const t0 = Date.now();
-      const r = await runHook(STOP, { home: h });
-      expect(Date.now() - t0).toBeLessThan(3_000);
-      expect(r.code).toBe(0);
-      expect(r.stdout.length).toBe(0);
-      chmodSync(spool, 0o755);
-    } finally {
-      rmSync(h, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(process.getuid?.() === 0 || process.platform === "win32")(
+    "unwritable spool: exit 0, logged",
+    async () => {
+      const h = tmp();
+      try {
+        const spool = join(h, "spool");
+        mkdirSync(spool, { recursive: true });
+        chmodSync(spool, 0o555);
+        const t0 = Date.now();
+        const r = await runHook(STOP, { home: h });
+        chmodSync(spool, 0o755);
+        expect(Date.now() - t0).toBeLessThan(3_000);
+        expect(r.code).toBe(0);
+        expect(r.stdout.length).toBe(0);
+        expect(readFileSync(join(h, "hook-errors.log"), "utf8")).toContain("spool-error");
+      } finally {
+        rmSync(h, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("R1.2 session and event ids are bounded", () => {

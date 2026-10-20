@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   ConfigError,
+  ensureConfigPrivate,
   maskedConfig,
   readConfig,
   validateHostName,
@@ -22,12 +24,22 @@ import { HOOK_EVENTS, MARKER } from "./events.ts";
 import {
   type Ctx,
   SettingsShapeError,
+  isRecord,
+  type StatusKey,
+  STATUS_KEYS,
   applyInstall,
   applyUninstall,
   validateSettings,
 } from "./merge.ts";
-import { SettingsReadError, commitSettings, loadSettings, serialize } from "./settings-io.ts";
+import {
+  SettingsReadError,
+  commitSettings,
+  loadSettings,
+  removeBackups,
+  serialize,
+} from "./settings-io.ts";
 import { getEntry, putEntry } from "./state.ts";
+import { isDeepStrictEqual } from "node:util";
 
 export interface RunIo {
   pathEnv: PathEnv;
@@ -42,9 +54,9 @@ const HELP = `probe: sessiondeck laptop probe
 
 usage:
   probe install [--hub <url>] [--token-file <path> | --token-stdin] [--host-name <name>]
-                [--settings <path>] [--statusline=replace]
-  probe uninstall [--purge] [--settings <path>]
-  probe config show
+                [--settings <path>] [--statusline=replace] [--home <dir>] [--allow-inside-claude]
+  probe uninstall [--purge] [--settings <path>] [--home <dir>]
+  probe config show [--home <dir>]
   probe --help
 
 The token is never accepted as an argument (argv is visible to other processes).
@@ -57,8 +69,15 @@ interface Args {
   flags: Map<string, string | true>;
 }
 
-const VALUE_FLAGS = ["--hub", "--token-file", "--host-name", "--settings", "--statusline"];
-const BOOL_FLAGS = ["--token-stdin", "--purge", "--help", "-h"];
+const VALUE_FLAGS = [
+  "--hub",
+  "--token-file",
+  "--host-name",
+  "--settings",
+  "--statusline",
+  "--home",
+];
+const BOOL_FLAGS = ["--token-stdin", "--purge", "--allow-inside-claude", "--help", "-h"];
 
 class UsageError extends Error {}
 
@@ -96,14 +115,31 @@ function str(flags: Args["flags"], name: string): string | undefined {
 
 const toSlash = (p: string): string => p.replace(/\\/g, "/");
 
-/** Characters that would break out of a double-quoted Git Bash string. */
-const SHELL_UNSAFE = /["$`\\!\n\r]/;
+/**
+ * The statusLine command runs through whichever shell Claude Code uses (Git Bash, PowerShell,
+ * cmd), so every word is limited to characters that mean the same in all of them. Anything else
+ * (curly quotes, %, $, `, ',', '@', non-ASCII) is refused rather than quoted.
+ */
+const SHELL_SAFE = /^[A-Za-z0-9 _./:=+-]+$/;
 
 function shellWord(word: string): string {
-  if (SHELL_UNSAFE.test(word)) {
-    throw new SettingsShapeError(`path contains characters unsafe for a shell command: ${word}`);
+  if (!SHELL_SAFE.test(word)) {
+    throw new SettingsShapeError(
+      `cannot install: the path ${JSON.stringify(word)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + -). Install from or into a path without them.`,
+    );
   }
-  return /[^A-Za-z0-9_./:@=+,-]/.test(word) ? `"${word}"` : word;
+  return word.includes(" ") ? `"${word}"` : word;
+}
+
+/** Nearest ancestor (or self) of dir that contains a `.git`, if any. */
+function gitWorkTreeAbove(dir: string): string | undefined {
+  let cur = resolve(dir);
+  for (;;) {
+    if (existsSync(join(cur, ".git"))) return cur;
+    const up = dirname(cur);
+    if (up === cur) return undefined;
+    cur = up;
+  }
 }
 
 function shellCommand(script: string, home: string, host: string): string {
@@ -146,14 +182,29 @@ async function install(args: Args, io: RunIo): Promise<number> {
     return true;
   })();
   const e = io.pathEnv;
-  const home = probeHome(e);
+  const homeFlag = str(args.flags, "--home");
+  const home = probeHome(e, homeFlag);
+  if (e.env["CLAUDECODE"] && !args.flags.has("--allow-inside-claude")) {
+    throw new UsageError(
+      "refusing to install from inside a Claude Code session (CLAUDECODE is set); run it in your own terminal, or pass --allow-inside-claude",
+    );
+  }
+  if (!homeFlag) {
+    const repo = gitWorkTreeAbove(home);
+    if (repo) {
+      throw new UsageError(
+        `refusing to use ${home} as the probe home: it is inside the git work tree ${repo} (the token and spool would be committable). Pass --home <dir> to choose it explicitly`,
+      );
+    }
+  }
+  io.out(`probe home: ${home}`);
   const settingsPath = str(args.flags, "--settings") ?? claudeSettingsPath(e);
   const hubFlag = str(args.flags, "--hub");
   const hubUrl = hubFlag === undefined ? undefined : validateHubUrl(hubFlag);
   const token = await resolveToken(args, io);
 
   // Config values, read-only until the settings are known good. Keep what exists unless given.
-  const cfgPath = probeConfigPath(e);
+  const cfgPath = probeConfigPath(e, homeFlag);
   const existing = await readConfig(cfgPath);
   const hostFlag = str(args.flags, "--host-name");
   const cfg = {
@@ -169,7 +220,7 @@ async function install(args: Args, io: RunIo): Promise<number> {
   // Settings first, read-only: a malformed file aborts before anything is written.
   const loaded = await loadSettings(settingsPath);
   validateSettings(loaded.settings);
-  const stateFile = installStatePath(e);
+  const stateFile = installStatePath(e, homeFlag);
   const prior = await getEntry(stateFile, loaded.path);
   const result = applyInstall(loaded.settings, ctx, prior, loaded.existed, { replaceStatus });
 
@@ -178,15 +229,27 @@ async function install(args: Args, io: RunIo): Promise<number> {
     existing.hubUrl === cfg.hubUrl &&
     existing.token === cfg.token &&
     existing.host === cfg.host;
-  if (!sameCfg) for (const w of await writeConfig(cfgPath, cfg)) io.err(`warning: ${w}`);
-  else await ensurePrivateDir(home);
+  if (!sameCfg) await writeConfig(cfgPath, cfg);
+  else {
+    await ensurePrivateDir(home);
+    await ensureConfigPrivate(cfgPath);
+  }
 
   const changed = serialize(result.settings, loaded.layout) !== loaded.original || !loaded.existed;
+  let backup: string | undefined;
   if (changed) {
-    const backup = await commitSettings(loaded, result.settings, home);
+    backup = await commitSettings(loaded, result.settings, home);
     if (backup) io.out(`backed up the previous settings to ${backup}`);
   }
-  await putEntry(stateFile, loaded.path, result.entry);
+  // Remember which backup holds each value we replaced: uninstall verifies against it.
+  const backups: Partial<Record<StatusKey, string>> = {};
+  for (const key of STATUS_KEYS) {
+    const kept = prior?.backups?.[key];
+    const fresh = result.entry.previous[key].present && !prior?.previous[key].present;
+    const b = fresh ? backup : kept;
+    if (b) backups[key] = b;
+  }
+  await putEntry(stateFile, loaded.path, { ...result.entry, backups });
   io.out(
     `${changed ? "installed into" : "already installed in"} ${loaded.path} (${HOOK_EVENTS.length} hook events)`,
   );
@@ -198,16 +261,51 @@ async function install(args: Args, io: RunIo): Promise<number> {
   return 0;
 }
 
+/** Keys whose recorded previous value equals the one in the backup taken at install. */
+async function verifyPrevious(
+  entry: ReturnType<typeof getEntry> extends Promise<infer T> ? T : never,
+  io: RunIo,
+): Promise<Set<StatusKey>> {
+  const ok = new Set<StatusKey>();
+  if (!entry) return ok;
+  for (const key of STATUS_KEYS) {
+    const prev = entry.previous[key];
+    if (!prev.present) continue;
+    const file = entry.backups?.[key];
+    let matches = false;
+    if (file) {
+      try {
+        const doc: unknown = JSON.parse((await readFile(file, "utf8")).replace(/^\uFEFF/, ""));
+        matches = isRecord(doc) && isDeepStrictEqual(doc[key], prev.value);
+      } catch {
+        matches = false;
+      }
+    }
+    if (matches) {
+      ok.add(key);
+      io.out(`restoring your previous ${key}: ${JSON.stringify(prev.value)}`);
+    } else {
+      io.err(
+        `warning: the recorded previous ${key} does not match the install backup${file ? ` ${file}` : " (no backup recorded)"}; not restoring it (${key} removed)`,
+      );
+    }
+  }
+  return ok;
+}
+
 async function uninstall(args: Args, io: RunIo): Promise<number> {
   const e = io.pathEnv;
-  const home = probeHome(e);
+  const homeFlag = str(args.flags, "--home");
+  const home = probeHome(e, homeFlag);
+  io.out(`probe home: ${home}`);
   const settingsPath = str(args.flags, "--settings") ?? claudeSettingsPath(e);
   const loaded = await loadSettings(settingsPath);
   validateSettings(loaded.settings);
-  const stateFile = installStatePath(e);
+  const stateFile = installStatePath(e, homeFlag);
   const entry = await getEntry(stateFile, loaded.path);
   if (loaded.existed) {
-    const next = applyUninstall(loaded.settings, entry);
+    const verified = await verifyPrevious(entry, io);
+    const next = applyUninstall(loaded.settings, entry, verified);
     if (serialize(next, loaded.layout) === loaded.original) {
       io.out(`nothing to remove in ${loaded.path}`);
     } else {
@@ -221,16 +319,19 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
   }
   await putEntry(stateFile, loaded.path, undefined);
   if (args.flags.has("--purge")) {
-    await rm(probeConfigPath(e), { force: true });
-    io.out("removed probe.json");
+    await rm(probeConfigPath(e, homeFlag), { force: true });
+    const n = await removeBackups(home);
+    io.out(`removed probe.json and ${n} settings backup${n === 1 ? "" : "s"}`);
   } else {
-    io.out(`left ${probeConfigPath(e)} in place (use --purge to delete it)`);
+    io.out(
+      `left ${probeConfigPath(e, homeFlag)} and the settings backups in place (use --purge to delete them)`,
+    );
   }
   return 0;
 }
 
-async function configShow(io: RunIo): Promise<number> {
-  const cfgPath = probeConfigPath(io.pathEnv);
+async function configShow(args: Args, io: RunIo): Promise<number> {
+  const cfgPath = probeConfigPath(io.pathEnv, str(args.flags, "--home"));
   const cfg = await readConfig(cfgPath);
   if (!cfg) {
     io.err(`no config at ${cfgPath}; run probe install`);
@@ -250,7 +351,7 @@ export async function run(argv: string[], io: RunIo): Promise<number> {
     }
     if (args.command === "install") return await install(args, io);
     if (args.command === "uninstall") return await uninstall(args, io);
-    if (args.command === "config" && args.sub === "show") return await configShow(io);
+    if (args.command === "config" && args.sub === "show") return await configShow(args, io);
     throw new UsageError(`unknown command ${args.command}${args.sub ? ` ${args.sub}` : ""}`);
   } catch (e) {
     if (e instanceof UsageError) {
