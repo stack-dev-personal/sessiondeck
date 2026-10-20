@@ -16,8 +16,19 @@ export function focusCard(id: string): boolean {
   return false;
 }
 
-/** The card is gone: keep the keyboard user on the board (first card, else the main region). */
-function focusNearest(): void {
+/** Id of the card after the given one in DOM order, else the one before it, else null. */
+function neighbourOf(id: string): string | null {
+  const cards = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-testid="session-card"]'),
+  );
+  const i = cards.findIndex((c) => c.dataset["sessionId"] === id);
+  if (i === -1) return null;
+  return (cards[i + 1] ?? cards[i - 1])?.dataset["sessionId"] ?? null;
+}
+
+/** The card is gone: keep the keyboard user near it (its recorded neighbour), else the main region. */
+function focusNearest(neighbour: string | null): void {
+  if (neighbour !== null && focusCard(neighbour)) return;
   const first = document.querySelector<HTMLElement>('[data-testid="session-card"]');
   if (first) {
     first.focus();
@@ -42,13 +53,16 @@ export function DrawerHost() {
   const now = useNow(1000 * 30);
   const open = id !== null && session !== undefined;
   const openedFor = useRef<string | null>(null);
+  const neighbour = useRef<string | null>(null);
 
   useEffect(() => {
     if (open) {
       openedFor.current = id;
+      neighbour.current = id === null ? null : neighbourOf(id);
     } else if (openedFor.current !== null) {
-      if (!focusCard(openedFor.current)) focusNearest();
+      if (!focusCard(openedFor.current)) focusNearest(neighbour.current);
       openedFor.current = null;
+      neighbour.current = null;
     }
   }, [open, id]);
 

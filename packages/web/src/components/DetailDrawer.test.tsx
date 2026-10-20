@@ -67,6 +67,9 @@ describe("open and close", () => {
     expect(useUi.getState().selectedSessionId).toBe("b");
     expect(dlg).toContainElement(document.activeElement as HTMLElement);
     expect(screen.getByRole("button", { name: /close/i })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(document.querySelector("main")).not.toHaveAttribute("inert");
+    expect(document.querySelector("header")).not.toHaveAttribute("inert");
   });
 
   it("click opens; Esc closes and focus returns to that card", async () => {
@@ -167,7 +170,7 @@ describe("keys while the drawer is open", () => {
     expect(screen.getByRole("button", { name: /close/i })).toHaveFocus();
   });
 
-  it("removing the open session closes the drawer and focuses the nearest card", async () => {
+  it("removing the open session closes the drawer and focuses the card that was next to it", async () => {
     mount();
     await userEvent.click(card("b"));
     act(() => {
@@ -175,8 +178,19 @@ describe("keys while the drawer is open", () => {
     });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(useUi.getState().selectedSessionId).toBeNull();
-    expect(document.activeElement).not.toBe(document.body);
+    expect(document.querySelector("main")).not.toHaveAttribute("inert");
+    expect(document.querySelector("header")).not.toHaveAttribute("inert");
     expect(document.activeElement).toHaveAttribute("data-testid", "session-card");
+    expect(document.activeElement).toHaveAttribute("data-session-id", "c");
+  });
+
+  it("removing the last card in order falls back to the previous one", async () => {
+    mount();
+    await userEvent.click(card("c"));
+    act(() => {
+      useBoard.setState({ sessions: { a: snap("a"), b: snap("b") } });
+    });
+    expect(document.activeElement).toHaveAttribute("data-session-id", "b");
   });
 
   it("cards announce the dialog and hint that Enter opens details", () => {

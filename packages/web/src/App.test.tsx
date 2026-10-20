@@ -92,12 +92,12 @@ describe("shell", () => {
     }
   });
 
-  it("routes: / goes to board; /dev/cards renders the stub", () => {
+  it("routes: / goes to board; /dev/cards renders the gallery", async () => {
     const { unmount } = mount("/");
     expect(screen.getByText("No sessions yet.")).toBeInTheDocument();
     unmount();
     mount("/dev/cards");
-    expect(screen.getByText("/dev/cards")).toBeInTheDocument();
+    expect(await screen.findByTestId("dev-cards")).toBeInTheDocument();
   });
 });
 
