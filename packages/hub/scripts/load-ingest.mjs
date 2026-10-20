@@ -16,8 +16,8 @@
 //   --with-retention   in-process only: pre-seed `--seed-events` (default 600000) events older than
 //        the retention window, run a compaction pass concurrently with the load, and report ingest
 //        latency during and outside the pass separately
-//   --hot-session      sustained mode: send every envelope of a host as ONE session (worst case for the
-//        dedup index walk; the sessions-per-host count is 1)
+//   --hot-session      sustained mode: send every envelope (both hosts) as ONE session_id (worst case for the
+//        dedup index walk: about 10k index entries per lookup)
 //   --verify-live      afterwards GET /sessions?live=1 and compare with the sessions created
 //   --url http://host:8787 --token-file <path>   test a running hub (never prints the token); http: only,
 //        and loopback unless --allow-insecure (the bearer token is sent in clear text)
@@ -150,11 +150,11 @@ for (const list of perHost.values()) {
 }
 for (const [k, v] of sessionEnds) sessionEnds.set(k, v + shift);
 if (HOT_SESSION) {
-  // R3: every envelope of a host goes to ONE session, so the (session_id, ts, signature) dup check
-  // walks the whole 10 s window of that session (about 5k entries at 500/s per host).
+  // R3: every envelope of both hosts goes to ONE session_id, so the (session_id, ts, signature) dup check
+  // walks the whole 10 s window of that session (about 10k entries at 1k/s).
   sessionEnds.clear();
-  for (const [host, list] of perHost) {
-    const sid = `hot-${sidPrefix}-${host}`;
+  for (const list of perHost.values()) {
+    const sid = `hot-${sidPrefix}`;
     for (const e of list) e.session_id = sid;
     sessionEnds.set(sid, list.at(-1).ts);
   }
