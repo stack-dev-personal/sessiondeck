@@ -33,6 +33,18 @@ export const DEFAULT_MAX_CLOCK_SKEW_MS = DAY_MS;
 
 const yieldLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+/**
+ * After each batch compaction rests for REST_FACTOR times the batch's own duration (1 to 50 ms), so
+ * it takes at most a third of the event loop. A bare setImmediate yield put a batch in every loop
+ * turn, and one ingest request needs several turns (body chunks, handler, reply); measured in
+ * docs/HUB.md "Load harness", ingest p95 doubled while a pass ran.
+ */
+export const COMPACT_REST_FACTOR = 2;
+const rest = (batchMs: number): Promise<void> =>
+  new Promise((resolve) =>
+    setTimeout(resolve, Math.min(50, Math.max(1, Math.round(batchMs * COMPACT_REST_FACTOR)))),
+  );
+
 export interface CompactResult {
   events: number;
   batches: number;
@@ -119,9 +131,10 @@ export async function compactEvents(
     res.events += step.done;
     res.futureEvents += step.future;
     res.batches++;
-    times.push(performance.now() - b0);
+    const took = performance.now() - b0;
+    times.push(took);
     if (!step.more) break;
-    await yieldLoop();
+    await rest(took);
   }
   res.sessions = touched.size;
   res.exceptions = stats.exceptions;

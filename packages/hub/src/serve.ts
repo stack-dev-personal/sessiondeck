@@ -1,3 +1,4 @@
+import { startCheckpointer } from "./checkpoint.ts";
 import { loadConfig } from "./config.ts";
 import { Store } from "./db/store.ts";
 import { PricingProvider, cachePathFor, loadPricing, refreshPricing } from "./pricing/loader.ts";
@@ -34,9 +35,11 @@ export async function serve(): Promise<void> {
     compactBatchBudgetMs: config.compactBatchBudgetMs,
   });
   const lease = startLease(store, app.log);
+  const checkpointer = startCheckpointer(store, config.dbPath, app.log);
   app.addHook("onClose", async () => {
     retention.stop();
     lease.stop();
+    await checkpointer.stop();
     store.close();
   });
   await app.listen({ port: config.port, host: config.bind });
