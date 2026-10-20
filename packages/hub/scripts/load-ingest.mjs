@@ -13,7 +13,7 @@
 //   node scripts/load-ingest.mjs --speed 10 [--events 180000] [--span-min 30]
 //        replay mode: a synthetic busy "day" of `events` envelopes (default 360000) starting over `span-min` (15) minutes
 //        (sessions then run about 40 min, about 100 envelopes/s overall), sent at `speed` times real time by envelope ts
-//   --with-retention   in-process only: pre-seed `--seed-events` (default 150000) events older than
+//   --with-retention   in-process only: pre-seed `--seed-events` (default 600000) events older than
 //        the retention window, run a compaction pass concurrently with the load, and report ingest
 //        latency during and outside the pass separately
 //   --verify-live      afterwards GET /sessions?live=1 and compare with the sessions created

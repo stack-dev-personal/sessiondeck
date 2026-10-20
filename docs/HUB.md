@@ -69,6 +69,7 @@ Phase 7 runs linux/arm64. Nothing in the Dockerfile is amd64-only: the base tag 
 | `HUB_READ_BURST`        | `100`                           | Read bucket size.                                                                                                                        |
 | `HUB_MAX_WS_CLIENTS`    | `64`                            | Concurrent `/stream` clients. Further upgrades get 503.                                                                                  |
 | `HUB_ALLOWED_ORIGINS`   | empty                           | Comma-separated Origin allow-list for WS upgrades. When non-empty, an upgrade carrying any other Origin is refused (403). See security. |
+| `HUB_MAX_CLOCK_SKEW_MS` | `86400000` (1 day)              | An envelope whose `ts` is more than this ahead of the hub clock refuses the whole batch (400 `too_far_in_future`; a warn log with counts only). Range 60000 (1 min) to 604800000 (7 days); outside it the hub does not start. |
 
 All numeric variables must be positive integers; an invalid value stops the hub at start.
 
@@ -82,6 +83,11 @@ Forward-only and numbered. They live in `src/db/migrations.ts` and are applied i
 | ------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 001     | `initial`        | `hosts`, `events`, `sessions`, `transcript_lines`, `statusline_samples`, `projects`, `layouts`, and the `events_session_ts` and `events_signature` indexes.            |
 | 002     | `ingest_indexes` | `events_signature_ts (signature, ts)` for the 5 s duplicate window (replaces `events_signature`, a strict prefix of it) and `sessions_host_state (host, state)`.        |
+| 005     | `dedup_index_by_session` | `events_session_ts_sig (session_id, ts, signature)` replaces `events_signature_ts` and `events_session_ts` (R2.4). See below. |
+
+Migrations 003 and 004 are listed in `src/db/migrations.ts` (retention and baselines, `hub_lease`).
+
+Migration 005: the 5 s duplicate check used to seek `events(signature, ts)`. A signature is a hash, so each insert touched a random leaf of that index (about half of the ~200 WAL pages a batch of 100 wrote, a third of its CPU). Equal signatures always share a `session_id` (it is part of the hashed material), so the check now seeks `(session_id, ts)` and compares the signature inside the index entries (covering, no table reads; `session_id IS NULL` has its own statement). Inserts append at the tail of a session's range. The new index starts with the columns of `events_session_ts`, so it also serves `WHERE session_id = ? ... ORDER BY seq` exactly as before (checked with `EXPLAIN QUERY PLAN`); both old indexes are dropped. No other query reads `events` by `ts` or `signature`; compaction and replay scan by rowid.
 
 The SQL is written to be valid on both SQLite and Postgres. Two portability rules from the schema in `01-architecture.md` section 5.1 (D-S3-1):
 
@@ -195,3 +201,36 @@ R2.5 gate: `pnpm -F @sessiondeck/hub ws:harness` (in-process hub) or `HUB_URL=..
 ## Replay and retention
 
 Scope: S3 delivers the ingest path, the environment variables and the migrations. `hub replay` (rebuild snapshots from stored events, R2.9) and event retention are owned by S4 and are not implemented here. Until then snapshots are materialized on ingest only, and no data is deleted by the hub.
+
+
+### WAL checkpointer
+
+`serve` starts `src/checkpoint.ts` (R2.4). SQLite's default checkpoints inside the commit that grows the WAL past 1000 pages; under `synchronous = NORMAL` that commit fsyncs the WAL and the database file, which stalled one ingest batch in about thirty by 30 to 50 ms and was the whole p95. A worker thread with its own connection now runs `PRAGMA wal_checkpoint(PASSIVE)` every 100 ms (never overlapping itself: the pragma is synchronous inside a single interval callback), and the writer's automatic checkpoint is raised to 8192 frames as a safety net that bounds the WAL (`journal_size_limit` 64 MiB trims it after a restart). Durability is unchanged. `stop()` (called from the Fastify `onClose` hook before the store closes) asks the worker for a final checkpoint, waits up to 2 s, then terminates it. If the worker cannot start or dies, automatic checkpoints are restored. In-memory databases skip it.
+
+## Load harness
+
+`packages/hub/scripts/load-ingest.mjs` (`pnpm -F @sessiondeck/hub load`) proves R2.4. It is open loop: batches go out on a fixed schedule and latency is measured from the scheduled send time to the end of the response, so a stalled hub shows as latency, not as a lower rate. Data comes from `scripts/synth-spool.ts` (the generator `bench-replay.ts` also uses): 2 hosts, golden-session hooks, the captured statusLines, liveness and transcript envelopes, fresh ULIDs and `(host, seq)` each run. The contract defines no spool file format, so there is no `--spool`.
+
+Default target is a real Fastify server on loopback with a real SQLite file under `--dir` (`/tmp/sd-1-S4-load`), built from the same code and pragmas as `serve`; the client shares its event loop, which can only overstate latency.
+
+| Flag | Meaning |
+|---|---|
+| `--rate 1000 --duration 60 --batch 100` | Sustained mode: envelopes per second, seconds, batch size. A 5 s warm-up (`--warmup`) is excluded from the percentiles. |
+| `--speed N [--events 360000] [--span-min 15]` | Replay mode: a synthetic busy day sent at N times real time by envelope `ts`. |
+| `--with-retention [--seed-events 600000]` | In-process only. Pre-seeds events older than the retention window, runs a compaction pass during the load, and reports ingest latency during and outside it. |
+| `--verify-live` | Afterwards `GET /sessions?live=1` and compare with the sessions created. |
+| `--url http://host:8787 --token-file path` | Test a running hub (for example the compose container). The token is never printed. `--spawn` runs the bundled `main.mjs` as a child process. |
+| `--p95-limit 20` | Exit 1 when batch p95 exceeds it (ms) or any request failed. |
+
+Results (60 s at 1000 envelopes/s in batches of 100, 659 measured batches, 65,900 envelopes, 0 failed requests, 0 warn/error log lines). Machine: a WSL2 Linux sprint container (20 vCPU, 20 GB), not the Windows laptop; other sprint sessions share the host, so numbers move with its load (see the noisy run below).
+
+| Run | p50 | p95 | p99 | max | Result |
+|---|---|---|---|---|---|
+| Sustained, in-process, `--verify-live` (116 of 119 sessions live, the other 3 ended under 10 min before the check as expected) | 7.82 | 13.70 | 24.35 | 52.90 | PASS |
+| Sustained, in-process, rerun | 8.03 | 12.01 | 17.09 | 37.16 | PASS |
+| Sustained against the compose hub container (`--url`, container IP, hub on a named volume, read-only rootfs) | 9.15 | 12.77 | 15.80 | 19.96 | PASS |
+| `--with-retention`, 600k-event backlog compacted during the load (32 s pass) | 8.34 | 15.92 | 40.73 | 57.01 | PASS |
+| same run, only the batches during compaction (319) | 10.04 | 19.64 | 42.69 | 57.01 | |
+| same run, batches outside compaction (340) | 6.68 | 10.53 | 19.26 | 38.62 | |
+
+Variance, stated plainly: two earlier `--with-retention` runs of the same configuration gave p95 21.25 ms (FAIL; 25.6 ms during compaction, 12.0 outside) and, with a 150k backlog, 15.81 ms and 26.59 ms, and one sustained run gave p95 215 ms while a sibling session ran a 200% CPU `tsc` on the same host (load average 16). Compaction roughly doubles the latency of the batches that overlap it; whether the whole run clears 20 ms depends on what fraction of the window the pass covers and on host noise. Lengthening the compaction rest (factor 4) did not help (p95 27 ms, the pass then covered the entire window), so the cost is DB work, not loop occupancy. A before/after comparison was not re-run in this unit; the stall sizes quoted in the checkpointer section come from the previous run's profiling, not from a table here. Compose container names are lower-cased by Docker (`sd-1-s4-hub-1`); the container was removed after the run.
