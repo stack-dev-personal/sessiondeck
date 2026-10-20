@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command for the live e2e: builds the hub image, starts hub + ws-gate + Playwright containers
-# on a private network, runs every live spec (R3.1, R3.3, R3.9; R3.6 will follow), copies
+# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
 # screenshots, removes everything.
 #
 #   packages/web/scripts/e2e-live.sh
@@ -9,6 +9,7 @@
 #   SD_E2E_PREFIX       container/network name prefix            (default sd-1-S6)
 #   SD_E2E_SCREENS_OUT  where screenshots are copied             (default /state/1/screens/S6 if /state/1 exists, else packages/web/e2e/screens)
 #   SD_E2E_RESULTS_OUT  where Playwright's results dir (actual/expected/diff, traces) is copied, also on failure (default: not copied)
+#   SD_E2E_SKIP_PERF    1 skips R3.6 (the 40 s load and trace run) for quick runs
 #   SD_E2E_WORK_VOLUME  docker volume that holds the checkout at its path (sprint container: sprint-1-work mounted at /work).
 #                       Unset: the checkout is bind-mounted, which needs a host-visible path (CI, local).
 set -euo pipefail
@@ -71,7 +72,7 @@ set +e
 docker run --name "$PW" --network "$NET" --shm-size=1g "${MOUNT[@]}" -w "$ROOT/packages/web" \
   -e HOME=/root -e CI=1 -e SCREENS_DIR=/tmp/screens \
   -e SD_E2E_HUB_URL="http://$GATE:8787" -e SD_E2E_HUB_DIRECT_URL="http://$HUB:8787" \
-  -e SD_E2E_GATE_URL="http://$GATE:9000" --env-file "$ENVDIR/pw.env" \
+  -e SD_E2E_GATE_URL="http://$GATE:9000" -e SD_E2E_SKIP_PERF="${SD_E2E_SKIP_PERF:-}" --env-file "$ENVDIR/pw.env" \
   "$PW_IMG" sh -c 'node node_modules/@playwright/test/cli.js test; rc=$?; chown -R '"$(id -u):$(id -g)"' dist e2e /tmp/screens /tmp/sd-pw-results 2>/dev/null; exit $rc'
 rc=$?
 set -e
