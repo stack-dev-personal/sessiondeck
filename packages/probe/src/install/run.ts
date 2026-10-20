@@ -61,6 +61,7 @@ usage:
                 [--settings <path>] [--statusline=replace] [--home <dir>] [--allow-inside-claude]
   probe uninstall [--purge] [--settings <path>] [--home <dir>]
   probe config show [--home <dir>]
+  probe daemon run | install | uninstall [--home <dir>]
   probe --help
 
 The token is never accepted as an argument (argv is visible to other processes).
@@ -276,6 +277,9 @@ async function install(args: Args, io: RunIo): Promise<number> {
   if (!cfg.hubUrl || !cfg.token) {
     io.out("note: hub URL or token not set yet; events are spooled locally until they are");
   }
+  io.out(
+    "next: `probe daemon install` starts the forwarder at every logon (or `probe daemon run` for this terminal); install does not register it for you",
+  );
   if (cfg.hubUrl && checkHubUrl(cfg.hubUrl, cfg.allowInsecureHub === true).ok === false) {
     io.out(
       "note: the daemon will not send to this hub URL: use https, or http to loopback, or set allowInsecureHub to true in probe.json for a LAN hub without TLS",

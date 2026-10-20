@@ -1,4 +1,4 @@
-// CLI entry (dist/probe.mjs): probe install | uninstall | config show | daemon run. Unlike the
+// CLI entry (dist/probe.mjs): probe install | uninstall | config show | daemon run | daemon install | daemon uninstall. Unlike the
 // hook, this exits non-zero on errors.
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,12 +12,18 @@ if (argv[0] === "daemon") {
     const { runDaemon } = await import("./daemon/run.ts");
     await runDaemon(argv.slice(2));
   } else if (argv[1] === "install" || argv[1] === "uninstall") {
-    process.stderr.write(
-      `probe: daemon ${argv[1]} is not available yet (scheduled task support comes later); use \`probe daemon run\`\n`,
-    );
-    process.exitCode = 2;
+    const { currentAutostartEnv, runAutostart } = await import("./autostart/index.ts");
+    process.exitCode = await runAutostart(argv.slice(1), {
+      e: currentAutostartEnv(),
+      distDir: dirname(fileURLToPath(import.meta.url)),
+      nodePath: process.execPath,
+      out: (line) => process.stdout.write(`${line}\n`),
+      err: (line) => process.stderr.write(`${line}\n`),
+    });
   } else {
-    process.stderr.write("probe: usage: probe daemon run [--home <dir>] [--stderr]\n");
+    process.stderr.write(
+      "probe: usage: probe daemon run [--home <dir>] [--stderr] | probe daemon install|uninstall\n",
+    );
     process.exitCode = 2;
   }
 } else {
