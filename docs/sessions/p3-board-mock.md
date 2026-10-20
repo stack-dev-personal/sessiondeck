@@ -79,3 +79,11 @@
 
 - Decision: the previous run stopped at about 03:00Z on the subscription usage limit (429). That is not a failure. At the stop the branch was clean and pushed at 72e7a63 (VERIFY-P3 written, PR #8 open, CI green on 72e7a63), but the blocked exit was never completed: /state/1/questions/S5.md was missing and the status file still said running on U4. No uncommitted work was left, no unit was redone. Sprint branch still at 5b76608, so no rebase was needed. No answer file exists for S5.
 - Action: wrote /state/1/questions/S5.md (four contrast tokens, options A/B/C with computed replacement values), set status blocked. On resume with an answer: one web unit (tokens.css, contrast test pinned list, design-system doc, Playwright baselines), then sd-reviewer, sd-verifier on R3.7 and a full re-verify, then update PR #8.
+
+## Resume 2026-10-20 (answer received)
+
+### Decisions made
+- 2026-10-20 R3.7 contrast tokens: option A, per /state/1/answers/S5.md (conductor, 2026-10-20T09:15Z). This was the conductor's call under the user's standing rule (decide after two messages without a choice; the user replied "continue, long tailed development overnight (5 hrs)" and "continue" without picking). The user may revise the values before PR #8 merges. New values: dark --state-ended #7f868f, dark --fg-faint #7c8792, light --state-starting #6e757d, light --fg-faint #6e757d. The design-system rule (every --state-* on --surface-1 passes 4.5:1 as text) is unchanged; docs/planning/03-design-system.md gets the new values in this PR.
+- U6 added: sd-executor-web, tokens.css, contrast test pinned list emptied, R3.7 e2e made strict, Playwright baselines refreshed, design-system doc section 2 values (doc edit granted to the web executor for this unit only).
+
+| U6 | contrast tokens per answer A | R3.7 | sd-executor-web | U1-U5 | in progress |
