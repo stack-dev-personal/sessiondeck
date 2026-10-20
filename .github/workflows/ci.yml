@@ -16,10 +16,10 @@ jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
     # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
-    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 = 21;
-    # 30 leaves a margin of 9 for a cold cache on a slow Windows runner. The job limit must stay
-    # above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
-    timeout-minutes: 30
+    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 + probe processes 5 = 26;
+    # 35 (raised from 30 for the probe step) leaves a margin of 9 for a cold cache on a slow Windows
+    # runner. The job limit must stay above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
+    timeout-minutes: 35
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,6 +43,13 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
+      - name: test probe processes (R1.2 R1.3 R1.8 R1.9 R1.10, outside R0.5)
+        # Spawn-heavy probe suites (hook robustness, 50-process stress, statusline, CLI install/config)
+        # split from `pnpm -r test` after they timed out the R0.5 step on windows-latest. Budget: 9.4 s
+        # wall locally; 4x for a Windows runner is about 38 s; vitest start-up and the esbuild build
+        # in globalSetup add about 30 s, so about 70 s; 5 min (300 s) leaves generous headroom.
+        run: pnpm -F @sessiondeck/probe test:proc
+        timeout-minutes: 5
       - name: test guard timing (outside R0.5 budget, up to 3 attempts)
         # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only
         # when every failed test failed on a timing bound; any other failure fails the step at once.
