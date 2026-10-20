@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { DrawerHost } from "./components/DrawerHost";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
 import { Board } from "./routes/Board";
@@ -24,6 +25,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/board" replace />} />
         </Routes>
       </main>
+      <DrawerHost />
     </div>
   );
 }

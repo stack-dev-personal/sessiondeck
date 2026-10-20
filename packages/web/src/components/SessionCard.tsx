@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type KeyboardEvent } from "react";
 import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { basename, formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
@@ -6,6 +6,22 @@ import { Meter, MeterValue, metersFor } from "./Meter";
 import { StateChip } from "./StateChip";
 
 export const MAX_DOTS = 5;
+
+type Open = ((sessionId: string) => void) | undefined;
+
+/** Click and Enter (not auto-repeat) on the card itself open the detail drawer. */
+function openHandlers(id: string, onOpen: Open) {
+  return {
+    "data-session-id": id,
+    onClick: () => onOpen?.(id),
+    onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+      if (e.key === "Enter" && !e.repeat && e.target === e.currentTarget) {
+        e.preventDefault();
+        onOpen?.(id);
+      }
+    },
+  };
+}
 
 const BADGE: Partial<Record<SessionState, string>> = {
   waiting_permission: "attention",
@@ -109,10 +125,12 @@ function SessionCardImpl({
   s,
   now,
   exceeds200k = null,
+  onOpen,
 }: {
   s: SessionSnapshot;
   now: number;
   exceeds200k?: boolean | null;
+  onOpen?: (sessionId: string) => void;
 }) {
   const { project, name, active, vocab } = cardInfo(s);
   const meters = metersFor(s, now, exceeds200k);
@@ -128,6 +146,7 @@ function SessionCardImpl({
       tabIndex={0}
       aria-label={ariaName(s)}
       data-testid="session-card"
+      {...openHandlers(s.session_id, onOpen)}
       data-state={s.state}
       data-density="full"
       style={{ height: "var(--card-h)" }}
@@ -212,10 +231,12 @@ function CompactCardImpl({
   s,
   now,
   exceeds200k = null,
+  onOpen,
 }: {
   s: SessionSnapshot;
   now: number;
   exceeds200k?: boolean | null;
+  onOpen?: (sessionId: string) => void;
 }) {
   const { project, name, active, vocab } = cardInfo(s);
   const meters = metersFor(s, now, exceeds200k);
@@ -224,6 +245,7 @@ function CompactCardImpl({
       tabIndex={0}
       aria-label={ariaName(s)}
       data-testid="session-card"
+      {...openHandlers(s.session_id, onOpen)}
       data-state={s.state}
       data-density="compact"
       style={{ height: "var(--card-compact-h)" }}

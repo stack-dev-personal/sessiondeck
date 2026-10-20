@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { CompactCard, SessionCard } from "../components/SessionCard";
 import { useNow } from "../hooks/useNow";
+import { useShortcuts } from "../lib/keys";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
@@ -14,12 +15,30 @@ export function Board() {
   const flags = useBoard((s) => s.exceeds200k);
   const compact = useUi((s) => s.compact);
   const now = useNow();
+  const openSession = useUi((s) => s.openSession);
+  const listRef = useRef<HTMLUListElement>(null);
+  const keys = useMemo(() => {
+    /** j/k clamp at the first and last card. With no card focused, j goes first and k goes last. */
+    const move = (dir: 1 | -1) => () => {
+      if (useUi.getState().selectedSessionId !== null || !listRef.current) return;
+      const cards = Array.from(
+        listRef.current.querySelectorAll<HTMLElement>('[data-testid="session-card"]'),
+      );
+      if (cards.length === 0) return;
+      const cur = cards.findIndex((c) => c === document.activeElement);
+      const next = cur === -1 ? (dir === 1 ? 0 : cards.length - 1) : cur + dir;
+      cards[Math.min(cards.length - 1, Math.max(0, next))]?.focus();
+    };
+    return { j: move(1), k: move(-1) };
+  }, []);
+  useShortcuts(keys);
   const list = useMemo(() => Object.values(sessions), [sessions]);
   if (list.length === 0) {
     return <p className="p-s-4 text-fg-muted">No sessions yet.</p>;
   }
   return (
     <ul
+      ref={listRef}
       className={
         compact
           ? "m-0 flex list-none flex-col gap-s-1 p-s-4"
@@ -31,9 +50,19 @@ export function Board() {
       {list.map((s) => (
         <li key={s.session_id} className="min-w-0">
           {compact ? (
-            <CompactCard s={s} now={now} exceeds200k={flags[s.session_id] ?? null} />
+            <CompactCard
+              s={s}
+              now={now}
+              exceeds200k={flags[s.session_id] ?? null}
+              onOpen={openSession}
+            />
           ) : (
-            <SessionCard s={s} now={now} exceeds200k={flags[s.session_id] ?? null} />
+            <SessionCard
+              s={s}
+              now={now}
+              exceeds200k={flags[s.session_id] ?? null}
+              onOpen={openSession}
+            />
           )}
         </li>
       ))}

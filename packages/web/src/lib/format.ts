@@ -75,3 +75,7 @@ export function basename(p: string | null): string | null {
   const parts = p.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? null;
 }
+
+export function formatClockSec(ts: number): string {
+  return `${formatClock(ts)}:${String(new Date(ts).getSeconds()).padStart(2, "0")}`;
+}

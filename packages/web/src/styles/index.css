@@ -56,6 +56,8 @@ body {
 :root {
   --card-h: 10rem;
   --card-compact-h: 36px;
+  --drawer-w: 420px;
+  --spark-h: 40px;
 }
 
 @keyframes sd-glow {
@@ -99,4 +101,30 @@ body {
 }
 .sd-dim [data-slot="bar"] {
   opacity: 0.5;
+}
+
+/* Detail drawer: a fixed overlay (the board never reflows) that slides in from the right. */
+.sd-scrim {
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+@keyframes sd-slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.sd-drawer {
+  animation: sd-slide-in var(--t-base) var(--ease) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-drawer {
+    animation: none;
+  }
 }
