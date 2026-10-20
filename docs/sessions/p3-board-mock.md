@@ -87,3 +87,7 @@
 - U6 added: sd-executor-web, tokens.css, contrast test pinned list emptied, R3.7 e2e made strict, Playwright baselines refreshed, design-system doc section 2 values (doc edit granted to the web executor for this unit only).
 
 | U6 | contrast tokens per answer A | R3.7 | sd-executor-web | U1-U5 | in progress |
+
+## Resume 2026-10-20 (after the container restart at about 14:20Z)
+
+- Decision: the sprint container restarted at about 14:20Z and killed the previous run during U6. Not a failure. State found: working tree clean, no heartbeat running, U6 commits 5edf2af (tokens.css and design-system section 2) and 8dbb110 (contrast unit test and R3.7 e2e strict) present but unpushed; Playwright baselines not yet refreshed. Sprint branch still at 5b76608. U6 continues with the same executor role: refresh baselines, run unit and e2e suites, then review and verify.
