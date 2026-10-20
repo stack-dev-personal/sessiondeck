@@ -41,6 +41,8 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - The sprint container restarted and killed the run in the middle of U1-fix-lock (not a session failure). Resumed at 14:21Z. Uncommitted diff: lock.ts (+286/-), daemon-review1.test.ts, daemon-review2.test.ts, lock-race.proc.test.ts. Decision: the generation design is sound in principle (exactly one creator per generation through link EEXIST), so sd-executor-probe finishes it rather than discarding it. Review loop restarts at iteration 1 for the fix.
 
 ## Deferred findings
+- [MINOR] transcript.ts:485,521-531 (U2): after the 30-day pruned memory expires, a returning key numbers from 0; collides with old hub rows only if the old stream had a compaction reset and the resume is more than about 37 days later. Fix: restart above max_issued for unknown keys whose transcript birthtime predates the daemon's first run.
+- [MINOR] transcript.ts:78-84 (U2): isUnder compares path text, not realpath; a symlink under projectsDir pointing outside passes. Fix with realpath when U4 wires projectsDir.
 - [MINOR] packages/probe/src/daemon/lock.ts:313-323: the check() ENOENT recreate ignores a live lower generation created after an external delete. Short two-holder window, closed at the next verify(). Fix: fail when scan shows any other live generation.
 - [MINOR] lock.ts:403-405: if the re-scan after create throws (EMFILE/EACCES), the starter falls through to holding the lock. Fix: tombstone and continue.
 - [LOW] lock.ts:139-142: readRaw races lstat against readFileSync (FIFO/symlink swap by the same user). Fix: open O_NOFOLLOW|O_NONBLOCK, fstat, bounded read.
@@ -62,3 +64,4 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 - Review iteration 1: sd-reviewer fix-then-merge (1 MAJOR unhandled rejection in onSpoolLine, 7 MINOR). Finding 8 (record the Windows reset rule) resolved by D-S2-8. Findings 1-7 sent to sd-executor-probe.
 - f230f09 fixes iteration-1 findings 1-7. Iteration 2: sd-reviewer fix-then-merge (1 MAJOR: pruned set grows forever; 7 MINOR, 1 LOW). Iteration 3 (last) sent with a persisted max-issued counter design.
 - For U4: pass `projectsDir` (Claude projects dir) to TranscriptTailer; the untracked SubagentStop fallback depends on it.
+- 26a1e25 fixes iteration-2 findings (max_issued counter, bounded pruned map, lost_until window, outbox multi-file fsync, isUnder table tests). Iteration 3: sd-reviewer merge, 2 MINOR deferred. 172 probe tests pass, 1 win32-gated.
