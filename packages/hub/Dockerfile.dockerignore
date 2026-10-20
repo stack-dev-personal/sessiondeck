@@ -11,3 +11,10 @@
 !packages/hub/scripts/bundle.mjs
 !packages/hub/tsconfig.json
 !tsconfig.base.json
+
+# Re-exclude sensitive material even inside allowed directories (last match wins).
+**/.env*
+**/probe.json
+**/*.sqlite*
+**/node_modules
+**/fixtures/raw

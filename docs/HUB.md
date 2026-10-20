@@ -43,6 +43,10 @@ Proof harness: `pnpm -F @sessiondeck/hub container:smoke` builds the image, runs
 
 By default the harness reaches the hub by container name (`http://sd-1-S3-hub:8787`), which only resolves from a container attached to the sprint network (`SMOKE_NETWORK`, default `sprint-1_default`), for example inside the sprint container. To run it from the host instead, set `SMOKE_HOST_PORT=<port>`: the hub is then published on `127.0.0.1:<port>` and the harness uses localhost.
 
+Unverified: the `SMOKE_HOST_PORT` path has never run successfully on a real host; treat it as untested until someone does. It works only when the harness and the Docker daemon share a network namespace (harness on the host itself); inside the sprint container use the default container-name mode, because `-p 127.0.0.1:<port>:8787` binds on the daemon host's loopback, not the harness container's.
+
+The root `.dockerignore` is defense in depth, checked by hand: the smoke harness builds from a scratch staged context, so its canary check does not exercise that file. The tested control is the Dockerfile's explicit COPY list.
+
 ### arm64
 
 Phase 7 runs linux/arm64. Nothing in the Dockerfile is amd64-only: the base tag is multi-arch, corepack and pnpm fetch the binary for the build platform, and `better-sqlite3` is compiled from source rather than fetched as a platform prebuilt. Building for arm64 on an amd64 host needs QEMU binfmt (or buildx with an arm64 builder); `container:smoke` reports whether that is available and builds `linux/arm64` when it is.
