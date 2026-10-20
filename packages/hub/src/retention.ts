@@ -18,6 +18,7 @@
 import type { Store } from "./db/store.ts";
 import { BaselineSessions, foldEvents, type FoldStats } from "./replay.ts";
 import type { Logger } from "./ingest/ingestor.ts";
+import type { IngestActivity } from "./ingest/activity.ts";
 
 export const DAY_MS = 86_400_000;
 /** Events read, folded and deleted per transaction (at most). */
@@ -45,7 +46,21 @@ const rest = (batchMs: number): Promise<void> =>
     setTimeout(resolve, Math.min(50, Math.max(1, Math.round(batchMs * COMPACT_REST_FACTOR)))),
   );
 
+/** Compaction starts a batch only after ingest has been quiet this long (ms). */
+export const COMPACT_QUIET_MS = 15;
+/** The longest one batch waits for a quiet moment before it runs anyway, so a saturated hub still drains. */
+export const COMPACT_MAX_YIELD_MS = 250;
+/** Default cap on events compacted per pass (HUB_COMPACT_MAX_EVENTS); the remainder drains in follow-up passes. */
+export const DEFAULT_COMPACT_MAX_EVENTS = 1_000_000;
+/** After a pass stopped at its cap the next one is scheduled this soon instead of a full interval. */
+export const CAPPED_FOLLOW_UP_MS = 60_000;
+
 export interface CompactResult {
+  /** True when the pass stopped at maxEvents with more left to compact. */
+  capped: boolean;
+  /** Time spent waiting for ingest to go quiet, and batches that ran only because the wait hit its cap. */
+  yieldedMs: number;
+  forcedBatches: number;
   events: number;
   batches: number;
   sessions: number;
@@ -70,13 +85,27 @@ export async function compactEvents(
     batchSize?: number;
     batchBudgetMs?: number;
     now?: () => number;
+    /** Yield to ingest: a batch waits until no ingest request is in flight and none ended recently. */
+    activity?: Pick<IngestActivity, "waitMs">;
+    quietMs?: number;
+    maxYieldMs?: number;
+    /** Stop after this many events (0 or absent: no cap). */
+    maxEvents?: number;
+    sleep?: (ms: number) => Promise<void>;
   },
 ): Promise<CompactResult> {
   const t0 = performance.now();
   const size = opts.batchSize ?? COMPACT_BATCH;
   const budget = opts.batchBudgetMs ?? COMPACT_BATCH_BUDGET_MS;
   const now = opts.now ?? Date.now;
+  const quietMs = opts.quietMs ?? COMPACT_QUIET_MS;
+  const maxYieldMs = opts.maxYieldMs ?? COMPACT_MAX_YIELD_MS;
+  const maxEvents = opts.maxEvents !== undefined && opts.maxEvents > 0 ? opts.maxEvents : Infinity;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const res: CompactResult = {
+    capped: false,
+    yieldedMs: 0,
+    forcedBatches: 0,
     events: 0,
     batches: 0,
     sessions: 0,
@@ -93,6 +122,21 @@ export async function compactEvents(
   const source = new BaselineSessions(store);
   const compactable = (ts: number): boolean => ts < opts.cutoffMs || ts > opts.maxTs;
   for (;;) {
+    if (opts.activity !== undefined) {
+      let waited = 0;
+      for (;;) {
+        const w = opts.activity.waitMs(quietMs);
+        if (w <= 0) break;
+        if (waited >= maxYieldMs) {
+          res.forcedBatches++;
+          break;
+        }
+        const d = Math.min(Math.max(1, Math.ceil(w)), maxYieldMs - waited);
+        await sleep(d);
+        waited += d;
+      }
+      res.yieldedMs += waited;
+    }
     const b0 = performance.now();
     const step = store.writeTransaction(() => {
       const rows = store.listEventsAfterRowid(0, size);
@@ -134,6 +178,12 @@ export async function compactEvents(
     const took = performance.now() - b0;
     times.push(took);
     if (!step.more) break;
+    if (res.events >= maxEvents) {
+      // Capped only if something compactable is actually left (the last batch may have been the end).
+      const next = store.listEventsAfterRowid(0, 1)[0];
+      res.capped = next !== undefined && compactable(next.ts);
+      break;
+    }
     await rest(took);
   }
   res.sessions = touched.size;
@@ -154,6 +204,9 @@ export async function compactEvents(
   log.info(
     {
       events: res.events,
+      capped: res.capped,
+      yielded_ms: Math.round(res.yieldedMs),
+      forced_batches: res.forcedBatches,
       batches: res.batches,
       sessions: res.sessions,
       ms: res.elapsedMs,
@@ -192,6 +245,10 @@ export interface RetentionConfig {
   maxClockSkewMs?: number;
   compactBatchSize?: number;
   compactBatchBudgetMs?: number;
+  /** HUB_COMPACT_MAX_EVENTS: events compacted per pass; 0 or absent for no cap. */
+  compactMaxEvents?: number;
+  /** Ingest activity to yield to; absent for offline runs (CLI) that have no ingest to protect. */
+  activity?: Pick<IngestActivity, "waitMs">;
 }
 
 /** One retention pass: compaction, then sample pruning. */
@@ -208,6 +265,8 @@ export async function runRetention(
     maxOpenSessionsPerHost: cfg.maxOpenSessionsPerHost,
     ...(cfg.compactBatchSize !== undefined ? { batchSize: cfg.compactBatchSize } : {}),
     ...(cfg.compactBatchBudgetMs !== undefined ? { batchBudgetMs: cfg.compactBatchBudgetMs } : {}),
+    ...(cfg.compactMaxEvents !== undefined ? { maxEvents: cfg.compactMaxEvents } : {}),
+    ...(cfg.activity !== undefined ? { activity: cfg.activity } : {}),
   });
   const s = await pruneSamples(store, log, {
     cutoffMs: now - cfg.sampleRetentionDays * DAY_MS,
@@ -234,12 +293,15 @@ export function startRetentionTimer(
     timer.unref();
   };
   const pass = async (): Promise<void> => {
+    let next = cfg.intervalMs;
     try {
-      await runRetention(store, log, cfg);
+      const r = await runRetention(store, log, cfg);
+      // A pass cut short by its cap leaves a backlog: come back soon rather than in an hour.
+      if (r.compact.capped) next = Math.min(next, CAPPED_FOLLOW_UP_MS);
     } catch (err) {
       log.warn({ err: err instanceof Error ? err.message : "unknown" }, "retention pass failed");
     }
-    schedule(cfg.intervalMs);
+    schedule(next);
   };
   schedule(cfg.initialDelayMs ?? Math.min(cfg.intervalMs, 30_000));
   return {

@@ -30,6 +30,7 @@ export async function makeHub(
     maxBufferedBytes?: number;
     refuseFallbackMs?: number;
     wallClock?: () => number;
+    activity?: import("../../src/ingest/activity.ts").IngestActivity;
   } = {},
 ): Promise<TestHub> {
   const t = tempStore();

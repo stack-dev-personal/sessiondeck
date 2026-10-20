@@ -79,6 +79,13 @@ describe("loadConfig retention", () => {
       7, 14, 0,
     ]);
   });
+  it("caps compaction per pass at 1M events by default; 0 disables the cap", () => {
+    expect(loadConfig(base).compactMaxEvents).toBe(1_000_000);
+    expect(loadConfig({ ...base, HUB_COMPACT_MAX_EVENTS: "0" }).compactMaxEvents).toBe(0);
+    expect(() => loadConfig({ ...base, HUB_COMPACT_MAX_EVENTS: "-5" })).toThrow(
+      /HUB_COMPACT_MAX_EVENTS/,
+    );
+  });
   it("rejects bad values", () => {
     expect(() => loadConfig({ ...base, HUB_EVENT_RETENTION_DAYS: "0" })).toThrow(
       /HUB_EVENT_RETENTION_DAYS/,

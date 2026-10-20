@@ -49,6 +49,8 @@ export interface HubConfig {
   /** HUB_COMPACT_BATCH_SIZE / HUB_COMPACT_BATCH_MS: events and fold time budget per compaction batch. */
   compactBatchSize: number;
   compactBatchBudgetMs: number;
+  /** HUB_COMPACT_MAX_EVENTS: events compacted per pass (0 = no cap); a backlog drains over several passes. */
+  compactMaxEvents: number;
 }
 
 /** What the replay and compact subcommands need; no token, no network settings. */
@@ -61,6 +63,8 @@ export interface RetentionSettings {
   maxClockSkewMs: number;
   compactBatchSize: number;
   compactBatchBudgetMs: number;
+  /** HUB_COMPACT_MAX_EVENTS: events compacted per pass (0 = no cap); a backlog drains over several passes. */
+  compactMaxEvents: number;
 }
 
 function nonNegInt(env: Record<string, string | undefined>, name: string, dflt: number): number {
@@ -81,6 +85,7 @@ export function loadRetentionSettings(env: Record<string, string | undefined>): 
     maxClockSkewMs: skewMs(env),
     compactBatchSize: posInt(env, "HUB_COMPACT_BATCH_SIZE", 100),
     compactBatchBudgetMs: posInt(env, "HUB_COMPACT_BATCH_MS", 10),
+    compactMaxEvents: nonNegInt(env, "HUB_COMPACT_MAX_EVENTS", 1_000_000),
   };
 }
 
@@ -153,6 +158,7 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     maxClockSkewMs: retention.maxClockSkewMs,
     compactBatchSize: retention.compactBatchSize,
     compactBatchBudgetMs: retention.compactBatchBudgetMs,
+    compactMaxEvents: retention.compactMaxEvents,
     ...(pricingFile !== undefined && pricingFile !== "" ? { pricingFile } : {}),
     ...(timezone !== undefined && timezone !== "" ? { timezone } : {}),
     pricingFetch: bool(env, "HUB_PRICING_FETCH", true),

@@ -99,7 +99,7 @@ export async function runCli(
         `replay: sessions=${r.sessions} events=${r.events} samples=${r.samples} elapsed_ms=${r.elapsedMs} reducer_exceptions=${r.exceptions}`,
       );
     } else {
-      const r = await runRetention(store, log, cfg);
+      const r = await runRetention(store, log, { ...cfg, compactMaxEvents: 0 });
       out(
         `compact: events=${r.compact.events} batches=${r.compact.batches} sessions=${r.compact.sessions} samples_deleted=${r.samples} elapsed_ms=${r.compact.elapsedMs} max_batch_ms=${r.compact.maxBatchMs} reducer_exceptions=${r.compact.exceptions}`,
       );

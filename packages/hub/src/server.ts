@@ -13,6 +13,7 @@ import { RateLimiter } from "./ingest/rate-limit.ts";
 import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
+import { IngestActivity } from "./ingest/activity.ts";
 import { registerStream, tokenFromProtocols } from "./stream.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
@@ -33,7 +34,10 @@ export function buildServer(opts: {
   refuseFallbackMs?: number;
   /** Cost history pricing; defaults to the bundled table. main.ts passes the configured one. */
   pricing?: PricingProvider;
+  /** Shared with background work that yields to ingest (retention); created here when absent. */
+  activity?: IngestActivity;
 }): FastifyInstance {
+  const activity = opts.activity ?? new IngestActivity();
   const expected = digest(opts.config.token);
 
   const isAuthed = (header: string | string[] | undefined): boolean => {
@@ -101,6 +105,11 @@ export function buildServer(opts: {
     now,
   );
   app.addHook("onRequest", async (req, reply) => {
+    // Covers body read, handling and the reply: closed by the response's own 'close', which also
+    // fires when the client aborts, so a dropped connection cannot leave the counter raised.
+    if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
+      reply.raw.once("close", activity.begin());
+    }
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
     const principal = principalOf(req.headers.authorization);
