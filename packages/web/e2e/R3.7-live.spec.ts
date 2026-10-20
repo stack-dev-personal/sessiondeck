@@ -101,13 +101,15 @@ for (const theme of ["dark", "light"] as const) {
     await expect(boxes).toHaveCount(4);
     for (const box of await boxes.all()) await expect(box).not.toBeChecked();
     await page.getByLabel("Mute all tones").check();
-    const saved = page.getByRole("status").filter({ hasText: /^$/ });
-    expect(await saved.count()).toBeGreaterThan(0);
+    const saved = page.getByTestId("settings-saved");
+    await expect(saved).toHaveCount(1);
+    await expect(saved).toHaveText("");
+    await expect(saved).toHaveAttribute("role", "status");
     expect(await axeViolations(page, `${theme} settings`)).toEqual([]);
     expectAllReadable(await measureAllText(page), `${theme} settings`);
     expect(await measureControlBorders(page), `${theme} settings control boundaries`).toEqual([]);
     await page.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+    await expect(saved).toHaveText(/Saved/);
     expect(await axeViolations(page, `${theme} settings saved`)).toEqual([]);
     expectAllReadable(await measureAllText(page), `${theme} settings saved`);
     await fullShot(page, `R3.7-settings-${theme}.png`);
@@ -139,6 +141,19 @@ for (const theme of ["dark", "light"] as const) {
     await expect(alert.getByRole("button", { name: "Retry" })).toBeVisible();
     expect(await axeViolations(page, `${theme} error boundary`)).toEqual([]);
     expectAllReadable(await measureAllText(page), `${theme} error boundary`);
+    expect(await measureControlBorders(page), `${theme} error boundary control boundaries`).toEqual(
+      [],
+    );
+  });
+
+  test(`R3.7 live ${theme}: detail drawer control boundaries`, async ({ page }) => {
+    await setTheme(page, theme);
+    await openSettledBoard(page);
+    await page.locator('[data-testid="session-card"]').first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog")).toBeVisible();
+    expect(await page.getByRole("dialog").getByRole("button").count()).toBeGreaterThan(0);
+    expect(await measureControlBorders(page), `${theme} drawer control boundaries`).toEqual([]);
   });
 }
 
@@ -262,91 +277,185 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
   await expect(first).toBeFocused();
 });
 
-test("R3.7 live: 320 px reflow and 400% zoom equivalents lose no content", async ({ page }) => {
-  for (const [w, h] of [
-    [320, 640],
-    [320, 256], // 1280 x 1024 at 400% zoom
-    [640, 450], // 1280 x 900 at 200% zoom
-  ] as const) {
-    await page.setViewportSize({ width: w, height: h });
-    await openSettledBoard(page);
-    await filterToHiddenAttention(page);
-    const m = await page.evaluate(() => {
-      const main = document.querySelector("main")!;
-      const over: string[] = [];
-      for (const el of document.querySelectorAll("header *, main *")) {
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && (r.right > window.innerWidth + 1 || r.left < -1)) {
-          over.push(
-            `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""} ${Math.round(r.left)}..${Math.round(r.right)}`,
-          );
-        }
+for (const density of ["full", "compact"] as const) {
+  test(`R3.7 live: 320 px reflow and 400% zoom equivalents lose no content (${density})`, async ({
+    page,
+  }) => {
+    for (const [w, h] of [
+      [320, 640],
+      [320, 256], // 1280 x 1024 at 400% zoom
+      [640, 450], // 1280 x 900 at 200% zoom
+    ] as const) {
+      await page.setViewportSize({ width: w, height: h });
+      await openSettledBoard(page);
+      if (density === "compact") {
+        await page.locator("body").click({ position: { x: 1, y: 1 } });
+        // The choice persists across reloads (R3.4), so only toggle when not already compact.
+        const pressed = await page
+          .getByRole("button", { name: /^Compact/ })
+          .getAttribute("aria-pressed");
+        if (pressed !== "true") await page.keyboard.press("c");
+        await expect(page.locator('[data-testid="session-card"]').first()).toHaveAttribute(
+          "data-density",
+          "compact",
+        );
       }
-      return {
-        docW: document.documentElement.scrollWidth,
-        mainW: main.scrollWidth,
-        mainC: main.clientWidth,
-        over: over.slice(0, 8),
-      };
-    });
-    const clippedInCards = await page.evaluate(() => {
-      const out: string[] = [];
-      for (const card of document.querySelectorAll('[data-testid="session-card"]')) {
-        const c = card.getBoundingClientRect();
-        for (const el of card.querySelectorAll("*")) {
+      await filterToHiddenAttention(page);
+      const m = await page.evaluate(() => {
+        const main = document.querySelector("main")!;
+        const over: string[] = [];
+        for (const el of document.querySelectorAll("header *, main *")) {
           const r = el.getBoundingClientRect();
-          if (r.width > 0 && (r.right > c.right + 1 || r.bottom > c.bottom + 1)) {
-            out.push(
-              `${el.tagName.toLowerCase()}[${el.getAttribute("data-slot") ?? ""}] ${el.textContent?.slice(0, 20)}`,
+          if (r.width > 0 && (r.right > window.innerWidth + 1 || r.left < -1)) {
+            over.push(
+              `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""} ${Math.round(r.left)}..${Math.round(r.right)}`,
             );
           }
         }
-      }
-      return out.slice(0, 6);
-    });
-    const truncatedNumbers = await page.evaluate(
-      () =>
-        Array.from(document.querySelectorAll<HTMLElement>('[data-slot="value"]')).filter(
-          (e) => e.scrollWidth > e.clientWidth,
-        ).length,
-    );
-    expect(truncatedNumbers, `${w}x${h} meter numbers truncated`).toBe(0);
-    // Anything clipped by overflow that is not an ellipsised, titled label is lost content.
-    const clippedText = await page.evaluate(() => {
-      const out: string[] = [];
-      for (const el of document.querySelectorAll<HTMLElement>(
-        'main [data-testid="session-card"], main [data-testid="session-card"] *',
-      )) {
-        const cs = getComputedStyle(el);
-        if (cs.overflowX === "visible" && el.tagName !== "ARTICLE") continue;
-        if (cs.textOverflow === "ellipsis" || el.classList.contains("sr-only")) continue;
-        if (el.scrollWidth > el.clientWidth + 1) {
-          out.push(
-            `${el.tagName.toLowerCase()}[${el.dataset["slot"] ?? el.dataset["row"] ?? ""}] ${el.scrollWidth}>${el.clientWidth}`,
-          );
+        return {
+          docW: document.documentElement.scrollWidth,
+          mainW: main.scrollWidth,
+          mainC: main.clientWidth,
+          over: over.slice(0, 8),
+        };
+      });
+      const clippedInCards = await page.evaluate(() => {
+        const out: string[] = [];
+        for (const card of document.querySelectorAll('[data-testid="session-card"]')) {
+          const c = card.getBoundingClientRect();
+          for (const el of card.querySelectorAll("*")) {
+            const r = el.getBoundingClientRect();
+            if (r.width > 0 && (r.right > c.right + 1 || r.bottom > c.bottom + 1)) {
+              out.push(
+                `${el.tagName.toLowerCase()}[${el.getAttribute("data-slot") ?? ""}] ${el.textContent?.slice(0, 20)}`,
+              );
+            }
+          }
         }
+        return out.slice(0, 6);
+      });
+      const truncatedNumbers = await page.evaluate(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="value"]')).filter(
+            (e) => e.scrollWidth > e.clientWidth,
+          ).length,
+      );
+      expect(truncatedNumbers, `${w}x${h} meter numbers truncated`).toBe(0);
+      // Anything clipped by overflow that is not an ellipsised, titled label is lost content.
+      const clippedText = await page.evaluate(() => {
+        const out: string[] = [];
+        for (const el of document.querySelectorAll<HTMLElement>(
+          'main [data-testid="session-card"], main [data-testid="session-card"] *',
+        )) {
+          const cs = getComputedStyle(el);
+          if (cs.overflowX === "visible" && el.tagName !== "ARTICLE") continue;
+          if (cs.textOverflow === "ellipsis" || el.classList.contains("sr-only")) continue;
+          if (el.scrollWidth > el.clientWidth + 1) {
+            out.push(
+              `${el.tagName.toLowerCase()}[${el.dataset["slot"] ?? el.dataset["row"] ?? ""}] ${el.scrollWidth}>${el.clientWidth}`,
+            );
+          }
+        }
+        return out.slice(0, 6);
+      });
+      expect(clippedText, `${w}x${h} card content clipped`).toEqual([]);
+      expect(clippedInCards, `${w}x${h} card content outside its card`).toEqual([]);
+      expect(m.over, `${w}x${h} elements outside the viewport`).toEqual([]);
+      expect(m.docW, `${w}x${h} page scrolls sideways`).toBeLessThanOrEqual(w);
+      expect(m.mainW, `${w}x${h} main scrolls sideways`).toBeLessThanOrEqual(m.mainC);
+      // The primary information is still there: toolbar controls and the count.
+      await expect(page.locator("#board-filter-host")).toBeVisible();
+      await expect(page.locator("#board-filter-project")).toBeVisible();
+      await expect(page.getByTestId("board-count")).toBeVisible();
+      await expect(page.getByTestId("board-hidden-attention")).toBeVisible();
+      await expect(page.getByTestId("connection")).toBeVisible();
+      if (w === 320 && h === 640) {
+        await setConnection(page, "closed", 5000);
+        await page.screenshot({ path: shot("R3.7-320.png") });
+        const box = await page.getByTestId("connection-banner").locator("p").boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(320);
       }
-      return out.slice(0, 6);
-    });
-    expect(clippedText, `${w}x${h} card content clipped`).toEqual([]);
-    expect(clippedInCards, `${w}x${h} card content outside its card`).toEqual([]);
-    expect(m.over, `${w}x${h} elements outside the viewport`).toEqual([]);
-    expect(m.docW, `${w}x${h} page scrolls sideways`).toBeLessThanOrEqual(w);
-    expect(m.mainW, `${w}x${h} main scrolls sideways`).toBeLessThanOrEqual(m.mainC);
-    // The primary information is still there: toolbar controls and the count.
-    await expect(page.locator("#board-filter-host")).toBeVisible();
-    await expect(page.locator("#board-filter-project")).toBeVisible();
-    await expect(page.getByTestId("board-count")).toBeVisible();
-    await expect(page.getByTestId("board-hidden-attention")).toBeVisible();
-    await expect(page.getByTestId("connection")).toBeVisible();
-    if (w === 320 && h === 640) {
-      await setConnection(page, "closed", 5000);
-      await page.screenshot({ path: shot("R3.7-320.png") });
-      const box = await page.getByTestId("connection-banner").locator("p").boundingBox();
-      expect(box!.x).toBeGreaterThanOrEqual(0);
-      expect(box!.x + box!.width).toBeLessThanOrEqual(320);
+      await page.locator("#board-filter-project").selectOption("");
     }
-    await page.locator("#board-filter-project").selectOption("");
+  });
+}
+
+test("R3.2 at 320 px a meter row going null to value moves no meter box", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await openSettledBoard(page);
+  type Store = {
+    getState: () => { sessions: Record<string, Record<string, unknown>> };
+    setState: (p: unknown) => void;
+  };
+  const patch = (p: { ctx: unknown; rl: unknown }) =>
+    page.evaluate((arg) => {
+      const b = (window as unknown as { __sd: { board: Store } }).__sd.board;
+      const s = b.getState().sessions;
+      const id = Object.keys(s)[0]!;
+      b.setState({
+        sessions: { ...s, [id]: { ...s[id], context: arg.ctx, rate_limits: arg.rl } },
+      });
+      return id;
+    }, p);
+  const boxes = async (id: string) =>
+    page.evaluate((sid) => {
+      const card = document.querySelector(`[data-session-id="${sid}"]`)!;
+      return Array.from(card.querySelectorAll<HTMLElement>("[data-meter]")).map((m) => {
+        const r = m.getBoundingClientRect();
+        const v = m.querySelector<HTMLElement>('[data-slot="value"]')!;
+        // The leading percent (first 4 chars or the whole "n/a") must be fully inside the value box.
+        const rng = document.createRange();
+        const node = v.firstChild!;
+        rng.setStart(node, 0);
+        rng.setEnd(node, Math.min(4, node.textContent!.length));
+        const lead = rng.getBoundingClientRect();
+        const vr = v.getBoundingClientRect();
+        return {
+          kind: m.dataset["meter"],
+          x: r.x,
+          y: r.y,
+          w: r.width,
+          h: r.height,
+          text: v.textContent,
+          cut: lead.right > vr.right + 0.5,
+        };
+      });
+    }, id);
+  const nullCtx = { used_pct: null, window: null, input: null, output: null };
+  const id = await patch({
+    ctx: nullCtx,
+    rl: { five_hour: null, seven_day: null, captured_at: null },
+  });
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+  const before = await boxes(id);
+  expect(before.map((b) => b.text)).toEqual(["n/a", "n/a", "n/a"]);
+  const future = Date.now() + 3_600_000;
+  await patch({
+    ctx: { used_pct: 100, window: 1_000_000, input: 1, output: 1 },
+    rl: {
+      five_hour: { used_pct: 100, resets_at: future },
+      seven_day: { used_pct: 100, resets_at: future },
+      captured_at: future,
+    },
+  });
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+  const after = await boxes(id);
+  expect(after.map((b) => b.text?.slice(0, 4))).toEqual(["100%", "100%", "100%"]);
+  for (let i = 0; i < 3; i++) {
+    const a = before[i]!;
+    const b = after[i]!;
+    expect({ x: b.x, y: b.y, w: b.w, h: b.h }, `${a.kind} meter box`).toEqual({
+      x: a.x,
+      y: a.y,
+      w: a.w,
+      h: a.h,
+    });
+    expect(b.cut, `${a.kind} leading number cut off`).toBe(false);
   }
 });
 
