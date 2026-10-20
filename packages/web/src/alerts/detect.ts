@@ -36,6 +36,11 @@ export interface DetectorOptions {
   seed?: Record<string, SeenEpisode>;
   /** An episode ended: the session left the state or disappeared. */
   onEnd?: (sessionId: string) => void;
+  /**
+   * A seeded episode (recorded before a reload) is still running on the first real set. Called once
+   * per such episode, so the caller can re-create the notification the reload orphaned.
+   */
+  onResume?: (event: AttentionEvent) => void;
 }
 
 /**
@@ -45,9 +50,11 @@ export interface DetectorOptions {
  */
 export function createAttentionDetector(opts: DetectorOptions = {}) {
   const seen = new Map<string, SeenEpisode>(Object.entries(opts.seed ?? {}));
+  const unresumed = new Set(Object.keys(opts.seed ?? {}));
   let primed = opts.seed === undefined || Object.keys(opts.seed).length === 0;
   const end = (id: string) => {
     seen.delete(id);
+    unresumed.delete(id);
     opts.onEnd?.(id);
   };
   return {
@@ -66,7 +73,11 @@ export function createAttentionDetector(opts: DetectorOptions = {}) {
         const state = session.state as AttentionState;
         const since = session.state_since;
         const prev = seen.get(id);
-        if (prev && prev.state === state && prev.since === since) continue;
+        if (prev && prev.state === state && prev.since === since) {
+          if (unresumed.delete(id)) opts.onResume?.({ sessionId: id, state, session });
+          continue;
+        }
+        unresumed.delete(id);
         if (prev) opts.onEnd?.(id);
         seen.set(id, { state, since });
         events.push({ sessionId: id, state, session });

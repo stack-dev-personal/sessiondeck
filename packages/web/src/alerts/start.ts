@@ -64,7 +64,17 @@ export function startAlerts(
       /* already gone */
     }
   };
-  const detector = createAttentionDetector({ seed: loadSeen(), onEnd: closeFor });
+  const detector = createAttentionDetector({
+    seed: loadSeen(),
+    onEnd: closeFor,
+    // After a reload the page lost its handle on the notification it showed. Show it again with
+    // the same tag (a silent replace, no tone) so the handle exists and it closes with the episode.
+    onResume: (e) => {
+      if (!ui.getState().settings.notifications) return;
+      const n = showNotification(env, e);
+      if (n) open.set(e.sessionId, n);
+    },
+  });
   let last = board.getState().sessions;
   // Baseline: sessions already present at start are recorded as seen episodes and reported once.
   const handle = (sessions: BoardState["sessions"]) => {

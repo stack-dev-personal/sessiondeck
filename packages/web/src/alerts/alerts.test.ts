@@ -184,12 +184,46 @@ describe("startAlerts delivery", () => {
     first.stop();
     const second = setup(settings({ notifications: true }));
     second.set(snap("a", "waiting_permission", { state_since: 10 }), snap("b", "idle"));
-    expect(calls).toHaveLength(1);
+    // only the silent same-tag replace of the orphaned notification, no new announcement
+    expect(calls.map((c) => c.options?.tag)).toEqual(["sd-a-10", "sd-a-10"]);
     second.set(
       snap("a", "waiting_permission", { state_since: 10 }),
       snap("b", "waiting_input", { state_since: 50 }),
     );
+    expect(calls).toHaveLength(3);
+    expect(calls[2]!.options?.tag).toBe("sd-b-50");
+  });
+
+  it("after a reload re-creates a still-waiting notification silently so it closes at episode end", () => {
+    const first = setup(
+      settings({ notifications: true, sounds: { waiting_permission: true, waiting_input: true } }),
+    );
+    first.set(snap("a", "waiting_permission", { state_since: 10 }));
+    first.stop();
+    tones.length = 0;
+    closed.length = 0;
+    const second = setup(
+      settings({ notifications: true, sounds: { waiting_permission: true, waiting_input: true } }),
+    );
+    second.set(snap("a", "waiting_permission", { state_since: 10 }));
     expect(calls).toHaveLength(2);
+    expect(calls[1]!.options?.tag).toBe("sd-a-10");
+    expect(calls[1]!.options?.silent).toBe(true);
+    expect(tones).toEqual([]);
+    // later updates in the same episode do not replace it again
+    second.set(snap("a", "waiting_permission", { state_since: 10, last_event_at: 99 }));
+    expect(calls).toHaveLength(2);
+    second.set(snap("a", "working", { state_since: 20 }));
+    expect(closed).toEqual(["sd-a-10"]);
+  });
+
+  it("does not re-create the notification after a reload when notifications are off", () => {
+    const first = setup(settings({ notifications: true }));
+    first.set(snap("a", "waiting_permission", { state_since: 10 }));
+    first.stop();
+    const second = setup(settings());
+    second.set(snap("a", "waiting_permission", { state_since: 10 }));
+    expect(calls).toHaveLength(1);
   });
 
   it("announces an episode that is new since the reload (state_since differs)", () => {
