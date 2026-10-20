@@ -12,7 +12,7 @@
 - [x] U2 (sd-executor-contract): PROMPT-BOOK.md section 2 launch prefix and stdin from /dev/null; sprint-image-static.test.ts checks; `pnpm -F @sessiondeck/scripts test:sprint`
 - [x] U3: container harness run (check-sprint-image.sh, evidence under .sprint/0/screens/INFRA-1)
 - [x] U4: sd-reviewer and sd-security-reviewer, one fix round at most
-- [ ] U5: sd-verifier adds R0.8 rows to docs/VERIFY-P0.md
+- [x] U5: sd-verifier adds R0.8 rows to docs/VERIFY-P0.md
 - [ ] U6: commit, push p0/sprint-auth, PR to main, CI green
 
 ## Decisions made
@@ -38,3 +38,7 @@
 ## Decisions made (review round)
 
 - The launch command gained env -u SPRINT_CLAUDE_OAUTH_TOKEN between the prefix assignment and claude -p (both reviewers; form per the security reviewer). The rest of the command is unchanged.
+
+## Verification
+
+- sd-verifier added the INFRA-1 section to docs/VERIFY-P0.md: 4 pass / 0 fail / 2 unverifiable (real-token nested launch: needs laptop confirmation at the Sprint 1 relaunch; deny rules and guard.mjs in the container: open, same relaunch).
