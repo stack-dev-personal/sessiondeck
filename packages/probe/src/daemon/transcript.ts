@@ -28,6 +28,8 @@ export const MAX_LINES_PER_ENVELOPE = 500;
 export const HEAD_BYTES = 256;
 const READ_CHUNK = 8 * 1024 * 1024;
 const ENDED_KEEP_MS = 7 * 24 * 3600 * 1000;
+/** How long a pruned key (and a loss of the offsets file) is remembered; bounds the state file. */
+export const PRUNED_KEEP_MS = 30 * 24 * 3600 * 1000;
 
 export type ReplaceStrategy = "posix" | "win32";
 
@@ -65,18 +67,20 @@ export interface TailEntry {
 interface TailState {
   v: 1;
   files: Record<string, TailEntry>;
-  /** Keys of entries pruned after SessionEnd; a later re-track starts at a high mark. */
-  pruned?: string[];
-  /** Offsets were lost once (corrupt file); new entries start at a high mark. */
-  lost?: boolean;
+  /** Highest line number ever issued by this daemon, across all streams. */
+  max_issued?: number;
+  /** Pruned key to prune time; a re-track within PRUNED_KEEP_MS restarts above max_issued. */
+  pruned?: Record<string, number>;
+  /** Offsets were lost (corrupt file) at this time; keys first seen until lost_until restart high. */
+  lost_until?: number;
 }
 
-function isUnder(p: string, dir: string): boolean {
+export function isUnder(p: string, dir: string): boolean {
   const w = looksWindows(dir) || looksWindows(p);
   const m = w ? path.win32 : path.posix;
   const norm = (x: string): string => (w ? m.resolve(x).toLowerCase() : m.resolve(x));
   const rel = m.relative(norm(dir), norm(p));
-  return rel !== "" && !rel.startsWith("..") && !m.isAbsolute(rel);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${m.sep}`) && !m.isAbsolute(rel);
 }
 
 /**
@@ -197,8 +201,9 @@ export class TranscriptTailer implements DaemonComponent {
   private readonly strategy: ReplaceStrategy;
   private readonly statFn: (p: string) => Promise<StatLike>;
   private dirty = false;
-  private lost = false;
-  private pruned = new Set<string>();
+  private maxIssued = -1;
+  private lostUntil = 0;
+  private pruned = new Map<string, number>();
   /** Counters for harnesses and logs. */
   readonly stats = { lines: 0, envelopes: 0, resets: 0, markers: 0 };
 
@@ -275,7 +280,6 @@ export class TranscriptTailer implements DaemonComponent {
               typeof p["agent_transcript_path"] === "string"
                 ? p["agent_transcript_path"]
                 : undefined,
-              tp,
             ),
             "SubagentStop",
           );
@@ -320,12 +324,7 @@ export class TranscriptTailer implements DaemonComponent {
     });
   }
 
-  onSubagentStop(
-    sessionId: string,
-    agentId: string,
-    agentPath?: string,
-    transcriptPath?: string,
-  ): Promise<void> {
+  onSubagentStop(sessionId: string, agentId: string, agentPath?: string): Promise<void> {
     return this.run(async () => {
       if (!AGENT_ID_RE.test(agentId)) {
         this.log("warn", "transcript: SubagentStop with an invalid agent id ignored");
@@ -334,13 +333,15 @@ export class TranscriptTailer implements DaemonComponent {
       let e = this.files.get(key(sessionId, agentId));
       let ok: string | undefined;
       if (agentPath) {
-        const mainPath = this.files.get(key(sessionId))?.path ?? transcriptPath;
+        // The payload's own transcript_path is not a trust anchor (attacker-chosen siblings).
+        const mainPath = this.files.get(key(sessionId))?.path;
         const roots = [
           ...(mainPath ? [path.dirname(mainPath)] : []),
           ...(this.o.projectsDir ? [this.o.projectsDir] : []),
         ];
         if (roots.some((r) => isUnder(agentPath, r))) ok = agentPath;
-        else this.log("warn", "transcript: SubagentStop agent_transcript_path outside projects dir");
+        else
+          this.log("warn", "transcript: SubagentStop agent_transcript_path outside projects dir");
       }
       if (!e) {
         if (!ok) return;
@@ -423,10 +424,13 @@ export class TranscriptTailer implements DaemonComponent {
         for (const [k, v] of Object.entries(parsed.files)) {
           if (validEntry(v)) this.files.set(k, v);
         }
-        if (Array.isArray(parsed.pruned)) {
-          for (const k of parsed.pruned) if (typeof k === "string") this.pruned.add(k);
+        const pr = parsed.pruned;
+        if (typeof pr === "object" && pr !== null && !Array.isArray(pr)) {
+          for (const [k, t] of Object.entries(pr)) if (Number.isFinite(t)) this.pruned.set(k, t);
         }
-        this.lost = parsed.lost === true;
+        if (Number.isInteger(parsed.max_issued)) this.maxIssued = parsed.max_issued as number;
+        if (Number.isFinite(parsed.lost_until)) this.lostUntil = parsed.lost_until as number;
+        for (const e of this.files.values()) this.maxIssued = Math.max(this.maxIssued, e.next_line);
         this.loaded = true;
         return;
       }
@@ -436,7 +440,10 @@ export class TranscriptTailer implements DaemonComponent {
     const aside = `${this.o.statePath}.corrupt-${this.now()}`;
     this.log("error", `transcript offsets unreadable; moved to ${aside}`);
     await rename(this.o.statePath, aside).catch(() => undefined);
-    this.lost = true;
+    // max_issued is unknown: assume everything below the current high mark may be taken, and
+    // restart every key first seen during the next PRUNED_KEEP_MS above it.
+    this.maxIssued = Math.max(this.maxIssued, highMark(this.now()) - 1);
+    this.lostUntil = this.now() + PRUNED_KEEP_MS;
     this.dirty = true;
     this.loaded = true;
   }
@@ -449,8 +456,9 @@ export class TranscriptTailer implements DaemonComponent {
     const state: TailState = {
       v: 1,
       files: Object.fromEntries(this.files),
-      ...(this.pruned.size > 0 ? { pruned: [...this.pruned] } : {}),
-      ...(this.lost ? { lost: true } : {}),
+      ...(this.maxIssued >= 0 ? { max_issued: this.maxIssued } : {}),
+      ...(this.pruned.size > 0 ? { pruned: Object.fromEntries(this.pruned) } : {}),
+      ...(this.lostUntil > this.now() ? { lost_until: this.lostUntil } : {}),
     };
     await writeFileAtomic(this.o.statePath, JSON.stringify(state), { mode: 0o600 });
     this.dirty = false;
@@ -474,13 +482,16 @@ export class TranscriptTailer implements DaemonComponent {
       return;
     }
     let next_line = 0;
-    if (this.lost || this.pruned.has(k)) {
+    if (this.pruned.has(k) || this.now() < this.lostUntil) {
       // State for this stream was lost; the hub may hold lines from 0, and ON CONFLICT DO NOTHING
-      // would drop re-read lines that collide. Number from a time-based mark that fits INTEGER.
-      next_line = highMark(this.now());
+      // would drop re-read lines that collide. Number above everything this daemon ever issued
+      // (and above a wall-clock mark, for the case where max_issued itself was lost). The clock
+      // can step back, so the maximum with max_issued keeps it monotonic. Fits INTEGER.
+      next_line = Math.max(highMark(this.now()), this.maxIssued + 1);
       this.pruned.delete(k);
       this.log("warn", `transcript ${k}: no saved offsets, numbering restarts at ${next_line}`);
     }
+    this.maxIssued = Math.max(this.maxIssued, next_line);
     this.files.set(k, {
       session_id: sessionId,
       ...(agentId !== undefined ? { agent_id: agentId } : {}),
@@ -503,9 +514,20 @@ export class TranscriptTailer implements DaemonComponent {
     for (const [k, e] of this.files) {
       if (e.ended_at !== undefined && e.ended_at < cutoff) {
         this.files.delete(k);
-        this.pruned.add(k);
+        this.pruned.set(k, this.now());
         this.dirty = true;
       }
+    }
+    const pcut = this.now() - PRUNED_KEEP_MS;
+    for (const [k, t] of this.pruned) {
+      if (t < pcut) {
+        this.pruned.delete(k);
+        this.dirty = true;
+      }
+    }
+    if (this.lostUntil !== 0 && this.now() >= this.lostUntil) {
+      this.lostUntil = 0;
+      this.dirty = true;
     }
   }
 
@@ -595,6 +617,7 @@ export class TranscriptTailer implements DaemonComponent {
     }
     e.offset = newOffset;
     e.next_line = line;
+    this.maxIssued = Math.max(this.maxIssued, line);
     e.sig = {
       ino: st.ino,
       birthtimeMs: st.birthtimeMs,

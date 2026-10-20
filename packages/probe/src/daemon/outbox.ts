@@ -19,25 +19,29 @@ import type { SpoolLine } from "../spool-format.ts";
 export type Outbox = ((line: SpoolLine) => void) & { sync: () => void };
 
 export function createOutbox(dir: string, now: () => number = Date.now): Outbox {
-  let last: string | undefined;
+  const written = new Set<string>();
   const put = (line: SpoolLine): void => {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    last = join(dir, dayFileName(now()));
-    appendFileSync(last, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    const f = join(dir, dayFileName(now()));
+    appendFileSync(f, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    written.add(f);
   };
-  /** fsyncs the day file last written, so a caller can commit state that depends on it. */
+  /** fsyncs every day file written since the last sync (a poll can straddle the day rollover). */
   const sync = (): void => {
-    if (last === undefined) return;
-    let fd: number;
-    try {
-      fd = openSync(last, "r+");
-    } catch {
-      return;
-    }
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+    for (const f of [...written]) {
+      let fd: number;
+      try {
+        fd = openSync(f, "r+");
+      } catch {
+        written.delete(f); // removed (pruned) or unreadable: nothing left to flush
+        continue;
+      }
+      try {
+        fsyncSync(fd);
+        written.delete(f);
+      } finally {
+        closeSync(fd);
+      }
     }
   };
   return Object.assign(put, { sync });

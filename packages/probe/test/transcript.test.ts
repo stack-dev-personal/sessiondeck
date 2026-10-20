@@ -9,6 +9,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import { vi } from "vitest";
+
+const fsyncCalls = vi.hoisted(() => ({ n: 0 }));
+vi.mock("node:fs", async (orig) => {
+  const a = await orig<typeof import("node:fs")>();
+  return {
+    ...a,
+    fsyncSync: (fd: number): void => {
+      fsyncCalls.n += 1;
+      a.fsyncSync(fd);
+    },
+  };
+});
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
@@ -20,11 +32,14 @@ import {
   type StatLike,
   TranscriptTailer,
   type TranscriptTailerOptions,
+  PRUNED_KEEP_MS,
   highMark,
+  isUnder,
   shouldReset,
   splitLines,
   subagentTranscriptPath,
 } from "../src/daemon/transcript.ts";
+import { createOutbox } from "../src/daemon/outbox.ts";
 import { fixturesDir } from "./helpers.ts";
 
 let dir: string;
@@ -120,6 +135,8 @@ describe("transcript tailer", () => {
     fail = false;
     await t.poll();
     expect(flat()).toEqual(gen(0, 4));
+    expect([...deliveries().keys()]).toEqual([0, 1, 2, 3]);
+    expect((out[0]!.payload as { start_line: number }).start_line).toBe(0);
   });
 
   it("a crash after the outbox write replays with identical start_line (hub dedups)", async () => {
@@ -428,7 +445,7 @@ describe("transcript tailer review fixes", () => {
     const sub = join(proj, stop.session_id, "subagents", `agent-${stop.agent_id}.jsonl`);
     mkdirSync(join(proj, stop.session_id, "subagents"), { recursive: true });
     writeFileSync(sub, nl(gen(0, 3, "S")));
-    const t = mk();
+    const t = mk({ projectsDir: proj });
     t.onSpoolLine(
       hook(
         "SubagentStop",
@@ -472,11 +489,12 @@ describe("transcript tailer review fixes", () => {
     writeFileSync(statePath(), "{nope");
     const logs: string[] = [];
     out.length = 0;
-    const t2 = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) });
+    const clock = Date.now();
+    const t2 = mk({ now: () => clock, log: (lv, m) => logs.push(`${lv} ${m}`) });
     await t2.onSessionStart(S, f);
     await t2.poll();
     const first = (out[0]!.payload as { start_line: number }).start_line;
-    expect(first).toBe(highMark(Date.now())); // within the same second, give or take one tick
+    expect(first).toBe(highMark(clock));
     expect(first).toBeGreaterThan(13);
     expect(first + 1e6).toBeLessThan(2 ** 31);
     expect(logs.some((l) => l.startsWith("warn") && l.includes("numbering restarts"))).toBe(true);
@@ -496,6 +514,121 @@ describe("transcript tailer review fixes", () => {
     const t2 = mk({ now: () => clock });
     await t2.onSessionStart(S, f);
     expect(t2.entries()[0]!.next_line).toBe(highMark(clock));
+  });
+
+  it("SubagentStop for an untracked main session needs projectsDir (payload path is no anchor)", async () => {
+    const proj = join(dir, "proj");
+    const sub = join(proj, S, "subagents", "agent-a1.jsonl");
+    mkdirSync(join(proj, S, "subagents"), { recursive: true });
+    writeFileSync(sub, nl(gen(0, 2, "S")));
+    const logs: string[] = [];
+    const t = mk({ log: (lv, m) => logs.push(`${lv} ${m}`) }); // no projectsDir
+    await t.onSubagentStop(S, "a1", sub);
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(t.entries()).toHaveLength(0);
+    expect(logs.some((l) => l.startsWith("warn") && l.includes("outside projects dir"))).toBe(true);
+    const t2 = mk({ projectsDir: proj });
+    await t2.onSubagentStop(S, "a1", sub);
+    expect(flat("a1")).toEqual(gen(0, 2, "S"));
+  });
+
+  it("re-tracking after a prune never reuses numbers, even if the clock steps back", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 3)));
+    const day = 24 * 3600 * 1000;
+    let clock = Date.now();
+    const t = mk({ now: () => clock });
+    await t.onSessionStart(S, f);
+    await t.poll();
+    await t.onSessionEnd(S);
+    clock += 8 * day;
+    await t.poll(); // pruned
+    await t.onSessionStart(S, f);
+    await t.poll();
+    const h1 = t.entries()[0]!.next_line;
+    expect(h1).toBe(highMark(clock) + 3);
+    await t.onSessionEnd(S);
+    clock += 8 * day;
+    await t.poll(); // pruned again
+    clock -= 20 * day; // NTP step back: highMark(clock) < h1
+    expect(highMark(clock)).toBeLessThan(h1);
+    await t.onSessionStart(S, f);
+    expect(t.entries()[0]!.next_line).toBeGreaterThanOrEqual(h1);
+    expect(JSON.parse(readFileSync(statePath(), "utf8")).max_issued).toBeGreaterThanOrEqual(h1);
+  });
+
+  it("a brand-new key starts at 0; only pruned or post-loss keys restart high", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const clock = Date.now();
+    const t = mk({ now: () => clock });
+    await t.onSessionStart("fresh", f);
+    expect(t.entries()[0]!.next_line).toBe(0);
+  });
+
+  it("the post-loss high-mark window ends after PRUNED_KEEP_MS", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    writeFileSync(statePath(), "{nope");
+    let clock = Date.now();
+    const t = mk({ now: () => clock });
+    await t.onSessionStart("a", f);
+    expect(t.entries()[0]!.next_line).toBeGreaterThanOrEqual(highMark(clock));
+    expect(JSON.parse(readFileSync(statePath(), "utf8")).lost_until).toBe(clock + PRUNED_KEEP_MS);
+    clock += PRUNED_KEEP_MS + 1000;
+    await t.poll(); // clears the window
+    await t.onSessionStart("b", f);
+    expect(t.entries().find((e) => e.session_id === "b")!.next_line).toBe(0);
+    expect(JSON.parse(readFileSync(statePath(), "utf8")).lost_until).toBeUndefined();
+  });
+
+  it("the offsets file stays bounded across many prune cycles", async () => {
+    const day = 24 * 3600 * 1000;
+    let clock = Date.now();
+    const t = mk({ now: () => clock });
+    const size = (): number => readFileSync(statePath(), "utf8").length;
+    const sizes: number[] = [];
+    for (let i = 0; i < 160; i++) {
+      await t.onSessionStart(`sess-${i}-${"x".repeat(30)}`, join(dir, "none.jsonl"));
+      await t.onSessionEnd(`sess-${i}-${"x".repeat(30)}`);
+      clock += 8 * day;
+      await t.poll();
+      if (i === 59 || i === 159) sizes.push(size());
+    }
+    expect(sizes[1]!).toBeLessThanOrEqual(sizes[0]! * 1.2);
+    expect(Object.keys(JSON.parse(readFileSync(statePath(), "utf8")).pruned).length).toBeLessThan(
+      6,
+    );
+    expect(t.entries().length).toBeLessThan(3);
+  }, 30_000);
+
+  it("fsyncs through the real outbox (enqueue.sync) before persisting offsets", async () => {
+    const f = join(dir, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const box = createOutbox(join(dir, "outbox"));
+    const t = mk({ enqueue: box });
+    await t.onSessionStart(S, f);
+    const before = fsyncCalls.n;
+    await t.poll();
+    expect(fsyncCalls.n).toBeGreaterThan(before);
+  });
+
+  it("outbox sync fsyncs every day file written since the last sync", () => {
+    const day = 24 * 3600 * 1000;
+    let clock = Date.UTC(2026, 5, 1, 23, 59, 59);
+    const box = createOutbox(join(dir, "ob"), () => clock);
+    const line = (id: string): SpoolLine =>
+      ({ v: 1, id, kind: "probe", host: "h", os: "linux", ts: 1, payload: {} }) as SpoolLine;
+    box(line("a"));
+    clock += 2000; // next UTC day
+    box(line("b"));
+    expect(clock % day).toBeLessThan(5000);
+    const before = fsyncCalls.n;
+    box.sync();
+    expect(fsyncCalls.n - before).toBe(2);
+    box.sync();
+    expect(fsyncCalls.n - before).toBe(2); // nothing pending
   });
 
   it("syncs the outbox before persisting offsets", async () => {
@@ -547,6 +680,21 @@ describe("transcript tailer review fixes", () => {
     await t2.poll();
     expect(readFileSync(statePath(), "utf8")).toBe(good);
     expect(t2.entries()[0]!.offset).toBeGreaterThan(0);
+  });
+});
+
+describe("isUnder", () => {
+  it("table", () => {
+    expect(isUnder("/a/b/c.jsonl", "/a/b")).toBe(true);
+    expect(isUnder("/a/b/s/subagents/x.jsonl", "/a/b/")).toBe(true);
+    expect(isUnder("/a/bc/x.jsonl", "/a/b")).toBe(false); // sibling prefix
+    expect(isUnder("/a/b", "/a/b")).toBe(false);
+    expect(isUnder("/a/b/../c/x.jsonl", "/a/b")).toBe(false);
+    expect(isUnder("/a/b/..x/y.jsonl", "/a/b")).toBe(true); // a name starting with two dots
+    expect(isUnder("C:\\Users\\X\\p\\a.jsonl", "c:/users/x/p")).toBe(true); // win32 case
+    expect(isUnder("C:\\Users\\X\\p2\\a.jsonl", "C:\\Users\\X\\p")).toBe(false);
+    expect(isUnder("C:\\p\\..\\q\\a.jsonl", "C:\\p")).toBe(false);
+    expect(isUnder("D:\\p\\a.jsonl", "C:\\p")).toBe(false);
   });
 });
 
