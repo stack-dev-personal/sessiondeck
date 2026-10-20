@@ -2,9 +2,10 @@ import type { Envelope, SessionSnapshot } from "@sessiondeck/contract";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { applyEnvelope } from "../ingest";
 import { exceeds200kOf } from "../statusline-adapter";
+import { RESERVED_IDS } from "../live/stream-client";
 import { recordEnvelope, type SessionHistory } from "./history";
 
-export type ConnectionStatus = "mock" | "connecting" | "open" | "closed";
+export type ConnectionStatus = "mock" | "connecting" | "open" | "closed" | "invalid";
 
 export interface BoardState {
   sessions: Record<string, SessionSnapshot>;
@@ -54,10 +55,12 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     retryAt: null,
     setConnection: (connection, retryAt = null) => set({ connection, retryAt }),
     enqueue: (e) => {
+      if (e.session_id !== null && RESERVED_IDS.has(e.session_id)) return;
       queue.push(e);
       arm(() => get().flush());
     },
     enqueueSnapshot: (s) => {
+      if (RESERVED_IDS.has(s.session_id)) return;
       snaps.set(s.session_id, s);
       arm(() => get().flush());
     },
@@ -65,7 +68,9 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       queue = [];
       snaps = new Map();
       set({
-        sessions: Object.fromEntries(list.map((s) => [s.session_id, s])),
+        sessions: Object.fromEntries(
+          list.filter((s) => !RESERVED_IDS.has(s.session_id)).map((s) => [s.session_id, s]),
+        ),
         exceeds200k: {},
         history: {},
       });

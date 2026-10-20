@@ -87,17 +87,53 @@ export function streamUrl(hubUrl: string, loc: { protocol: string; host: string 
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const numOrNull = (v: unknown): boolean =>
+  v === null || (typeof v === "number" && Number.isFinite(v));
+const strOrNull = (v: unknown): boolean => v === null || typeof v === "string";
+const windowOk = (v: unknown): boolean =>
+  v === null || (isObj(v) && numOrNull(v["used_pct"]) && numOrNull(v["resets_at"]));
 
-/** Minimal shape check for what the board dereferences. Anything else is dropped. */
+/** Ids that would act on the prototype when used as a plain-object key. */
+export const RESERVED_IDS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Shape check for everything the board and drawer dereference. Anything else is dropped. */
 export function isSnapshot(v: unknown): v is SessionSnapshot {
+  if (!isObj(v)) return false;
+  const id = v["session_id"];
+  if (typeof id !== "string" || id === "" || RESERVED_IDS.has(id)) return false;
+  if (typeof v["host"] !== "string" || typeof v["state"] !== "string") return false;
+  const ctx = v["context"];
+  if (!isObj(ctx)) return false;
+  for (const k of ["used_pct", "window", "input", "output"]) if (!numOrNull(ctx[k])) return false;
+  const rl = v["rate_limits"];
+  if (!isObj(rl)) return false;
+  if (!windowOk(rl["five_hour"]) || !windowOk(rl["seven_day"]) || !numOrNull(rl["captured_at"]))
+    return false;
+  const cost = v["cost"];
+  if (!isObj(cost)) return false;
+  for (const k of ["usd", "duration_ms", "lines_added", "lines_removed"])
+    if (!numOrNull(cost[k])) return false;
+  const tasks = v["tasks"];
+  if (
+    !isObj(tasks) ||
+    typeof tasks["total"] !== "number" ||
+    typeof tasks["completed"] !== "number" ||
+    !strOrNull(tasks["last_subject"])
+  )
+    return false;
+  if (!Array.isArray(v["subagents"]) || !v["subagents"].every(isObj)) return false;
+  const git = v["git"];
+  if (!isObj(git) || !strOrNull(git["branch"]) || !strOrNull(git["worktree"])) return false;
+  const model = v["model"];
+  if (
+    model !== null &&
+    !(isObj(model) && strOrNull(model["id"]) && strOrNull(model["display_name"]))
+  )
+    return false;
   return (
-    isObj(v) &&
-    typeof v["session_id"] === "string" &&
-    v["session_id"] !== "" &&
-    typeof v["host"] === "string" &&
-    typeof v["state"] === "string" &&
-    isObj(v["context"]) &&
-    isObj(v["rate_limits"])
+    typeof v["state_since"] === "number" &&
+    typeof v["started_at"] === "number" &&
+    typeof v["last_event_at"] === "number"
   );
 }
 
@@ -185,9 +221,16 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
       else opts.onStatus("connecting", null);
       return;
     }
-    if (current)
-      armLiveness(); // a quiet probe failed; the old socket stays, probe again later
-    else scheduleRetry();
+    if (current) {
+      // A quiet liveness probe failed while the old socket was silent for the whole window: the
+      // link is half-open or the hub is gone. Treat the old socket as dead so the banner shows.
+      const dead = current;
+      current = null;
+      if (liveTimer !== null) clearT(liveTimer);
+      liveTimer = null;
+      detach(dead);
+    }
+    scheduleRetry();
   };
 
   function open(): void {

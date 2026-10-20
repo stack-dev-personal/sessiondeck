@@ -1,5 +1,19 @@
 import { useState, type FormEvent } from "react";
+import { streamUrl } from "../live/stream-client";
 import { useUi } from "../store/ui";
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** Warning text when the token would travel unencrypted to a non-loopback host, else null. */
+export function insecureHubWarning(hubUrl: string): string | null {
+  const raw = hubUrl.trim();
+  if (raw === "") return null;
+  const ws = streamUrl(raw, { protocol: "https:", host: "x" });
+  if (ws === null) return "Hub URL is not valid. Use http(s):// or ws(s)://.";
+  const u = new URL(ws);
+  if (u.protocol === "wss:" || LOOPBACK.has(u.hostname)) return null;
+  return "This URL is not encrypted. The token is sent in clear text; use https unless the network is trusted.";
+}
 
 const input = "w-96 rounded border border-border bg-surface-2 px-s-2 py-s-1 text-fg";
 
@@ -8,6 +22,7 @@ export function Settings() {
   const { settings, saveSettings } = useUi();
   const [draft, setDraft] = useState(settings);
   const [saved, setSaved] = useState(false);
+  const warning = insecureHubWarning(draft.hubUrl);
   const submit = (e: FormEvent) => {
     e.preventDefault();
     saveSettings(draft);
@@ -28,6 +43,12 @@ export function Settings() {
           }}
         />
       </label>
+      {warning ? (
+        <p role="alert" className="flex items-center gap-s-2 text-sm text-fg">
+          <span aria-hidden="true">▲</span>
+          <span>{warning}</span>
+        </p>
+      ) : null}
       <label className="flex flex-col gap-s-1">
         Token
         <input

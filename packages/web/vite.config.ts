@@ -6,7 +6,8 @@ export default defineConfig({
   // Dev only: same-origin /stream and REST reach a local hub (leave Settings hubUrl empty).
   server: {
     port: 5173,
-    host: "0.0.0.0",
+    // Loopback by default (the proxy exposes the hub); SD_WEB_HOST=0.0.0.0 for containers.
+    host: process.env["SD_WEB_HOST"] ?? "127.0.0.1",
     proxy: {
       "/stream": { target: "http://localhost:8787", ws: true },
       "/sessions": "http://localhost:8787",

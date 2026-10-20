@@ -89,8 +89,7 @@ export async function configureHub(page: Page): Promise<void> {
 }
 
 export async function waitConnected(page: Page): Promise<void> {
-  await expect(page.getByTestId("connection")).toContainText("connected", { timeout: 15_000 });
-  await expect(page.getByTestId("connection")).not.toContainText("disconnected");
+  await expect(page.getByTestId("connection")).toHaveText("● connected", { timeout: 15_000 });
 }
 
 export const card = (page: Page, id: string) =>

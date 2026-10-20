@@ -235,6 +235,63 @@ describe("stream client", () => {
     expect(store.getState().sessions).toEqual({});
   });
 
+  it("a failing liveness probe kills the silent socket and shows the banner state", () => {
+    const { client, statuses, c } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.send({ type: "initial", sessions: [snap("a")] });
+    c.advance(60_000);
+    expect(FakeWs.all).toHaveLength(2);
+    FakeWs.all[1]!.onerror?.({});
+    expect(first.closed).toBe(true);
+    expect(statuses.at(-1)![0]).toBe("closed");
+    c.advance(10_000);
+    expect(FakeWs.all).toHaveLength(3);
+  });
+
+  it("current dropping while a candidate is pending keeps connecting, then adopts the candidate", () => {
+    const { client, statuses, c, store } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.send({ type: "initial", sessions: [snap("a")] });
+    c.advance(60_000);
+    const cand = FakeWs.all[1]!;
+    first.drop();
+    expect(statuses.at(-1)).toEqual(["connecting", null]);
+    expect(c.pending()).toBe(0);
+    cand.send({ type: "initial", sessions: [snap("b")] });
+    expect(statuses.at(-1)).toEqual(["open", null]);
+    expect(Object.keys(store.getState().sessions)).toEqual(["b"]);
+  });
+
+  it("stop with a candidate in flight closes both sockets and leaves no timers", () => {
+    const { client, c } = setup();
+    client.start();
+    const first = FakeWs.all[0]!;
+    first.send({ type: "initial", sessions: [] });
+    c.advance(60_000);
+    const cand = FakeWs.all[1]!;
+    client.stop();
+    expect(first.closed).toBe(true);
+    expect(cand.closed).toBe(true);
+    expect(c.pending()).toBe(0);
+  });
+
+  it("drops snapshots with a prototype-polluting id or malformed nested fields", () => {
+    const { client, store, flush } = setup();
+    client.start();
+    const ws = FakeWs.all[0]!;
+    const bad = { ...snap("x"), context: { ...snap("x").context, used_pct: "x" } };
+    ws.send({ type: "initial", sessions: [snap("a"), snap("__proto__"), bad] });
+    expect(Object.keys(store.getState().sessions)).toEqual(["a"]);
+    ws.send({ type: "session", data: snap("__proto__") });
+    ws.send({ type: "session", data: snap("constructor") });
+    store.getState().enqueueSnapshot(snap("__proto__"));
+    flush();
+    expect(Object.keys(store.getState().sessions)).toEqual(["a"]);
+    expect(Object.getPrototypeOf(store.getState().sessions)).toBe(Object.prototype);
+  });
+
   it("messages keep the liveness timer from firing", () => {
     const { client, c } = setup();
     client.start();
@@ -325,6 +382,19 @@ describe("wireStream banner state", () => {
     FakeWs.all[0]!.drop();
     expect(store.getState().connection).toBe("closed");
     expect(store.getState().retryAt).toBe(c.now() + 500);
+    stop();
+  });
+
+  it("an unparseable hub URL sets the invalid status, not closed", () => {
+    const store = createBoardStore(() => undefined);
+    const stop = wireStream(store, {
+      hubUrl: "hub.local:8787",
+      token: "t",
+      WebSocketCtor: FakeWs,
+      location: { protocol: "http:", host: "x" },
+    });
+    expect(store.getState().connection).toBe("invalid");
+    expect(FakeWs.all).toHaveLength(0);
     stop();
   });
 });

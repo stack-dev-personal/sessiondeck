@@ -145,7 +145,7 @@ describe("disconnect banner", () => {
     expect(banner).toHaveTextContent("Reconnecting");
     act(() => useBoard.getState().setConnection("open"));
     expect(banner).toBeEmptyDOMElement();
-    expect(screen.getByTestId("connection")).toHaveTextContent("connected");
+    expect(screen.getByTestId("connection")).toHaveTextContent("● connected");
   });
 
   it("takes no layout flow space (fixed overlay)", () => {

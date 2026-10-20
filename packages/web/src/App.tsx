@@ -1,6 +1,7 @@
 import { Suspense, lazy, useMemo } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ConnectionBanner } from "./components/ConnectionBanner";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DrawerHost } from "./components/DrawerHost";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
@@ -26,22 +27,24 @@ export function App() {
     <div className="flex h-full flex-col">
       <Header />
       <main className="min-h-0 flex-1 overflow-auto">
-        <Routes>
-          <Route path="/" element={<Navigate to="/board" replace />} />
-          <Route path="/board" element={<Board />} />
-          <Route path="/settings" element={<Settings />} />
-          {DevCards ? (
-            <Route
-              path="/dev/cards"
-              element={
-                <Suspense fallback={<p className="p-s-4 text-fg-muted">Loading...</p>}>
-                  <DevCards />
-                </Suspense>
-              }
-            />
-          ) : null}
-          <Route path="*" element={<Navigate to="/board" replace />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Navigate to="/board" replace />} />
+            <Route path="/board" element={<Board />} />
+            <Route path="/settings" element={<Settings />} />
+            {DevCards ? (
+              <Route
+                path="/dev/cards"
+                element={
+                  <Suspense fallback={<p className="p-s-4 text-fg-muted">Loading...</p>}>
+                    <DevCards />
+                  </Suspense>
+                }
+              />
+            ) : null}
+            <Route path="*" element={<Navigate to="/board" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </main>
       <ConnectionBanner />
       <DrawerHost />

@@ -63,8 +63,7 @@ test("R3.9 disconnect shows a banner, reconnect resyncs, no stale working card",
   await expect(card(page, a)).toHaveAttribute("data-state", "working");
 
   await gate("up");
-  await expect(page.getByTestId("connection")).toContainText("connected", { timeout: 30_000 });
-  await expect(page.getByTestId("connection")).not.toContainText("disconnected");
+  await expect(page.getByTestId("connection")).toHaveText("● connected", { timeout: 30_000 });
   await expect(banner).toHaveText("");
   await expect(card(page, a)).toHaveAttribute("data-state", "idle");
   await expect(card(page, b)).toHaveAttribute("data-state", "ended");

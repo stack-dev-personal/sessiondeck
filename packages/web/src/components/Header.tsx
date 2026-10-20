@@ -43,7 +43,9 @@ export function Header() {
             ? "● connected"
             : connection === "connecting"
               ? "◌ connecting"
-              : "✖ disconnected"}
+              : connection === "invalid"
+                ? "✖ hub URL invalid"
+                : "✖ disconnected"}
       </span>
       <button type="button" className={btn} onClick={toggleCompact} aria-pressed={compact}>
         {compact ? "Compact: on" : "Compact: off"} (c)

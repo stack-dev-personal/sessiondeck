@@ -23,6 +23,8 @@ export function ConnectionBanner() {
       secs === null || secs === 0
         ? "Disconnected, reconnecting"
         : `Disconnected, reconnecting in ${secs}s`;
+  } else if (connection === "invalid") {
+    text = "Hub URL invalid, check Settings";
   } else if (connection === "connecting") {
     text = "Reconnecting";
   }
@@ -31,7 +33,9 @@ export function ConnectionBanner() {
       <div role="status" aria-live="polite" data-testid="connection-banner">
         {text !== null ? (
           <p className="num pointer-events-auto flex items-center gap-s-2 rounded border border-state-error bg-surface-2 px-s-3 py-s-1 text-sm text-fg shadow-lg">
-            <span aria-hidden="true">{connection === "closed" ? "✖" : "◌"}</span>
+            <span aria-hidden="true">
+              {connection === "closed" || connection === "invalid" ? "✖" : "◌"}
+            </span>
             <span>{text}</span>
           </p>
         ) : null}

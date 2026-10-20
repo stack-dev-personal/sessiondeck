@@ -22,7 +22,7 @@ export function wireStream(
   const { setConnection, replaceAll, enqueueSnapshot } = store.getState();
   const url = streamUrl(cfg.hubUrl, cfg.location ?? window.location);
   if (url === null) {
-    setConnection("closed");
+    setConnection("invalid");
     return () => undefined;
   }
   const { hubUrl: _h, token, location: _l, ...extra } = cfg;

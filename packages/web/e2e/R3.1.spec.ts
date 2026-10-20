@@ -28,12 +28,12 @@ test("R3.1 a SessionStart posted to the hub shows as a card within 1 s", async (
   for (let i = 0; i < 5; i++) {
     const id = newSessionId();
     last = id;
-    await ingest([startEnv(id)]);
     const t0 = performance.now();
+    await ingest([startEnv(id)]);
     await card(page, id).waitFor({ state: "visible", timeout: 5_000 });
     samples.push(Math.round(performance.now() - t0));
   }
-  console.log(`R3.1 latency ms (POST response to card visible), 5 samples: ${samples.join(", ")}`);
+  console.log(`R3.1 latency ms (POST sent to card visible), 5 samples: ${samples.join(", ")}`);
   console.log(`R3.1 max ${Math.max(...samples)} ms`);
   expect(Math.max(...samples)).toBeLessThan(1000);
   await expect(page.getByTestId("session-card")).toHaveCount(5);
