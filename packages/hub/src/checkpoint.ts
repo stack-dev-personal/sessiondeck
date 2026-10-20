@@ -16,6 +16,38 @@ import type { Store } from "./db/store.ts";
 import type { Logger } from "./ingest/ingestor.ts";
 
 export const CHECKPOINT_INTERVAL_MS = 100;
+/** Failed checkpoints are logged once, then summarised at most this often (S3, R4). */
+export const FAILURE_LOG_INTERVAL_MS = 5 * 60_000;
+/** Consecutive failed checkpoints after which the worker is dropped and automatic ones restored. */
+export const MAX_CONSECUTIVE_FAILURES = 100;
+
+/**
+ * Rate-limited failure reporting: the first failure is logged at once, later ones are counted and
+ * summarised when intervalMs has passed since the last line. Holds only a counter and a timestamp.
+ */
+export function failureReporter(
+  log: Logger,
+  now: () => number = Date.now,
+  intervalMs: number = FAILURE_LOG_INTERVAL_MS,
+): { failed: (why: string) => void; recovered: () => void } {
+  let last = Number.NEGATIVE_INFINITY;
+  let suppressed = 0;
+  return {
+    failed: (why) => {
+      const t = now();
+      if (t - last >= intervalMs) {
+        log.warn({ err: why, suppressed }, "wal checkpoint failed");
+        last = t;
+        suppressed = 0;
+      } else suppressed++;
+    },
+    recovered: () => {
+      log.info({}, "wal checkpoint recovered");
+      last = Number.NEGATIVE_INFINITY;
+      suppressed = 0;
+    },
+  };
+}
 
 const WORKER_SRC = `
 const { parentPort, workerData } = require("node:worker_threads");
@@ -23,9 +55,12 @@ const Database = require(workerData.sqlite);
 const db = new Database(workerData.dbPath);
 db.pragma("busy_timeout = 5000");
 db.pragma("wal_autocheckpoint = 0");
+let failing = false;
 const run = () => {
-  try { db.pragma("wal_checkpoint(PASSIVE)"); }
-  catch (e) { parentPort.postMessage({ error: String(e && e.message) }); }
+  try {
+    db.pragma("wal_checkpoint(PASSIVE)");
+    if (failing) { failing = false; parentPort.postMessage({ recovered: true }); }
+  } catch (e) { failing = true; parentPort.postMessage({ error: String(e && e.message) }); }
 };
 const timer = setInterval(run, workerData.intervalMs);
 parentPort.on("message", (m) => {
@@ -54,7 +89,10 @@ export function startCheckpointer(
   intervalMs: number = CHECKPOINT_INTERVAL_MS,
 ): Checkpointer {
   if (dbPath === ":memory:") return { stop: async () => undefined };
+  let fellBack = false;
   const fallback = (why: string): void => {
+    if (fellBack) return;
+    fellBack = true;
     try {
       store.db.pragma("wal_autocheckpoint = 1000");
     } catch {
@@ -80,9 +118,20 @@ export function startCheckpointer(
   let stopping = false;
   let exited = false;
   const gone = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+  const report = failureReporter(log);
+  let consecutive = 0;
   worker.on("message", (m: unknown) => {
-    if (typeof m === "object" && m !== null && "error" in m) {
-      log.warn({ err: String((m as { error: unknown }).error) }, "wal checkpoint failed");
+    if (typeof m !== "object" || m === null) return;
+    if ("recovered" in m) {
+      consecutive = 0;
+      report.recovered();
+    } else if ("error" in m) {
+      report.failed(String((m as { error: unknown }).error));
+      // A database that stays unreadable for this long will not be fixed by more attempts.
+      if (++consecutive === MAX_CONSECUTIVE_FAILURES && !stopping) {
+        fallback("too many consecutive checkpoint failures");
+        void worker.terminate();
+      }
     }
   });
   worker.on("error", (err) => {

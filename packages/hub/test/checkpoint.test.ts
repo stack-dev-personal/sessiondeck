@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { statSync } from "node:fs";
 import type { Envelope } from "@sessiondeck/contract";
-import { SAFETY_NET_FRAMES, startCheckpointer } from "../src/checkpoint.ts";
+import { SAFETY_NET_FRAMES, failureReporter, startCheckpointer } from "../src/checkpoint.ts";
 import { Ingestor } from "../src/ingest/ingestor.ts";
 import { mkEnv } from "./support/hub.ts";
 import { tempStore } from "./helpers.ts";
@@ -55,5 +55,38 @@ describe("startCheckpointer", () => {
     const ck = startCheckpointer(t.store, ":memory:", quiet);
     await ck.stop();
     expect(t.store.db.pragma("wal_autocheckpoint", { simple: true })).toBe(1000);
+  });
+
+  it("restores automatic checkpoints and warns when the worker cannot open the database", async () => {
+    const t = tempStore({ file: true });
+    cleanup = t.cleanup;
+    t.store.migrate();
+    const warns: string[] = [];
+    const log = { info: () => undefined, warn: (_o: object, m: string) => void warns.push(m) };
+    const ck = startCheckpointer(t.store, "/nonexistent-dir/x/y.db", log, 25);
+    await waitFor(() => warns.length > 0);
+    expect(warns[0]).toBe("checkpoint worker unavailable, automatic checkpoints restored");
+    expect(t.store.db.pragma("wal_autocheckpoint", { simple: true })).toBe(1000);
+    await ck.stop();
+  });
+});
+
+describe("failureReporter (S3, R4)", () => {
+  it("logs the first failure, counts the rest, and summarises after the interval", () => {
+    const lines: { o: Record<string, unknown>; m: string }[] = [];
+    const log = {
+      info: () => undefined,
+      warn: (o: object, m: string) => void lines.push({ o: o as Record<string, unknown>, m }),
+    };
+    let now = 1_000;
+    const r = failureReporter(log, () => now, 60_000);
+    for (let i = 0; i <= 600; i++) {
+      r.failed("locked");
+      now += 100;
+    }
+    // 10 failures/s for 60 s: the first, then exactly one summary (601 calls, 600 ms apart cumulatively).
+    expect(lines.length).toBe(2);
+    expect(lines[0]?.o["suppressed"]).toBe(0);
+    expect(Number(lines[1]?.o["suppressed"])).toBeGreaterThan(500);
   });
 });
