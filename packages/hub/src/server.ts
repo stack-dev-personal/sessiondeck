@@ -10,7 +10,9 @@ import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
+import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
+import { PricingProvider, bundledTable } from "./pricing/loader.ts";
 import { registerStream, tokenFromProtocols } from "./stream.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
@@ -27,6 +29,8 @@ export function buildServer(opts: {
   heartbeatMs?: number;
   maxBufferedBytes?: number;
   refuseFallbackMs?: number;
+  /** Cost history pricing; defaults to the bundled table. main.ts passes the configured one. */
+  pricing?: PricingProvider;
 }): FastifyInstance {
   const expected = digest(opts.config.token);
 
@@ -125,6 +129,12 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
+  registerCost(
+    app,
+    opts.store,
+    opts.pricing ?? new PricingProvider(bundledTable()),
+    opts.config.timezone,
+  );
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,

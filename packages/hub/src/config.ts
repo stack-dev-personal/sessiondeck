@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isValidTimeZone } from "./usage/usage.ts";
 
 export interface HubConfig {
   token: string;
@@ -25,6 +26,15 @@ export interface HubConfig {
   allowedOrigins: string[];
   /** New sessions for a host are not created once it has this many open (non-ended) sessions. */
   maxOpenSessionsPerHost: number;
+  /** HUB_PRICING_FILE: LiteLLM-shaped pricing file; highest precedence, disables the fetch. */
+  pricingFile?: string;
+  /** HUB_PRICING_FETCH (default on): fetch LiteLLM prices once at startup, in the background. */
+  pricingFetch: boolean;
+  /**
+   * HUB_TIMEZONE: IANA zone used to bucket history days when a request gives no `tz`. Unset means
+   * the process-local zone, which is ccusage's default.
+   */
+  timezone?: string;
 }
 
 export const MIN_TOKEN_LENGTH = 16;
@@ -38,6 +48,14 @@ function posInt(env: Record<string, string | undefined>, name: string, dflt: num
   const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${name} must be a positive integer`);
   return n;
+}
+
+function bool(env: Record<string, string | undefined>, name: string, dflt: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return dflt;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  throw new Error(`${name} must be 0, 1, true or false`);
 }
 
 export function loadConfig(env: Record<string, string | undefined>): HubConfig {
@@ -61,7 +79,15 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
   ] as const) {
     if (v < MIN_BUCKET) throw new Error(`${name} must be at least ${MIN_BUCKET} (max batch size)`);
   }
+  const timezone = env["HUB_TIMEZONE"];
+  if (timezone !== undefined && timezone !== "" && !isValidTimeZone(timezone)) {
+    throw new Error("HUB_TIMEZONE must be an IANA time zone name");
+  }
+  const pricingFile = env["HUB_PRICING_FILE"];
   return {
+    ...(pricingFile !== undefined && pricingFile !== "" ? { pricingFile } : {}),
+    ...(timezone !== undefined && timezone !== "" ? { timezone } : {}),
+    pricingFetch: bool(env, "HUB_PRICING_FETCH", true),
     token,
     ingestRate,
     ingestBurst,

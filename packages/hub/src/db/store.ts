@@ -52,6 +52,11 @@ export interface SampleRow {
   seven_day_resets: number | null;
 }
 
+export interface UsageLineRow {
+  session_id: string;
+  raw: string;
+}
+
 export interface TranscriptLineRow {
   session_id: string;
   agent_id: string;
@@ -272,6 +277,25 @@ export class Store {
       : (this.stmt(
           "SELECT * FROM transcript_lines WHERE session_id = ? AND agent_id = ? AND line_no > ? ORDER BY line_no LIMIT ?",
         ).all(sessionId, agentId, after, limit) as TranscriptLineRow[]);
+  }
+
+  /**
+   * Raw lines that carry a usage block ('"usage":{' is also ccusage's own line filter), one
+   * session, ordered (agent_id, line_no): main transcript first, then subagents.
+   */
+  iterateSessionUsageLines(sessionId: string): IterableIterator<UsageLineRow> {
+    return this.stmt(
+      `SELECT session_id, raw FROM transcript_lines
+       WHERE session_id = ? AND instr(raw, '"usage":{') > 0 ORDER BY agent_id, line_no`,
+    ).iterate(sessionId) as IterableIterator<UsageLineRow>;
+  }
+
+  /** Same filter across every session, ordered (session_id, agent_id, line_no). */
+  iterateAllUsageLines(): IterableIterator<UsageLineRow> {
+    return this.stmt(
+      `SELECT session_id, raw FROM transcript_lines
+       WHERE instr(raw, '"usage":{') > 0 ORDER BY session_id, agent_id, line_no`,
+    ).iterate() as IterableIterator<UsageLineRow>;
   }
 
   /** Configured projects plus every project_dir seen on a session. */
