@@ -44,6 +44,13 @@ describe("R1.7 real process", () => {
       seq: 0,
     };
     await m.registerSession("real-proc-session", pid, env.ts);
+    // A cold PowerShell on a loaded runner can time out the first process snapshot (8 s, seen in
+    // CI run 39513044395). The registration is then retried on the next 10 s tick, so tracking may
+    // begin one tick late; the 15 s death bound below is measured from the kill, not from here.
+    const trackBy = Date.now() + 30_000;
+    while (m.snapshot()[0]?.state !== "tracking" && Date.now() < trackBy) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     expect(m.snapshot()[0]).toMatchObject({ pid, state: "tracking" });
     // A node process is not named "claude", so it is on probation until the first tick finds it alive.
     const regAt = Date.now();

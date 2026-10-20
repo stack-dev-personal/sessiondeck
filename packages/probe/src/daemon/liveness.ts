@@ -40,6 +40,7 @@ import {
   findParent,
   isShellProcess,
   pidAlive,
+  ProcTableUnreadable,
   type ProcInfo,
   type ProcLookup,
 } from "./proc-info.ts";
@@ -78,6 +79,8 @@ const BOOT_TOLERANCE_MS = 60_000;
 /** Probation is checked on the first tick that finds the entry at least this old. */
 const PROBATION_MIN_MS = 2000;
 const RESOLVE_RETRIES_PER_TICK = 3;
+/** Ticks on which an unreadable process table (timeout, spawn error) is retried before giving up. */
+const MAX_UNREADABLE_RETRIES = 6;
 /** More live sessions-file pids than this for one session id is not a situation to guess about. */
 const MAX_FILE_CANDIDATES = 4;
 
@@ -174,6 +177,10 @@ export class LivenessMonitor implements DaemonComponent {
   /** session_id -> time of the last discovery attempt. */
   private discovered = new Map<string, number>();
   private lastLookup = new Map<string, number>();
+  /** Set by processCandidate when the process table could not be read; read and cleared by resolve. */
+  private unreadableNow = false;
+  /** session_id -> resolves that failed because the process table was unreadable. */
+  private unreadable = new Map<string, number>();
   private fileCache: { at: number; files: SessionFile[] } | undefined;
   private inflight = 0;
   private pendingReg = 0;
@@ -563,6 +570,7 @@ export class LivenessMonitor implements DaemonComponent {
     }
     this.entries.delete(victim.session_id);
     this.lastLookup.delete(victim.session_id);
+    this.unreadable.delete(victim.session_id);
     this.fileMismatch.delete(victim.session_id);
     return true;
   }
@@ -616,7 +624,14 @@ export class LivenessMonitor implements DaemonComponent {
     ts: number,
   ): Promise<{ info: ProcInfo; walked: boolean } | undefined> {
     if (reported <= 0) return undefined;
-    const info = await findParent(reported, this.gated(), this.isAlive, ts);
+    let info: ProcInfo | undefined;
+    try {
+      info = await findParent(reported, this.gated(), this.isAlive, ts);
+    } catch (e) {
+      if (!(e instanceof ProcTableUnreadable)) throw e;
+      this.unreadableNow = true; // unknown, not a negative: resolve() schedules a retry
+      return undefined;
+    }
     if (info === undefined) return undefined;
     if (info.startMs !== undefined && info.startMs > ts + START_SKEW_MS) {
       this.log("info", `liveness: pid ${info.pid} started after the hook line; not claude`);
@@ -690,8 +705,12 @@ export class LivenessMonitor implements DaemonComponent {
     delete e.retry;
     const mine = this.files().filter((f) => f.sessionId === e.session_id);
     const before = this.dropped;
+    this.unreadableNow = false;
     const c = await this.processCandidate(e.reported_pid, ts);
+    const unreadable = this.unreadableNow;
+    this.unreadableNow = false;
     if (c !== undefined) {
+      this.unreadable.delete(e.session_id);
       const file = mine.find((f) => f.pid === c.info.pid);
       this.adopt(e, c.info, file ? "sessions" : c.walked ? "walked" : "process", file);
       return;
@@ -699,6 +718,21 @@ export class LivenessMonitor implements DaemonComponent {
     if (this.dropped > before) {
       e.retry = true; // not "dead": the lookup was rate-limited, try again on a tick
       return;
+    }
+    if (unreadable) {
+      // The snapshot timed out or failed (a cold PowerShell on a loaded box): the pid was never
+      // judged. Keep it as the candidate and look again on the next ticks, a bounded number of times.
+      const n = (this.unreadable.get(e.session_id) ?? 0) + 1;
+      this.unreadable.set(e.session_id, n);
+      if (n <= MAX_UNREADABLE_RETRIES) {
+        e.retry = true;
+        this.log(
+          "warn",
+          `liveness: process table unreadable for ${shown(e.session_id)} (pid ${e.reported_pid}); retrying (${n}/${MAX_UNREADABLE_RETRIES})`,
+        );
+        return;
+      }
+      this.unreadable.delete(e.session_id);
     }
     if (e.reported_pid <= 0) return;
     this.log(

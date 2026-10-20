@@ -31,6 +31,17 @@ export interface ProcInfo {
   startMs?: number;
 }
 
+/**
+ * Thrown by `ancestry` when the process table could not be read (timeout, overflow, spawn error).
+ * That is "unknown", not "no such process": a caller must not conclude anything about the pid.
+ */
+export class ProcTableUnreadable extends Error {
+  constructor(message = "process table unreadable") {
+    super(message);
+    this.name = "ProcTableUnreadable";
+  }
+}
+
 export interface ProcLookup {
   /** One process, or undefined when it does not exist or cannot be read. Never throws. */
   lookup(pid: number): Promise<ProcInfo | undefined>;
@@ -46,6 +57,7 @@ export interface ProcLookup {
    * process instead of one per step. `notBefore` (epoch ms, the hook line's ts) is the oldest
    * process-table read that may answer: a shared snapshot taken before it could resolve a pid the OS
    * has since handed to a new process, so a platform that caches reads must take a new one.
+   * Rejects with ProcTableUnreadable when the table could not be read (unknown, not "absent").
    */
   ancestry?(pid: number, notBefore?: number): Promise<ProcInfo[]>;
   /**
@@ -398,11 +410,13 @@ export function windowsLookup(
       const stale = cache !== undefined && notBefore !== undefined && cache.at < notBefore;
       const age = cache === undefined ? 0 : nowFn() - cache.at;
       let s = await snap(stale ? -1 : SNAPSHOT_TTL_MS);
-      let chain = s === undefined ? [] : chainFromSnapshot(s, pid);
+      if (s === undefined) throw new ProcTableUnreadable();
+      let chain = chainFromSnapshot(s, pid);
       // A shared snapshot older than the process being walked cannot contain it: read a new one.
       if (chain.length === 0 && s !== undefined && age > SNAPSHOT_REFRESH_MIN_MS) {
         s = await snap(-1);
-        chain = s === undefined ? [] : chainFromSnapshot(s, pid);
+        if (s === undefined) throw new ProcTableUnreadable();
+        chain = chainFromSnapshot(s, pid);
       }
       return chain;
     },

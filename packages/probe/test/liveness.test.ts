@@ -53,6 +53,7 @@ import {
   parseWinLine,
   PS_PATH,
   pidAlive,
+  ProcTableUnreadable,
   psLookup,
   resolvePowerShell,
   ticksToMs,
@@ -1392,5 +1393,64 @@ describe("U3-fix iteration 4 (review iteration 3 findings 1-5)", () => {
     expect(m.snapshot()[0]).toMatchObject({ state: "tracking" });
     expect(m.snapshot()[0]).not.toHaveProperty("recheck");
     await m.stop();
+  });
+});
+
+describe("R1.7 unreadable process table (Windows CI flake, run 39513044395)", () => {
+  it("a timed-out first snapshot leaves the live pid retryable and the next tick tracks it", async () => {
+    let calls = 0;
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: () => Promise.resolve(undefined),
+      ancestry: (pid) => {
+        calls += 1;
+        if (calls === 1) return Promise.reject(new ProcTableUnreadable());
+        return Promise.resolve([{ pid, ppid: 1, name: "claude" }]);
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: () => true });
+    await m.start();
+    await m.registerSession(SID_A, 100, 4242);
+    expect(m.snapshot()[0]).toMatchObject({ pid: 0, state: "unconfirmed", retry: true });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(m.snapshot()[0]).toMatchObject({ pid: 100, state: "tracking" });
+    expect(m.snapshot()[0]).not.toHaveProperty("retry");
+    await m.stop();
+  });
+
+  it("an always-unreadable table is retried a bounded number of times, then left unconfirmed", async () => {
+    let calls = 0;
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: () => Promise.resolve(undefined),
+      ancestry: () => {
+        calls += 1;
+        return Promise.reject(new ProcTableUnreadable());
+      },
+    };
+    const m = mk({ store: memStore(), procs, isAlive: () => true });
+    await m.start();
+    await m.registerSession(SID_A, 100, 4242);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(calls).toBe(7); // the registration plus six retries
+    expect(m.snapshot()[0]).toMatchObject({ pid: 0, state: "unconfirmed" });
+    expect(m.snapshot()[0]).not.toHaveProperty("retry");
+    await m.stop();
+  });
+
+  it("the Windows lookup rejects ancestry when the snapshot fails, instead of answering empty", async () => {
+    const w = windowsLookup(
+      8000,
+      undefined,
+      () => undefined,
+      () => 9_000_000,
+    );
+    execFail.err = { code: "ETIMEDOUT" };
+    try {
+      await expect(w.ancestry!(50, 1)).rejects.toBeInstanceOf(ProcTableUnreadable);
+    } finally {
+      execFail.err = undefined;
+    }
+    expect((await w.ancestry!(50, 1)).map((c) => c.pid)).toEqual([50, 40, 30]);
   });
 });
