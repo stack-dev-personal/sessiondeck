@@ -16,7 +16,11 @@
 //  - A pid whose process name is not "claude" (a node shim, a node-run cli.js) is on probation
 //    until the first tick that finds it alive; if it is gone by then it is dropped silently.
 //  - Pid reuse: Linux compares /proc starttime every tick; Windows and macOS re-read the process
-//    start (rate-limited) and a changed machine boot time ends every tracked entry.
+//    start every RECHECK_MS whatever the sessions file says (one shared process snapshot per tick on
+//    Windows). A changed machine boot time only forces that re-read at once; it is never a verdict.
+//  - The 10 s check itself never waits for a child process: it is one synchronous pass of
+//    process.kill probes, and start re-checks and the confirming look run outside the registry's
+//    work queue, so a flood of registrations or a slow PowerShell cannot delay a death past 15 s.
 //  - A death is confirmed twice (the tick, then GRACE later) so a SessionEnd that is still on its
 //    way through the spool wins.
 //  - When the watched pid differs from the one the hook reported, an alive:true correction is
@@ -52,9 +56,14 @@ const FILE_MISMATCH_TICKS = 2;
 /** Registry cap; the oldest entry that is not tracking is evicted first. */
 export const MAX_ENTRIES = 256;
 const MAX_DISCOVERED = 1024;
+/** stop() waits at most this long for queued work. */
+const STOP_WAIT_MS = 3000;
 const DISCOVERED_KEEP_MS = 10 * 60 * 1000;
-/** Registration lines waiting in the queue; the excess is dropped (the next hook line retries). */
+/** Registration lines waiting in the queue; the excess is parked (MAX_PARKED_REG) and replayed. */
 const MAX_PENDING_REG = 128;
+/** Registrations that did not fit the queue, newest per session id; replayed as the queue drains. */
+const MAX_PARKED_REG = 256;
+const REG_DROP_LOG_MS = 10_000;
 const MAX_SESSION_ID_CHARS = 256;
 const SESSION_ID_RE = /^[A-Za-z0-9._:@-]+$/;
 /** Process lookups that start a child process: bucket of LOOKUP_BURST, one token per second. */
@@ -64,13 +73,16 @@ export const LOOKUP_REFILL_MS = 1000;
 const START_SKEW_MS = 2000;
 /** Windows and macOS: re-read a tracked pid's start at most this often. */
 const RECHECK_MS = 60_000;
-/** Boot time changes by more than this (clock steps, uptime drift) mean the machine rebooted. */
+/** A boot time change by more than this (clock steps, uptime drift) forces a start re-check. */
 const BOOT_TOLERANCE_MS = 60_000;
 /** Probation is checked on the first tick that finds the entry at least this old. */
 const PROBATION_MIN_MS = 2000;
 const RESOLVE_RETRIES_PER_TICK = 3;
+/** More live sessions-file pids than this for one session id is not a situation to guess about. */
+const MAX_FILE_CANDIDATES = 4;
 
 export type EntryState = "tracking" | "unconfirmed" | "ended" | "dead" | "superseded";
+const ENTRY_STATES: readonly string[] = ["tracking", "unconfirmed", "ended", "dead", "superseded"];
 export type PidSource = "sessions" | "process" | "walked";
 
 export interface LivenessEntry {
@@ -89,12 +101,16 @@ export interface LivenessEntry {
   proc_start?: string;
   /** procStart from the sessions file. */
   file_start?: string;
-  /** Not yet seen alive on a tick; a death now is dropped silently, never reported. */
+  /** Not yet seen alive on a tick; a death now is dropped silently unless its start was verified. */
   probation?: true;
+  /** The process start was read and was not younger than the hook line, or a correction went out. */
+  start_ok?: true;
+  /** Process name when adopted (eviction prefers names other than "claude"). */
+  name?: string;
   /** A process lookup was rate-limited while resolving; the tick resolves again. */
   retry?: true;
-  /** The machine rebooted since this entry was tracked: the pid is gone whatever kill says. */
-  stale?: true;
+  /** The boot time moved: read the OS start again at the next opportunity (never a verdict). */
+  recheck?: true;
 }
 
 interface LivenessState {
@@ -161,6 +177,11 @@ export class LivenessMonitor implements DaemonComponent {
   private fileCache: { at: number; files: SessionFile[] } | undefined;
   private inflight = 0;
   private pendingReg = 0;
+  private parkedReg = new Map<string, { pid: number; ts: number }>();
+  private lastRegDropLog = -Infinity;
+  private bg = new Set<Promise<unknown>>();
+  private rechecking = false;
+  private maintainQueued = false;
   private dirty = false;
   private bootMs = 0;
   private tokens = LOOKUP_BURST;
@@ -185,6 +206,10 @@ export class LivenessMonitor implements DaemonComponent {
     superseded: 0,
     lookups: 0,
     throttled: 0,
+    regDropped: 0,
+    regReplayed: 0,
+    evictedTracking: 0,
+    capRefused: 0,
   };
 
   private readonly o: LivenessOptions;
@@ -200,7 +225,7 @@ export class LivenessMonitor implements DaemonComponent {
     this.log = o.log ?? ((): void => undefined);
     this.now = o.now ?? Date.now;
     this.isAlive = o.isAlive ?? pidAlive;
-    this.procs = o.procs ?? defaultProcLookup();
+    this.procs = o.procs ?? defaultProcLookup(undefined, (m) => this.log("warn", `liveness: ${m}`));
     this.store =
       o.store ??
       fileStore(
@@ -240,7 +265,16 @@ export class LivenessMonitor implements DaemonComponent {
     for (const t of this.graceTimers) clearTimeout(t);
     this.graceTimers.clear();
     this.dying.clear();
-    await this.chain.catch(() => undefined);
+    // Wait for queued work, but never for a hung one: a daemon shutdown must not hang on a lookup.
+    let cap: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.allSettled([this.chain, ...this.bg]),
+      new Promise<void>((r) => {
+        cap = setTimeout(r, STOP_WAIT_MS);
+        cap.unref();
+      }),
+    ]);
+    clearTimeout(cap);
   }
 
   /** Hook-spool envelope tap (at-least-once; every handler here is idempotent by ts). */
@@ -258,14 +292,10 @@ export class LivenessMonitor implements DaemonComponent {
       };
       if (p.alive === true && Number.isInteger(p.pid) && (p.pid as number) > 0) {
         if (this.pendingReg >= MAX_PENDING_REG) {
-          this.warnOnce("queue", "registration queue is full; dropping excess liveness lines");
+          this.park(sid, p.pid as number, env.ts);
           return;
         }
-        this.pendingReg += 1;
-        this.fire(
-          this.registerSession(sid, p.pid as number, env.ts).finally(() => (this.pendingReg -= 1)),
-          "register",
-        );
+        this.startRegistration(sid, p.pid as number, env.ts);
       }
       return;
     }
@@ -277,9 +307,63 @@ export class LivenessMonitor implements DaemonComponent {
     }
   }
 
+  private startRegistration(sid: string, pid: number, ts: number): void {
+    this.pendingReg += 1;
+    this.fire(
+      this.registerSession(sid, pid, ts).finally(() => {
+        this.pendingReg -= 1;
+        this.replayParked();
+      }),
+      "register",
+    );
+  }
+
+  /** The queue is full: keep the newest (pid, ts) per session id and replay it when room appears. */
+  private park(sid: string, pid: number, ts: number): void {
+    this.stats.regDropped += 1;
+    const prev = this.parkedReg.get(sid);
+    if (prev === undefined || ts >= prev.ts) {
+      this.parkedReg.delete(sid);
+      this.parkedReg.set(sid, { pid, ts });
+      if (this.parkedReg.size > MAX_PARKED_REG) {
+        const oldest = this.parkedReg.keys().next().value;
+        if (oldest !== undefined) this.parkedReg.delete(oldest);
+      }
+    }
+    const now = this.now();
+    if (now - this.lastRegDropLog >= REG_DROP_LOG_MS) {
+      this.lastRegDropLog = now;
+      this.log(
+        "warn",
+        `liveness: registration queue is full; ${this.stats.regDropped} parked so far, replayed as it drains`,
+      );
+    }
+  }
+
+  private replayParked(): void {
+    while (this.pendingReg < MAX_PENDING_REG && this.parkedReg.size > 0) {
+      const first = this.parkedReg.entries().next().value;
+      if (first === undefined) return;
+      this.parkedReg.delete(first[0]);
+      this.stats.regReplayed += 1;
+      this.startRegistration(first[0], first[1].pid, first[1].ts);
+    }
+  }
+
   private fire(p: Promise<unknown>, what: string): void {
-    p.catch((e: unknown) =>
+    const q = p.catch((e: unknown) =>
       this.log("error", `liveness ${what}: ${e instanceof Error ? e.message : String(e)}`),
+    );
+    this.bg.add(q);
+    void q.finally(() => this.bg.delete(q));
+  }
+
+  /** Persists the registry after work done outside the work queue. */
+  private flushSoon(): void {
+    this.dirty = true;
+    this.fire(
+      this.run(() => Promise.resolve()),
+      "flush",
     );
   }
 
@@ -381,16 +465,27 @@ export class LivenessMonitor implements DaemonComponent {
       const s = JSON.parse(text) as Partial<LivenessState>;
       if (s.v !== 1 || typeof s.sessions !== "object" || s.sessions === null)
         throw new Error("shape");
-      for (const [k, e] of Object.entries(s.sessions)) {
-        if (typeof e?.pid === "number" && typeof e.ts === "number" && typeof e.state === "string") {
-          this.entries.set(k, e);
-        }
+      const good: LivenessEntry[] = [];
+      for (const [k, raw] of Object.entries(s.sessions)) {
+        const e = sanitizeEntry(k, raw);
+        if (e !== undefined) good.push(e);
       }
-      if (typeof s.boot === "number" && Math.abs(s.boot - this.bootMs) > BOOT_TOLERANCE_MS) {
-        // The machine rebooted while the daemon was down: every pid recorded before is gone or
-        // reused, whatever kill(pid, 0) says. The first tick reports them.
+      good.sort((a, b) => b.at - a.at); // newest first; the cap keeps the newest
+      if (good.length > MAX_ENTRIES) {
+        this.log("warn", `liveness: state held ${good.length} entries; keeping the newest`);
+        good.length = MAX_ENTRIES;
+      }
+      for (const e of good) this.entries.set(e.session_id, e);
+      // A boot time that moved is either a reboot or a wall-clock step (the boot time is now minus
+      // uptime). Linux compares /proc starttime every check, which settles it. Elsewhere it forces
+      // an OS start re-check at the next check; the verdict is the OS's, never the clock's.
+      if (
+        typeof s.boot === "number" &&
+        Math.abs(s.boot - this.bootMs) > BOOT_TOLERANCE_MS &&
+        this.procs.cheapStart === undefined
+      ) {
         for (const e of this.entries.values()) {
-          if (e.state === "tracking") e.stale = true;
+          if (e.state === "tracking") e.recheck = true;
         }
         this.dirty = true;
       }
@@ -421,7 +516,11 @@ export class LivenessMonitor implements DaemonComponent {
     sync?.();
   }
 
-  /** Room for one more entry: evicts the oldest entry that is not tracking; false when none can go. */
+  /**
+   * Room for one more entry. When the registry is full the oldest entry that is not tracking goes;
+   * with none, the tracking entry least likely to be a real claude goes (a name other than
+   * "claude", then one no sessions file confirms, then the oldest), and that is counted and logged.
+   */
   private admit(sid: string): boolean {
     if (this.entries.has(sid) || this.entries.size < MAX_ENTRIES) return true;
     let victim: LivenessEntry | undefined;
@@ -429,10 +528,27 @@ export class LivenessMonitor implements DaemonComponent {
       if (e.state !== "tracking" && (victim === undefined || e.at < victim.at)) victim = e;
     }
     if (victim === undefined) {
-      this.warnOnce("cap", `registry holds ${MAX_ENTRIES} tracked sessions; dropping new ones`);
-      return false;
+      const rank = (e: LivenessEntry): number =>
+        (e.name === "claude" ? 2 : 0) + (e.source === "sessions" ? 1 : 0);
+      for (const e of this.entries.values()) {
+        if (victim === undefined) victim = e;
+        else if (rank(e) < rank(victim) || (rank(e) === rank(victim) && e.at < victim.at))
+          victim = e;
+      }
+      if (victim === undefined) {
+        this.stats.capRefused += 1;
+        this.warnOnce("cap", `registry is full of ${MAX_ENTRIES} entries; refusing new ones`);
+        return false;
+      }
+      this.stats.evictedTracking += 1;
+      this.log(
+        "warn",
+        `liveness: registry full; no longer watching ${shown(victim.session_id)} (pid ${victim.pid}) to admit ${shown(sid)}`,
+      );
     }
     this.entries.delete(victim.session_id);
+    this.lastLookup.delete(victim.session_id);
+    this.fileMismatch.delete(victim.session_id);
     return true;
   }
 
@@ -446,7 +562,6 @@ export class LivenessMonitor implements DaemonComponent {
       if (
         prev?.state === "tracking" &&
         prev.reported_pid === reportedPid &&
-        !prev.stale &&
         this.isAlive(prev.pid)
       ) {
         prev.ts = ts; // same session announced again by the same process
@@ -495,14 +610,37 @@ export class LivenessMonitor implements DaemonComponent {
     return { info, walked: info.pid !== reported };
   }
 
-  /** A sessions-file pid with no process-path anchor: alive and, when readable, not a shell. */
+  /**
+   * A sessions-file pid with no process-path anchor: alive, not a shell, not younger than the hook
+   * line. A file whose procStart equals the OS start of its pid is preferred over one that does not
+   * (a crashed run's file whose pid went to a long-running process). When several files still
+   * qualify, the one with the strictly newest startedAt wins; with no such winner nothing is taken.
+   */
   private async fileCandidate(files: SessionFile[], ts: number): Promise<ProcInfo | undefined> {
-    for (const f of files.filter((x) => this.isAlive(x.pid)).slice(0, 3)) {
+    const live = files.filter((x) => this.isAlive(x.pid));
+    if (live.length > MAX_FILE_CANDIDATES) return undefined;
+    const found: { f: SessionFile; info: ProcInfo }[] = [];
+    for (const f of live) {
       const info = await this.gated().lookup(f.pid);
       if (info === undefined || isShellProcess(info.name)) continue;
       if (info.startMs !== undefined && info.startMs > ts + START_SKEW_MS) continue;
-      return info;
+      found.push({ f, info });
     }
+    let pool = found;
+    const matching = found.filter(
+      (c) => c.f.procStart !== undefined && c.info.start === c.f.procStart,
+    );
+    if (matching.length > 0) pool = matching;
+    if (pool.length <= 1) return pool[0]?.info;
+    const at = pool.map((c) => startedAtMs(c.f));
+    if (at.some((v) => v === undefined)) return this.ambiguous();
+    const max = Math.max(...(at as number[]));
+    const top = pool.filter((_, i) => at[i] === max);
+    return top.length === 1 ? top[0]?.info : this.ambiguous();
+  }
+
+  private ambiguous(): undefined {
+    this.warnOnce("ambiguous", "several sessions files qualify for one session; watching none");
     return undefined;
   }
 
@@ -518,6 +656,11 @@ export class LivenessMonitor implements DaemonComponent {
     delete e.retry;
     const start = this.procs.cheapStart?.(info.pid) ?? info.start;
     if (start !== undefined) e.proc_start = start;
+    e.name = info.name;
+    if (info.startMs !== undefined) e.start_ok = true; // not younger than the hook line (checked by the caller)
+    if (this.procs.cheapStart === undefined && info.start !== undefined) {
+      this.lastLookup.set(e.session_id, this.now()); // just read: the first re-check is a RECHECK_MS away
+    }
     if (file?.procStart !== undefined) e.file_start = file.procStart;
     if (file === undefined && info.name !== "claude") e.probation = true;
   }
@@ -529,6 +672,7 @@ export class LivenessMonitor implements DaemonComponent {
    * crashed run's stale file, or a reused pid. Leaves e unconfirmed when nothing confirms.
    */
   private async resolve(e: LivenessEntry, ts: number): Promise<void> {
+    delete e.retry;
     const mine = this.files().filter((f) => f.sessionId === e.session_id);
     const before = this.dropped;
     const c = await this.processCandidate(e.reported_pid, ts);
@@ -637,21 +781,18 @@ export class LivenessMonitor implements DaemonComponent {
   // --- the check ---
 
   /**
-   * Is the watched process gone, or no longer the process we registered (pid reuse)? `force`
-   * ignores the re-check interval (the second look of a death).
+   * Synchronous verdict from what is free every tick: kill(pid, 0), the Linux /proc start, and a
+   * repeated procStart change in Claude's own sessions file. Never starts a process.
    */
-  private async gone(e: LivenessEntry, force = false): Promise<boolean> {
-    if (e.stale === true) return true;
+  private goneNow(e: LivenessEntry): boolean {
     if (!this.isAlive(e.pid)) return true;
     const cheap = this.procs.cheapStart;
     if (e.proc_start !== undefined && cheap !== undefined) {
       const cur = cheap.call(this.procs, e.pid);
       if (cur !== undefined && cur !== e.proc_start) return true; // Linux: pid reused
     }
-    let fileFresh = false;
     if (e.file_start !== undefined) {
-      // Claude's own file for this pid gives a start. Needs a repeat, because a file being
-      // rewritten could read oddly once.
+      // A file being rewritten could read oddly once, so a mismatch has to repeat.
       const cur = liveFileStart(this.reader.readPid(e.pid));
       if (cur !== undefined && cur !== e.file_start) {
         const n = (this.fileMismatch.get(e.session_id) ?? 0) + 1;
@@ -659,120 +800,217 @@ export class LivenessMonitor implements DaemonComponent {
         return n >= FILE_MISMATCH_TICKS;
       }
       this.fileMismatch.delete(e.session_id);
-      fileFresh = cur !== undefined;
-    }
-    if (cheap === undefined && e.proc_start !== undefined) {
-      // Windows and macOS: no per-tick process start, and a crashed claude leaves its file behind,
-      // so the file alone cannot prove the pid was not reused. Re-read the start now and then.
-      const now = this.now();
-      const last = this.lastLookup.get(e.session_id);
-      if (force || last === undefined || now - last >= RECHECK_MS) {
-        if (!fileFresh || force) {
-          const before = this.dropped;
-          const info = await this.gated().lookup(e.pid);
-          if (this.dropped === before) this.lastLookup.set(e.session_id, now);
-          if (info?.start !== undefined && info.start !== e.proc_start) return true;
-        } else {
-          this.lastLookup.set(e.session_id, now);
-        }
-      }
     }
     return false;
   }
 
-  /** One pass over the registry; the interval calls it every 10 s. */
-  tick(): Promise<void> {
-    return this.run(async () => {
-      await this.load();
-      if (this.stopped) return;
-      const now = this.now();
-      let changed = false;
-      let retries = 0;
-      for (const [sid, at] of this.discovered) {
-        if (now - at > DISCOVERED_KEEP_MS) this.discovered.delete(sid);
-      }
-      for (const e of [...this.entries.values()]) {
-        if (e.state === "tracking") {
-          if (e.probation === true) {
-            if (now - e.at < PROBATION_MIN_MS) continue;
-            delete e.probation;
-            changed = true;
-            if (!this.isAlive(e.pid)) {
-              // Never confirmed to be claude (a shim, a reused pid): drop without a word.
-              e.state = "unconfirmed";
-              e.pid = 0;
-              e.at = now;
-              this.log("info", `liveness: ${shown(e.session_id)} pid gone while on probation`);
-              continue;
-            }
-          }
-          if ((await this.gone(e)) && !this.dying.has(e.session_id)) {
-            this.dying.add(e.session_id);
-            const t = setTimeout(() => {
-              this.graceTimers.delete(t);
-              this.fire(this.confirmDeath(e.session_id), "confirm");
-            }, this.o.graceMs ?? GRACE_MS);
-            t.unref();
-            this.graceTimers.add(t);
-          }
-        } else if (e.state === "unconfirmed") {
-          if (e.retry === true && retries < RESOLVE_RETRIES_PER_TICK) {
-            retries += 1;
-            await this.resolve(e, e.ts);
-            if ((e.state as EntryState) === "tracking") {
-              e.at = now;
-              this.afterTracked(e);
-            }
-            changed = true;
-            continue;
-          }
-          const mine = this.files().filter((x) => x.sessionId === e.session_id);
-          const info =
-            mine.length > 0 && retries < RESOLVE_RETRIES_PER_TICK
-              ? await this.fileCandidate(mine, e.ts)
-              : undefined;
-          if (info !== undefined) {
-            retries += 1;
-            this.adopt(
-              e,
-              info,
-              "sessions",
-              mine.find((f) => f.pid === info.pid),
-            );
-            e.at = now;
-            this.afterTracked(e);
-            changed = true;
-          } else if (now - e.at > UNCONFIRMED_KEEP_MS) {
-            e.state = "ended";
-            e.at = now;
-            changed = true;
-          }
-        } else if (now - e.at > FINISHED_KEEP_MS) {
-          this.entries.delete(e.session_id);
-          this.lastLookup.delete(e.session_id);
-          changed = true;
-        }
-      }
-      if (changed) this.dirty = true;
-    });
+  /**
+   * Windows and macOS have no free per-tick process start, and a crashed claude leaves its sessions
+   * file behind, so the file proves nothing about pid reuse: the OS start is read again every
+   * RECHECK_MS, or at once when `recheck` is set, whatever the file says.
+   */
+  private startCheckDue(e: LivenessEntry, now: number): boolean {
+    if (this.procs.cheapStart !== undefined || e.proc_start === undefined) return false;
+    if (e.recheck === true) return true;
+    const last = this.lastLookup.get(e.session_id);
+    return last === undefined || now - last >= RECHECK_MS;
   }
 
-  private confirmDeath(sid: string): Promise<void> {
-    return this.run(async () => {
-      this.dying.delete(sid);
-      const e = this.entries.get(sid);
-      if (this.stopped || !e || e.state !== "tracking") return; // SessionEnd or supersede won
-      if (await this.gone(e, true)) {
-        // Order: queue, flush, then record. A crash in between repeats the envelope after a
-        // restart (the reducer ignores a second alive:false); it can never lose one.
-        this.emit(sid, e.pid, false);
-        e.state = "dead";
-        e.at = this.now();
-        this.stats.deaths += 1;
-        this.fileMismatch.delete(sid);
+  /**
+   * One process read for several pids, rate-limited as one lookup (one snapshot) when the platform
+   * has lookupMany, else in parallel. A pid missing from the result was not looked up (bucket empty).
+   */
+  private async startLookup(pids: number[]): Promise<Map<number, ProcInfo | undefined>> {
+    const out = new Map<number, ProcInfo | undefined>();
+    const p = this.procs;
+    if (p.spawns === true && p.lookupMany !== undefined) {
+      if (!this.takeToken()) return out;
+      this.stats.lookups += 1;
+      const m = await p.lookupMany(pids);
+      for (const pid of pids) out.set(pid, m.get(pid));
+      return out;
+    }
+    await Promise.all(
+      pids.map(async (pid) => {
+        if (p.spawns === true) {
+          if (!this.takeToken()) return;
+          this.stats.lookups += 1;
+        }
+        out.set(pid, await p.lookup(pid));
+      }),
+    );
+    return out;
+  }
+
+  private scheduleDeath(e: LivenessEntry): void {
+    if (this.stopped || this.dying.has(e.session_id)) return;
+    this.dying.add(e.session_id);
+    const t = setTimeout(() => {
+      this.graceTimers.delete(t);
+      this.fire(this.confirmDeath(e.session_id), "confirm");
+    }, this.o.graceMs ?? GRACE_MS);
+    t.unref();
+    this.graceTimers.add(t);
+  }
+
+  /**
+   * The synchronous half of the 10 s check, outside the work queue so nothing queued behind a slow
+   * lookup can delay it: every tracking entry is probed with kill(pid, 0) and the free checks, and a
+   * death gets its grace timer. Returns the entries whose OS start is due for a re-read.
+   */
+  private sweep(): LivenessEntry[] {
+    const now = this.now();
+    const due: LivenessEntry[] = [];
+    for (const e of [...this.entries.values()]) {
+      if (e.state !== "tracking") continue;
+      if (e.probation === true) {
+        if (now - e.at < PROBATION_MIN_MS) continue;
+        delete e.probation;
         this.dirty = true;
+        // A process never confirmed to be claude (a shim, a reused pid) that is already gone is
+        // dropped without a word, unless its start was verified or a correction already went to the
+        // hub (which would otherwise keep that pid alive forever).
+        if (!this.isAlive(e.pid) && e.start_ok !== true && e.pid === e.reported_pid) {
+          e.state = "unconfirmed";
+          e.pid = 0;
+          e.at = now;
+          this.log("info", `liveness: ${shown(e.session_id)} pid gone while on probation`);
+          continue;
+        }
       }
-    });
+      if (this.goneNow(e)) this.scheduleDeath(e);
+      else if (this.startCheckDue(e, now)) due.push(e);
+    }
+    return due;
+  }
+
+  /** Start re-checks for the due entries: one shared read, outside the work queue. */
+  private async recheck(due: LivenessEntry[]): Promise<void> {
+    if (due.length === 0 || this.rechecking) return;
+    this.rechecking = true;
+    try {
+      const r = await this.startLookup([...new Set(due.map((e) => e.pid))]);
+      const now = this.now();
+      for (const e of due) {
+        if (this.stopped || e.state !== "tracking" || this.entries.get(e.session_id) !== e)
+          continue;
+        if (!r.has(e.pid)) continue; // bucket empty: still due next tick
+        this.lastLookup.set(e.session_id, now);
+        if (e.recheck === true) {
+          delete e.recheck;
+          this.dirty = true;
+        }
+        const info = r.get(e.pid);
+        if (info?.start !== undefined && info.start !== e.proc_start) this.scheduleDeath(e);
+      }
+    } finally {
+      this.rechecking = false;
+    }
+  }
+
+  /** One pass over the registry; the interval calls it every 10 s. */
+  async tick(): Promise<void> {
+    if (!this.loaded) await this.run(() => this.load());
+    if (this.stopped) return;
+    const due = this.sweep();
+    const parts: Promise<unknown>[] = [];
+    if (due.length > 0) parts.push(this.recheck(due));
+    if (!this.maintainQueued) {
+      this.maintainQueued = true;
+      parts.push(
+        this.run(() => {
+          this.maintainQueued = false;
+          return this.maintain();
+        }),
+      );
+    }
+    await Promise.all(parts);
+  }
+
+  /** The slow half of the check, on the work queue: unconfirmed entries, pruning, bookkeeping. */
+  private async maintain(): Promise<void> {
+    if (this.stopped) return;
+    const now = this.now();
+    let changed = false;
+    let retries = 0;
+    for (const [sid, at] of this.discovered) {
+      if (now - at > DISCOVERED_KEEP_MS) this.discovered.delete(sid);
+    }
+    for (const e of [...this.entries.values()]) {
+      if (e.state === "unconfirmed") {
+        if (e.retry === true && retries < RESOLVE_RETRIES_PER_TICK) {
+          retries += 1;
+          await this.resolve(e, e.ts);
+          if ((e.state as EntryState) === "tracking") {
+            e.at = now;
+            this.afterTracked(e);
+          }
+          changed = true;
+          continue;
+        }
+        const mine = this.files().filter((x) => x.sessionId === e.session_id);
+        const info =
+          mine.length > 0 && retries < RESOLVE_RETRIES_PER_TICK
+            ? await this.fileCandidate(mine, e.ts)
+            : undefined;
+        if (info !== undefined) {
+          retries += 1;
+          this.adopt(
+            e,
+            info,
+            "sessions",
+            mine.find((f) => f.pid === info.pid),
+          );
+          e.at = now;
+          this.afterTracked(e);
+          changed = true;
+        } else if (now - e.at > UNCONFIRMED_KEEP_MS) {
+          e.state = "ended";
+          e.at = now;
+          changed = true;
+        }
+      } else if (e.state !== "tracking" && now - e.at > FINISHED_KEEP_MS) {
+        this.entries.delete(e.session_id);
+        this.lastLookup.delete(e.session_id);
+        changed = true;
+      }
+    }
+    if (changed) this.dirty = true;
+  }
+
+  /**
+   * The second look at a death, GRACE_MS after the tick that saw it, outside the work queue. When
+   * the free checks no longer say gone but a start re-check made the case, the OS start is read
+   * again; if that read cannot be made (bucket empty) the entry is marked for a forced re-check on
+   * the next tick rather than judged either way.
+   */
+  private async confirmDeath(sid: string): Promise<void> {
+    this.dying.delete(sid);
+    const e = this.entries.get(sid);
+    if (this.stopped || !e || e.state !== "tracking") return; // SessionEnd or supersede won
+    let dead = this.goneNow(e);
+    if (!dead && this.procs.cheapStart === undefined && e.proc_start !== undefined) {
+      const r = await this.startLookup([e.pid]);
+      if (this.stopped || this.entries.get(sid) !== e || e.state !== "tracking") return;
+      if (!r.has(e.pid)) {
+        e.recheck = true;
+        this.flushSoon();
+      } else {
+        this.lastLookup.set(sid, this.now());
+        const info = r.get(e.pid);
+        dead = info?.start !== undefined && info.start !== e.proc_start;
+        if (!dead && !this.isAlive(e.pid)) dead = true;
+      }
+    }
+    if (!dead) return;
+    // Order: queue, flush, then record. A crash in between repeats the envelope after a restart
+    // (the reducer ignores a second alive:false); it can never lose one.
+    this.emit(sid, e.pid, false);
+    e.state = "dead";
+    e.at = this.now();
+    this.stats.deaths += 1;
+    this.fileMismatch.delete(sid);
+    this.flushSoon();
   }
 
   /** Read-only view for tests and harnesses. */
@@ -788,4 +1026,52 @@ function validSessionId(sid: string): boolean {
 /** A session id for a log line: JSON-encoded and cut, so a forged id cannot forge a line. */
 function shown(sid: string): string {
   return JSON.stringify(sid.slice(0, 64));
+}
+
+function startedAtMs(f: SessionFile): number | undefined {
+  const v = f.startedAt;
+  if (v === undefined) return undefined;
+  const n = /^\d+(\.\d+)?$/.test(v) ? Number(v) : Date.parse(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+const optStr = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/**
+ * One persisted entry, copied field by field; undefined when it is not usable. The key must equal
+ * the session id and be a valid one (a mismatch would defeat pruning and the cap).
+ */
+function sanitizeEntry(key: string, raw: unknown): LivenessEntry | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  if (typeof r["session_id"] !== "string" || r["session_id"] !== key || !validSessionId(key))
+    return undefined;
+  const state = r["state"];
+  if (typeof state !== "string" || !ENTRY_STATES.includes(state)) return undefined;
+  const pid = r["pid"];
+  if (!finite(pid) || !Number.isInteger(pid) || pid < 0) return undefined;
+  const rpid = r["reported_pid"];
+  if (!finite(r["ts"]) || !finite(r["at"])) return undefined;
+  const e: LivenessEntry = {
+    session_id: key,
+    pid,
+    reported_pid: finite(rpid) && Number.isInteger(rpid) && rpid >= 0 ? rpid : 0,
+    state: state as EntryState,
+    ts: r["ts"],
+    at: r["at"],
+  };
+  const src = r["source"];
+  if (src === "sessions" || src === "process" || src === "walked") e.source = src;
+  const ps = optStr(r["proc_start"]);
+  if (ps !== undefined) e.proc_start = ps.slice(0, 128);
+  const fs = optStr(r["file_start"]);
+  if (fs !== undefined) e.file_start = fs.slice(0, 128);
+  const nm = optStr(r["name"]);
+  if (nm !== undefined) e.name = nm.slice(0, 64);
+  if (r["probation"] === true) e.probation = true;
+  if (r["start_ok"] === true) e.start_ok = true;
+  if (r["retry"] === true) e.retry = true;
+  if (r["recheck"] === true) e.recheck = true;
+  return e;
 }

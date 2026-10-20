@@ -32,15 +32,24 @@ export const MAX_FILE_BYTES = 64 * 1024;
 /**
  * Reads one regular file without ever blocking or following a link: lstat must say "regular file"
  * (a symlink, FIFO, or device is skipped), the open is O_NONBLOCK (and O_NOFOLLOW on POSIX), the
- * opened descriptor is fstat-checked again (closes the stat/open race), and at most
+ * opened descriptor is fstat-checked again (closes the stat/open race; on win32, which has no
+ * O_NOFOLLOW, its dev and ino must equal the lstat's, so a swapped-in link is refused), and at most
  * MAX_FILE_BYTES + 1 bytes are read through it. Returns undefined for anything else or over the cap.
  */
-export function readRegularFileCapped(file: string, maxBytes = MAX_FILE_BYTES): string | undefined {
-  if (!lstatSync(file).isFile()) return undefined;
+export function readRegularFileCapped(
+  file: string,
+  maxBytes = MAX_FILE_BYTES,
+  /** Compare the opened file's identity with the lstat's; on by default where O_NOFOLLOW is missing. */
+  checkIdentity: boolean = constants.O_NOFOLLOW === undefined,
+): string | undefined {
+  const before = lstatSync(file, { bigint: true });
+  if (!before.isFile()) return undefined;
   const flags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0);
   const fd = openSync(file, flags);
   try {
-    if (!fstatSync(fd).isFile()) return undefined;
+    const opened = fstatSync(fd, { bigint: true });
+    if (!opened.isFile()) return undefined;
+    if (checkIdentity && !sameIdentity(before, opened)) return undefined;
     const buf = Buffer.allocUnsafe(maxBytes + 1);
     let n = 0;
     while (n < buf.length) {
@@ -52,6 +61,17 @@ export function readRegularFileCapped(file: string, maxBytes = MAX_FILE_BYTES): 
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * Windows has no O_NOFOLLOW, so a link swapped in between lstat and open would be followed. The
+ * opened descriptor must be the very file lstat saw: same device and file id.
+ */
+export function sameIdentity(
+  a: { dev: bigint; ino: bigint },
+  b: { dev: bigint; ino: bigint },
+): boolean {
+  return a.dev === b.dev && a.ino === b.ino;
 }
 
 export function sessionsDir(env: Record<string, string | undefined> = process.env): string {

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const execCalls = vi.hoisted(
   () => [] as { file: string; args: string[]; opts: Record<string, unknown> }[],
 );
+const execFail = vi.hoisted(() => ({ err: undefined as { code: string } | undefined }));
 vi.mock("node:child_process", async (orig) => {
   const a = await orig<typeof import("node:child_process")>();
   return {
@@ -20,6 +21,10 @@ vi.mock("node:child_process", async (orig) => {
       cb: (e: Error | null, out: string) => void,
     ): void => {
       execCalls.push({ file, args, opts });
+      if (execFail.err) {
+        cb(Object.assign(new Error("boom"), execFail.err), "");
+        return;
+      }
       const script = args[args.length - 1] ?? "";
       cb(
         null,
@@ -57,6 +62,7 @@ import {
 } from "../src/daemon/proc-info.ts";
 import {
   MAX_FILE_BYTES,
+  sameIdentity,
   SessionsReader,
   parseSessionFile,
   readRegularFileCapped,
@@ -603,26 +609,61 @@ describe("U3-fix: which pid is trusted (findings A, C)", () => {
 });
 
 describe("U3-fix: pid reuse without a cheap start (finding B)", () => {
-  it("a reboot while the daemon was down ends every tracked pid, even ones that look alive", async () => {
+  it("a boot-time shift forces a start re-check: a live pid with an unchanged start stays alive", async () => {
     const store = memStore();
-    const p = fakeProcs({ 100: { ppid: 1, name: "claude" } });
+    const table: Record<number, Omit<ProcInfo, "pid">> = {
+      100: { ppid: 1, name: "claude", start: "AAA" },
+    };
+    const p = fakeProcs(table);
+    const procs: ProcLookup = { lookup: p.procs.lookup, spawns: true }; // no cheapStart
+    const m1 = mk({ store, procs, isAlive: p.isAlive, bootTime: () => 1_000_000 });
+    await m1.start();
+    m1.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    await m1.stop();
+    // a wall-clock step of 2 min while the daemon restarts: not a reboot, the pid is still claude
+    const m2 = mk({ store, procs, isAlive: p.isAlive, bootTime: () => 1_120_000 });
+    await m2.start();
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(deaths()).toHaveLength(0);
+    expect(m2.snapshot()[0]).toMatchObject({ state: "tracking", pid: 100 });
+    expect(m2.snapshot()[0]).not.toHaveProperty("recheck"); // done: the OS answered
+    await m2.stop();
+  });
+
+  it("a boot-time shift plus a changed start (a reused pid) is a death", async () => {
+    const store = memStore();
+    const table: Record<number, Omit<ProcInfo, "pid">> = {
+      100: { ppid: 1, name: "claude", start: "AAA" },
+    };
+    const p = fakeProcs(table);
+    const procs: ProcLookup = { lookup: p.procs.lookup, spawns: true };
+    const m1 = mk({ store, procs, isAlive: p.isAlive, bootTime: () => 1_000_000 });
+    await m1.start();
+    m1.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    await m1.stop();
+    table[100] = { ppid: 1, name: "svchost", start: "BBB" }; // rebooted: the pid is somebody else's
+    const m2 = mk({ store, procs, isAlive: p.isAlive, bootTime: () => 9_000_000 });
+    await m2.start();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deaths().map((d) => d.payload)).toEqual([{ pid: 100, alive: false }]);
+    await m2.stop();
+  });
+
+  it("with a cheap start (Linux) a boot-time shift is ignored: starttime already decides", async () => {
+    const store = memStore();
+    const p = fakeProcs({ 100: { ppid: 1, name: "claude", start: "5000" } }, { 100: "5000" });
     const m1 = mk({ store, procs: p.procs, isAlive: p.isAlive, bootTime: () => 1_000_000 });
     await m1.start();
     m1.onSpoolLine(liveEnv(SID_A, 100, 1000));
     await flush();
     await m1.stop();
-    // same boot, a few seconds of drift: nothing happens
-    const m2 = mk({ store, procs: p.procs, isAlive: p.isAlive, bootTime: () => 1_005_000 });
+    const m2 = mk({ store, procs: p.procs, isAlive: p.isAlive, bootTime: () => 9_000_000 });
     await m2.start();
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(deaths()).toHaveLength(0);
     await m2.stop();
-    // rebooted: pid 100 is alive again, but it is somebody else's now
-    const m3 = mk({ store, procs: p.procs, isAlive: p.isAlive, bootTime: () => 9_000_000 });
-    await m3.start();
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(deaths().map((d) => d.payload)).toEqual([{ pid: 100, alive: false }]);
-    await m3.stop();
   });
 
   it("Windows/macOS: a live pid whose start changed is a death, found by a rate-limited lookup", async () => {
@@ -674,9 +715,10 @@ describe("U3-fix: limits on spool input (findings F, K)", () => {
       m.onSpoolLine(liveEnv(`sess-${i}`, 10_000 + i, 1000 + i));
     }
     await flush();
-    expect(m.snapshot().length).toBeLessThanOrEqual(128); // queue depth cap
+    expect(m.snapshot().length).toBeLessThanOrEqual(MAX_ENTRIES);
+    expect(m.stats.regDropped).toBeGreaterThan(0); // counted, parked, replayed as the queue drains
     expect(lookups).toBeLessThanOrEqual(LOOKUP_BURST + 2);
-    expect(saves).toBeLessThanOrEqual(3);
+    expect(saves).toBeLessThanOrEqual(8);
     expect(logs.filter((l) => l.includes("rate-limited"))).toHaveLength(1);
     expect(logs.filter((l) => l.includes("queue is full"))).toHaveLength(1);
     await m.stop();
@@ -706,13 +748,12 @@ describe("U3-fix: limits on spool input (findings F, K)", () => {
     await m.start();
     for (let i = 0; i < MAX_ENTRIES; i += 1) await m.registerSession(`s-${i}`, 2000 + i, 1000 + i);
     expect(m.snapshot()).toHaveLength(MAX_ENTRIES);
-    await m.registerSession("overflow", 2000 + MAX_ENTRIES, 5000); // all tracking: dropped
-    expect(m.snapshot().find((e) => e.session_id === "overflow")).toBeUndefined();
     await m.endSession("s-3", 6000);
     await m.registerSession("overflow", 2000 + MAX_ENTRIES, 7000);
     expect(m.snapshot()).toHaveLength(MAX_ENTRIES);
     expect(m.snapshot().find((e) => e.session_id === "s-3")).toBeUndefined();
     expect(m.snapshot().find((e) => e.session_id === "overflow")?.state).toBe("tracking");
+    expect(m.stats.evictedTracking).toBe(0);
     await m.stop();
   });
 
@@ -739,7 +780,7 @@ describe("U3-fix: limits on spool input (findings F, K)", () => {
     expect(execCalls).toHaveLength(1);
     expect(execCalls[0]?.opts).toMatchObject({ windowsHide: true });
     expect(await findParentPID(50, w, () => true)).toBe(30);
-    expect(execCalls).toHaveLength(2);
+    expect(execCalls).toHaveLength(1); // the burst shares one snapshot (see finding 11)
   });
 
   it("K: an invalid or oversize session id is ignored and never reaches the log raw", async () => {
@@ -851,5 +892,337 @@ describe("U3-fix: sessions dir reads and process paths (findings I, J)", () => {
     await psLookup().lookup(4321);
     expect(PS_PATH).toBe("/bin/ps");
     expect(execCalls[0]?.file).toBe("/bin/ps");
+  });
+});
+
+/** A process table without cheapStart (Windows/macOS shape) that counts its lookups. */
+function spawnProcs(table: Record<number, Omit<ProcInfo, "pid">>) {
+  const alive = new Set<number>(Object.keys(table).map(Number));
+  const n = { lookup: 0, many: 0 };
+  const lookup = (pid: number): Promise<ProcInfo | undefined> => {
+    n.lookup += 1;
+    const t = table[pid];
+    return Promise.resolve(t && alive.has(pid) ? { pid, ...t } : undefined);
+  };
+  const procs: ProcLookup = {
+    spawns: true,
+    lookup,
+    lookupMany: (pids) => {
+      n.many += 1;
+      const m = new Map<number, ProcInfo>();
+      for (const pid of pids) {
+        const t = table[pid];
+        if (t && alive.has(pid)) m.set(pid, { pid, ...t });
+      }
+      return Promise.resolve(m);
+    },
+  };
+  return { alive, procs, isAlive: (pid: number): boolean => alive.has(pid), n, table };
+}
+
+describe("U3-fix iteration 3: start re-check, probation, retry (findings 1, 3, 4, 5)", () => {
+  const sdir = (): string => join(tmp, "sessions");
+  const put = (name: string, body: unknown): void => {
+    mkdirSync(sdir(), { recursive: true });
+    writeFileSync(join(sdir(), name), JSON.stringify(body));
+  };
+
+  it("1: a sessions file that still matches does not stop the start re-check (reused pid, file left behind)", async () => {
+    const p = spawnProcs({ 100: { ppid: 1, name: "claude", start: "AAA" } });
+    put("100.json", { pid: 100, sessionId: SID_A, procStart: "1" });
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    expect(m.snapshot()[0]).toMatchObject({
+      source: "sessions",
+      file_start: "1",
+      proc_start: "AAA",
+    });
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(deaths()).toHaveLength(0);
+    // claude crashed, its file stays, and the pid went to another process within a tick
+    p.table[100] = { ppid: 1, name: "svchost", start: "BBB" };
+    await vi.advanceTimersByTimeAsync(80_000);
+    expect(deaths().map((d) => d.payload)).toEqual([{ pid: 100, alive: false }]);
+    await m.stop();
+  });
+
+  it("3: a probation death is reported when the start was verified", async () => {
+    const p = fakeProcs({ 100: { ppid: 1, name: "node", startMs: 500 } });
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    expect(m.snapshot()[0]).toMatchObject({ probation: true, start_ok: true });
+    p.alive.delete(100);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deaths().map((d) => d.payload)).toEqual([{ pid: 100, alive: false }]);
+    await m.stop();
+  });
+
+  it("3: a probation death is reported when an alive:true correction already went out", async () => {
+    const p = fakeProcs({ 50: { ppid: 30, name: "bash" }, 30: { ppid: 1, name: "node" } });
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 50, 1000));
+    await flush();
+    expect(out.map((l) => l.payload)).toEqual([{ pid: 30, alive: true }]);
+    p.alive.clear();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deaths().map((d) => d.payload)).toEqual([{ pid: 30, alive: false }]);
+    await m.stop();
+  });
+
+  it("4: a retry flag is cleared when the next resolve fails for a real reason", async () => {
+    const table: Record<number, Omit<ProcInfo, "pid">> = {};
+    for (let i = 0; i < LOOKUP_BURST; i += 1) table[300 + i] = { ppid: 1, name: "claude" };
+    const p = spawnProcs(table);
+    p.alive.add(999); // alive, but the process table cannot read it
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    for (let i = 0; i < LOOKUP_BURST; i += 1) await m.registerSession(`s-${i}`, 300 + i, 1000 + i);
+    await m.registerSession("late", 999, 2000); // bucket empty: dropped, flagged for retry
+    expect(m.snapshot().find((e) => e.session_id === "late")).toMatchObject({ retry: true });
+    await vi.advanceTimersByTimeAsync(10_000); // tick: the lookup works now and finds nothing
+    expect(m.snapshot().find((e) => e.session_id === "late")).not.toHaveProperty("retry");
+    const lookups = m.stats.lookups;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(m.stats.lookups - lookups).toBeLessThanOrEqual(1); // only the periodic re-checks
+    await m.stop();
+  });
+
+  it("5: due re-checks share one process read per tick (one snapshot, not one spawn per entry)", async () => {
+    const table: Record<number, Omit<ProcInfo, "pid">> = {};
+    for (let i = 0; i < 8; i += 1) table[400 + i] = { ppid: 1, name: "claude", start: `S${i}` };
+    const p = spawnProcs(table);
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    for (let i = 0; i < 8; i += 1) await m.registerSession(`s-${i}`, 400 + i, 1000 + i);
+    const single = p.n.lookup;
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(p.n.lookup).toBe(single); // no per-entry lookups afterwards
+    expect(p.n.many).toBeGreaterThanOrEqual(2);
+    expect(p.n.many).toBeLessThanOrEqual(3);
+    expect(deaths()).toHaveLength(0);
+    await m.stop();
+  });
+
+  it("5/11: a hung process lookup and a stalled registration queue do not delay a death past 15 s", async () => {
+    const p = spawnProcs({ 100: { ppid: 1, name: "claude", start: "AAA" } });
+    let release: () => void = () => undefined;
+    const hang = new Promise<undefined>((r) => (release = () => r(undefined)));
+    const procs: ProcLookup = {
+      spawns: true,
+      lookup: (pid) => (pid === 200 ? hang : p.procs.lookup(pid)),
+      lookupMany: () => hang.then(() => new Map()),
+    };
+    p.alive.add(200);
+    const m = mk({ store: memStore(), procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    await flush();
+    m.onSpoolLine(liveEnv(SID_B, 200, 1001)); // its lookup never answers: the work queue is stuck
+    await flush();
+    const diedAt = Date.now();
+    p.alive.delete(100);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const d = deaths();
+    expect(d).toHaveLength(1);
+    expect(d[0]!.ts - diedAt).toBeLessThanOrEqual(15_000);
+    release();
+    await m.stop();
+  });
+
+  it("5: a hung start re-check does not delay another entry's death", async () => {
+    const p = spawnProcs({
+      100: { ppid: 1, name: "claude", start: "AAA" },
+      101: { ppid: 1, name: "claude", start: "BBB" },
+    });
+    const m0 = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m0.start();
+    m0.onSpoolLine(liveEnv(SID_A, 100, 1000));
+    m0.onSpoolLine(liveEnv(SID_B, 101, 1001));
+    await flush();
+    let release: () => void = () => undefined;
+    const hang = new Promise<Map<number, ProcInfo>>((r) => (release = () => r(new Map())));
+    // swap the lookup under the same registry: re-checks now hang
+    (p.procs as { lookupMany: ProcLookup["lookupMany"] }).lookupMany = () => hang;
+    await vi.advanceTimersByTimeAsync(60_000); // a re-check is due and hangs
+    const diedAt = Date.now();
+    p.alive.delete(101);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(deaths().map((d) => d.session_id)).toEqual([SID_B]);
+    expect(deaths()[0]!.ts - diedAt).toBeLessThanOrEqual(15_000);
+    release();
+    await m0.stop();
+  });
+});
+
+describe("U3-fix iteration 3: file candidates, parking, eviction, load, snapshot (findings 6-11)", () => {
+  const sdir = (): string => join(tmp, "sessions");
+  const put = (name: string, body: unknown): void => {
+    mkdirSync(sdir(), { recursive: true });
+    writeFileSync(join(sdir(), name), JSON.stringify(body));
+  };
+
+  it("6: of two files for one session the one whose procStart matches the OS start is watched", async () => {
+    const p = fakeProcs({
+      100: { ppid: 1, name: "claude", start: "OLD" }, // crashed run's pid, now a long-running process
+      200: { ppid: 1, name: "claude", start: "NEW" },
+    });
+    put("100.json", { pid: 100, sessionId: SID_A, procStart: "STALE", startedAt: 5 });
+    put("200.json", { pid: 200, sessionId: SID_A, procStart: "NEW", startedAt: 9 });
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(hookEnv(SID_A, "PostToolUse", 1000));
+    await flush();
+    expect(m.snapshot()[0]).toMatchObject({ pid: 200, state: "tracking" });
+    await m.stop();
+  });
+
+  it("6: with no procStart match the newest startedAt wins; with no clear winner nothing is watched", async () => {
+    const p = fakeProcs({ 100: { ppid: 1, name: "claude" }, 200: { ppid: 1, name: "claude" } });
+    put("100.json", { pid: 100, sessionId: SID_A, startedAt: 5 });
+    put("200.json", { pid: 200, sessionId: SID_A, startedAt: 9 });
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    m.onSpoolLine(hookEnv(SID_A, "PostToolUse", 1000));
+    await flush();
+    expect(m.snapshot()[0]).toMatchObject({ pid: 200, state: "tracking" });
+    put("300.json", { pid: 300, sessionId: SID_B });
+    put("400.json", { pid: 400, sessionId: SID_B });
+    const q = fakeProcs({ 300: { ppid: 1, name: "claude" }, 400: { ppid: 1, name: "claude" } });
+    const m2 = mk({ store: memStore(), procs: q.procs, isAlive: q.isAlive });
+    await m2.start();
+    m2.onSpoolLine(hookEnv(SID_B, "PostToolUse", 1000));
+    await flush();
+    expect(m2.snapshot()).toHaveLength(0);
+    expect(logs.some((l) => l.includes("several sessions files"))).toBe(true);
+    await m.stop();
+    await m2.stop();
+  });
+
+  it("7: registrations past the queue cap are parked, counted, logged rate-limited, and replayed", async () => {
+    const table: Record<number, Omit<ProcInfo, "pid">> = {};
+    for (let i = 0; i < 200; i += 1) table[5000 + i] = { ppid: 1, name: "claude" };
+    const p = fakeProcs(table);
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    for (let i = 0; i < 200; i += 1) m.onSpoolLine(liveEnv(`sess-${i}`, 5000 + i, 1000 + i));
+    expect(m.stats.regDropped).toBe(72);
+    await flush();
+    await flush();
+    expect(m.stats.regReplayed).toBe(72);
+    expect(m.snapshot().filter((e) => e.state === "tracking")).toHaveLength(200);
+    expect(logs.filter((l) => l.includes("queue is full"))).toHaveLength(1);
+    await m.stop();
+  });
+
+  it("8: a full registry of tracking entries evicts one (non-claude first) instead of refusing", async () => {
+    const table: Record<number, Omit<ProcInfo, "pid">> = {};
+    for (let i = 0; i <= MAX_ENTRIES; i += 1)
+      table[2000 + i] = { ppid: 1, name: i === 7 ? "node" : "claude" };
+    const p = fakeProcs(table);
+    const m = mk({ store: memStore(), procs: p.procs, isAlive: p.isAlive });
+    await m.start();
+    for (let i = 0; i < MAX_ENTRIES; i += 1) await m.registerSession(`s-${i}`, 2000 + i, 1000 + i);
+    await m.registerSession("overflow", 2000 + MAX_ENTRIES, 5000);
+    const ids = m.snapshot().map((e) => e.session_id);
+    expect(ids).toHaveLength(MAX_ENTRIES);
+    expect(ids).toContain("overflow");
+    expect(ids).not.toContain("s-7");
+    expect(m.stats.evictedTracking).toBe(1);
+    expect(m.stats.capRefused).toBe(0);
+    expect(logs.some((l) => l.includes("registry full"))).toBe(true);
+    await m.stop();
+  });
+
+  it("9: a persisted registry is validated entry by entry and capped to the newest", async () => {
+    const store = memStore();
+    const base = { pid: 0, reported_pid: 0, state: "ended", ts: 1 };
+    const sessions: Record<string, unknown> = {
+      good: { ...base, session_id: "good", at: Date.now() },
+      "key-mismatch": { ...base, session_id: "other", at: 5 },
+      numeric: { ...base, session_id: 5, at: 5 },
+      "bad state": { ...base, session_id: "bad state", at: 5 },
+      "bad-pid": { ...base, session_id: "bad-pid", pid: "7", at: 5 },
+      "no-at": { ...base, session_id: "no-at" },
+      null: null,
+    };
+    for (let i = 0; i < MAX_ENTRIES + 50; i += 1)
+      sessions[`old-${i}`] = { ...base, session_id: `old-${i}`, at: Date.now() - 100_000 + i };
+    store.text = JSON.stringify({ v: 1, boot: 1_000_000, sessions });
+    const m = mk({ store, procs: fakeProcs({}).procs, isAlive: () => false });
+    await m.start();
+    await vi.advanceTimersByTimeAsync(30_000);
+    const ids = m.snapshot().map((e) => e.session_id);
+    expect(ids).toHaveLength(MAX_ENTRIES);
+    expect(ids).toContain("good");
+    expect(ids).toContain(`old-${MAX_ENTRIES + 49}`);
+    expect(ids).not.toContain("old-0");
+    for (const bad of ["key-mismatch", "numeric", "bad state", "bad-pid", "no-at", "null"])
+      expect(ids).not.toContain(bad);
+    expect(logs.filter((l) => l.startsWith("error"))).toEqual([]);
+    await m.stop();
+  });
+
+  it("10: win32 identity check: dev and ino must match the lstat's", () => {
+    expect(sameIdentity({ dev: 1n, ino: 2n }, { dev: 1n, ino: 2n })).toBe(true);
+    expect(sameIdentity({ dev: 1n, ino: 2n }, { dev: 1n, ino: 3n })).toBe(false);
+    expect(sameIdentity({ dev: 1n, ino: 2n }, { dev: 9n, ino: 2n })).toBe(false);
+    mkdirSync(sdir(), { recursive: true });
+    const f = join(sdir(), "5.json");
+    writeFileSync(f, '{"pid":5,"sessionId":"x"}');
+    expect(readRegularFileCapped(f, MAX_FILE_BYTES, true)).toContain("sessionId");
+    expect(readRegularFileCapped(f, MAX_FILE_BYTES, false)).toContain("sessionId");
+  });
+
+  it("11: a burst of Windows lookups shares one snapshot for about 2 s, then reads again", async () => {
+    execCalls.length = 0;
+    let t = 1_000_000;
+    const w = windowsLookup(8000, undefined, undefined, () => t);
+    const results = await Promise.all([
+      w.ancestry!(50),
+      w.ancestry!(50),
+      w.lookupMany!([30, 40, 999]),
+      w.lookupMany!([50]),
+    ]);
+    expect(execCalls).toHaveLength(1);
+    expect(results[0]?.map((c) => c.pid)).toEqual([50, 40, 30]);
+    expect([...results[2]!.keys()]).toEqual([30, 40]);
+    t += 1000;
+    await w.lookupMany!([30]);
+    expect(execCalls).toHaveLength(1);
+    t += 3000;
+    await w.lookupMany!([30]);
+    expect(execCalls).toHaveLength(2);
+    // a cached snapshot that lacks the pid being walked is refreshed (the process is newer than it)
+    t += 1000;
+    expect(await w.ancestry!(77_777)).toEqual([]);
+    expect(execCalls).toHaveLength(3); // the 1 s old snapshot lacked the pid: read again
+    expect(await w.ancestry!(77_777)).toEqual([]);
+    expect(execCalls).toHaveLength(3); // but not again within 300 ms
+  });
+
+  it("11: a snapshot over the buffer or a failed one is logged and never cached", async () => {
+    execCalls.length = 0;
+    const msgs: string[] = [];
+    const w = windowsLookup(
+      8000,
+      undefined,
+      (m) => msgs.push(m),
+      () => 5_000_000,
+    );
+    execFail.err = { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" };
+    try {
+      expect((await w.lookupMany!([30])).size).toBe(0);
+      expect(msgs.some((m) => m.includes("exceeded"))).toBe(true);
+      execFail.err = undefined;
+      expect([...(await w.lookupMany!([30])).keys()]).toEqual([30]); // retried, not cached
+      expect(execCalls).toHaveLength(2);
+    } finally {
+      execFail.err = undefined;
+    }
   });
 });

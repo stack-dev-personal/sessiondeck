@@ -46,6 +46,11 @@ export interface ProcLookup {
    * process instead of one per step.
    */
   ancestry?(pid: number): Promise<ProcInfo[]>;
+  /**
+   * Several processes from ONE process-table read (a pid that does not exist is absent from the
+   * map). The monitor uses it for the periodic start re-check, so N entries cost one child process.
+   */
+  lookupMany?(pids: number[]): Promise<Map<number, ProcInfo>>;
   /** True when lookup/ancestry start a child process; the monitor then rate-limits them. */
   spawns?: boolean;
 }
@@ -185,6 +190,7 @@ function run(
   args: string[],
   timeoutMs: number,
   maxBuffer = 64 * 1024,
+  onError?: (err: { code?: string | number | null; message: string }) => void,
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     try {
@@ -192,7 +198,10 @@ function run(
         file,
         args,
         { windowsHide: true, timeout: timeoutMs, maxBuffer, encoding: "utf8" },
-        (err, stdout) => resolve(err ? undefined : stdout),
+        (err, stdout) => {
+          if (err) onError?.(err);
+          resolve(err ? undefined : stdout);
+        },
       );
     } catch {
       resolve(undefined);
@@ -314,14 +323,26 @@ const WIN_FIELDS =
   `"$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)|" + ` +
   `$(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 })`;
 
+/** A snapshot younger than this is reused by every lookup in a burst. */
+export const SNAPSHOT_TTL_MS = 2000;
+/** A cached snapshot that lacks the asked-for pid is refreshed only when it is older than this. */
+const SNAPSHOT_REFRESH_MIN_MS = 300;
+const SNAPSHOT_MAX_BUFFER = 4 * 1024 * 1024;
+
 /**
- * Windows: hidden, time-limited PowerShell CIM queries. `lookup` reads one process; `ancestry` reads
- * the whole table once and walks it in JS, so a registration costs one child process however deep
- * the shell chain is. The daemon calls these only when a pid is registered or re-checked, never on
- * the 10 s tick, and the monitor rate-limits them. No admin rights are needed to read Win32_Process
- * for the user's own processes, and nothing is written.
+ * Windows: hidden, time-limited PowerShell CIM queries. `lookup` reads one process; `ancestry` and
+ * `lookupMany` read the whole table once (shared for SNAPSHOT_TTL_MS by every caller, so a burst of
+ * registrations or re-checks costs one child process) and walk it in JS. The daemon calls these
+ * only when a pid is registered or re-checked, never on the 10 s liveness check, and the monitor
+ * rate-limits them. No admin rights are needed to read Win32_Process for the user's own processes,
+ * and nothing is written. `log` hears about a snapshot that overflowed its buffer or timed out.
  */
-export function windowsLookup(timeoutMs = 8000, powershell?: string): ProcLookup {
+export function windowsLookup(
+  timeoutMs = 8000,
+  powershell?: string,
+  log?: (msg: string) => void,
+  nowFn: () => number = () => Date.now(),
+): ProcLookup {
   const ps = powershell ?? resolvePowerShell();
   const args = (script: string): string[] => [
     "-NoProfile",
@@ -331,6 +352,32 @@ export function windowsLookup(timeoutMs = 8000, powershell?: string): ProcLookup
     "-Command",
     script,
   ];
+  const snapScript =
+    `Get-CimInstance Win32_Process | ForEach-Object { ` +
+    `[Console]::Out.WriteLine(${WIN_FIELDS}) }`;
+  let cache: { at: number; p: Promise<Map<number, ProcInfo> | undefined> } | undefined;
+  /** One process-table read; maxAge < 0 forces a new one. Concurrent callers share the same read. */
+  const snap = (maxAge: number): Promise<Map<number, ProcInfo> | undefined> => {
+    const t = nowFn();
+    if (cache !== undefined && maxAge >= 0 && t - cache.at <= maxAge) return cache.p;
+    const p = (async (): Promise<Map<number, ProcInfo> | undefined> => {
+      const out = await run(ps, args(snapScript), timeoutMs, SNAPSHOT_MAX_BUFFER, (err) => {
+        const over = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        log?.(
+          over
+            ? `process snapshot exceeded ${SNAPSHOT_MAX_BUFFER} bytes; start checks are skipped`
+            : `process snapshot failed: ${err.code ?? err.message}`,
+        );
+      });
+      return out === undefined ? undefined : parseWinSnapshot(out);
+    })();
+    const mine = { at: t, p };
+    cache = mine;
+    void p.then((m) => {
+      if (m === undefined && cache === mine) cache = undefined; // never cache a failure
+    });
+    return p;
+  };
   return {
     spawns: true,
     async lookup(pid) {
@@ -343,18 +390,35 @@ export function windowsLookup(timeoutMs = 8000, powershell?: string): ProcLookup
     },
     async ancestry(pid) {
       if (!Number.isInteger(pid) || pid <= 1) return [];
-      const script =
-        `Get-CimInstance Win32_Process | ForEach-Object { ` +
-        `[Console]::Out.WriteLine(${WIN_FIELDS}) }`;
-      const out = await run(ps, args(script), timeoutMs, 4 * 1024 * 1024);
-      return out === undefined ? [] : chainFromSnapshot(parseWinSnapshot(out), pid);
+      const age = cache === undefined ? 0 : nowFn() - cache.at;
+      let s = await snap(SNAPSHOT_TTL_MS);
+      let chain = s === undefined ? [] : chainFromSnapshot(s, pid);
+      // A shared snapshot older than the process being walked cannot contain it: read a new one.
+      if (chain.length === 0 && s !== undefined && age > SNAPSHOT_REFRESH_MIN_MS) {
+        s = await snap(-1);
+        chain = s === undefined ? [] : chainFromSnapshot(s, pid);
+      }
+      return chain;
+    },
+    async lookupMany(pids) {
+      const out = new Map<number, ProcInfo>();
+      const s = await snap(SNAPSHOT_TTL_MS);
+      if (s === undefined) return out;
+      for (const pid of pids) {
+        const i = s.get(pid);
+        if (i !== undefined) out.set(pid, i);
+      }
+      return out;
     },
   };
 }
 
-export function defaultProcLookup(platform: NodeJS.Platform = process.platform): ProcLookup {
+export function defaultProcLookup(
+  platform: NodeJS.Platform = process.platform,
+  log?: (msg: string) => void,
+): ProcLookup {
   if (platform === "linux") return linuxProcLookup();
-  if (platform === "win32") return windowsLookup();
+  if (platform === "win32") return windowsLookup(undefined, undefined, log);
   return psLookup();
 }
 
