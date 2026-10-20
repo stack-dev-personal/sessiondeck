@@ -1,0 +1,66 @@
+# sessiondeck laptop stack: hub + static web. Phase 2 scope.
+#   cp infra/.env.example infra/.env && chmod 600 infra/.env   (then set HUB_TOKEN)
+#   docker compose -f infra/docker-compose.yml up -d --build
+# Never run `docker compose config` against the real env file in a shared session: it prints it.
+# Default-deny: both ports publish on loopback only. A LAN bind is an explicit override
+# (HUB_BIND / WEB_BIND in infra/.env), and then HUB_ALLOWED_ORIGINS should be set too.
+name: sessiondeck
+
+services:
+  hub:
+    build:
+      context: ..
+      dockerfile: packages/hub/Dockerfile
+    image: sessiondeck-hub:dev
+    env_file:
+      # HUB_TOKEN (required, >= 16 chars) and optional HUB_* tuning. Gitignored, never baked into the image.
+      - ${HUB_ENV_FILE:-.env}
+    environment:
+      # Inside the container the hub must listen on all interfaces so the published port reaches it.
+      # Exposure to the host network is decided only by the port mapping below.
+      HUB_BIND: 0.0.0.0
+      HUB_DB_PATH: /data/hub.sqlite
+    ports:
+      - "${HUB_BIND:-127.0.0.1}:${HUB_PORT:-8787}:8787"
+    volumes:
+      - hub-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    # The image declares the same HEALTHCHECK; stated here so the compose file is self-describing.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web/Dockerfile
+    image: sessiondeck-web:dev
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-5173}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+volumes:
+  hub-data:
