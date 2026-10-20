@@ -15,6 +15,7 @@
 | U1 hub scaffold, config, migrations (5.1), store, bearer auth, /health | sd-executor-hub | R2.8 | U0 | done d3b4f88 |
 | U2 POST /ingest: validation, 1 MB limit, id+signature dedup, batch txn, reducer wiring all kinds, golden replay | sd-executor-hub | R2.1, R2.2, R2.3, R2.7 | U1 | done 337e5d2 (R2.7 read path in U3) |
 | U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6, R2.7 | U2 | done ba15e04 |
+| U7 hub test CPU cut for Windows R0.5 | sd-executor-hub | R0.5 (CI) | U5 | done 0e1810f, 416b3ca |
 | U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | done 93a97d7, edcfd78, ffac2b5, fab329c, d2a3c6a |
 
 ## Decisions made
@@ -40,6 +41,9 @@
 - D-S3-17: root .dockerignore (deny-all allow-list, owned by sd-executor-contract as root config) kept as defense in depth against the legacy builder ignoring Dockerfile.dockerignore. Any future image built with the repo root as context (web, S4 compose) must extend its allow-list. Note for S4 and web owners.
 
 - D-S3-18: sprint container restarted at about 14:20Z and killed the run during U5 fixes (not a session failure). Resumed 14:21Z. Commit 6e80da6 (the U5 iteration-2 optional MINOR) was local and unpushed; U5 reviewer verdict merge at iteration 2. The remaining Windows CI failure is the contract test state-file-merge.test.ts:135, which times out at 5 s once sort: false runs the package suites concurrently. That becomes U6 (sd-executor-contract).
+
+- D-S3-19: PR CI windows node 24 R0.5 step timed out at 61 s (push run on the same SHA green); hub adds about 20 s on Windows. U7 (sd-executor-hub) cut hub test CPU: in-memory stores by default (0e1810f), isolate:false and maxWorkers 2 (416b3ca). CI 39443991770 and 39443984373 green, Windows R0.5 step 36-41 s.
+- D-S3-20: at about 15:11Z the Docker Desktop VM ran out of memory (orphaned parallel vitest runs across sessions) and the sprint container froze; the user restarted it and the run was killed during U7 review (not a session failure). Resumed 2026-10-20 after 16:08Z with the conductor memory rule: one foreground test process at a time per session, --maxWorkers=2 or fewer, no background tests, check pgrep before each run, stop and ask if memory runs short.
 
 - infra/docker-compose.yml is S4 scope (R2.10 handoff); S3 proves the container with `docker build` + `docker run` (sd-1-S3-* names).
 
@@ -78,12 +82,20 @@
 - Review: iteration 1 fix-then-merge (MAJOR sprint test still Promise.all; MINOR waitMs above LOCK_STALE_MS). Iteration 2 merge, no findings.
 - CI run 39439735050 at 7425f9e: 4/4 jobs success; Windows R0.5 step 49 s (node 24), 52 s (node 22).
 
+### U7 (0e1810f, 416b3ca) hub test CPU cut for Windows R0.5
+- Files: packages/hub/{vitest.config.ts,test/helpers.ts,test/migrations.test.ts} (test config only).
+- Review: iteration 1 sd-reviewer merge (2 MINOR, deferred). Normal and shuffled runs 177/177.
+- CI 39443991770 (PR) and 39443984373 (push): 4/4 jobs success, Windows R0.5 step 36-41 s (19 s headroom).
+- Verify: sd-verifier final at 416b3ca, R2.1-R2.3, R2.5-R2.8 pass, R0.5 pass by CI; pnpm -r test 10 s, typecheck and lint clean; ws-harness and container smoke pass; no sd-1-S3-* resources left.
+
 ### Session close
 - sd-verifier final at 7425f9e (d749719): R2.1, R2.2, R2.3, R2.5, R2.6, R2.7, R2.8 pass, R0.5 pass by CI; pnpm -r test 17 s, typecheck and lint clean; ws-harness and container smoke pass. R2.4 and R2.10 are S4.
 - Notes: hub tests 204 -> 177 from the U5 golden-matrix trim (each golden still replayed in three modes; U5 reviewer accepted). Windows R0.5 headroom is 8 s.
 
 ## Deferred findings
 
+- U7 reviewer MINOR: test/support/hub.ts mkEnv counter is shared across files under isolate:false (harmless today; reset per file if a test asserts default seq or ts).
+- U7 reviewer MINOR: test/helpers.ts:26 comment is stale; tempStore({file:true}) uses synchronous=OFF, so durability tests must call Store.open directly.
 - U4 security MEDIUM: base image node:22-bookworm-slim pinned by tag only; pin by digest before Phase 7 (documented in Dockerfile and docs/HUB.md).
 - U4: SMOKE_HOST_PORT mode unverified (fails in nested Docker); needs one run on a real host.
 - U4: arm64 image build not exercised (no buildx/qemu in the sprint container).
