@@ -78,7 +78,9 @@ describe("R2.3 golden replay over HTTP", () => {
       // Size 1 (one envelope per request) is replayed for the small sequences here; the golden-session
       // timeline test below replays golden-session one envelope at a time and compares the full golden.
       const cells: [number, Mode][] = [
-        ...(seq.envelopes.length <= 100 ? ([[1, "plain"]] as [number, Mode][]) : []),
+        ...(seq.envelopes.length <= 100 || seq.name === "all-kinds"
+          ? ([[1, "plain"]] as [number, Mode][])
+          : []),
         [100_000, "plain"],
         [7, "interleaved-dups"],
         [7, "resent-after"],

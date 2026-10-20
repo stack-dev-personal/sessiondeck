@@ -378,7 +378,7 @@ describe("slow client", () => {
 
 describe("heartbeat", () => {
   it("terminates a client that stops answering pings; a healthy one stays", async () => {
-    await boot({}, { heartbeatMs: 150 });
+    await boot({}, { heartbeatMs: 500 });
     const dead = await connect({ autoPong: false });
     const live = await connect();
     await waitFor(() => dead.ws.readyState === WebSocket.CLOSED, 5000);
