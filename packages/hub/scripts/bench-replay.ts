@@ -15,14 +15,14 @@
 //
 //   node scripts/bench-replay.mjs [--dir /tmp/sd-1-S4-bench] [--events 1020000] [--sessions 300]
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import type { Envelope } from "@sessiondeck/contract";
 import { Store } from "../src/db/store.ts";
 import { Ingestor, type Logger } from "../src/ingest/ingestor.ts";
 import { replay } from "../src/replay.ts";
 import { DAY_MS, compactEvents } from "../src/retention.ts";
+import { synthSessions, type Rec } from "./synth-spool.ts";
 
 const args = process.argv.slice(2);
 const opt = (name: string, dflt: string): string => {
@@ -34,128 +34,37 @@ const dir = opt("dir", "/tmp/sd-1-S4-bench");
 const dbPath = path.join(dir, "hub.sqlite");
 const TOTAL_EVENTS = Number(opt("events", "1020000"));
 const SESSIONS = Number(opt("sessions", "300"));
-const HOSTS = ["laptop-win", "dev-box-linux"];
-const FIX = path.resolve(import.meta.dirname, "../../contract/fixtures");
 
 const quiet: Logger = { info: () => undefined, warn: () => undefined };
 const mb = (b: number): string => (b / 1024 / 1024).toFixed(1);
-
-// Deterministic PRNG (mulberry32) so runs are comparable.
-function rng(seed: number): () => number {
-  let a = seed;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-function ulid(n: number): string {
-  let s = "";
-  let v = n;
-  for (let i = 0; i < 25; i++) {
-    s = B32[v % 32] + s;
-    v = Math.floor(v / 32);
-  }
-  return `0${s}`;
-}
-
-type Rec = Record<string, unknown>;
-const golden = readFileSync(path.join(FIX, "sessions/golden-session.jsonl"), "utf8")
-  .split("\n")
-  .filter((l) => l.trim() !== "")
-  .map((l) => JSON.parse(l) as Rec);
-const start = golden.find((p) => p["hook_event_name"] === "SessionStart") as Rec;
-const end = golden.find((p) => p["hook_event_name"] === "SessionEnd") as Rec;
-const middle = golden.filter(
-  (p) => !["SessionStart", "SessionEnd"].includes(String(p["hook_event_name"])),
-);
-const statuses = readdirSync(path.join(FIX, "statusLine"))
-  .filter((f) => f.endsWith(".json"))
-  .sort()
-  .map((f) => JSON.parse(readFileSync(path.join(FIX, "statusLine", f), "utf8")) as Rec);
 
 function generate(): void {
   const store = Store.open(dbPath);
   store.db.pragma("synchronous = OFF");
   store.migrate();
   const ing = new Ingestor(store, quiet, Date.now, { maxOpenSessionsPerHost: 100000 });
-  const rand = rng(42);
-  const perSession = Math.round(TOTAL_EVENTS / SESSIONS);
-  const spanMs = 29 * DAY_MS;
   const t0 = Date.now() - 30 * DAY_MS;
-  const seqOf = new Map<string, number>();
-  let id = 1;
   let generated = 0;
   let accepted = 0;
   let payloadBytes = 0;
   const g0 = performance.now();
-  for (let s = 0; s < SESSIONS; s++) {
-    const host = HOSTS[s % HOSTS.length] as string;
-    const sid = `bench-${String(s).padStart(4, "0")}-${ulid(s + 1)
-      .slice(-8)
-      .toLowerCase()}`;
-    let ts = t0 + Math.floor((s / SESSIONS) * spanMs);
-    const out: Envelope[] = [];
-    const push = (kind: Envelope["kind"], payload: Rec, hook?: string): void => {
-      const seq = (seqOf.get(host) ?? 0) + 1;
-      seqOf.set(host, seq);
-      out.push({
-        v: 1,
-        id: ulid(id++),
-        kind,
-        host,
-        os: host.includes("win") ? "windows" : "linux",
-        session_id: sid,
-        ...(hook !== undefined ? { hook_event_name: hook } : {}),
-        ts,
-        seq,
-        payload,
-      } as Envelope);
-    };
-    const step = (): void => {
-      // Bursts of 5-20 envelopes/s, then an idle gap.
-      ts += Math.floor(1000 / (5 + rand() * 15));
-      if (rand() < 0.02) ts += 5000 + Math.floor(rand() * 55_000);
-    };
-    push("hook", { ...start, session_id: sid }, "SessionStart");
-    let hookIdx = 0;
-    let statusIdx = 0;
-    while (out.length < perSession - 1) {
-      step();
-      const r = rand();
-      if (r < 0.12) {
-        push("statusline", {
-          ...(statuses[statusIdx++ % statuses.length] as Rec),
-          session_id: sid,
-        });
-      } else if (r < 0.15) {
-        push("liveness", { pid: 10_000 + s, alive: true });
-        ts += 6000; // keeps repeats of the identical liveness payload outside the 5 s signature window
-      } else if (r < 0.2) {
-        const lineNo = out.length * 5;
-        const lines = Array.from({ length: 5 }, (_, k) =>
-          JSON.stringify({ n: lineNo + k, text: "x".repeat(400 + Math.floor(rand() * 400)) }),
-        );
-        push("transcript", { start_line: lineNo, lines });
-      } else {
-        const p = middle[hookIdx++ % middle.length] as Rec;
-        push("hook", { ...p, session_id: sid }, String(p["hook_event_name"]));
-      }
-    }
-    step();
-    push("hook", { ...end, session_id: sid }, "SessionEnd");
+  let s = 0;
+  for (const { host, envelopes: out } of synthSessions({
+    sessions: SESSIONS,
+    totalEvents: TOTAL_EVENTS,
+    t0,
+    spanMs: 29 * DAY_MS,
+  })) {
     for (const e of out) payloadBytes += JSON.stringify(e.payload).length;
     for (let i = 0; i < out.length; i += 500) {
       const r = ing.ingest(host, out.slice(i, i + 500));
       accepted += r.accepted;
     }
     generated += out.length;
-    if ((s + 1) % 50 === 0) {
+    s++;
+    if (s % 50 === 0) {
       console.log(
-        `generated ${s + 1}/${SESSIONS} sessions, ${generated} events, ${Math.round((performance.now() - g0) / 1000)} s`,
+        `generated ${s}/${SESSIONS} sessions, ${generated} events, ${Math.round((performance.now() - g0) / 1000)} s`,
       );
     }
   }
