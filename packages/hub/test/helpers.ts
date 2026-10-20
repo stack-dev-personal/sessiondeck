@@ -6,6 +6,8 @@ import { Store } from "../src/db/store.ts";
 export function tempStore(): { store: Store; cleanup: () => void } {
   const dir = mkdtempSync(path.join(os.tmpdir(), "hub-test-"));
   const store = Store.open(path.join(dir, "hub.sqlite"));
+  // Test-only: skip fsync. Durability is not under test here; file-mode tests use Store.open directly.
+  store.db.pragma("synchronous = OFF");
   return {
     store,
     cleanup: () => {

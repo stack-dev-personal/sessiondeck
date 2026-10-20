@@ -73,15 +73,23 @@ describe("R2.3 golden replay over HTTP", () => {
       it("committed golden file equals a fresh oracle fold (generator is current)", () => {
         expect(golden(seq.name)).toEqual(JSON.parse(JSON.stringify(oracle(seq))));
       });
-      for (const size of [1, 7, 100_000]) {
-        for (const mode of ["plain", "interleaved-dups", "resent-after"] as Mode[]) {
-          it(`batch size ${size === 100_000 ? "all" : size}, ${mode}`, async () => {
-            const h = await run(seq, size, mode);
-            expect(dump(h)).toEqual(golden(seq.name));
-            expect(h.eventCount()).toBe(seq.envelopes.length);
-            expect(h.app.hub.reducerExceptionCount()).toBe(0);
-          });
-        }
+      // Every golden file runs in every mode at least once; size 1 and "all" bracket the plain mode.
+      // Redundant cross-product cells were dropped to keep `pnpm -r test` inside the R0.5 60 s budget.
+      // Size 1 (one envelope per request) is replayed for the small sequences here; the golden-session
+      // timeline test below replays golden-session one envelope at a time and compares the full golden.
+      const cells: [number, Mode][] = [
+        ...(seq.envelopes.length <= 100 ? ([[1, "plain"]] as [number, Mode][]) : []),
+        [100_000, "plain"],
+        [7, "interleaved-dups"],
+        [7, "resent-after"],
+      ];
+      for (const [size, mode] of cells) {
+        it(`batch size ${size === 100_000 ? "all" : size}, ${mode}`, async () => {
+          const h = await run(seq, size, mode);
+          expect(dump(h)).toEqual(golden(seq.name));
+          expect(h.eventCount()).toBe(seq.envelopes.length);
+          expect(h.app.hub.reducerExceptionCount()).toBe(0);
+        });
       }
     });
   }
@@ -145,6 +153,7 @@ describe("R2.3 golden replay over HTTP", () => {
     expect(s.subagents.map((a) => a.ended_at !== null)).toEqual(
       tl.final.subagents.map((a) => a.ended_index !== null),
     );
+    expect(dump(h)).toEqual(golden(seq.name));
     // sessions row columns follow the snapshot
     const row = h.store.getSession(s.session_id);
     expect(row).toMatchObject({
