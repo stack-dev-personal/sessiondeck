@@ -4,6 +4,7 @@ import { CompactCard, SessionCard } from "../components/SessionCard";
 import { useNow } from "../hooks/useNow";
 import { applyFilters, isAttentionState, sortForAttention } from "../lib/attention";
 import { useShortcuts } from "../lib/keys";
+import { reorderChildren } from "../lib/reorder";
 import { useBoard } from "../store/board";
 import { useFilters } from "../store/filters";
 import { useUi } from "../store/ui";
@@ -49,6 +50,21 @@ export function Board() {
     const shown = new Set(list.map((s) => s.session_id));
     return all.filter((s) => isAttentionState(s.state) && !shown.has(s.session_id)).length;
   }, [all, list]);
+  // R3.6: React keeps a stable child order (first seen first) so it never moves a card itself; the
+  // layout effect below puts the DOM into sort order with the fewest moves. React's own keyed
+  // reconciliation moved every card a moved one passed, and a moved card pays style, layout and
+  // paint again.
+  const stable = useRef<string[]>([]);
+  const present = new Set(list.map((s) => s.session_id));
+  const kept = stable.current.filter((id) => present.has(id));
+  const known = new Set(kept);
+  for (const s of list) if (!known.has(s.session_id)) kept.push(s.session_id);
+  stable.current = kept;
+  const byId = new Map(list.map((s) => [s.session_id, s]));
+  const sortedIds = list.map((s) => s.session_id);
+  useLayoutEffect(() => {
+    if (listRef.current) reorderChildren(listRef.current, sortedIds);
+  });
   // A reorder moves DOM nodes, which can drop focus to <body>; put it back on the same card.
   const focusedId = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -98,25 +114,27 @@ export function Board() {
           aria-label="Sessions"
           data-density={compact ? "compact" : "full"}
         >
-          {list.map((s) => (
-            <li key={s.session_id} className="min-w-0">
-              {compact ? (
-                <CompactCard
-                  s={s}
-                  now={now}
-                  exceeds200k={flags[s.session_id] ?? null}
-                  onOpen={openSession}
-                />
-              ) : (
-                <SessionCard
-                  s={s}
-                  now={now}
-                  exceeds200k={flags[s.session_id] ?? null}
-                  onOpen={openSession}
-                />
-              )}
-            </li>
-          ))}
+          {kept
+            .map((id) => byId.get(id)!)
+            .map((s) => (
+              <li key={s.session_id} data-row={s.session_id} className="min-w-0">
+                {compact ? (
+                  <CompactCard
+                    s={s}
+                    now={now}
+                    exceeds200k={flags[s.session_id] ?? null}
+                    onOpen={openSession}
+                  />
+                ) : (
+                  <SessionCard
+                    s={s}
+                    now={now}
+                    exceeds200k={flags[s.session_id] ?? null}
+                    onOpen={openSession}
+                  />
+                )}
+              </li>
+            ))}
         </ul>
       )}
     </>
