@@ -99,6 +99,17 @@ describe("Board attention order, accent and filters", () => {
     expect(document.activeElement).toHaveAttribute("data-session-id", "a");
   });
 
+  it("keeps focus on the card that itself moves to the top (3 cards)", () => {
+    put(snap("a", "working", 30), snap("b", "working", 20), snap("c", "working", 10));
+    render(<Board />);
+    const c = document.querySelector<HTMLElement>('[data-session-id="c"]')!;
+    c.focus();
+    expect(document.activeElement).toBe(c);
+    put(snap("a", "working", 30), snap("b", "working", 20), snap("c", "working", 40));
+    expect(order()).toEqual(["c", "a", "b"]);
+    expect(document.activeElement).toHaveAttribute("data-session-id", "c");
+  });
+
   it("says how many waiting sessions the filters hide", async () => {
     put(snap("a", "idle", 3, "h1"), snap("b", "idle", 2, "h2"));
     render(<Board />);
