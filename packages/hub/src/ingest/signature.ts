@@ -1,6 +1,7 @@
-// Adapted from simple10/agents-observe app/server/src/utils/event-signature.ts
+// Adapted from simple10/agents-observe, path app/server/src/utils/event-signature.ts
 // Repo: https://github.com/simple10/agents-observe
-// License: MIT
+// Upstream commit: b3a7238b3913976c10da052f75c73e29ad084c61
+// License: MIT, Copyright (c) 2025 Joe Johnston
 // Changes: material is built from the sessiondeck envelope (kind, host, session_id, agent_id,
 //   hook_event_name, payload) instead of agents-observe's envelope; canonicalJson is written here
 //   (sorted keys, recursive). The fixed 5 s time bucket is REMOVED from the hash: two events are
@@ -12,7 +13,10 @@ import type { Envelope } from "@sessiondeck/contract";
 
 export const SIGNATURE_WINDOW_MS = 5000;
 
-/** JSON with object keys sorted at every depth; undefined values are dropped as JSON.stringify does. */
+/**
+ * JSON with object keys sorted at every depth; undefined values are dropped as JSON.stringify does.
+ * Recursive: callers must have bounded the nesting first (route: MAX_PAYLOAD_DEPTH = 64).
+ */
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v ?? null)).join(",")}]`;
   if (value !== null && typeof value === "object") {

@@ -158,7 +158,7 @@ export class Store {
     ).run(row);
   }
 
-  /** An event with this signature and |ts - ts'| < windowMs exists (events_signature index). */
+  /** An event with this signature and |ts - ts'| < windowMs exists (events_signature_ts index, a range seek). */
   hasSignatureWithin(signature: string, ts: number, windowMs: number): boolean {
     return (
       this.stmt("SELECT 1 AS x FROM events WHERE signature = ? AND ts > ? AND ts < ? LIMIT 1").get(
@@ -201,11 +201,27 @@ export class Store {
     );
   }
 
-  /** Sessions of a host that are not in state 'ended'; the caller filters by pid. */
+  /**
+   * Sessions of a host that are not in state 'ended'; the caller filters by pid. Written as a
+   * range pair (state < 'ended' OR state > 'ended') so sessions_host_state seeks both sides and
+   * ended rows are never visited; `<>` would scan every session the host ever had.
+   */
   listOpenSessionsForHost(host: string): SessionRow[] {
-    return this.stmt("SELECT * FROM sessions WHERE host = ? AND state <> 'ended'").all(
-      host,
-    ) as SessionRow[];
+    return this.stmt(
+      "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')",
+    ).all(host) as SessionRow[];
+  }
+
+  countOpenSessionsForHost(host: string): number {
+    return (
+      this.stmt(
+        "SELECT COUNT(*) AS n FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')",
+      ).get(host) as { n: number }
+    ).n;
+  }
+
+  countHosts(): number {
+    return (this.stmt("SELECT COUNT(*) AS n FROM hosts").get() as { n: number }).n;
   }
 
   close(): void {

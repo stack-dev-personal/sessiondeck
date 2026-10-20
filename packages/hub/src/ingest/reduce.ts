@@ -31,6 +31,38 @@ function staleCheck(w: Window | null, now: number): Window | null {
   return { used_pct: null, resets_at: w.resets_at };
 }
 
+/**
+ * R2.7 read-time staleness (D-S3-7). The reducer only nulls a past-reset window when another
+ * statusline arrives, so an idle session would keep showing an old used_pct. Every read and every
+ * broadcast of a snapshot (REST, WS) must pass it through this pure function with the current
+ * time. Returns the same object when nothing is stale; never mutates the input.
+ */
+export function applyRateLimitStaleness(snapshot: SessionSnapshot, nowMs: number): SessionSnapshot {
+  const five = staleCheck(snapshot.rate_limits.five_hour, nowMs);
+  const seven = staleCheck(snapshot.rate_limits.seven_day, nowMs);
+  if (five === snapshot.rate_limits.five_hour && seven === snapshot.rate_limits.seven_day) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    rate_limits: { ...snapshot.rate_limits, five_hour: five, seven_day: seven },
+  };
+}
+
+/** Longest path kept in a snapshot (cwd, project_dir); longer values are truncated. */
+export const MAX_SNAPSHOT_PATH = 1024;
+
+/** Truncates attacker-sized path fields; returns the same object when within bounds. */
+export function clampSnapshot(s: SessionSnapshot): SessionSnapshot {
+  if (s.cwd.length <= MAX_SNAPSHOT_PATH && (s.project_dir?.length ?? 0) <= MAX_SNAPSHOT_PATH)
+    return s;
+  return {
+    ...s,
+    cwd: s.cwd.slice(0, MAX_SNAPSHOT_PATH),
+    project_dir: s.project_dir === null ? null : s.project_dir.slice(0, MAX_SNAPSHOT_PATH),
+  };
+}
+
 function window(
   raw: RateLimitPeriod | null | undefined,
   prev: Window | null,
@@ -48,7 +80,12 @@ export function applyStatusLine(
   prev: SessionSnapshot,
   e: Envelope,
   onNulled: RangeNulled,
-): { snapshot: SessionSnapshot; sample: SampleRow } {
+): { snapshot: SessionSnapshot; sample: SampleRow | null } {
+  // Same routing rule as the contract reducer (isForSession): another host's envelope must not
+  // overwrite this session's context, cost or rate limits.
+  if (e.host !== prev.host || e.session_id !== prev.session_id) {
+    return { snapshot: prev, sample: null };
+  }
   const parsed = StatusLinePayloadSchema.safeParse(e.payload);
   if (!parsed.success) throw new Error("statusline payload does not match StatusLinePayloadSchema");
   const p = parsed.data;
@@ -189,6 +226,7 @@ const SubagentsPayloadSchema = z
  * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored.
  */
 export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnapshot {
+  if (e.host !== prev.host || e.session_id !== prev.session_id) return prev;
   const parsed = SubagentsPayloadSchema.safeParse(e.payload);
   if (!parsed.success) throw new Error("subagents payload does not match the expected shape");
   const byId = new Map(parsed.data.tasks.map((t) => [t.id, t]));
@@ -208,10 +246,13 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
 
 /**
  * Transcript envelope payload (the contract defines none; hub decision, to confirm with the probe
- * tailer): lines are raw JSONL strings, start_line is the 0-based line number of lines[0].
+ * tailer S2 and the contract owner): `{ start_line: number, lines: string[] }`. lines are raw JSONL
+ * strings and start_line, REQUIRED (no default), is the 0-based line number of lines[0]. A default
+ * of 0 would number every chunk from 0 and (session, agent, line_no) conflicts would silently drop
+ * all chunks after the first, so a payload without start_line is a reducer exception instead.
  */
 const TranscriptPayloadSchema = z.object({
-  start_line: z.number().int().nonnegative().default(0),
+  start_line: z.number().int().nonnegative(),
   lines: z.array(z.string()),
 });
 

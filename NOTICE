@@ -32,4 +32,4 @@ Actual borrowings (update as code lands):
 - appaquet/ccmon src/status-writer.ts → packages/contract/src/transitions.ts (MIT, Copyright (c) 2026 Andre-Philippe Paquet, commit 0758fa2)
 - DeanLa/cctop plugin/scripts/cctop-hook.sh → packages/contract/src/transitions.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256)
 - martinwickman/ccmonitor internal/hook/hook.go, internal/session/session.go → packages/contract/src/state.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a)
-- simple10/agents-observe app/server/src/utils/event-signature.ts → packages/hub/src/ingest/signature.ts (MIT, sliding 5 s window instead of fixed bucket)
+- simple10/agents-observe app/server/src/utils/event-signature.ts → packages/hub/src/ingest/signature.ts (MIT, Copyright (c) 2025 Joe Johnston, commit b3a7238b3913976c10da052f75c73e29ad084c61, sliding 5 s window instead of fixed bucket)

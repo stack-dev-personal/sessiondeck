@@ -71,7 +71,7 @@ export function oracle(seq: Seq): Golden {
     } else if (e.kind === "statusline") {
       const r = applyStatusLine(prev, e, () => undefined);
       snaps.set(id, r.snapshot);
-      samples.push(r.sample);
+      if (r.sample !== null) samples.push(r.sample);
     } else if (e.kind === "subagents") {
       snaps.set(id, applySubagents(prev, e));
     } else if (e.kind === "transcript") {

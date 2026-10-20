@@ -24,4 +24,16 @@ CREATE TABLE projects (project_dir TEXT PRIMARY KEY, name TEXT, color TEXT, vaul
 CREATE TABLE layouts (id TEXT PRIMARY KEY, name TEXT, spec TEXT, builtin INTEGER DEFAULT 0);
 `,
   },
+  {
+    version: 2,
+    name: "ingest_indexes",
+    // The 5 s signature window is a (signature, ts) range: an index on signature alone scans every
+    // row of a signature (hostile or constant heartbeats make that O(rows)). The old index is a
+    // strict prefix of the new one. sessions(host, state) serves the open-sessions lookup.
+    sql: `
+CREATE INDEX events_signature_ts ON events(signature, ts);
+DROP INDEX events_signature;
+CREATE INDEX sessions_host_state ON sessions(host, state);
+`,
+  },
 ];

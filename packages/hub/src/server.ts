@@ -9,7 +9,7 @@ import type { HubConfig } from "./config.ts";
 import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
-import { HostRateLimiter } from "./ingest/rate-limit.ts";
+import { RateLimiter } from "./ingest/rate-limit.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
 
@@ -82,14 +82,25 @@ export function buildServer(opts: {
   app.get("/health", async () => ({ ok: true }));
 
   const now = opts.now ?? Date.now;
-  const ingestor = new Ingestor(opts.store, app.log, now);
+  const ingestor = new Ingestor(opts.store, app.log, now, {
+    maxOpenSessionsPerHost: opts.config.maxOpenSessionsPerHost,
+  });
   app.decorate("hub", {
     events: ingestor.events,
     reducerExceptionCount: () => ingestor.reducerExceptionCount(),
   });
   registerIngest(app, {
     ingestor,
-    limiter: new HostRateLimiter(opts.config.ingestRate, opts.config.ingestBurst, now),
+    store: opts.store,
+    // One token in the MVP; the key space is the set of valid principals, so a small cap.
+    principalLimiter: new RateLimiter(opts.config.ingestRate, opts.config.ingestBurst, 16, now),
+    hostLimiter: new RateLimiter(
+      opts.config.hostRate,
+      opts.config.hostBurst,
+      opts.config.maxHosts * 2,
+      now,
+    ),
+    maxHosts: opts.config.maxHosts,
     sanitize,
   });
 

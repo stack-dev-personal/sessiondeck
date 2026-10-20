@@ -168,7 +168,7 @@ describe("subagents and transcript", () => {
       kind: "transcript",
       hook_event_name: undefined,
       agent_id: "ag9",
-      payload: { lines: ["l0"] },
+      payload: { start_line: 0, lines: ["l0"] },
     });
     const e3 = mkEnv({
       kind: "transcript",

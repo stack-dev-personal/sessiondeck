@@ -187,4 +187,18 @@ export function supersede(): Seq {
   return { name: "supersede", host: b.host, envelopes: b.envelopes };
 }
 
-export const SEQUENCES: (() => Seq)[] = [goldenSession, fixtureMix, allKinds, supersede];
+/** Every statusLine (20) and subagentStatusLine (5) fixture, each under its own session_id (R2.3). */
+export function allStatusLines(): Seq {
+  const b = new Builder("status-host");
+  for (const f of listJson("statusLine")) b.push("statusline", readJson(f));
+  for (const f of listJson("subagentStatusLine")) b.push("subagents", readJson(f));
+  return { name: "all-statuslines", host: b.host, envelopes: b.envelopes };
+}
+
+export const SEQUENCES: (() => Seq)[] = [
+  goldenSession,
+  fixtureMix,
+  allKinds,
+  supersede,
+  allStatusLines,
+];

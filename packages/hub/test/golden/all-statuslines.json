@@ -1,0 +1,817 @@
+{
+  "snapshots": {
+    "607fbcc7-a1cf-4a09-8832-af0d790aada5": {
+      "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_C>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": "<TEXT 28>",
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000018000,
+      "state_detail": null,
+      "started_at": 1760000018000,
+      "last_event_at": 1760000024000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": 9,
+        "window": 1000000,
+        "input": 85966,
+        "output": 4
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 13,
+          "resets_at": 1792083600000
+        },
+        "seven_day": {
+          "used_pct": 17,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000024000
+      },
+      "cost": {
+        "usd": 48.786760199999954,
+        "duration_ms": 74253408,
+        "lines_added": 831,
+        "lines_removed": 9
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": "<TEXT 19>",
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": {
+        "warm": true,
+        "expires_at": 1792083800000
+      },
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "76451451-8f96-42b5-8de2-69a4bc28b494": {
+      "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_H>",
+      "project_dir": "<HOME>/projects/<PROJECT_H>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000006000,
+      "state_detail": null,
+      "started_at": 1760000006000,
+      "last_event_at": 1760000066000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": 5,
+        "window": 1000000,
+        "input": 48631,
+        "output": 3
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 12,
+          "resets_at": 1792101600000
+        },
+        "seven_day": {
+          "used_pct": 21,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000066000
+      },
+      "cost": {
+        "usd": 47.2913915,
+        "duration_ms": 576935005,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": {
+        "warm": true,
+        "expires_at": 1792092558000
+      },
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "8cc38311-7274-400a-8426-a201e49b8e4f": {
+      "session_id": "8cc38311-7274-400a-8426-a201e49b8e4f",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_A>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000108000,
+      "state_detail": null,
+      "started_at": 1760000108000,
+      "last_event_at": 1760000108000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 9,
+          "resets_at": 1792119600000
+        },
+        "seven_day": {
+          "used_pct": 36,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000108000
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 521,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "a9648976-1965-4d5a-8cf8-eb285b22406f": {
+      "session_id": "a9648976-1965-4d5a-8cf8-eb285b22406f",
+      "host": "status-host",
+      "cwd": "<HOME>",
+      "project_dir": "<HOME>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000036000,
+      "state_detail": null,
+      "started_at": 1760000036000,
+      "last_event_at": 1760000042000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 2,
+          "resets_at": 1792101600000
+        },
+        "seven_day": {
+          "used_pct": 18,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000042000
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 17573,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "bf8e715e-8b6b-42dd-82c7-81961122063b": {
+      "session_id": "bf8e715e-8b6b-42dd-82c7-81961122063b",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_A>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000072000,
+      "state_detail": null,
+      "started_at": 1760000072000,
+      "last_event_at": 1760000072000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 2725,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "e108ef49-f015-4c27-83ab-92636e8eba0a": {
+      "session_id": "e108ef49-f015-4c27-83ab-92636e8eba0a",
+      "host": "status-host",
+      "cwd": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>",
+      "project_dir": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000120000,
+      "state_detail": null,
+      "started_at": 1760000120000,
+      "last_event_at": 1760000120000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 11,
+          "resets_at": 1792119600000
+        },
+        "seven_day": {
+          "used_pct": 37,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000120000
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 2534,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "f8c38fd0-8071-4912-8ef9-342ea8729793": {
+      "session_id": "f8c38fd0-8071-4912-8ef9-342ea8729793",
+      "host": "status-host",
+      "cwd": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>",
+      "project_dir": "<HOME>/<PROJECT_I>/<DIR_1>/<DIR_2>/<DIR_3>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000102000,
+      "state_detail": null,
+      "started_at": 1760000102000,
+      "last_event_at": 1760000102000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 6,
+          "resets_at": 1792119600000
+        },
+        "seven_day": {
+          "used_pct": 36,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000102000
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 4002,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "fc727a7b-bc64-4de4-8767-4a0a61457910": {
+      "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+      "host": "status-host",
+      "cwd": "<HOME>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": "<TEXT 30>",
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000012000,
+      "state_detail": null,
+      "started_at": 1760000012000,
+      "last_event_at": 1760000048000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": 0,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 4,
+          "resets_at": 1792101600000
+        },
+        "seven_day": {
+          "used_pct": 19,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000048000
+      },
+      "cost": {
+        "usd": 77.85860540000004,
+        "duration_ms": 80669183,
+        "lines_added": 7448,
+        "lines_removed": 149
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": "<TEXT 14>",
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": {
+        "warm": true,
+        "expires_at": 1792090175000
+      },
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "fdafa657-e191-4646-88ad-7ae634752456": {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_A>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": "<TEXT 24>",
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000054000,
+      "state_detail": null,
+      "started_at": 1760000054000,
+      "last_event_at": 1760000144000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": 41,
+        "window": 1000000,
+        "input": 407439,
+        "output": 8
+      },
+      "rate_limits": {
+        "five_hour": {
+          "used_pct": 9,
+          "resets_at": 1792119600000
+        },
+        "seven_day": {
+          "used_pct": 37,
+          "resets_at": 1792555200000
+        },
+        "captured_at": 1760000114000
+      },
+      "cost": {
+        "usd": 174.81500344999998,
+        "duration_ms": 15935488,
+        "lines_added": 13844,
+        "lines_removed": 1274
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": "<TEXT 19>",
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": {
+        "warm": true,
+        "expires_at": 1792106681000
+      },
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    },
+    "fef17e22-168c-4fef-8964-9af573b7f2e9": {
+      "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+      "host": "status-host",
+      "cwd": "<HOME>/projects/<PROJECT_A>",
+      "project_dir": "<HOME>/projects/<PROJECT_A>",
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "Fable 5.1"
+      },
+      "effort": "xhigh",
+      "state": "starting",
+      "state_since": 1760000090000,
+      "state_detail": null,
+      "started_at": 1760000090000,
+      "last_event_at": 1760000150000,
+      "ended_reason": null,
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": 1000000,
+        "input": 0,
+        "output": 0
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": 0,
+        "duration_ms": 4756,
+        "lines_added": 0,
+        "lines_removed": 0
+      },
+      "subagents": [],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": null,
+      "last_prompt": null,
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    }
+  },
+  "samples": [
+    {
+      "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+      "ts": 1760000018000,
+      "context_used_pct": 0,
+      "cost_usd": 47.73927794999996,
+      "five_hour_pct": 11,
+      "five_hour_resets": 1792083600000,
+      "seven_day_pct": 16,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "607fbcc7-a1cf-4a09-8832-af0d790aada5",
+      "ts": 1760000024000,
+      "context_used_pct": 9,
+      "cost_usd": 48.786760199999954,
+      "five_hour_pct": 13,
+      "five_hour_resets": 1792083600000,
+      "seven_day_pct": 17,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+      "ts": 1760000006000,
+      "context_used_pct": 0,
+      "cost_usd": 45.13542975,
+      "five_hour_pct": 12,
+      "five_hour_resets": 1792083600000,
+      "seven_day_pct": 16,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "76451451-8f96-42b5-8de2-69a4bc28b494",
+      "ts": 1760000066000,
+      "context_used_pct": 5,
+      "cost_usd": 47.2913915,
+      "five_hour_pct": 12,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 21,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "8cc38311-7274-400a-8426-a201e49b8e4f",
+      "ts": 1760000108000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": 9,
+      "five_hour_resets": 1792119600000,
+      "seven_day_pct": 36,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "a9648976-1965-4d5a-8cf8-eb285b22406f",
+      "ts": 1760000036000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": null,
+      "five_hour_resets": null,
+      "seven_day_pct": null,
+      "seven_day_resets": null
+    },
+    {
+      "session_id": "a9648976-1965-4d5a-8cf8-eb285b22406f",
+      "ts": 1760000042000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": 2,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 18,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "bf8e715e-8b6b-42dd-82c7-81961122063b",
+      "ts": 1760000072000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": null,
+      "five_hour_resets": null,
+      "seven_day_pct": null,
+      "seven_day_resets": null
+    },
+    {
+      "session_id": "e108ef49-f015-4c27-83ab-92636e8eba0a",
+      "ts": 1760000120000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": 11,
+      "five_hour_resets": 1792119600000,
+      "seven_day_pct": 37,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "f8c38fd0-8071-4912-8ef9-342ea8729793",
+      "ts": 1760000102000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": 6,
+      "five_hour_resets": 1792119600000,
+      "seven_day_pct": 36,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+      "ts": 1760000012000,
+      "context_used_pct": 0,
+      "cost_usd": 69.12357790000002,
+      "five_hour_pct": null,
+      "five_hour_resets": null,
+      "seven_day_pct": 14,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+      "ts": 1760000030000,
+      "context_used_pct": 16,
+      "cost_usd": 73.95745715000005,
+      "five_hour_pct": 15,
+      "five_hour_resets": 1792083600000,
+      "seven_day_pct": 17,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+      "ts": 1760000048000,
+      "context_used_pct": 0,
+      "cost_usd": 77.85860540000004,
+      "five_hour_pct": 4,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 19,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000054000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": 6,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 20,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000060000,
+      "context_used_pct": 7,
+      "cost_usd": 0.00028060000000000004,
+      "five_hour_pct": 6,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 20,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000078000,
+      "context_used_pct": 96,
+      "cost_usd": 151.93180295000005,
+      "five_hour_pct": 62,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 32,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000084000,
+      "context_used_pct": 0,
+      "cost_usd": 153.98172895000005,
+      "five_hour_pct": 64,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 32,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000096000,
+      "context_used_pct": 38,
+      "cost_usd": 172.09709670000004,
+      "five_hour_pct": 78,
+      "five_hour_resets": 1792101600000,
+      "seven_day_pct": 35,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fdafa657-e191-4646-88ad-7ae634752456",
+      "ts": 1760000114000,
+      "context_used_pct": 41,
+      "cost_usd": 174.81500344999998,
+      "five_hour_pct": 9,
+      "five_hour_resets": 1792119600000,
+      "seven_day_pct": 37,
+      "seven_day_resets": 1792555200000
+    },
+    {
+      "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+      "ts": 1760000090000,
+      "context_used_pct": null,
+      "cost_usd": 0,
+      "five_hour_pct": null,
+      "five_hour_resets": null,
+      "seven_day_pct": null,
+      "seven_day_resets": null
+    }
+  ],
+  "transcript_lines": []
+}

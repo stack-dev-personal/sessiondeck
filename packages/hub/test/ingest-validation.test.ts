@@ -102,7 +102,11 @@ describe("R2.1 validation", () => {
   it("per-host rate limit: 429 with an empty body, buckets are per host and refill", async () => {
     await h.cleanup();
     let now = 1_000_000;
-    h = await makeHub({ HUB_INGEST_RATE: "10", HUB_INGEST_BURST: "20" }, () => now);
+    // Updated for D-S3-5: the global bucket is a separate layer, so it is set high here.
+    h = await makeHub(
+      { HUB_HOST_RATE: "10", HUB_HOST_BURST: "20", HUB_INGEST_RATE: "1000" },
+      () => now,
+    );
     const twenty = Array.from({ length: 20 }, () => mkEnv());
     expect((await h.post(batch(twenty))).statusCode).toBe(200);
     const one = await h.post(batch([mkEnv()]));

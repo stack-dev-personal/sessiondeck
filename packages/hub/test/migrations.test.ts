@@ -10,10 +10,10 @@ let cleanup: (() => void) | undefined;
 afterEach(() => cleanup?.());
 
 describe("migrations", () => {
-  it("creates all tables and indexes, is idempotent, records version 1", () => {
+  it("creates all tables and indexes, is idempotent, records versions 1 and 2", () => {
     const t = tempStore();
     cleanup = t.cleanup;
-    expect(t.store.migrate()).toEqual([1]);
+    expect(t.store.migrate()).toEqual([1, 2]);
     const names = (type: string) =>
       (
         t.store.db
@@ -33,10 +33,11 @@ describe("migrations", () => {
       ]),
     );
     expect(names("index")).toEqual(
-      expect.arrayContaining(["events_session_ts", "events_signature"]),
+      expect.arrayContaining(["events_session_ts", "events_signature_ts", "sessions_host_state"]),
     );
+    expect(names("index")).not.toContain("events_signature"); // superseded by events_signature_ts
     expect(t.store.migrate()).toEqual([]);
-    expect(t.store.schemaVersion()).toBe(1);
+    expect(t.store.schemaVersion()).toBe(2);
   });
 
   it("sets WAL and foreign keys", () => {
