@@ -56,4 +56,14 @@ describe("R3.6 trace analysis", () => {
     expect(d[0]!.durMs).toBe(60);
     expect(d[0]!.children.map((c) => c.name)).toEqual(["Paint", "Layerize"]);
   });
+
+  it("lists a nested long task once", () => {
+    const ev = [
+      meta,
+      x("RunTask", 0, 60_000),
+      x("ThreadControllerImpl::RunTask", 10, 59_000),
+      x("Paint", 100, 40_000),
+    ];
+    expect(longTaskDetails(ev)).toHaveLength(1);
+  });
 });

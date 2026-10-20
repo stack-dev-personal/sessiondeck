@@ -51,9 +51,12 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
       }
       onclick: unknown = null;
       tag = "";
-      constructor(title: string, o?: { body?: string; tag?: string; renotify?: boolean }) {
+      constructor(
+        title: string,
+        o?: { body?: string; tag?: string; renotify?: boolean; silent?: boolean },
+      ) {
         this.tag = o?.tag ?? "";
-        (w["__notifs"] as unknown[]).push({ title, body: o?.body, tag: o?.tag });
+        (w["__notifs"] as unknown[]).push({ title, body: o?.body, tag: o?.tag, silent: o?.silent });
       }
       close() {
         (w["__closed"] as unknown[]).push(this.tag);
@@ -237,10 +240,13 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   await page.screenshot({ path: shot("R3.3-filters.png") });
   await page.reload();
   await waitConnected(page);
-  // The reload did not make the two waiting sessions new: no notification for them.
+  // The reload did not make the two waiting sessions new: no announcement for them. The page
+  // only re-creates their notifications as silent same-tag replaces (so they can still be closed).
   await expect(card(page, a)).toHaveAttribute("data-state", "waiting_permission");
   await sleep(300);
-  expect(await notifs()).toHaveLength(0);
+  const again = (await notifs()) as { tag: string; silent: boolean }[];
+  expect(again.map((x) => x.tag).sort()).toEqual([n[1]!.tag, n[2]!.tag].sort());
+  expect(again.every((x) => x.silent === true)).toBe(true);
   await expect(page.getByLabel("Host", { exact: true })).toHaveValue(HOST);
   await expect(page.getByLabel("Project", { exact: true })).toHaveValue(ALPHA);
   await expect(page.getByTestId("session-card")).toHaveCount(2);
@@ -257,5 +263,9 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
     HOST2,
   );
   await expect(card(page, a)).toHaveAttribute("data-state", "ended");
+  // The handles re-created after the reload close with their episodes.
+  await expect
+    .poll(async () => (await closed()).slice().sort())
+    .toEqual([n[1]!.tag, n[2]!.tag].sort());
   await expect(card(page, d)).toHaveAttribute("data-state", "ended");
 });

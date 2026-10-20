@@ -103,7 +103,19 @@ export function mainThreadBusy(events: TraceEvent[], windowUs: number) {
 export function longTaskDetails(events: TraceEvent[], minMs = 50) {
   const mains = mainThreadKeys(events);
   const onMain = events.filter((e) => e.ph === "X" && mains.has(key(e)));
-  const long = onMain.filter((e) => TASK_NAMES.has(e.name) && (e.dur ?? 0) >= minMs * 1000);
+  const all = onMain.filter((e) => TASK_NAMES.has(e.name) && (e.dur ?? 0) >= minMs * 1000);
+  // Outermost only: a task nested in another long task is the same work.
+  const long = all.filter(
+    (t) =>
+      !all.some(
+        (o) =>
+          o !== t &&
+          key(o) === key(t) &&
+          o.ts <= t.ts &&
+          o.ts + (o.dur ?? 0) >= t.ts + (t.dur ?? 0) &&
+          (o.ts < t.ts || (o.dur ?? 0) > (t.dur ?? 0)),
+      ),
+  );
   return long.map((t) => {
     const end = t.ts + (t.dur ?? 0);
     const best = new Map<string, number>();
