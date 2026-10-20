@@ -61,3 +61,33 @@ describe("loadConfig bucket sizes and WS settings", () => {
     ]);
   });
 });
+
+describe("loadConfig retention", () => {
+  const base = { HUB_TOKEN: "a".repeat(16) };
+  it("defaults to 30 days, hourly, and parses overrides", () => {
+    const d = loadConfig(base);
+    expect([d.eventRetentionDays, d.sampleRetentionDays, d.retentionIntervalMs]).toEqual([
+      30, 30, 3_600_000,
+    ]);
+    const c = loadConfig({
+      ...base,
+      HUB_EVENT_RETENTION_DAYS: "7",
+      HUB_SAMPLE_RETENTION_DAYS: "14",
+      HUB_RETENTION_INTERVAL_MS: "0",
+    });
+    expect([c.eventRetentionDays, c.sampleRetentionDays, c.retentionIntervalMs]).toEqual([
+      7, 14, 0,
+    ]);
+  });
+  it("rejects bad values", () => {
+    expect(() => loadConfig({ ...base, HUB_EVENT_RETENTION_DAYS: "0" })).toThrow(
+      /HUB_EVENT_RETENTION_DAYS/,
+    );
+    expect(() => loadConfig({ ...base, HUB_SAMPLE_RETENTION_DAYS: "x" })).toThrow(
+      /HUB_SAMPLE_RETENTION_DAYS/,
+    );
+    expect(() => loadConfig({ ...base, HUB_RETENTION_INTERVAL_MS: "-1" })).toThrow(
+      /HUB_RETENTION_INTERVAL_MS/,
+    );
+  });
+});

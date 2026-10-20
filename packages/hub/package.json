@@ -27,6 +27,8 @@
     "ws:harness": "node scripts/ws-harness.mjs",
     "ws:harness:negative": "node scripts/ws-harness.mjs --negative",
     "bundle": "node scripts/bundle.mjs src/main.ts dist/main.mjs",
-    "gen:golden": "node scripts/bundle.mjs scripts/gen-golden.ts dist/gen-golden.mjs && node dist/gen-golden.mjs"
+    "gen:golden": "node scripts/bundle.mjs scripts/gen-golden.ts dist/gen-golden.mjs && node dist/gen-golden.mjs",
+    "replay": "node scripts/bundle.mjs src/main.ts dist/main.mjs && node dist/main.mjs replay",
+    "compact": "node scripts/bundle.mjs src/main.ts dist/main.mjs && node dist/main.mjs compact"
   }
 }

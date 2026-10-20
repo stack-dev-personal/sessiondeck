@@ -38,6 +38,39 @@ export interface HubConfig {
    * the process-local zone, which is ccusage's default.
    */
   timezone?: string;
+  /** HUB_EVENT_RETENTION_DAYS: events older than this are folded into baselines and deleted. */
+  eventRetentionDays: number;
+  /** HUB_SAMPLE_RETENTION_DAYS: statusline samples older than this are deleted. */
+  sampleRetentionDays: number;
+  /** HUB_RETENTION_INTERVAL_MS: time between retention passes; 0 disables the timer. */
+  retentionIntervalMs: number;
+}
+
+/** What the replay and compact subcommands need; no token, no network settings. */
+export interface RetentionSettings {
+  dbPath: string;
+  eventRetentionDays: number;
+  sampleRetentionDays: number;
+  retentionIntervalMs: number;
+  maxOpenSessionsPerHost: number;
+}
+
+function nonNegInt(env: Record<string, string | undefined>, name: string, dflt: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return dflt;
+  const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(n)) throw new Error(`${name} must be a non-negative integer`);
+  return n;
+}
+
+export function loadRetentionSettings(env: Record<string, string | undefined>): RetentionSettings {
+  return {
+    dbPath: env["HUB_DB_PATH"] ?? path.join(".", "data", "hub.sqlite"),
+    eventRetentionDays: posInt(env, "HUB_EVENT_RETENTION_DAYS", 30),
+    sampleRetentionDays: posInt(env, "HUB_SAMPLE_RETENTION_DAYS", 30),
+    retentionIntervalMs: nonNegInt(env, "HUB_RETENTION_INTERVAL_MS", 3_600_000),
+    maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
+  };
 }
 
 export const MIN_TOKEN_LENGTH = 16;
@@ -87,7 +120,11 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     throw new Error("HUB_TIMEZONE must be an IANA time zone name");
   }
   const pricingFile = env["HUB_PRICING_FILE"];
+  const retention = loadRetentionSettings(env);
   return {
+    eventRetentionDays: retention.eventRetentionDays,
+    sampleRetentionDays: retention.sampleRetentionDays,
+    retentionIntervalMs: retention.retentionIntervalMs,
     ...(pricingFile !== undefined && pricingFile !== "" ? { pricingFile } : {}),
     ...(timezone !== undefined && timezone !== "" ? { timezone } : {}),
     pricingFetch: bool(env, "HUB_PRICING_FETCH", true),

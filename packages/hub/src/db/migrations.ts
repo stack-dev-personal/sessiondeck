@@ -36,4 +36,18 @@ DROP INDEX events_signature;
 CREATE INDEX sessions_host_state ON sessions(host, state);
 `,
   },
+  {
+    version: 3,
+    name: "retention_baselines",
+    // Compaction deletes events older than the retention window after folding them into one
+    // baseline snapshot per session; replay starts from these baselines and applies the remaining
+    // events. compaction_state is a single row (id = 1): cut_ts is the watermark, ingest treats an
+    // envelope older than it as already seen (its id and signature are gone with the event).
+    // statusline_samples_ts serves the bounded retention delete (the primary key leads with session_id).
+    sql: `
+CREATE TABLE session_baselines (session_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE compaction_state (id INTEGER PRIMARY KEY, cut_ts BIGINT NOT NULL, compacted_events BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE INDEX statusline_samples_ts ON statusline_samples(ts);
+`,
+  },
 ];

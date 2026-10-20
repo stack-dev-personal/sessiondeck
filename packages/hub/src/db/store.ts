@@ -331,6 +331,74 @@ export class Store {
     return this.stmt("SELECT * FROM hosts ORDER BY host LIMIT ?").all(limit) as HostRow[];
   }
 
+  /** Write transaction taken up front (BEGIN IMMEDIATE): other writers wait, then fail with SQLITE_BUSY. */
+  writeTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
+  /** Compaction watermark: envelopes with ts below it were compacted away. Null before any compaction. */
+  getCompactionCut(): number | null {
+    const r = this.stmt("SELECT cut_ts FROM compaction_state WHERE id = 1").get() as
+      { cut_ts: number } | undefined;
+    return r === undefined ? null : r.cut_ts;
+  }
+
+  /** Raises the watermark (never lowers it) and adds to the running count of compacted events. */
+  advanceCompaction(cutTs: number, compacted: number, now: number): void {
+    this.stmt(
+      `INSERT INTO compaction_state (id, cut_ts, compacted_events, updated_at) VALUES (1, @cutTs, @compacted, @now)
+       ON CONFLICT(id) DO UPDATE SET cut_ts = CASE WHEN excluded.cut_ts > cut_ts THEN excluded.cut_ts ELSE cut_ts END,
+         compacted_events = compacted_events + excluded.compacted_events, updated_at = excluded.updated_at`,
+    ).run({ cutTs, compacted, now });
+  }
+
+  listBaselines(): { session_id: string; snapshot: string }[] {
+    return this.stmt("SELECT session_id, snapshot FROM session_baselines").all() as {
+      session_id: string;
+      snapshot: string;
+    }[];
+  }
+
+  upsertBaseline(sessionId: string, snapshot: string, now: number): void {
+    this.stmt(
+      `INSERT INTO session_baselines (session_id, snapshot, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at`,
+    ).run(sessionId, snapshot, now);
+  }
+
+  /**
+   * Events in ingest order (rowid; the table is append-only, so rowid is insertion order), rowid >
+   * after. SQLite-specific: Phase 7 needs an explicit ingest sequence column on Postgres.
+   */
+  listEventsAfterRowid(after: number, limit: number): (EventRow & { rid: number })[] {
+    return this.stmt(
+      "SELECT rowid AS rid, * FROM events WHERE rowid > ? ORDER BY rowid LIMIT ?",
+    ).all(after, limit) as (EventRow & { rid: number })[];
+  }
+
+  countEvents(): number {
+    return (this.stmt("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+  }
+
+  /** Deletes the contiguous rowid range [from, to] of events. */
+  deleteEventsRowidRange(from: number, to: number): number {
+    return this.stmt("DELETE FROM events WHERE rowid >= ? AND rowid <= ?").run(from, to).changes;
+  }
+
+  /** Deletes up to limit statusline samples with ts < cutoff (statusline_samples_ts); returns the count. */
+  deleteSamplesBefore(cutoffMs: number, limit: number): number {
+    return this.stmt(
+      `DELETE FROM statusline_samples WHERE (session_id, ts) IN
+         (SELECT session_id, ts FROM statusline_samples WHERE ts < ? LIMIT ?)`,
+    ).run(cutoffMs, limit).changes;
+  }
+
+  /** Replay only: drops every session row (the caller re-inserts inside the same transaction). */
+  deleteAllSessions(): void {
+    this.stmt("DELETE FROM sessions").run();
+    this.projectsVersion++;
+  }
+
   close(): void {
     this.db.close();
   }
