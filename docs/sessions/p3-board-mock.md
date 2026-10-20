@@ -10,7 +10,7 @@
 
 | # | Unit | Requirements | Executor | Blocked by | Status |
 |---|------|--------------|----------|------------|--------|
-| U1 | tokens and shell (scaffold, tokens.css, Tailwind, Zustand store, VITE_MOCK fixture replay through reduce(), theme toggle, contrast test) | R3.7, R3.8 | sd-executor-web | none | pending |
+| U1 | tokens and shell (scaffold, tokens.css, Tailwind, Zustand store, VITE_MOCK fixture replay through reduce(), theme toggle, contrast test) | R3.7, R3.8 | sd-executor-web | none | reviewed: merge; verification after U4 (IDs span units) |
 | U2 | session card (6-row and compact 1-row, attention accent, n/a without layout shift, subagent +n, compact `c` with localStorage) | R3.2, R3.4, R3.7 | sd-executor-web | U1 | pending |
 | U3 | detail drawer (Enter/click open, Esc close, focus return, sections per design system 5.2) | R3.5 | sd-executor-web | U2 | pending |
 | U4 | /dev/cards route, Playwright suite in container, screenshots to /state/1/screens/S5 | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-web | U3 | pending |
@@ -22,5 +22,13 @@
 - 2026-10-20 /dev/cards route chosen over Storybook (phase doc Instruments leaves it to the session; cheaper, no extra toolchain).
 
 ## Units
+
+### U1 tokens and shell
+- Commits: 838ab27, 0eb65d6, fix 9a07104. Files: packages/web/** (scaffold, tokens.css verbatim with two prettier-ignore lines, contrast test and report script, shell, store with rAF coalescing, mock replay of 8 sessions on 2 hosts, statusline adapter), pnpm-lock.yaml.
+- Review iteration 1 (117d37c..0eb65d6): fix-then-merge. 1 MAJOR (fg-faint text contrast untested), 5 MINOR. All fixed in 9a07104.
+- Review iteration 2 (0eb65d6..9a07104): merge. 2 MINOR carried into U2 (check:bundle args; meters must render through windowAt).
+- Tests: 33/33 pass. Contrast report: 4 pinned text failures (dark state-ended 3.80, light state-starting 3.04, dark fg-faint 3.83, light fg-faint 3.04).
+- Decision: react-router-dom v6 (route params for later /session/:id); vite 7 (matches vitest 3).
+- Decision: fg-faint stays on host and footer text per the design system and joins the pending contrast question; state-colored and faint text only on bg-surface-1 (the surface the design system's contrast rule names).
 
 ## Deferred findings
