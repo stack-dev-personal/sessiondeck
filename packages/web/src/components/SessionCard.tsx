@@ -294,7 +294,11 @@ function CompactCardImpl({
       <span id={hintId} className="sr-only">
         Enter opens details
       </span>
-      <span data-slot="state" className={`num shrink-0 ${vocab.textClass}`} title={vocab.label}>
+      <span
+        data-slot="state"
+        className={`num w-36 shrink-0 truncate ${vocab.textClass}`}
+        title={vocab.label}
+      >
         <span aria-hidden="true" className={s.state === "working" ? "sd-pulse" : ""}>
           {vocab.glyph}
         </span>{" "}
@@ -309,7 +313,7 @@ function CompactCardImpl({
       <span data-slot="agents" className="num w-20 shrink-0 text-right text-fg-muted">
         {active} {active === 1 ? "agent" : "agents"}
       </span>
-      <span className="shrink-0">
+      <span data-slot="tasks-slot" className="flex w-16 shrink-0 justify-end">
         <TaskProgress s={s} bar={false} />
       </span>
     </article>

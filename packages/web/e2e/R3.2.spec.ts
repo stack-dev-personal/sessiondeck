@@ -110,3 +110,85 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
   expect(bad).toEqual([]);
   await fullShot(page, "R3.2-board.png", { baseline: true });
 });
+
+test("R3.2 compact rows: every nullable field null to longest value moves nothing at 320-480 px", async ({
+  page,
+}) => {
+  await page.addInitScript(() => window.localStorage.setItem("sd.compact", "1"));
+  await openSettledBoard(page);
+  type Store = {
+    getState: () => { sessions: Record<string, Record<string, unknown>> };
+    setState: (p: unknown) => void;
+  };
+  const patch = (patchObj: Record<string, unknown>, sid?: string) =>
+    page.evaluate(
+      ({ arg, want }) => {
+        const b = (window as unknown as { __sd: { board: Store } }).__sd.board;
+        const s = b.getState().sessions;
+        const id =
+          want ??
+          document.querySelector<HTMLElement>('[data-testid="session-card"]')!.dataset[
+            "sessionId"
+          ]!;
+        b.setState({ sessions: { ...s, [id]: { ...s[id], ...arg } } });
+        return id;
+      },
+      { arg: patchObj, want: sid },
+    );
+  const raf = () =>
+    page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const boxes = (id: string) =>
+    page.evaluate((sid) => {
+      const card = document.querySelector<HTMLElement>(`[data-session-id="${sid}"]`)!;
+      // Relative to the card: a state change legitimately re-sorts the card on the board.
+      const c0 = card.getBoundingClientRect();
+      const rect = (e: Element) => {
+        const r = e.getBoundingClientRect();
+        return [r.x - c0.x, r.y - c0.y, r.width, r.height].map((n) => Math.round(n * 10) / 10);
+      };
+      return {
+        card: rect(card),
+        density: card.dataset["density"],
+        items: Array.from(card.querySelectorAll("[data-slot], [data-meter]"))
+          // The text inside the fixed tasks slot is right-aligned, so only the slot is measured.
+          .filter((e) => !e.closest('[data-slot="tasks"]'))
+          .map((e) => ({
+            k: (e as HTMLElement).dataset["slot"] ?? (e as HTMLElement).dataset["meter"],
+            r: rect(e),
+          })),
+      };
+    }, id);
+  const future = Date.now() + 3_600_000;
+  const empty = {
+    state: "starting",
+    session_name: null,
+    context: { used_pct: null, window: null, input: null, output: null },
+    rate_limits: { five_hour: null, seven_day: null, captured_at: null },
+    tasks: { total: 0, completed: 0, last_subject: null },
+    subagents: [],
+  };
+  const full = {
+    state: "waiting_permission",
+    session_name: "a very long session name that must truncate and never wrap the row",
+    context: { used_pct: 100, window: 1_000_000, input: 1, output: 1 },
+    rate_limits: {
+      five_hour: { used_pct: 100, resets_at: future },
+      seven_day: { used_pct: 100, resets_at: future },
+      captured_at: future,
+    },
+    tasks: { total: 100, completed: 100, last_subject: "x" },
+    subagents: [],
+  };
+  for (const w of [320, 360, 400, 440, 480]) {
+    await page.setViewportSize({ width: w, height: 800 });
+    const id = await patch(empty);
+    await raf();
+    const before = await boxes(id);
+    expect(before.density).toBe("compact");
+    await patch(full, id);
+    await raf();
+    const after = await boxes(id);
+    expect(after.card, `${w}px card box`).toEqual(before.card);
+    expect(after.items, `${w}px item boxes`).toEqual(before.items);
+  }
+});

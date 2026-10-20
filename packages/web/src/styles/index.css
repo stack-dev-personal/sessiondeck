@@ -66,9 +66,10 @@ body {
     grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem;
   }
   /*
-   * Compact rows hold fixed-width items (state, three 3.5rem meters, agents, tasks) that exceed
-   * 320 px, so they wrap onto extra lines instead of clipping. Item widths do not depend on the
-   * data, so null to value still moves nothing; height is min 36 px and stable per viewport.
+   * Compact rows hold fixed-width items (state 9rem, three 3.5rem meters, agents 5rem, tasks 4rem;
+   * the name takes the rest) that exceed 320 px, so they wrap onto extra lines instead of
+   * clipping. Every item has a fixed width (text truncates inside it), so null to value or a
+   * state change moves nothing; height is min 36 px and stable per viewport.
    */
   .sd-card[data-density="compact"] {
     height: auto !important;
