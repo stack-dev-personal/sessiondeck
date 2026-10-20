@@ -20,6 +20,10 @@ export const TASK_NAMES: ReadonlySet<string> = new Set([
 /** Script entry points on the main thread: our JS. */
 const SCRIPT = new Set(["FireAnimationFrame", "TimerFire", "EventDispatch", "FunctionCall"]);
 
+const GC = /GC|V8\.GC/;
+const clippedDur = (e: TraceEvent, t0: number, t1: number): number =>
+  Math.min(e.ts + (e.dur ?? 0), t1) - Math.max(e.ts, t0);
+
 const key = (e: { pid: number; tid: number }): string => `${e.pid}:${e.tid}`;
 
 function mainThreadKeys(events: TraceEvent[]): Set<string> {
@@ -76,9 +80,36 @@ export function mainThreadBusy(events: TraceEvent[], windowUs: number) {
     cur.longest = Math.max(cur.longest, b - a);
     byThread.set(k, cur);
   }
-  const maxScriptUs = events
-    .filter((e) => e.ph === "X" && SCRIPT.has(e.name) && mains.has(key(e)))
-    .reduce((m, e) => Math.max(m, e.dur ?? 0), 0);
+  const busiest = [...byThread.entries()].sort(
+    (x, y) => unionLength(y[1].iv) - unionLength(x[1].iv),
+  )[0]?.[0];
+  // Script events on the busiest main thread only, clipped to [t0, t1].
+  const scripts = events.filter(
+    (e) =>
+      e.ph === "X" &&
+      SCRIPT.has(e.name) &&
+      key(e) === busiest &&
+      e.ts + (e.dur ?? 0) > t0 &&
+      e.ts < t1,
+  );
+  const longest = scripts.reduce<TraceEvent | null>(
+    (m, e) => (m === null || clippedDur(e, t0, t1) > clippedDur(m, t0, t1) ? e : m),
+    null,
+  );
+  const maxScriptUs = longest ? clippedDur(longest, t0, t1) : 0;
+  // GC inside the longest script task: it counts against rule (a) but is not our code.
+  const gcUs = longest
+    ? events
+        .filter(
+          (e) =>
+            e.ph === "X" &&
+            key(e) === busiest &&
+            GC.test(e.name) &&
+            e.ts >= longest.ts &&
+            e.ts + (e.dur ?? 0) <= longest.ts + (longest.dur ?? 0),
+        )
+        .reduce((sum, e) => sum + (e.dur ?? 0), 0)
+    : 0;
   const threads = [...byThread.entries()]
     .map(([thread, v]) => ({
       thread,
@@ -91,6 +122,7 @@ export function mainThreadBusy(events: TraceEvent[], windowUs: number) {
     busyPct: threads[0]?.busyPct ?? 0,
     taskCount: threads[0]?.tasks ?? 0,
     maxScriptMs: r2(maxScriptUs / 1000),
+    maxScriptGcMs: r2(gcUs / 1000),
     threads,
     mainThreads: mains.size,
   };

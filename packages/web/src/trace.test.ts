@@ -31,6 +31,27 @@ describe("R3.6 trace analysis", () => {
     expect(r.busyPct).toBe(20);
   });
 
+  it("limits script time to the busiest main thread, clips to the window, reports GC inside", () => {
+    const meta2: TraceEvent = { ...meta, tid: 9 };
+    const other = (name: string, ts: number, dur: number): TraceEvent => ({
+      ...x(name, ts, dur),
+      tid: 9,
+    });
+    const ev = [
+      meta,
+      meta2,
+      x("RunTask", 0, 9000),
+      x("TimerFire", 100, 5000),
+      x("MajorGC", 200, 3000),
+      x("TimerFire", 20_000, 50_000), // after the 10 ms window: ignored
+      other("RunTask", 0, 100),
+      other("TimerFire", 0, 90_000), // quiet thread: ignored
+    ];
+    const r = mainThreadBusy(ev, 10_000);
+    expect(r.maxScriptMs).toBe(5);
+    expect(r.maxScriptGcMs).toBe(3);
+  });
+
   it("reports zero counted tasks for an unrecognised trace instead of failing open", () => {
     const r = mainThreadBusy([meta, x("SomethingElse", 0, 5000)], 10_000);
     expect(r.taskCount).toBe(0);

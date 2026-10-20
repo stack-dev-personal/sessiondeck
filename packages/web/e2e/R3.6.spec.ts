@@ -177,6 +177,7 @@ test("R3.6 20 sessions, 2 hosts, 20 deltas/s: main thread < 50% busy, no dropped
         mainThreadBusyPct: busy.busyPct,
         countedTasks: busy.taskCount,
         maxScriptTaskMs: busy.maxScriptMs,
+        maxScriptTaskGcMs: busy.maxScriptGcMs,
         mainThreads: busy.threads,
         frames: m.data.frames.length,
         intervalsOver1_5xMedian: intervals.filter((d) => d > 1.5 * median).length,
@@ -196,8 +197,11 @@ test("R3.6 20 sessions, 2 hosts, 20 deltas/s: main thread < 50% busy, no dropped
       };
     };
 
-    // Window 1: idle baseline, generator off.
+    // Population GC and JIT work must not land in the idle window: run one discarded window first.
     await sleep(WARMUP_MS);
+    await measure("discard", 8_000);
+
+    // Window 1: idle baseline, generator off.
     const idleRaw = await measure("idle", WINDOW_MS);
     const idle = analyse(idleRaw);
 

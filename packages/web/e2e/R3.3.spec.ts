@@ -63,6 +63,33 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
       }
     }
     w["Notification"] = FakeNotification;
+    // Counts tones (each one starts one oscillator). The init script runs again on reload, so the
+    // count after a reload covers that page load only.
+    w["__tones"] = 0;
+    class FakeAudio {
+      currentTime = 0;
+      destination = {};
+      resume() {
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return {
+          frequency: { value: 0 },
+          connect: () => undefined,
+          start: () => {
+            (w["__tones"] as number)++;
+          },
+          stop: () => undefined,
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime: () => undefined, linearRampToValueAtTime: () => undefined },
+          connect: () => undefined,
+        };
+      }
+    }
+    w["AudioContext"] = FakeAudio;
     const Native = window.WebSocket;
     w["__msg"] = {};
     w["__frame"] = 0;
@@ -89,7 +116,10 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
       }
     };
   });
-  await configureHub(page, { notifications: true });
+  await configureHub(page, {
+    notifications: true,
+    sounds: { waiting_permission: true, waiting_input: true },
+  });
   await page.goto("/board");
   await waitConnected(page);
 
@@ -247,6 +277,19 @@ test("R3.3 attention sort, accent, one notification per transition, filters", as
   const again = (await notifs()) as { tag: string; silent: boolean }[];
   expect(again.map((x) => x.tag).sort()).toEqual([n[1]!.tag, n[2]!.tag].sort());
   expect(again.every((x) => x.silent === true)).toBe(true);
+  // Sounds are on: a silent replace plays no tone, a fresh announcement would.
+  expect(await page.evaluate(() => (window as never as { __tones: number }).__tones)).toBe(0);
+  // Both resumed episodes are recorded as shown.
+  const shown = await page.evaluate(
+    () =>
+      Object.values(
+        JSON.parse(window.sessionStorage.getItem("sd.alerts.seen") ?? "{}") as Record<
+          string,
+          { shown?: boolean }
+        >,
+      ).filter((e) => e.shown === true).length,
+  );
+  expect(shown).toBeGreaterThanOrEqual(2);
   await expect(page.getByLabel("Host", { exact: true })).toHaveValue(HOST);
   await expect(page.getByLabel("Project", { exact: true })).toHaveValue(ALPHA);
   await expect(page.getByTestId("session-card")).toHaveCount(2);
