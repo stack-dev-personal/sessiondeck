@@ -5,3 +5,5 @@ engineStrict: true
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+# R0.5: run recursive scripts without topological ordering so package suites start together.
+sort: false
