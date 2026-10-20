@@ -58,8 +58,31 @@ body {
  */
 @media (max-width: 30rem) {
   .sd-card [data-slot="meters"] {
-    grid-template-columns: auto auto auto;
-    justify-content: space-between;
+    /*
+     * Fixed tracks, never content-sized: a value arriving must not move a column (R3.2). The
+     * 5h and 7d tracks fit label, "100%" and cue; ctx takes the rest and may ellipsise its
+     * secondary "of 200k" / "200k+" tail (full text in title and aria-label), never the percent.
+     */
+    grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem;
+  }
+  /*
+   * Compact rows hold fixed-width items (state, three 3.5rem meters, agents, tasks) that exceed
+   * 320 px, so they wrap onto extra lines instead of clipping. Item widths do not depend on the
+   * data, so null to value still moves nothing; height is min 36 px and stable per viewport.
+   */
+  .sd-card[data-density="compact"] {
+    height: auto !important;
+    min-height: var(--card-compact-h);
+    flex-wrap: wrap;
+    row-gap: var(--s-1);
+    padding-block: var(--s-1);
+  }
+  .sd-card[data-density="compact"] [data-slot="name"] {
+    flex: 1 1 8rem;
+  }
+  /* The label is a constant per meter, so letting it size to its text moves nothing (R3.2). */
+  .sd-card [data-slot="label"] {
+    width: auto;
   }
   .sd-card [data-slot="bar"],
   .sd-card [data-slot="task-bar"] {
