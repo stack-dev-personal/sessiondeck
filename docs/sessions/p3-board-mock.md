@@ -13,8 +13,8 @@
 | U1 | tokens and shell (scaffold, tokens.css, Tailwind, Zustand store, VITE_MOCK fixture replay through reduce(), theme toggle, contrast test) | R3.7, R3.8 | sd-executor-web | none | reviewed: merge; verification after U4 (IDs span units) |
 | U2 | session card (6-row and compact 1-row, attention accent, n/a without layout shift, subagent +n, compact `c` with localStorage) | R3.2, R3.4, R3.7 | sd-executor-web | U1 | reviewed: merge; verification after U4 |
 | U3 | detail drawer (Enter/click open, Esc close, focus return, sections per design system 5.2) | R3.5 | sd-executor-web | U2 | reviewed: merge; verification after U4 |
-| U4 | /dev/cards route, Playwright suite in container, screenshots to /state/1/screens/S5 | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-web | U3 | pending |
-| U5 | CI job running the Playwright smoke suite (phase DoD: Playwright smoke green in CI) | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-contract (.github) | U4 | pending |
+| U4 | /dev/cards route, Playwright suite in container, screenshots to /state/1/screens/S5 | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-web | U3 | reviewed: merge |
+| U5 | CI job running the Playwright smoke suite (phase DoD: Playwright smoke green in CI) | R3.2, R3.4, R3.5, R3.7, R3.8 | sd-executor-contract (.github) | U4 | reviewed: merge (CI green pending on final head) |
 
 ## Decisions made
 
@@ -49,7 +49,28 @@
 - Tests: 105/105 pass.
 - Decision: tasks section shows counts plus last subject (snapshot has no per-task list); j/k clamp; no ?session= URL.
 
+### U4 /dev/cards and Playwright suite
+- Commits: 40645ec, 7c61038, fixes dcd58b1, ba70295, minors 17b16dd, d934448. Files: packages/web/src/dev/specimens.ts, routes/DevCards.tsx, mock/{timeline,start,fixtures}.ts, e2e/R3.{2,4,5,7,8}.spec.ts, helpers, summary reporter, playwright.config.ts, e2e/__screenshots__/ baselines; U3 carried minors (focusNearest, inert asserts).
+- Review iteration 1 (54bf94f..7c61038): fix-then-merge. 4 MAJOR (mock replay left most cards empty; screenshots taken mid-replay; drawer shot of an empty session; /dev/cards PNGs never compared), 5 MINOR. Fixed in dcd58b1.
+- Review iteration 2 (7c61038..dcd58b1): fix-then-merge. 1 MAJOR (placeholder text ignored field: prompt got assistant-style text), 2 MINOR. Fixed in ba70295.
+- Review iteration 3 (dcd58b1..ba70295): merge. 2 MINOR fixed in 17b16dd (reply variety; row-1 ellipsis), then 1 MINOR fixed in d934448 (state detail priority in row 1).
+- Evidence: Playwright 12/12 in mcr.microsoft.com/playwright:v1.63.0-noble, baselines stable over repeated runs; screenshots in /state/1/screens/S5/. Settled mock board: all 8 states, 7/8 cards with context and 5h/7d, 8 distinct names, 7 branches.
+- Decision: /dev/cards is available only in dev and VITE_MOCK=1 builds (fixtures carry a marker id that check:bundle keeps out of production).
+- Decision: mock replay has ?replay=fast and a data-replay="done" signal for e2e; interactive pace unchanged.
+
+### U5 CI Playwright job
+- Commits: 37de274, fix 3ef73eb. File: .github/workflows/ci.yml (new job e2e-web in the pinned Playwright image so baselines match).
+- Review iteration 1 (ba70295..17b16dd): fix-then-merge. 2 MAJOR (screens dir used host path in a container job; uploaded result paths never created). Fixed in 3ef73eb.
+- Review iteration 2 (17b16dd..d934448): merge, conditional on green e2e-web on the final head. CI run 39361096443 on 17b16dd: e2e-web success, ubuntu checks success.
+
+### Session close checks (d934448)
+- pnpm -r test: scripts 575 pass / 7 skipped, contract 1090 pass / 1 skipped, web 116 pass. pnpm -r typecheck, pnpm -r lint, lint:root, format:check: exit 0.
+- Sprint branch unchanged since intake (5b76608): no rebase needed.
+- MINI-SPRINT-ORDER integration check for S5 ("web Playwright flows from S5 and S6 against the live hub") is a sprint-gate check run after S3 and S6 merge; S5's flows run on the mock build here.
+
 ## Deferred findings
+- [MINOR] packages/web/src/components/SessionCard.tsx:176: `where` (project/branch) has shrink-[8] and min-w-0, so on narrow cards (about 400 px) it can collapse to "…"; e2e collapse check covers only the state detail. Add a floor (min-w-[8ch]) and extend the check.
+- [MINOR] packages/web/e2e/R3.2.spec.ts:96: collapse threshold 6 x 0.5em is looser than the 10ch CSS floor; compare against a measured 10-character width.
 - [contract, for S6 / contract owner] SessionSnapshot has no per-task list; the drawer's "tasks list" (design system 5.2) shows counts and last subject until it does.
 - [contract, for S6 / contract owner] Add `context.exceeds_200k` (from statusLine `exceeds_200k_tokens`) to SessionSnapshot; the web-side map in packages/web/src/store/board.ts does not survive once the hub owns snapshots. Also a prompt timestamp would allow "since prompt" in the footer.
 - [MINOR, S6] packages/web/src/store/board.ts:47-50: replaceAll (reconnect resync) clears the exceeds200k map, so an idle session above 200k loses its tag until its next statusLine tick; no store tests for set / replaceAll / compaction flip. S6 owns reconnect.
