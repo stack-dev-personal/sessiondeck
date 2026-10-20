@@ -4,14 +4,15 @@
  * a file that is shorter than the cursor offset was replaced or truncated and is read from 0.
  *
  * Only complete lines are consumed: a trailing partial line is held back until its newline
- * arrives. Invalid lines are skipped (counted, logged clipped to 200 chars) and get no seq. The
- * reader moves to the next day file only when the current one is exhausted and a later one exists.
+ * arrives. Invalid lines are skipped (counted; the log gets file, offset, length and the parse
+ * error, never line content) and get no seq. The reader moves to the next day file only when the
+ * current one is exhausted, a later one exists, and the current one has not grown for DAY_GRACE_MS:
+ * a hook that picked the old day's name just before UTC midnight may still append to it.
  */
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { parseSpoolLine } from "../spool.ts";
 import type { SpoolLine } from "../spool-format.ts";
-import { clip } from "./log.ts";
 import type { Cursor, Logger } from "./types.ts";
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
@@ -20,13 +21,21 @@ const FIRST_CHUNK = 1024 * 1024;
 export const SEQ_OVERHEAD = 24;
 /** A torn last line of a past day file is dropped after this long without growth. */
 const TORN_TAIL_MS = 60_000;
+/** An exhausted day file is left for the next one only after this long without a write. */
+export const DAY_GRACE_MS = 60_000;
 
 export interface ReadOutcome {
   items: SpoolLine[];
+  /** Per item: the position just after its line (a restart from here repeats nothing before it). */
+  ends: Cursor[];
+  /** Per item: estimated serialized bytes. */
+  costs: number[];
   /** Estimated serialized bytes of the items. */
   bytes: number;
   /** Stopped because the next item did not fit the byte budget. */
   full: boolean;
+  /** Stopped because there was nothing more to read (not for a limit). */
+  drained: boolean;
 }
 
 export class DayFileReader {
@@ -71,8 +80,20 @@ export class DayFileReader {
     return lag;
   }
 
-  async read(maxItems: number, maxBytes: number): Promise<ReadOutcome> {
-    const out: ReadOutcome = { items: [], bytes: 0, full: false };
+  /**
+   * Reads up to maxItems complete lines. The byte budget holds for every item except the first,
+   * which is let through over budget only when `allowOversizeFirst` (the caller's buffer is empty,
+   * so the line goes out alone).
+   */
+  async read(maxItems: number, maxBytes: number, allowOversizeFirst = true): Promise<ReadOutcome> {
+    const out: ReadOutcome = {
+      items: [],
+      ends: [],
+      costs: [],
+      bytes: 0,
+      full: false,
+      drained: false,
+    };
     while (out.items.length < maxItems && !out.full) {
       const files = await this.listFiles();
       if (!this.position) {
@@ -102,7 +123,7 @@ export class DayFileReader {
       }
       const later = files.find((f) => f > pos.file);
       if (st.size === pos.offset) {
-        if (!later) break;
+        if (!later || this.now() - st.mtimeMs <= DAY_GRACE_MS) break;
         this.position = { file: later, offset: 0 };
         continue;
       }
@@ -115,12 +136,14 @@ export class DayFileReader {
         out,
         maxItems,
         maxBytes,
+        allowOversizeFirst,
       );
       if (!progressed) {
         // Only a partial line is left. Elsewhere to go and nothing new: wait for the newline.
         break;
       }
     }
+    out.drained = !out.full && out.items.length < maxItems;
     return out;
   }
 
@@ -134,6 +157,7 @@ export class DayFileReader {
     out: ReadOutcome,
     maxItems: number,
     maxBytes: number,
+    allowOversizeFirst: boolean,
   ): Promise<boolean> {
     const fh = await open(path, "r");
     try {
@@ -149,6 +173,7 @@ export class DayFileReader {
       let consumed = 0;
       let start = 0;
       let progressed = false;
+      let stopped = false;
       for (;;) {
         const nl = buf.indexOf(0x0a, start);
         if (nl < 0) break;
@@ -164,18 +189,24 @@ export class DayFileReader {
         const parsed = parseSpoolLine(text);
         if (parsed.ok) {
           const cost = n + SEQ_OVERHEAD;
-          if (out.items.length >= maxItems) break;
-          if (out.items.length > 0 && out.bytes + cost > maxBytes) {
+          if (out.items.length >= maxItems) {
+            stopped = true;
+            break;
+          }
+          if ((out.items.length > 0 || !allowOversizeFirst) && out.bytes + cost > maxBytes) {
             out.full = true;
+            stopped = true;
             break;
           }
           out.items.push(parsed.line);
+          out.ends.push({ file: pos.file, offset: pos.offset + nl + 1 });
+          out.costs.push(cost);
           out.bytes += cost;
         } else {
           this.skipped += 1;
           this.log(
             "warn",
-            `${this.label}: skipped invalid line in ${pos.file} at ${pos.offset + start} (${parsed.error}): ${clip(text)}`,
+            `${this.label}: skipped invalid line in ${pos.file} at ${pos.offset + start} length ${n} (${parsed.error})`,
           );
         }
         start = nl + 1;
@@ -183,12 +214,18 @@ export class DayFileReader {
         progressed = true;
       }
       pos.offset += consumed;
-      if (!progressed && hasLater && this.now() - mtimeMs > TORN_TAIL_MS && buf.length > 0) {
+      if (
+        !progressed &&
+        !stopped &&
+        hasLater &&
+        this.now() - mtimeMs > TORN_TAIL_MS &&
+        buf.length > 0
+      ) {
         // A torn final line in a past day file will never be completed.
         this.skipped += 1;
         this.log(
           "warn",
-          `${this.label}: dropped torn tail of ${pos.file} at ${pos.offset}: ${clip(buf.toString("utf8"))}`,
+          `${this.label}: dropped torn tail of ${pos.file} at ${pos.offset} length ${buf.length}`,
         );
         pos.offset += buf.length;
         return true;

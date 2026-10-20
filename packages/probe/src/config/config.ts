@@ -10,6 +10,8 @@ export interface ProbeConfig {
   hubUrl?: string;
   token?: string;
   host: string;
+  /** Opt-in to cleartext http for a non-loopback hub (a LAN hub without TLS). */
+  allowInsecureHub?: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -37,6 +39,7 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   };
   if (typeof r["hubUrl"] === "string") cfg.hubUrl = r["hubUrl"];
   if (typeof r["token"] === "string") cfg.token = r["token"];
+  if (r["allowInsecureHub"] === true) cfg.allowInsecureHub = true;
   return cfg;
 }
 
@@ -57,6 +60,9 @@ export function validateHubUrl(url: string): string {
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new ConfigError("--hub must be an http or https URL");
+  }
+  if (u.username !== "" || u.password !== "") {
+    throw new ConfigError("--hub must not contain a user name or password");
   }
   return url;
 }
@@ -174,6 +180,7 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void>
   if (cfg.hubUrl !== undefined) body["hubUrl"] = cfg.hubUrl;
   if (cfg.token !== undefined) body["token"] = cfg.token;
   body["host"] = cfg.host;
+  if (cfg.allowInsecureHub === true) body["allowInsecureHub"] = true;
   await writeFileAtomic(path, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
     beforeWrite: async (tmp) => {

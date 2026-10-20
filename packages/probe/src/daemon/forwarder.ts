@@ -8,23 +8,40 @@
  * hub's dedup by id absorbs the resend of a batch whose ack was lost.
  *
  * One batch in flight. A batch closes at 200 envelopes, 250 ms after its first envelope, or about
- * 900 KiB of body (the hub accepts 1 MiB).
+ * 900 KiB of body (the hub accepts 1 MiB). A batch the hub still answers 413 to is split in halves
+ * and resent (same ids, same seq).
+ *
+ * Seq order follows `ts`: each batch merges the outbox and the hook spool by ts, and only takes
+ * from a source while the other source's next envelope is known (see select()).
  */
 import { join } from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
 import type { ProbeConfig } from "../config/config.ts";
 import type { SpoolLine } from "../spool-format.ts";
 import { BACKOFF_BASE_MS, BACKOFF_CAP_MS, backoffDelay } from "./backoff.ts";
+import { HUB_URL_REFUSED, checkHubUrl } from "./hub-url.ts";
 import { pruneOutbox } from "./outbox.ts";
-import { writeFileAtomic } from "../install/atomic.ts";
+import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
 import { DayFileReader } from "./reader.ts";
+import { REJECTED_MAX_BYTES, REJECTED_MAX_FILES, capRejected } from "./rejected.ts";
 import { type DaemonState, type PendingBatch, loadState, saveState } from "./state.ts";
 import type { Cursor, Logger } from "./types.ts";
 
 export const MAX_BATCH_ENVELOPES = 200;
 export const MAX_BATCH_MS = 250;
 export const MAX_BODY_BYTES = 900 * 1024;
-const OUTBOX_PER_BATCH = 100;
+type Src = "outbox" | "spool";
+const SOURCES: readonly Src[] = ["outbox", "spool"];
+interface Queued {
+  line: SpoolLine;
+  end: Cursor;
+  cost: number;
+}
+interface Rejection {
+  envs: Envelope[];
+  status: number;
+  why: string;
+}
 const BODY_WRAPPER_BYTES = 1024;
 
 export interface ForwarderOptions {
@@ -46,6 +63,9 @@ export interface ForwarderOptions {
   requestTimeoutMs: number;
   /** Upper bound of the retry delay; default 30 s. Shortened by tests and the loss harness. */
   backoffCapMs?: number;
+  /** Caps for the rejected-batch directory (defaults 200 files, 64 MiB). */
+  rejectedMaxFiles?: number;
+  rejectedMaxBytes?: number;
   /** Called for each hook-spool envelope of a batch when it is about to be sent. */
   onSpoolLine?: (env: Envelope) => void;
 }
@@ -57,20 +77,24 @@ type Outcome =
   | { kind: "reject"; status: number; why: string }
   | { kind: "aborted" };
 
+function range(from: number, to: number): number[] {
+  return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
+}
+
 export class Forwarder {
   private state!: DaemonState;
   private spool!: DayFileReader;
   private outbox!: DayFileReader;
-  private buf: { outbox: SpoolLine[]; spool: SpoolLine[]; bytes: number; firstAt: number } = {
-    outbox: [],
-    spool: [],
-    bytes: 0,
-    firstAt: 0,
-  };
+  private q: Record<Src, Queued[]> = { outbox: [], spool: [] };
+  private qBytes: Record<Src, number> = { outbox: 0, spool: 0 };
+  /** The last read of a source ran out of data (rather than stopping at a limit). */
+  private drained: Record<Src, boolean> = { outbox: false, spool: false };
+  private firstAt = 0;
   private bufFull = false;
   private readonly ctl = new AbortController();
   private loop: Promise<void> | undefined;
   private authLogged = false;
+  private policyLogged = false;
   private dead = false;
   /** Delays slept between failed attempts, for tests and the heartbeat. */
   attempts = 0;
@@ -100,7 +124,7 @@ export class Forwarder {
 
   /** Envelopes read or journaled but not yet acknowledged. */
   pendingCount(): number {
-    return this.state.pending?.envelopes.length ?? this.buf.outbox.length + this.buf.spool.length;
+    return this.state.pending?.envelopes.length ?? this.q.outbox.length + this.q.spool.length;
   }
 
   async lagBytes(): Promise<number> {
@@ -141,45 +165,115 @@ export class Forwarder {
   }
 
   private async fill(): Promise<void> {
-    const b = this.buf;
-    const room = (): number => this.o.maxBatch - b.outbox.length - b.spool.length;
-    const budget = (): number => this.o.maxBodyBytes - BODY_WRAPPER_BYTES - b.bytes;
-    if (room() > 0 && !this.bufFull) {
-      const r = await this.outbox.read(Math.min(room(), OUTBOX_PER_BATCH), budget());
-      b.outbox.push(...r.items);
-      b.bytes += r.bytes;
+    const budgetAll = this.o.maxBodyBytes - BODY_WRAPPER_BYTES;
+    for (const src of SOURCES) {
+      const q = this.q[src];
+      if (q.length >= this.o.maxBatch) {
+        this.drained[src] = false;
+        continue;
+      }
+      // The byte budget holds for everything but a line read into an empty queue.
+      const r = await this[src].read(
+        this.o.maxBatch - q.length,
+        budgetAll - this.qBytes[src],
+        q.length === 0,
+      );
+      r.items.forEach((line, i) => {
+        q.push({ line, end: r.ends[i] as Cursor, cost: r.costs[i] as number });
+      });
+      this.qBytes[src] += r.bytes;
+      this.drained[src] = r.drained;
       if (r.full) this.bufFull = true;
     }
-    if (room() > 0 && !this.bufFull) {
-      const r = await this.spool.read(room(), budget());
-      b.spool.push(...r.items);
-      b.bytes += r.bytes;
-      if (r.full) this.bufFull = true;
-    }
-    if (b.firstAt === 0 && b.outbox.length + b.spool.length > 0) b.firstAt = this.o.now();
+    if (this.firstAt === 0 && this.queued() > 0) this.firstAt = this.o.now();
+  }
+
+  private queued(): number {
+    return this.q.outbox.length + this.q.spool.length;
   }
 
   private shouldClose(): boolean {
-    const n = this.buf.outbox.length + this.buf.spool.length;
+    const n = this.queued();
     if (n === 0) return false;
     return (
-      n >= this.o.maxBatch || this.bufFull || this.o.now() - this.buf.firstAt >= this.o.batchMs
+      n >= this.o.maxBatch ||
+      this.bufFull ||
+      this.qBytes.outbox + this.qBytes.spool > this.o.maxBodyBytes - BODY_WRAPPER_BYTES ||
+      this.o.now() - this.firstAt >= this.o.batchMs
     );
   }
 
+  /**
+   * Picks the next batch from the two queues in `ts` order (ties: outbox first). A source whose
+   * queue is used up but which stopped at a limit (not drained) may hold an older envelope that
+   * is not read yet, so selection stops there. The first pick is always allowed; later ones must
+   * fit the body budget.
+   */
+  private select(): { src: Src; q: Queued }[] {
+    const budget = this.o.maxBodyBytes - BODY_WRAPPER_BYTES;
+    const at: Record<Src, number> = { outbox: 0, spool: 0 };
+    const picked: { src: Src; q: Queued }[] = [];
+    let bytes = 0;
+    while (picked.length < this.o.maxBatch) {
+      const o = this.q.outbox[at.outbox];
+      const s = this.q.spool[at.spool];
+      let src: Src;
+      if (o && s) src = s.line.ts < o.line.ts ? "spool" : "outbox";
+      else if (o) {
+        if (!this.drained.spool) break;
+        src = "outbox";
+      } else if (s) {
+        if (!this.drained.outbox) break;
+        src = "spool";
+      } else break;
+      const item = this.q[src][at[src]] as Queued;
+      if (picked.length > 0 && bytes + item.cost > budget) break;
+      picked.push({ src, q: item });
+      bytes += item.cost;
+      at[src] += 1;
+    }
+    for (const src of SOURCES) {
+      this.q[src].splice(0, at[src]);
+      this.qBytes[src] = this.q[src].reduce((n, x) => n + x.cost, 0);
+    }
+    return picked;
+  }
+
   private async closeBatch(): Promise<void> {
-    const { outbox, spool } = this.buf;
+    const picked = this.select();
+    if (picked.length === 0) {
+      this.firstAt = this.o.now();
+      return;
+    }
     const first = this.state.next_seq;
-    const envelopes: Envelope[] = [...outbox, ...spool].map((l, i) => ({ ...l, seq: first + i }));
-    const pending: PendingBatch = { first_seq: first, envelopes, spool_from: outbox.length };
-    // Positions after everything read, including skipped invalid lines.
-    if (this.spool.position) pending.spool = { ...this.spool.position };
-    if (this.outbox.position) pending.outbox = { ...this.outbox.position };
+    const envelopes: Envelope[] = picked.map((x, i) => ({ ...x.q.line, seq: first + i }));
+    const pending: PendingBatch = {
+      first_seq: first,
+      envelopes,
+      spool_idx: picked.flatMap((x, i) => (x.src === "spool" ? [i] : [])),
+    };
+    // Cursors: after the last picked line of a source, or (queue empty) after everything read,
+    // including skipped invalid lines.
+    for (const src of SOURCES) {
+      const last = picked.filter((x) => x.src === src).at(-1);
+      const pos = this[src].position;
+      const cur = this.q[src].length === 0 ? pos : last?.q.end;
+      if (cur) pending[src] = { ...cur };
+    }
     if (this.dead) return;
-    await saveState(this.o.statePath, { ...this.state, pending });
+    try {
+      await saveState(this.o.statePath, { ...this.state, pending });
+    } catch (e) {
+      // Nothing is journaled: put the picks back in order and let the loop retry.
+      for (const src of SOURCES) {
+        this.q[src].unshift(...picked.filter((x) => x.src === src).map((x) => x.q));
+        this.qBytes[src] = this.q[src].reduce((n, x) => n + x.cost, 0);
+      }
+      throw e;
+    }
     if (this.dead) return;
     this.state = { ...this.state, pending };
-    this.buf = { outbox: [], spool: [], bytes: 0, firstAt: 0 };
+    this.firstAt = this.queued() > 0 ? this.o.now() : 0;
     this.bufFull = false;
     this.notify(pending);
     await this.deliver(pending);
@@ -187,7 +281,10 @@ export class Forwarder {
 
   private notify(p: PendingBatch): void {
     if (!this.o.onSpoolLine) return;
-    for (const env of p.envelopes.slice(p.spool_from)) {
+    const idx = p.spool_idx ?? range(p.spool_from ?? p.envelopes.length, p.envelopes.length);
+    for (const i of idx) {
+      const env = p.envelopes[i];
+      if (!env) continue;
       try {
         this.o.onSpoolLine(env);
       } catch (e) {
@@ -200,21 +297,41 @@ export class Forwarder {
   }
 
   private async deliver(p: PendingBatch): Promise<void> {
+    this.authLogged = false;
+    const tally = { delivered: 0, rejected: [] as Rejection[] };
+    if (!(await this.send(p.envelopes, tally))) return;
+    if (tally.rejected.length > 0) await this.reject(tally.rejected);
+    // Nothing reached the hub when everything was rejected: reuse the seq, no gap on its side.
+    await this.commit(p, tally.delivered === 0);
+  }
+
+  /** Sends envelopes until the hub acks, rejects, or the forwarder stops (false). */
+  private async send(
+    envs: Envelope[],
+    tally: { delivered: number; rejected: Rejection[] },
+  ): Promise<boolean> {
     let attempt = 0;
     const cap = this.o.backoffCapMs ?? BACKOFF_CAP_MS;
-    this.authLogged = false;
     while (!this.dead) {
-      const out = await this.post(p);
+      const out = await this.post(envs);
       this.attempts += 1;
-      if (this.dead || out.kind === "aborted") return;
+      if (this.dead || out.kind === "aborted") return false;
       if (out.kind === "ok") {
-        await this.commit(p, false);
-        return;
+        tally.delivered += envs.length;
+        return true;
       }
       if (out.kind === "reject") {
-        await this.reject(p, out.status, out.why);
-        await this.commit(p, true);
-        return;
+        if (out.status === 413 && envs.length > 1) {
+          // Too large for the hub: split and resend the halves (same ids and seq).
+          const mid = envs.length >> 1;
+          this.o.log("warn", `hub answered 413 for ${envs.length} envelopes; splitting`);
+          return (
+            (await this.send(envs.slice(0, mid), tally)) &&
+            (await this.send(envs.slice(mid), tally))
+          );
+        }
+        tally.rejected.push({ envs, status: out.status, why: out.why });
+        return true;
       }
       let delay: number;
       if (out.kind === "auth") {
@@ -233,15 +350,25 @@ export class Forwarder {
       attempt += 1;
       await this.o.sleep(delay, this.ctl.signal);
     }
+    return false;
   }
 
-  private async post(p: PendingBatch): Promise<Outcome> {
+  private async post(envs: Envelope[]): Promise<Outcome> {
     const cfg = await this.o.getConfig();
     if (!cfg?.hubUrl || !cfg.token) {
       return { kind: "retry", why: "hubUrl or token missing in probe.json" };
     }
-    const base = cfg.hubUrl.endsWith("/") ? cfg.hubUrl : `${cfg.hubUrl}/`;
-    const body = JSON.stringify({ host: cfg.host, envelopes: p.envelopes });
+    const check = checkHubUrl(cfg.hubUrl, cfg.allowInsecureHub === true);
+    if (!check.ok) {
+      if (!this.policyLogged) {
+        this.o.log("error", HUB_URL_REFUSED);
+        this.policyLogged = true;
+      }
+      return { kind: "retry", why: "hub URL refused by policy" };
+    }
+    this.policyLogged = false;
+    const base = check.url.href.endsWith("/") ? check.url.href : `${check.url.href}/`;
+    const body = JSON.stringify({ host: cfg.host, envelopes: envs });
     const signal = AbortSignal.any([this.ctl.signal, AbortSignal.timeout(this.o.requestTimeoutMs)]);
     try {
       const res = await this.o.fetch(new URL("ingest", base), {
@@ -249,6 +376,7 @@ export class Forwarder {
         headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
         body,
         signal,
+        redirect: "error", // never carry the bearer token to another host
       });
       await res.text().catch(() => "");
       const s = res.status;
@@ -265,20 +393,38 @@ export class Forwarder {
     }
   }
 
-  private async reject(p: PendingBatch, status: number, why: string): Promise<void> {
-    const file = join(this.o.rejectedDir, `${this.o.now()}-${p.first_seq}.jsonl`);
-    const text = p.envelopes.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  private async reject(groups: Rejection[]): Promise<void> {
     try {
-      await writeFileAtomic(file, text, { mode: 0o600 });
+      await ensurePrivateDir(this.o.rejectedDir);
     } catch (e) {
       this.o.log(
         "error",
-        `could not write rejected batch: ${e instanceof Error ? e.message : String(e)}`,
+        `could not create rejected dir: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
-    this.o.log(
-      "error",
-      `hub rejected batch seq ${p.first_seq}..${p.first_seq + p.envelopes.length - 1} (${why}, HTTP ${status}); saved to ${file}`,
+    for (const g of groups) {
+      const firstSeq = g.envs[0]?.seq ?? 0;
+      const lastSeq = g.envs.at(-1)?.seq ?? firstSeq;
+      const file = join(this.o.rejectedDir, `${this.o.now()}-${firstSeq}.jsonl`);
+      const text = g.envs.map((e) => JSON.stringify(e)).join("\n") + "\n";
+      try {
+        await writeFileAtomic(file, text, { mode: 0o600 });
+      } catch (e) {
+        this.o.log(
+          "error",
+          `could not write rejected batch: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      this.o.log(
+        "error",
+        `hub rejected batch seq ${firstSeq}..${lastSeq} (${g.why}, HTTP ${g.status}); saved to ${file}`,
+      );
+    }
+    await capRejected(
+      this.o.rejectedDir,
+      this.o.rejectedMaxFiles ?? REJECTED_MAX_FILES,
+      this.o.rejectedMaxBytes ?? REJECTED_MAX_BYTES,
+      this.o.log,
     );
   }
 

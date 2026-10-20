@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import type { Envelope } from "@sessiondeck/contract";
 import pkg from "../../package.json" with { type: "json" };
 import { type ProbeConfig, readConfig } from "../config/config.ts";
@@ -17,7 +17,8 @@ import type { SpoolLine } from "../spool-format.ts";
 import { ulid } from "../ulid.ts";
 import { Forwarder, MAX_BATCH_ENVELOPES, MAX_BATCH_MS, MAX_BODY_BYTES } from "./forwarder.ts";
 import { createFileLogger } from "./log.ts";
-import { acquireLock } from "./lock.ts";
+import { checkHubUrl, INSECURE_HUB_WARNING } from "./hub-url.ts";
+import { LOCK_TOUCH_MS, acquireLock } from "./lock.ts";
 import { createOutbox } from "./outbox.ts";
 import type { ComponentContext, DaemonComponent, Logger } from "./types.ts";
 
@@ -47,6 +48,11 @@ export interface DaemonOptions {
   heartbeatMs?: number;
   /** Also write log lines to stderr. */
   stderr?: boolean;
+  /** Caps for the rejected-batch directory. */
+  rejectedMaxFiles?: number;
+  rejectedMaxBytes?: number;
+  /** Called (once) when another process took over the lock; the daemon has already stopped. */
+  onLockLost?: () => void;
 }
 
 export interface DaemonHandle {
@@ -74,6 +80,14 @@ const realSleep = (ms: number, signal: AbortSignal): Promise<void> =>
     signal.addEventListener("abort", done, { once: true });
   });
 
+/** The probe home and its daemon, outbox, rejected and spool directories are user-only (POSIX). */
+function hardenDirs(home: string): void {
+  for (const d of [home, daemonDir(home), outboxDir(home), rejectedDir(home), spoolDir(home)]) {
+    mkdirSync(d, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") chmodSync(d, 0o700);
+  }
+}
+
 /** Starts the daemon; undefined when another daemon already holds the lock for this home. */
 export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | undefined> {
   const home = opts.home;
@@ -81,6 +95,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   mkdirSync(daemonDir(home), { recursive: true, mode: 0o700 });
   const lock = acquireLock(daemonLockPath(home));
   if (!lock) return undefined;
+  hardenDirs(home);
   const fileLog = createFileLogger(daemonLogPath(home), now);
   const log: Logger = opts.stderr
     ? (l, m) => {
@@ -104,6 +119,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   } catch (e) {
     log("error", `config unreadable: ${e instanceof Error ? e.message : String(e)}`);
   }
+  try {
+    const c0 = await getConfig();
+    if (c0?.hubUrl) {
+      const chk = checkHubUrl(c0.hubUrl, c0.allowInsecureHub === true);
+      if (chk.ok && chk.insecure) log("warn", INSECURE_HUB_WARNING);
+    }
+  } catch {
+    // reported above
+  }
 
   const fwd = new Forwarder({
     statePath: daemonStatePath(home),
@@ -121,6 +145,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
     maxBatch: opts.maxBatch ?? MAX_BATCH_ENVELOPES,
     maxBodyBytes: opts.maxBodyBytes ?? MAX_BODY_BYTES,
     requestTimeoutMs: opts.requestTimeoutMs ?? 5000,
+    ...(opts.rejectedMaxFiles !== undefined ? { rejectedMaxFiles: opts.rejectedMaxFiles } : {}),
+    ...(opts.rejectedMaxBytes !== undefined ? { rejectedMaxBytes: opts.rejectedMaxBytes } : {}),
     ...(opts.backoffCapMs !== undefined ? { backoffCapMs: opts.backoffCapMs } : {}),
     onSpoolLine: (env: Envelope) => {
       for (const c of components) c.onSpoolLine?.(env);
@@ -167,10 +193,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   log("info", `daemon started pid=${process.pid} home=${home}`);
 
   let ended = false;
+  const lockTimer = setInterval(() => {
+    if (ended || lock.touch()) return;
+    log("error", "daemon lock was taken over by another process; stopping");
+    void finish(true).then(() => opts.onLockLost?.());
+  }, LOCK_TOUCH_MS);
+  lockTimer.unref();
   const finish = async (graceful: boolean): Promise<void> => {
     if (ended) return;
     ended = true;
     if (timer) clearInterval(timer);
+    clearInterval(lockTimer);
     await fwd.stop();
     if (graceful) {
       for (const c of components) {

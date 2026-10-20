@@ -9,9 +9,12 @@ import type { Cursor, Logger } from "./types.ts";
  */
 export interface PendingBatch {
   first_seq: number;
-  /** Envelopes with seq: outbox envelopes first, then hook-spool envelopes from `spool_from`. */
+  /** Envelopes with seq, merged from the outbox and the hook spool in `ts` order. */
   envelopes: Envelope[];
-  spool_from: number;
+  /** Indices (into envelopes) of the hook-spool envelopes. */
+  spool_idx?: number[];
+  /** Older journals: outbox envelopes first, hook-spool envelopes from this index. */
+  spool_from?: number;
   /** Cursors the batch advances to. */
   spool?: Cursor;
   outbox?: Cursor;
@@ -50,7 +53,10 @@ function valid(s: unknown): s is DaemonState {
   if (p !== undefined) {
     if (typeof p !== "object" || p === null) return false;
     if (!Number.isInteger(p["first_seq"]) || !Array.isArray(p["envelopes"])) return false;
-    if (!Number.isInteger(p["spool_from"])) return false;
+    if (p["spool_from"] !== undefined && !Number.isInteger(p["spool_from"])) return false;
+    const idx = p["spool_idx"];
+    if (idx !== undefined && !(Array.isArray(idx) && idx.every((i) => Number.isInteger(i))))
+      return false;
     for (const k of ["spool", "outbox"]) if (p[k] !== undefined && !isCursor(p[k])) return false;
   }
   return true;

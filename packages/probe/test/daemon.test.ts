@@ -1,12 +1,4 @@
-import {
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  truncateSync,
-} from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, truncateSync } from "node:fs";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,11 +68,12 @@ describe("R1.4 day-file reader cursor", () => {
     appendSpoolLines(dir, [line(0), line(1)], () => Date.parse("2026-01-01T10:00:00Z"));
     appendSpoolLines(dir, [line(2)], () => Date.parse("2026-01-02T10:00:00Z"));
     appendSpoolLines(dir, [line(3), line(4)], () => Date.parse("2026-01-04T10:00:00Z"));
-    const r = new DayFileReader(dir, undefined, noLog);
+    const later = (): number => Date.now() + 120_000; // past the day-file grace
+    const r = new DayFileReader(dir, undefined, noLog, later);
     const a = await r.read(3, 1e6);
     expect(a.items.map((i) => (i.payload as { n: number }).n)).toEqual([0, 1, 2]);
     const saved = JSON.parse(JSON.stringify(r.position)) as { file: string; offset: number };
-    const r2 = new DayFileReader(dir, saved, noLog);
+    const r2 = new DayFileReader(dir, saved, noLog, later);
     const b = await r2.read(10, 1e6);
     expect(b.items.map((i) => (i.payload as { n: number }).n)).toEqual([3, 4]);
     expect(r2.position?.file).toBe("2026-01-04.jsonl");
@@ -169,7 +162,7 @@ function fakeFetch(answer: (n: number) => number | "hang") {
   return { f, sent, auth };
 }
 
-const cfg = { hubUrl: "http://hub.test", token: "secret", host: "h" };
+const cfg = { hubUrl: "http://127.0.0.1:9", token: "secret", host: "h" };
 const fast = { pollMs: 5, batchMs: 20, heartbeatMs: 0, rng: () => 0 };
 
 describe("R1.4 journal, seq and ack", () => {
@@ -268,7 +261,7 @@ describe("R1.4 journal, seq and ack", () => {
     }))!;
     open.push(d);
     await waitFor(() => fx.sent.length >= 2);
-    expect(existsSync(join(home, "daemon", "rejected"))).toBe(false);
+    expect(readdirSync(join(home, "daemon", "rejected"))).toEqual([]);
     ok = true;
     await waitFor(() => d.pending() === 0);
   });

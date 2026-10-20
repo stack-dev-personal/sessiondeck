@@ -1,6 +1,7 @@
 // Daemon entry (dist/daemon.mjs): `node daemon.mjs [--home <dir>] [--stderr]`. Runs until
 // SIGINT/SIGTERM (or until the console closes). A second instance for the same home exits 0.
 import { defaultProbeHome } from "../paths.ts";
+import { parseBackoffCapMs, parseHeartbeatMs } from "./env-knobs.ts";
 import { startDaemon } from "./index.ts";
 
 const argv = process.argv.slice(2);
@@ -9,15 +10,12 @@ const home = homeIdx >= 0 && argv[homeIdx + 1] ? (argv[homeIdx + 1] as string) :
 
 // Test and harness knobs (the defaults are the product behavior): SESSIONDECK_BACKOFF_CAP_MS
 // shortens the 30 s retry cap, SESSIONDECK_HEARTBEAT_MS the 30 s heartbeat interval.
-function envMs(name: string): number | undefined {
-  const n = Number(process.env[name]);
-  return Number.isFinite(n) && n >= 0 && process.env[name] ? n : undefined;
-}
-const backoffCapMs = envMs("SESSIONDECK_BACKOFF_CAP_MS");
-const heartbeatMs = envMs("SESSIONDECK_HEARTBEAT_MS");
+const backoffCapMs = parseBackoffCapMs(process.env["SESSIONDECK_BACKOFF_CAP_MS"]);
+const heartbeatMs = parseHeartbeatMs(process.env["SESSIONDECK_HEARTBEAT_MS"]);
 const daemon = await startDaemon({
   home,
   stderr: argv.includes("--stderr"),
+  onLockLost: () => process.exit(0),
   ...(backoffCapMs !== undefined ? { backoffCapMs } : {}),
   ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),
 });

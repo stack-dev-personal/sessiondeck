@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { checkHubUrl } from "../daemon/hub-url.ts";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import {
@@ -230,6 +231,7 @@ async function install(args: Args, io: RunIo): Promise<number> {
       (hostFlag === undefined ? undefined : validateHostName(hostFlag)) ??
       existing?.host ??
       resolveHostName(),
+    ...(existing?.allowInsecureHub === true ? { allowInsecureHub: true } : {}),
   };
   const ctx = buildCtx(io.distDir, home, validateHostName(cfg.host));
 
@@ -273,6 +275,11 @@ async function install(args: Args, io: RunIo): Promise<number> {
   io.out(`config: ${cfgPath}`);
   if (!cfg.hubUrl || !cfg.token) {
     io.out("note: hub URL or token not set yet; events are spooled locally until they are");
+  }
+  if (cfg.hubUrl && checkHubUrl(cfg.hubUrl, cfg.allowInsecureHub === true).ok === false) {
+    io.out(
+      "note: the daemon will not send to this hub URL: use https, or http to loopback, or set allowInsecureHub to true in probe.json for a LAN hub without TLS",
+    );
   }
   return 0;
 }
