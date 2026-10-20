@@ -71,6 +71,17 @@ test("R3.5 the drawer of the busiest session shows sparkline, timeline, subagent
   );
   await expect(dialog.locator('[data-section="limits"]')).toContainText(/\d+%/);
   await expect(dialog.locator('[data-section="tasks"]')).toContainText(/\d/);
+  const prompt = ((await dialog.locator('[data-section="prompt"]').textContent()) ?? "")
+    .replace("Last prompt", "")
+    .trim();
+  const reply = ((await dialog.locator('[data-section="assistant"]').textContent()) ?? "")
+    .replace("Last assistant message", "")
+    .trim();
+  expect(prompt).not.toMatch(/^n\/a$/);
+  expect(reply).not.toMatch(/^n\/a$/);
+  expect(prompt.length).toBeGreaterThan(0);
+  expect(reply.length).toBeGreaterThan(0);
+  expect(prompt).not.toBe(reply);
 
   await page.screenshot({ path: shot("R3.5-drawer.png") });
   await expect(page).toHaveScreenshot("R3.5-drawer.png");

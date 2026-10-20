@@ -11,6 +11,11 @@ import { fx, goldenEvents, statusLines } from "./fixtures";
 interface Script {
   host: string;
   project: string;
+  /** Distinct session_name shown on the card and in the drawer. */
+  name: string;
+  /** Synthetic worktree.branch / worktree.name emitted with the statusLine ticks. */
+  branch?: string;
+  worktree?: string;
   /** Hook payloads (already bare payloads) in order. */
   hooks: Record<string, unknown>[];
   /** Indices into statusLines; one tick is emitted after every `every` hooks. */
@@ -52,6 +57,9 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-lap",
     project: "bb2dash",
+    name: "Port the chart widgets",
+    branch: "feat/chart-widgets",
+    worktree: "bb2dash-charts",
     hooks: [...G.slice(0, 92), ...tasks(2, 1)],
     status: [3, 4, 12],
     every: 20,
@@ -60,6 +68,8 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-lap",
     project: "harvest",
+    name: "Harvest scheduler retries",
+    branch: "fix/scheduler-retry",
     hooks: [...G.slice(0, 217), ...subagent("mock-agent-h1", false), ...tasks(4, 2)],
     status: [3, 9, 4],
     every: 40,
@@ -68,8 +78,12 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-box",
     project: "sessiondeck",
+    name: "Board mock and drawer",
+    branch: "p3/board-mock",
     hooks: [
-      ...G.slice(0, 120),
+      ...G.slice(0, 100),
+      G[216]!,
+      ...G.slice(100, 120),
       ...subagent("mock-agent-s1", false),
       ...subagent("mock-agent-s2", false),
       ...subagent("mock-agent-s3", true),
@@ -82,6 +96,8 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-box",
     project: "atlas",
+    name: "Atlas tile cache",
+    branch: "perf/tile-cache",
     hooks: [...G, ...tasks(5, 5)],
     status: [3, 4, 9],
     every: 55,
@@ -90,6 +106,7 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-lap",
     project: "scratch",
+    name: "Scratch pad",
     hooks: [fx.sessionStart],
     status: [],
     every: 1,
@@ -98,6 +115,8 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-box",
     project: "docs-site",
+    name: "Docs navigation",
+    branch: "docs/nav-rework",
     hooks: [fx.sessionStart, fx.userPrompt, fx.askPreTool, fx.stopAfterAsk],
     status: [18],
     every: 2,
@@ -106,6 +125,8 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-lap",
     project: "ingest-api",
+    name: "Ingest API rate limits",
+    branch: "fix/ingest-429",
     hooks: [fx.sessionStart, fx.userPrompt, fx.stopFailure],
     status: [15],
     every: 2,
@@ -114,6 +135,8 @@ const SCRIPTS: Script[] = [
   {
     host: "stack-box",
     project: "old-spike",
+    name: "Old spike cleanup",
+    branch: "spike/old-queue",
     hooks: G.slice(0, 60),
     status: [4],
     every: 30,
@@ -133,35 +156,54 @@ function ulid(n: number): string {
   return "0" + s;
 }
 
-const PHRASES = [
+const PROMPT_POOL = [
+  "Refactor the session store so board updates are coalesced per animation frame, then run the full test suite and report anything that fails.",
+  "Fix the lint errors in the parser module and run the tests again",
+  "Add a regression test for the empty transcript case",
+  "Which approach do you prefer for the migration?",
+  "Run the tests",
+  "Fix the build",
+  "Ok",
+];
+const ASSISTANT_POOL = [
+  "Done. I updated the parser, added a regression test and the full suite passes; the diff is ready for review. One follow-up remains: the migration script still needs a dry-run flag.",
   "Done. The checks pass and the diff is ready for review.",
   "I updated the parser and added a regression test.",
-  "Which approach do you prefer for the migration?",
-  "Reading the config",
-  "Fix the lint errors",
-  "Run the tests",
+  "Tests pass",
   "Done",
   "Ok",
 ];
+const OTHER_POOL = ["Reading the config", "Updating the parser", "Run the tests", "Done", "Ok"];
 
-/** Readable stand-in for a scrubbed `<TEXT n>` placeholder: the longest phrase of at most n chars. */
-function synthText(n: number): string {
-  const fit = PHRASES.filter((p) => p.length <= n).sort((a, b) => b.length - a.length)[0];
+function poolFor(key: string): string[] {
+  if (key === "prompt") return PROMPT_POOL;
+  if (key === "last_assistant_message") return ASSISTANT_POOL;
+  return OTHER_POOL;
+}
+
+/**
+ * Readable stand-in for a scrubbed `<TEXT n>` placeholder: the longest phrase of the pool for the
+ * field (`prompt`, `last_assistant_message`, anything else) that fits in n characters.
+ */
+export function synthText(n: number, key = ""): string {
+  const fit = poolFor(key)
+    .filter((p) => p.length <= n)
+    .sort((a, b) => b.length - a.length)[0];
   return fit ?? "x".repeat(Math.max(1, n));
 }
 
 /** Replaces scrubber placeholders (<TEXT n>, <HOME>, <PROJECT_x>) inside any string. */
-function humanize(v: unknown, project: string): unknown {
+function humanize(v: unknown, project: string, key = ""): unknown {
   if (typeof v === "string") {
     return v
-      .replace(/<TEXT (\d+)>/g, (_, n: string) => synthText(Number(n)))
+      .replace(/<TEXT (\d+)>/g, (_, n: string) => synthText(Number(n), key))
       .replace(/<HOME>/g, "/home/dev")
       .replace(/<PROJECT_\w+>/g, project);
   }
-  if (Array.isArray(v)) return v.map((x) => humanize(x, project));
+  if (Array.isArray(v)) return v.map((x) => humanize(x, project, key));
   if (v !== null && typeof v === "object") {
     return Object.fromEntries(
-      Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, humanize(x, project)]),
+      Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, humanize(x, project, k)]),
     );
   }
   return v;
@@ -182,11 +224,16 @@ function rewrite(
 function rewriteStatus(
   payload: Record<string, unknown>,
   sessionId: string,
-  project: string,
+  sc: Script,
   now: number,
 ): Record<string, unknown> {
+  const project = sc.project;
   const out = rewrite(payload, sessionId, project);
+  out.session_name = sc.name;
+  if (sc.branch) out.worktree = { name: sc.worktree ?? project, branch: sc.branch };
+  const gitWorktree = (payload.workspace as { git_worktree?: string } | undefined)?.git_worktree;
   out.workspace = {
+    ...(gitWorktree ? { git_worktree: sc.worktree ?? project } : {}),
     current_dir: `/home/dev/projects/${project}`,
     project_dir: `/home/dev/projects/${project}`,
   };
@@ -236,7 +283,7 @@ export function buildMockTimeline(now: number): Envelope[] {
           payload: rewriteStatus(
             statusLines[idx % statusLines.length] as Record<string, unknown>,
             sessionId,
-            sc.project,
+            sc,
             now,
           ),
         });
@@ -247,12 +294,7 @@ export function buildMockTimeline(now: number): Envelope[] {
       list.push({
         ...base,
         kind: "statusline",
-        payload: rewriteStatus(
-          statusLines[idx] as Record<string, unknown>,
-          sessionId,
-          sc.project,
-          now,
-        ),
+        payload: rewriteStatus(statusLines[idx] as Record<string, unknown>, sessionId, sc, now),
       });
     }
     if (sc.dies) list.push({ ...base, kind: "liveness", payload: { pid: sc.pid, alive: false } });

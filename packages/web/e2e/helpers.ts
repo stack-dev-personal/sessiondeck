@@ -97,6 +97,8 @@ export interface SettledMix {
   withLimits: number;
   withDots: number;
   withTasks: number;
+  names: string[];
+  withBranch: number;
 }
 
 /** Reads the settled board: how many cards show numbers, subagent dots and task progress. */
@@ -118,6 +120,12 @@ export async function settledMix(page: Page): Promise<SettledMix> {
       withTasks: els.filter((e) =>
         /\d+\/\d+/.test(e.querySelector('[data-slot="tasks"]')?.textContent ?? ""),
       ).length,
+      names: els.map((e) => e.querySelector('[data-slot="name"]')?.textContent ?? ""),
+      withBranch: els.filter((e) => {
+        const where = e.querySelector('[data-row="1"] > span:last-child')?.textContent ?? "";
+        const branch = where.split(" · ")[1] ?? "n/a";
+        return !branch.startsWith("n/a");
+      }).length,
     };
   });
 }

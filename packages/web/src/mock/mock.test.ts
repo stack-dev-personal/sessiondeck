@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBoardStore } from "../store/board";
 import { playTimeline } from "./player";
 import { startMock } from "./start";
-import { buildMockTimeline } from "./timeline";
+import { buildMockTimeline, synthText } from "./timeline";
 
 const NOW = 1_792_400_000_000;
 
@@ -107,6 +107,35 @@ describe("mock replay", () => {
     expect(list.filter((s) => s.subagents.length > 0).length).toBeGreaterThanOrEqual(2);
     expect(list.filter((s) => s.tasks.total > 0).length).toBeGreaterThanOrEqual(2);
     expect(JSON.stringify(list)).not.toMatch(/<TEXT|<HOME>|<PROJECT/);
+    const names = list.map((s) => s.session_name ?? s.project_dir);
+    expect(new Set(names).size).toBe(list.length);
+    expect(new Set(list.filter((s) => s.session_name).map((s) => s.session_name)).size).toBe(
+      list.filter((s) => s.session_name).length,
+    );
+    expect(list.filter((s) => s.git.branch !== null).length).toBeGreaterThanOrEqual(6);
+    const busiest = list.find((s) => s.session_id.startsWith("mock-sessiondeck"))!;
+    expect(busiest.last_prompt).toBeTruthy();
+    expect(busiest.last_assistant_message).toBeTruthy();
+    expect(busiest.last_prompt).not.toBe(busiest.last_assistant_message);
+  });
+
+  it("fills placeholders from the pool of the field they sit in", () => {
+    const tl = buildMockTimeline(NOW);
+    const prompts = new Set<string>();
+    const replies = new Set<string>();
+    for (const e of tl) {
+      const p = e.payload as Record<string, unknown>;
+      if (typeof p.prompt === "string") prompts.add(p.prompt);
+      if (typeof p.last_assistant_message === "string") replies.add(p.last_assistant_message);
+    }
+    expect(prompts.size).toBeGreaterThan(0);
+    expect(replies.size).toBeGreaterThan(0);
+    for (const n of [28, 102, 403, 4352]) {
+      expect(synthText(n, "prompt")).not.toBe(synthText(n, "last_assistant_message"));
+    }
+    for (const m of replies) expect(prompts.has(m)).toBe(false);
+    expect(synthText(102, "prompt")).toMatch(/^Fix the lint errors/);
+    expect(synthText(42, "last_assistant_message")).toBe("Tests pass");
   });
 
   it("?replay=fast delivers quickly and sets data-replay=done", () => {

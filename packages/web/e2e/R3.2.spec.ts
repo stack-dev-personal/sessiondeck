@@ -76,6 +76,8 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
   expect(mix.withLimits).toBeGreaterThanOrEqual(6);
   expect(mix.withDots).toBeGreaterThanOrEqual(2);
   expect(mix.withTasks).toBeGreaterThanOrEqual(2);
+  expect(new Set(mix.names).size).toBe(mix.names.length);
+  expect(mix.withBranch).toBeGreaterThanOrEqual(6);
   expect(Object.keys(mix.states).sort()).toEqual(STATES.map(([st]) => st).sort());
   await fullShot(page, "R3.2-board.png", { baseline: true });
 });

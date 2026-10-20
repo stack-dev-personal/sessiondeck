@@ -38,6 +38,8 @@ test("R3.8 mock build runs the full board with no network beyond the preview ser
   console.log(`R3.8 settled board: ${JSON.stringify(mix)}`);
   expect(Object.keys(mix.states).length).toBeGreaterThanOrEqual(6);
   expect(mix.withContext).toBeGreaterThanOrEqual(6);
+  expect(new Set(mix.names).size).toBe(mix.names.length);
+  expect(mix.withBranch).toBeGreaterThanOrEqual(6);
   await expect(page.getByTestId("connection")).toContainText("mock");
   await fullShot(page, "R3.8.png", { baseline: true });
 
