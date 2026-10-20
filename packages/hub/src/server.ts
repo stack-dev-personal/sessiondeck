@@ -1,7 +1,15 @@
-import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, {
+  type FastifyError,
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { HubConfig } from "./config.ts";
 import type { Store } from "./db/store.ts";
+import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
+import { registerIngest } from "./ingest/route.ts";
+import { HostRateLimiter } from "./ingest/rate-limit.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
 
@@ -11,6 +19,8 @@ export function buildServer(opts: {
   logger?: boolean;
   /** Test hook: destination for log lines (implies logging). */
   logStream?: { write(msg: string): void };
+  /** Test hook: clock for the rate limiter and the hosts.last_seen column. */
+  now?: () => number;
 }): FastifyInstance {
   const expected = digest(opts.config.token);
 
@@ -48,14 +58,15 @@ export function buildServer(opts: {
   });
 
   // Sanitize thrown errors only; replies a route sends itself (e.g. 4xx with a reason) bypass this.
-  app.setErrorHandler((err: FastifyError, req, reply) => {
+  const sanitize = (err: FastifyError, req: FastifyRequest, reply: FastifyReply) => {
     const status =
       typeof err.statusCode === "number" && err.statusCode >= 400 && err.statusCode < 500
         ? err.statusCode
         : 500;
     req.log.error({ code: err.code, status, reqId: req.id }, "request error");
     return reply.code(status).send({ error: status === 500 ? "internal" : "bad_request" });
-  });
+  };
+  app.setErrorHandler(sanitize);
 
   app.decorate("store", opts.store);
 
@@ -70,11 +81,28 @@ export function buildServer(opts: {
 
   app.get("/health", async () => ({ ok: true }));
 
+  const now = opts.now ?? Date.now;
+  const ingestor = new Ingestor(opts.store, app.log, now);
+  app.decorate("hub", {
+    events: ingestor.events,
+    reducerExceptionCount: () => ingestor.reducerExceptionCount(),
+  });
+  registerIngest(app, {
+    ingestor,
+    limiter: new HostRateLimiter(opts.config.ingestRate, opts.config.ingestBurst, now),
+    sanitize,
+  });
+
   return app;
 }
 
 declare module "fastify" {
   interface FastifyInstance {
     store: Store;
+    hub: {
+      /** Emits `batch` once per committed ingest batch (never for rejected or rolled-back ones). */
+      events: HubEmitter;
+      reducerExceptionCount(): number;
+    };
   }
 }

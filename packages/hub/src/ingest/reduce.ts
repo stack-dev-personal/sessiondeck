@@ -1,0 +1,222 @@
+// Pure snapshot updates for the envelope kinds the contract has no reducer for (statusline,
+// subagents) and the transcript payload shape. Hook and liveness reduction is the contract's
+// reduce() / reduceLiveness(); this file never reimplements them. Time comes only from e.ts so a
+// replay reproduces the same snapshots.
+import {
+  StatusLinePayloadSchema,
+  epochSecondsToMs,
+  normalizeRateLimitWindow,
+  type Envelope,
+  type RateLimitPeriod,
+  type SessionSnapshot,
+  type Window,
+} from "@sessiondeck/contract";
+import { z } from "zod";
+import type { SampleRow } from "../db/store.ts";
+
+const MAX_TEXT = 200;
+const cap = (s: string): string => (s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) : s);
+const finite = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+const nonEmpty = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+
+/** Called with the payload field name each time an out-of-range used_percentage is nulled. */
+export type RangeNulled = (field: string) => void;
+
+const inRange = (p: number): boolean => p >= 0 && p <= 100;
+
+/** A stored window whose reset time has passed no longer has a valid percentage. */
+function staleCheck(w: Window | null, now: number): Window | null {
+  if (w === null || w.resets_at === null || now < w.resets_at || w.used_pct === null) return w;
+  return { used_pct: null, resets_at: w.resets_at };
+}
+
+function window(
+  raw: RateLimitPeriod | null | undefined,
+  prev: Window | null,
+  e: Envelope,
+  field: string,
+  onNulled: RangeNulled,
+): Window | null {
+  if (raw === undefined) return staleCheck(prev, e.ts);
+  const pct = raw?.used_percentage;
+  if (typeof pct === "number" && Number.isFinite(pct) && !inRange(pct)) onNulled(field);
+  return normalizeRateLimitWindow(raw, e.ts);
+}
+
+export function applyStatusLine(
+  prev: SessionSnapshot,
+  e: Envelope,
+  onNulled: RangeNulled,
+): { snapshot: SessionSnapshot; sample: SampleRow } {
+  const parsed = StatusLinePayloadSchema.safeParse(e.payload);
+  if (!parsed.success) throw new Error("statusline payload does not match StatusLinePayloadSchema");
+  const p = parsed.data;
+  const s: SessionSnapshot = { ...prev, last_event_at: Math.max(prev.last_event_at, e.ts) };
+
+  const modelRaw = p.model;
+  if (typeof modelRaw === "string" && modelRaw !== "") {
+    s.model = { id: cap(modelRaw), display_name: cap(modelRaw) };
+  } else if (typeof modelRaw === "object" && modelRaw !== null) {
+    const id = nonEmpty(modelRaw.id);
+    if (id !== null) {
+      s.model = { id: cap(id), display_name: cap(nonEmpty(modelRaw.display_name) ?? id) };
+    }
+  }
+  const level = p.effort?.level;
+  if (typeof level === "string" && level !== "") s.effort = cap(level);
+  const name = nonEmpty(p.session_name);
+  if (name !== null) s.session_name = cap(name);
+  if (s.cwd === "" && nonEmpty(p.cwd) !== null) s.cwd = cap(p.cwd as string);
+  const projectDir = nonEmpty(p.workspace?.project_dir);
+  if (projectDir !== null) s.project_dir = projectDir;
+
+  const branch = nonEmpty(p.worktree?.branch);
+  const worktree = nonEmpty(p.workspace?.git_worktree) ?? nonEmpty(p.worktree?.name);
+  const prNumber = finite(p.pr?.number);
+  const prUrl = nonEmpty(p.pr?.url);
+  s.git = {
+    branch: branch !== null ? cap(branch) : prev.git.branch,
+    worktree: worktree !== null ? cap(worktree) : prev.git.worktree,
+    pr: prNumber !== null && prUrl !== null ? { number: prNumber, url: prUrl } : prev.git.pr,
+  };
+
+  const cw = p.context_window;
+  if (cw !== undefined && cw !== null) {
+    let used: number | null = finite(cw.used_percentage);
+    if (used !== null && !inRange(used)) {
+      onNulled("context_window.used_percentage");
+      used = null;
+    }
+    s.context = {
+      used_pct: cw.used_percentage === undefined ? prev.context.used_pct : used,
+      window:
+        cw.context_window_size === undefined ? prev.context.window : finite(cw.context_window_size),
+      input:
+        cw.total_input_tokens === undefined ? prev.context.input : finite(cw.total_input_tokens),
+      output:
+        cw.total_output_tokens === undefined ? prev.context.output : finite(cw.total_output_tokens),
+    };
+  }
+
+  const cost = p.cost;
+  if (cost !== undefined) {
+    s.cost = {
+      usd: cost.total_cost_usd === undefined ? prev.cost.usd : finite(cost.total_cost_usd),
+      duration_ms:
+        cost.total_duration_ms === undefined
+          ? prev.cost.duration_ms
+          : finite(cost.total_duration_ms),
+      lines_added:
+        cost.total_lines_added === undefined
+          ? prev.cost.lines_added
+          : finite(cost.total_lines_added),
+      lines_removed:
+        cost.total_lines_removed === undefined
+          ? prev.cost.lines_removed
+          : finite(cost.total_lines_removed),
+    };
+  }
+
+  const rl = p.rate_limits;
+  const base = prev.rate_limits;
+  if (rl !== undefined && rl !== null) {
+    s.rate_limits = {
+      five_hour: window(
+        rl.five_hour,
+        base.five_hour,
+        e,
+        "rate_limits.five_hour.used_percentage",
+        onNulled,
+      ),
+      seven_day: window(
+        rl.seven_day,
+        base.seven_day,
+        e,
+        "rate_limits.seven_day.used_percentage",
+        onNulled,
+      ),
+      captured_at: e.ts,
+    };
+  } else {
+    s.rate_limits = {
+      five_hour: staleCheck(base.five_hour, e.ts),
+      seven_day: staleCheck(base.seven_day, e.ts),
+      captured_at: base.captured_at,
+    };
+  }
+
+  const pc = p.prompt_cache;
+  if (pc !== undefined) {
+    const exp = finite(pc.expires_at);
+    s.prompt_cache = {
+      warm: pc.warm === true,
+      expires_at: exp === null ? null : epochSecondsToMs(exp),
+    };
+  }
+
+  const sample: SampleRow = {
+    session_id: s.session_id,
+    ts: e.ts,
+    context_used_pct: s.context.used_pct,
+    cost_usd: s.cost.usd,
+    five_hour_pct: s.rate_limits.five_hour?.used_pct ?? null,
+    five_hour_resets: s.rate_limits.five_hour?.resets_at ?? null,
+    seven_day_pct: s.rate_limits.seven_day?.used_pct ?? null,
+    seven_day_resets: s.rate_limits.seven_day?.resets_at ?? null,
+  };
+  return { snapshot: s, sample };
+}
+
+const SubagentsPayloadSchema = z
+  .object({
+    tasks: z.array(
+      z
+        .object({
+          id: z.string(),
+          model: z.string().nullish(),
+          contextWindowSize: z.number().nullish(),
+          tokenCount: z.number().nullish(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
+
+/**
+ * subagentStatusLine rows refresh tokens, context window and model of the snapshot's existing
+ * subagent rows (matched by agent_id = task id). Rows are created and closed by the hooks
+ * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored.
+ */
+export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnapshot {
+  const parsed = SubagentsPayloadSchema.safeParse(e.payload);
+  if (!parsed.success) throw new Error("subagents payload does not match the expected shape");
+  const byId = new Map(parsed.data.tasks.map((t) => [t.id, t]));
+  const subagents = prev.subagents.map((row) => {
+    const t = byId.get(row.agent_id);
+    if (t === undefined) return row;
+    return {
+      ...row,
+      tokens: t.tokenCount === undefined ? row.tokens : finite(t.tokenCount),
+      context_window:
+        t.contextWindowSize === undefined ? row.context_window : finite(t.contextWindowSize),
+      model: t.model === undefined ? row.model : nonEmpty(t.model),
+    };
+  });
+  return { ...prev, subagents, last_event_at: Math.max(prev.last_event_at, e.ts) };
+}
+
+/**
+ * Transcript envelope payload (the contract defines none; hub decision, to confirm with the probe
+ * tailer): lines are raw JSONL strings, start_line is the 0-based line number of lines[0].
+ */
+const TranscriptPayloadSchema = z.object({
+  start_line: z.number().int().nonnegative().default(0),
+  lines: z.array(z.string()),
+});
+
+export function parseTranscriptPayload(payload: unknown): { line_no: number; raw: string }[] {
+  const parsed = TranscriptPayloadSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("transcript payload does not match the expected shape");
+  return parsed.data.lines.map((raw, i) => ({ line_no: parsed.data.start_line + i, raw }));
+}
