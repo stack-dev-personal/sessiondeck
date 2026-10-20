@@ -78,11 +78,14 @@ describe("withFileLock", () => {
   it("waits for a live lock, then times out with a clear error, without real sleeping", async () => {
     await writeFile(lockFile(), "");
     const time = fakeTime(Date.now());
-    const run = withFileLock(target, () => Promise.resolve(), time);
+    // A large poll step keeps this at 5 rounds of real fs work; the default 25 ms means 200 rounds,
+    // which can exceed the 5 s test limit on a loaded Windows runner (R0.5).
+    const pollMs = 1_000;
+    const run = withFileLock(target, () => Promise.resolve(), { ...time, pollMs });
     await expect(run).rejects.toThrow(StateFileError);
     await expect(run).rejects.toMatchObject({ kind: "lock-timeout" });
     await expect(run).rejects.toThrow(/held by another writer after 5000 ms/);
-    expect(time.slept.length).toBe(LOCK_WAIT_MS / LOCK_POLL_MS);
+    expect(time.slept.length).toBe(LOCK_WAIT_MS / pollMs);
     expect(await readdir(root)).toEqual(["status.json.lock"]); // not ours, so not removed
   });
 
@@ -234,9 +237,14 @@ describe("a lock that cannot be created", () => {
     async (code) => {
       await writeFile(lockFile(), "someone");
       const time = fakeTime(Date.now());
-      const run = withFileLock(target, () => Promise.resolve(), { ...time, create: denied(code) });
+      const pollMs = 1_000; // 5 rounds instead of 200 real fs rounds (R0.5)
+      const run = withFileLock(target, () => Promise.resolve(), {
+        ...time,
+        pollMs,
+        create: denied(code),
+      });
       await expect(run).rejects.toMatchObject({ kind: "lock-timeout" });
-      expect(time.slept.length).toBe(LOCK_WAIT_MS / LOCK_POLL_MS);
+      expect(time.slept.length).toBe(LOCK_WAIT_MS / pollMs);
     },
   );
 
