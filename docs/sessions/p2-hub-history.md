@@ -47,3 +47,16 @@ Hub units run one after another (one package, and the memory rule allows one tes
 - Verify: sd-verifier R2.9 pass, e3efbac: 1,020,000 events replay 12.7 s, 0 reducer exceptions (docs/HUB-BENCH.md "R2.9 replay bench").
 - Deferred minors: whole batch 400 on one far-future ts (probe moves the batch to rejected/); skew config has no range clamp; hub startup does not check an existing live lease and CLI does not hold the lease while running; supersede-by-pid scan inside compaction batches; events rely on SQLite rowid order (Phase 7 needs a sequence column).
 - Observation: compaction batch max 578 ms on this WSL2 disk, attributed to WAL autocheckpoint (affects every writer); measured against R2.4 in U4.
+
+## Stop and restart (2026-10-20)
+- 19:51Z the subscription usage limit (429) stopped the previous run mid-U4 (conductor addendum 22:04Z, not a failure).
+- 2026-10-20T22:04:15Z resumed. Worktree held uncommitted U4 work: scripts/load-ingest.mjs, scripts/synth-spool.ts, src/checkpoint.ts (WAL checkpointer), migration 5 (dedup index events_session_ts_sig), canonicalJson hot-path rewrite and crypto.hash, compaction rest pacing, skew range clamp (U3 deferred minor), far-future batch log line, tests checkpoint/signature-canonical. Decision: keep it; the executor re-checks it, runs the proving tests and the load harness, and finishes docs/HUB.md before review.
+- No stale S4.hb-stop and no heartbeat from the previous run was running.
+
+### U4 load harness + HUB.md (R2.4): reviewed
+- Commits: 5060769, 950858a, 5c8d24f, 55a57e4, d92dddc (inherited work from the stopped run, finished); fix 1 7e44fcf..996b81e (9 commits); fix 2 01b6e01.
+- Review 1: sd-reviewer fix-then-merge (BLOCKING executor wrote HUB-BENCH.md evidence; MAJOR R2.4 not shown under compaction; minors: hot-session dedup walk, checkpoint log flood, untested fallbacks, harness checkpoint interval differs from serve, stale HUB.md). sd-security-reviewer fail (HIGH canonicalJson key cache retained unbounded-length wire keys, ~8 GiB DoS; MEDIUM harness --url https sent bearer in plaintext; LOWs).
+- Decision (orchestrator): R2.4 must hold while compaction runs, no exemption. Fix: compaction yields to authenticated ingest activity (15 ms quiet, 250 ms bound), per-pass cap HUB_COMPACT_MAX_EVENTS (default 1,000,000), 150 ms pause per 100 batches so the checkpoint worker catches up.
+- Review 2: sd-reviewer merge (minors fixed in 01b6e01: tracker after auth, abort test, CLI capped, HUB.md table, fallback test). sd-security-reviewer pass. Review 3 on 01b6e01: merge.
+- Executor results (quiet host): sustained p95 12.26 ms; with-retention 600k x3 p95 during compaction 11.45 / 10.40 / 10.67 ms, backlog drained 39 to 42 s; hot session p95 12.88 ms. Busy host (load 1.7 to 3.7, other sessions building) gave 16.8 to 30.2 ms overall, slow outside compaction too.
+- Deferred: Fastify requestTimeout/connectionTimeout unset (token holder can trickle a body; bounded by the 250 ms yield) -> S3 owner / Phase 7 hardening; checkpoint test does not assert worker terminate (MINOR); compose-container harness not re-run after fix 1 (verifier runs it).
