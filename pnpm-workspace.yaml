@@ -3,4 +3,5 @@ packages:
   - scripts
 engineStrict: true
 allowBuilds:
+  better-sqlite3: true
   esbuild: true
