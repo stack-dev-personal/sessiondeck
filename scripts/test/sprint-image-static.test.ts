@@ -232,7 +232,9 @@ describe("sprint entrypoint", () => {
 
   it("keeps the mirror export top-level and unconditional so a .sprint/env value is always overwritten", () => {
     const exportLine = 'export SPRINT_CLAUDE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"';
-    const mirrorLines = entrypoint.split("\n").filter((l) => l.includes("SPRINT_CLAUDE_OAUTH_TOKEN"));
+    const mirrorLines = entrypoint
+      .split("\n")
+      .filter((l) => l.includes("SPRINT_CLAUDE_OAUTH_TOKEN"));
     expect(mirrorLines).toEqual([exportLine]);
     const [line] = mirrorLines;
     expect(line).toBe(line?.trimStart());
