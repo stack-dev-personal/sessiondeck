@@ -374,6 +374,13 @@ test("R3.7 live: text spacing override (1.4.12) clips nothing in toolbar, header
     return out;
   });
   expect(clipped).toEqual([]);
+  const cardClip = await page.evaluate(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-testid="session-card"]')).filter(
+        (c) => c.scrollHeight > c.clientHeight + 1,
+      ).length,
+  );
+  expect(cardClip, "cards whose content outgrows the fixed height under 1.4.12 spacing").toBe(0);
 });
 
 test("R3.7 live: arrival glow is one 400 ms opacity pass, off under reduced motion", async ({
