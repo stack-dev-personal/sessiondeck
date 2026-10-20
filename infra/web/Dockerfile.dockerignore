@@ -19,6 +19,7 @@
 !packages/web/scripts
 !packages/web/e2e/*.ts
 !infra/web/nginx.conf
+!infra/web/05-validate-sd-env.sh
 !infra/web/Dockerfile
 
 **/.env*

@@ -38,6 +38,9 @@ USER root
 RUN rm -f /etc/nginx/conf.d/default.conf
 USER 101
 COPY infra/web/nginx.conf /etc/nginx/templates/default.conf.template
+COPY infra/web/05-validate-sd-env.sh /docker-entrypoint.d/05-validate-sd-env.sh
+# COPY keeps the file mode; the script is committed executable (the entrypoint skips non-executable hooks
+# only by sourcing them, which would still run the check).
 COPY --from=build /repo/packages/web/dist /usr/share/nginx/html
 EXPOSE 8080
 # nginx-unprivileged already runs as uid 101.
