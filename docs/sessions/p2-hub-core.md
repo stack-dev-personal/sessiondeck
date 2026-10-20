@@ -14,7 +14,7 @@
 | U0 allow better-sqlite3 native build in pnpm-workspace.yaml | sd-executor-contract | infra for all | - | done b8c3ec2 |
 | U1 hub scaffold, config, migrations (5.1), store, bearer auth, /health | sd-executor-hub | R2.8 | U0 | done d3b4f88 |
 | U2 POST /ingest: validation, 1 MB limit, id+signature dedup, batch txn, reducer wiring all kinds, golden replay | sd-executor-hub | R2.1, R2.2, R2.3, R2.7 | U1 | done 337e5d2 (R2.7 read path in U3) |
-| U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6 | U2 | pending |
+| U3 REST routes + WS /stream (initial, deltas, heartbeat) + 5-client WS harness | sd-executor-hub | R2.5, R2.6, R2.7 | U2 | done ba15e04 |
 | U4 Dockerfile (arm64-safe), container smoke harness, docs/HUB.md | sd-executor-hub | R2.8 (container), DoD | U3 | pending |
 
 ## Decisions made
@@ -27,6 +27,12 @@
 - D-S3-7: R2.7 staleness also applied at read and broadcast time (U3) via applyRateLimitStaleness.
 - D-S3-8: per batch <= 5000 envelopes, payload depth <= 64, string bounds (host/session_id/agent_id 128, hook_event_name 64, project_dir/cwd truncated to 1024).
 - D-S3-9: transcript envelope payload shape defined in the hub as {start_line (required int >= 0), lines: string[]} because packages/contract has none. Cross-session: S2 tailer must emit this; contract owner should add the schema. Open question for the user.
+- D-S3-10: claude-watch has no LICENSE file upstream (sd-researcher 2026-10-20, HEAD 1f40b01; README says MIT). Borrow map 9 lists it as MIT. Nothing copied; broadcast written fresh from the ws docs. Open question for the user: fix the borrow map entry or confirm.
+- D-S3-11: GET /sessions/:id/events is a raw authenticated audit view; R2.7 applies to rendered snapshots (REST snapshot reads and WS).
+- D-S3-12: WS initial and REST ?live=1 share default limit 1000; warn only on real truncation at the cap.
+- D-S3-13: transcript paging: after requires agent_id; agent_id '' is the main session.
+- D-S3-14: per-principal read rate limit (HUB_READ_RATE 50/s, burst 100) for REST GETs and WS upgrades, keyed on the credential that authenticated.
+- D-S3-15: WS auth for browsers: Sec-WebSocket-Protocol `sessiondeck.v1` + `sessiondeck.bearer.<base64url(token)>`; server selects only sessiondeck.v1. Header Authorization also accepted. For S6.
 - D-S3-4: default bind 127.0.0.1 (HUB_BIND); LAN bind is an explicit opt-in. Architecture section 7 says the hub binds to the LAN interface; Phase 2 runs on the laptop, so localhost default is the safer reading and is configurable.
 
 - infra/docker-compose.yml is S4 scope (R2.10 handoff); S3 proves the container with `docker build` + `docker run` (sd-1-S3-* names).
@@ -44,9 +50,18 @@
 - Review: iteration 1 sd-reviewer fix-then-merge (3 MAJOR, 6 MINOR); sd-security-reviewer Gate fail (HIGH rate limit keyed on body.host, 3 MEDIUM, 3 LOW). Iteration 2: sd-reviewer merge; security Gate pass (3 LOW).
 - Verify: R2.1, R2.2, R2.3 pass (docs/VERIFY-P2.md, b39c23e). R2.7 out-of-range nulling tested; read-time staleness wired in U3.
 
+### U3 (ff2b14d, f5c3c41, ba15e04)
+- Files: packages/hub/src/{stream.ts,snapshots.ts,routes/read.ts,server.ts,config.ts,db/store.ts,ingest/ingestor.ts}, scripts/ws-harness.mjs, test/{stream,read-routes,read-limit,ingest-hostindex}.test.ts, golden all-statuslines.json.
+- Borrow: none (D-S3-10).
+- Review: iteration 1 sd-reviewer fix-then-merge (1 MAJOR harness gate, 6 MINOR), security Gate pass (1 MEDIUM refused sockets never destroyed, 2 LOW). Iteration 2 reviewer fix-then-merge (1 MAJOR read limiter keyed on unauthenticated header, 1 MINOR), security Gate pass (2 LOW). Iteration 3 reviewer fix-then-merge, no BLOCKING (1 MAJOR: fallback-destroy test does not exercise the timer). Exit condition met per /review-loop; the MAJOR is folded into U4 and re-reviewed there.
+- Verify: R2.5, R2.6, R2.7 pass, R2.8 re-run pass (docs/VERIFY-P2.md, 8965728, 32bc47f). Harness: 200 deltas x 5 clients, max 29.49 ms, 0 dup, 0 missing; negative self-test fails the gate as designed.
+
 ## Deferred findings
 
 - U1 sd-reviewer MINOR (packages/hub/test/auth.test.ts:111): no test for unauthenticated malformed-JSON POST returning empty 401. Folded into U2.
 - U2 security LOW: HUB_MAX_HOSTS can be filled permanently by a token holder (hosts never age out). Accepted risk with D-S3-6.
 - U2 reviewer/security MINOR+LOW: subagents fixtures in all-statuslines golden have no SubagentStart (rows stay empty); hostIndex re-loads each open session; bucket size below 5000 under-charges. Folded into U3.
+- U3 security LOW: HUB_ALLOWED_ORIGINS unset by default; token alone blocks CSWSH. Must be set when Access fronts the hub (Phase 7). Documented in docs/HUB.md (U4).
+- U3 reviewer MAJOR (iteration 3): read-limit.test.ts:108-135 fallback test does not exercise the 2 s timer. Folded into U4.
+- Verifier note: ended sessions show ended_at null in the REST snapshot. Folded into U4 for investigation.
 - U1 security LOW: better-sqlite3 prebuilt binary is fetched at install time and not covered by the lockfile hash. Dockerfile (U4) builds from source.
