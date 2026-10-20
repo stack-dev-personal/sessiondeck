@@ -74,12 +74,19 @@ export function sameIdentity(
   return a.dev === b.dev && a.ino === b.ino;
 }
 
-export function sessionsDir(env: Record<string, string | undefined> = process.env): string {
+/** Claude Code config dir: CLAUDE_CONFIG_DIR when set, else ~/.claude. The daemon only reads from it. */
+export function claudeConfigDir(env: Record<string, string | undefined> = process.env): string {
   const base = env["CLAUDE_CONFIG_DIR"];
-  return path.join(
-    base !== undefined && base !== "" ? base : path.join(homedir(), ".claude"),
-    "sessions",
-  );
+  return base !== undefined && base !== "" ? base : path.join(homedir(), ".claude");
+}
+
+export function sessionsDir(env: Record<string, string | undefined> = process.env): string {
+  return path.join(claudeConfigDir(env), "sessions");
+}
+
+/** Where Claude Code keeps transcripts: <config dir>/projects. */
+export function projectsDir(env: Record<string, string | undefined> = process.env): string {
+  return path.join(claudeConfigDir(env), "projects");
 }
 
 function token(v: unknown): string | undefined {

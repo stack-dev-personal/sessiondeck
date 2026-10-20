@@ -111,6 +111,9 @@ export class StubHub {
         seq: env.seq,
         host: body.host,
         kind: env.kind,
+        session_id: env.session_id,
+        agent_id: env.agent_id,
+        hook_event_name: env.hook_event_name,
         payload: env.payload,
       });
       this.order.push(env.id);
