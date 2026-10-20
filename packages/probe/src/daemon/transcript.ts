@@ -10,8 +10,8 @@
 //                (inode on POSIX; birthtime plus a head-bytes fingerprint on Windows, where inode is
 //                unreliable); lines are emitted as `transcript` envelopes into the daemon outbox
 //                with a start_line counter that survives resets; oversize lines become a marker.
-import { constants } from "node:fs";
-import { lstat, open, readFile, realpath, rename, stat } from "node:fs/promises";
+import { constants, type BigIntStats } from "node:fs";
+import { type FileHandle, lstat, open, readFile, realpath, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { hostOs } from "../envelope.ts";
 import { writeFileAtomic } from "../install/atomic.ts";
@@ -104,11 +104,9 @@ export async function realpathLoose(p: string): Promise<string> {
   }
 }
 
-/** isUnder after resolving symlinks on both sides: a link inside dir that points out does not pass. */
-export async function isUnderReal(p: string, dir: string): Promise<boolean> {
-  if (!isUnder(p, dir)) return false;
-  return isUnder(await realpathLoose(p), await realpathLoose(dir));
-}
+/** Windows paths compare case-insensitively. */
+const sameReal = (a: string, b: string): boolean =>
+  process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 
 /**
  * Pure replace test. `headMatches` is undefined when it could not be checked (nothing consumed yet).
@@ -166,6 +164,9 @@ const validSessionId = (s: string): boolean =>
   s.length <= MAX_SESSION_ID_CHARS && SESSION_ID_RE.test(s) && !s.includes("..");
 /** Distinct refusals remembered for log rate limiting. */
 const MAX_REFUSALS = 1000;
+
+const refusedFile = (): Error =>
+  Object.assign(new Error("not a single-link regular file"), { code: "ESDREFUSE" });
 
 const key = (session: string, agent?: string): string => `${session}|${agent ?? ""}`;
 
@@ -235,6 +236,9 @@ export class TranscriptTailer implements DaemonComponent {
   private readonly strategy: ReplaceStrategy;
   private readonly statFn: (p: string) => Promise<StatLike>;
   private dirty = false;
+  /** The projects dir as first seen: its realpath and identity. Never re-pinned (D-S2-10). */
+  private pin: { real: string; dev: bigint; ino: bigint } | undefined;
+  private rootBad = false;
   private maxIssued = -1;
   private lostUntil = 0;
   private pruned = new Map<string, number>();
@@ -276,6 +280,7 @@ export class TranscriptTailer implements DaemonComponent {
       this.host = ctx.host;
       this.log = ctx.log;
     }
+    await this.pinRoot();
     await this.load();
     if (this.o.pollMs !== 0) {
       this.timer = setInterval(() => void this.poll().catch(() => undefined), this.o.pollMs ?? 500);
@@ -418,9 +423,10 @@ export class TranscriptTailer implements DaemonComponent {
    * Refuses when no projects dir is configured, and files with more than one hard link.
    */
   private async trusted(p: string): Promise<string | undefined> {
-    const root = this.o.projectsDir;
-    if (!root || !(await isUnderReal(p, root))) return undefined;
+    const root = await this.pinRoot();
+    if (!root) return undefined;
     const rp = await realpathLoose(p);
+    if (!isUnder(rp, root)) return undefined;
     try {
       const st = await lstat(rp);
       if (st.isFile() && st.nlink > 1) return undefined;
@@ -432,10 +438,74 @@ export class TranscriptTailer implements DaemonComponent {
 
   /** Containment check of an already resolved path, repeated before every read. */
   private async stillTrusted(rp: string): Promise<string | undefined> {
-    const root = this.o.projectsDir;
+    const root = await this.pinRoot();
     if (!root) return undefined;
     const now = await realpathLoose(rp);
-    return isUnder(now, await realpathLoose(root)) ? now : undefined;
+    return isUnder(now, root) ? now : undefined;
+  }
+
+  /**
+   * The pinned real projects dir, or undefined when none is configured, it does not exist yet, or the
+   * configured path no longer resolves to the pinned directory (swapped for a link: refuse everything,
+   * log once, never re-pin). A dir that is legitimately behind a link at pin time works: containment
+   * is judged on real paths against the pinned real root.
+   */
+  private async pinRoot(): Promise<string | undefined> {
+    const cfg = this.o.projectsDir;
+    if (!cfg) return undefined;
+    let real: string;
+    let st: BigIntStats;
+    try {
+      real = await realpath(cfg);
+      st = await stat(real, { bigint: true });
+    } catch {
+      if (this.pin) this.rootChanged("is gone");
+      return undefined;
+    }
+    if (!this.pin) {
+      if (!st.isDirectory()) return undefined;
+      this.pin = { real, dev: st.dev, ino: st.ino };
+      this.log("info", `transcript: projects dir pinned to ${real}`);
+      return real;
+    }
+    if (!sameReal(real, this.pin.real) || st.dev !== this.pin.dev || st.ino !== this.pin.ino) {
+      this.rootChanged(`now resolves to ${real}`);
+      return undefined;
+    }
+    this.rootBad = false;
+    return this.pin.real;
+  }
+
+  private rootChanged(what: string): void {
+    if (this.rootBad) return;
+    this.rootBad = true;
+    this.log(
+      "error",
+      `transcript: projects dir ${what}, expected ${this.pin?.real}; refusing all transcripts`,
+    );
+  }
+
+  /**
+   * Opens a transcript for reading without blocking or following a link: lstat must say regular file,
+   * the open is O_NONBLOCK (a FIFO swapped in cannot stall the chain) and O_NOFOLLOW where it exists,
+   * and the handle must be a regular file with one hard link and the very file lstat saw.
+   */
+  private async openRegular(rp: string): Promise<FileHandle> {
+    const before = await lstat(rp, { bigint: true });
+    if (!before.isFile()) throw refusedFile();
+    const fh = await open(
+      rp,
+      constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const st = await fh.stat({ bigint: true });
+      if (!st.isFile() || st.nlink !== 1n || st.dev !== before.dev || st.ino !== before.ino)
+        throw refusedFile();
+      return fh;
+    } catch (e) {
+      await fh.close().catch(() => undefined);
+      throw e;
+    }
   }
 
   private readonly refused = new Set<string>();
@@ -619,7 +689,7 @@ export class TranscriptTailer implements DaemonComponent {
   }
 
   private async readHead(p: string, len: number): Promise<Buffer | undefined> {
-    const fh = await open(p, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const fh = await this.openRegular(p);
     try {
       const b = Buffer.alloc(len);
       const { bytesRead } = await fh.read(b, 0, len, 0);
@@ -658,7 +728,8 @@ export class TranscriptTailer implements DaemonComponent {
       try {
         const got = await this.readHead(rp, want.length);
         headMatches = got !== undefined && got.equals(want);
-      } catch {
+      } catch (err) {
+        this.noteOpenFailure(e, err);
         return; // vanished between stat and open; next poll
       }
     }
@@ -676,8 +747,9 @@ export class TranscriptTailer implements DaemonComponent {
     if (avail > 0) {
       let fh;
       try {
-        fh = await open(rp, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-      } catch {
+        fh = await this.openRegular(rp);
+      } catch (err) {
+        this.noteOpenFailure(e, err);
         return;
       }
       try {
@@ -719,6 +791,14 @@ export class TranscriptTailer implements DaemonComponent {
       head: await this.headFor(e, rp, newOffset, reset, headMatches),
     };
     this.dirty = true;
+  }
+
+  private noteOpenFailure(e: TailEntry, err: unknown): void {
+    if ((err as NodeJS.ErrnoException).code === "ESDREFUSE")
+      this.refuse(
+        e.session_id,
+        `tracked transcript ${path.basename(e.path)} is not a single-link regular file`,
+      );
   }
 
   private async headFor(

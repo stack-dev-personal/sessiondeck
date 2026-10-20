@@ -362,6 +362,7 @@ describe("transcript tailer", () => {
       );
     const start = fx("SessionStart", "01-startup.json");
     const sub = fx("SubagentStart", "01-subagent.json");
+    mkdirSync(join(dir, ".claude", "projects"), { recursive: true });
     const t = mk({ projectsDir: join(dir, ".claude", "projects") });
     const env = (p: Record<string, unknown>, name: string, agent?: string): Envelope =>
       ({
@@ -937,4 +938,117 @@ describe("transcript containment (D-S2-10)", () => {
     expect(out).toHaveLength(0);
     expect(t.entries()).toHaveLength(0);
   });
+
+  // Review iteration 3.
+  it("A: a projects dir behind a symlink/junction works, also after a restart", async () => {
+    const realProj = join(dir, "data", "projects");
+    mkdirSync(join(realProj, "x"), { recursive: true });
+    const link = join(dir, "linked");
+    symlinkSync(join(dir, "data"), link, junction);
+    const viaLink = join(link, "projects");
+    const f = join(viaLink, "x", `${S}.jsonl`);
+    writeFileSync(f, nl(gen(0, 2)));
+    const t1 = tail({ projectsDir: viaLink });
+    await t1.start();
+    await t1.onSessionStart(S, f);
+    await t1.onSubagentStart(S, "a1"); // derived from the stored (resolved) main path
+    expect(t1.entries().map((e) => e.agent_id)).toEqual([undefined, "a1"]);
+    await t1.poll();
+    expect(flat()).toEqual(gen(0, 2));
+    await t1.stop();
+    const t2 = tail({ projectsDir: viaLink });
+    await t2.start();
+    expect(t2.entries()).toHaveLength(2); // load() kept both
+    appendFileSync(f, nl(gen(2, 3)));
+    await t2.poll();
+    expect(flat()).toEqual(gen(0, 3));
+    await t2.stop();
+    expect(logs.some((l) => l.includes("outside the projects dir"))).toBe(false);
+  });
+
+  it("B: a projects dir swapped for a link to a parent is refused, logged once", async () => {
+    const secretDir = join(dir, "home", ".ssh");
+    mkdirSync(secretDir, { recursive: true });
+    writeFileSync(join(secretDir, "id_rsa"), nl(gen(0, 2, "KEY")));
+    const cfg = join(dir, "home", ".claude-projects");
+    mkdirSync(cfg);
+    const t = tail({ projectsDir: cfg });
+    await t.start();
+    const own = join(cfg, "t.jsonl");
+    writeFileSync(own, nl(gen(0, 1)));
+    await t.onSessionStart(S, own);
+    renameSync(cfg, join(dir, "home", "moved"));
+    symlinkSync(join(dir, "home"), cfg, junction);
+    await t.onSessionStart("s2", join(cfg, ".ssh", "id_rsa"));
+    await t.poll(); // the already tracked file is refused as well
+    await t.poll();
+    expect(flat()).toEqual([]);
+    expect(out).toHaveLength(0);
+    expect(
+      logs.filter((l) => l.includes("projects dir")).filter((l) => l.startsWith("error")),
+    ).toHaveLength(1);
+    // A restart re-pins to the new root only by starting afresh; the old pin never auto-heals.
+    await t.stop();
+  });
+
+  it("B: a projects dir that does not exist yet is pinned when it first appears", async () => {
+    const t = tail();
+    rmSync(proj, { recursive: true });
+    await t.start();
+    const f = join(proj, "t.jsonl");
+    await t.onSessionStart(S, f);
+    expect(t.entries()).toHaveLength(0);
+    mkdirSync(proj);
+    writeFileSync(f, nl(gen(0, 2)));
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(flat()).toEqual(gen(0, 2));
+    expect(logs.some((l) => l.includes("pinned"))).toBe(true);
+  });
+
+  it("C: a hard link created after tracking is not tailed", async () => {
+    const secret = join(outside, "credentials");
+    writeFileSync(secret, nl(gen(0, 2, "AWS")));
+    const f = join(proj, "t.jsonl");
+    const t = tail();
+    await t.onSessionStart(S, f); // does not exist yet: the nlink check in trusted() is skipped
+    linkSync(secret, f);
+    await t.poll();
+    await t.poll();
+    expect(out).toHaveLength(0);
+    expect(logs.filter((l) => l.includes("single-link"))).toHaveLength(1);
+  });
+
+  it("C: a hard link created after bytes were consumed stops the tailing", async () => {
+    const f = join(proj, "t.jsonl");
+    writeFileSync(f, nl(gen(0, 2)));
+    const t = tail();
+    await t.onSessionStart(S, f);
+    await t.poll();
+    expect(flat()).toEqual(gen(0, 2));
+    linkSync(f, join(outside, "alias"));
+    appendFileSync(f, nl(gen(2, 4)));
+    await t.poll();
+    expect(flat()).toEqual(gen(0, 2));
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "D: a transcript swapped for a FIFO does not stall the tailer",
+    async () => {
+      const { execFileSync } = await import("node:child_process");
+      const f = join(proj, "t.jsonl");
+      writeFileSync(f, nl(gen(0, 2)));
+      const t = tail();
+      await t.onSessionStart(S, f);
+      await t.poll();
+      rmSync(f);
+      execFileSync("mkfifo", [f]);
+      const done = await Promise.race([
+        t.poll().then(() => "ok"),
+        new Promise((r) => setTimeout(() => r("stalled"), 3000)),
+      ]);
+      expect(done).toBe("ok");
+      expect(flat()).toEqual(gen(0, 2));
+    },
+  );
 });
