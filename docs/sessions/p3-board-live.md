@@ -34,6 +34,12 @@
 - Evidence (executor): vitest 185; live R3.1, R3.3, R3.9 pass; reorder 1 frame (15.5 ms); screenshots /state/1/screens/S6/R3.3.png, R3.3-filters.png, R3.3-hidden-attention.png.
 ### U4 R3.6 perf trace
 - Commits: b65c88e (minimal DOM moves on reorder), 9a46471 (load generator, trace analysis, live R3.6 spec). Run 3: main thread busy 16.01%, frame p99 16.8 ms, 20 session msgs/s, 3 Chromium paint long tasks (54-62 ms), longest script task 11.95 ms. Review pending.
+### U4 review iterations
+- Iteration 1 (8471f84, f64bdaa, 20fbca7, c47d62d, 5879a9d): trace guard and interval merge, reviewer pass rule (a)-(d), generator in-flight Set, focus test, connect timer split (onopen, then 30 s for initial), silent re-create after reload. React keyed variant measured worse (busy 21.6%, 18 dropped vs manual 11.89%, 0).
+- Iteration 2 (8a6a943, 25bb584, c30a208, e37f655, ebac57d): shown flag for resume, glow once per attention transition, contain: layout paint style on .sd-card, 8 s warm-up before the idle window, R3.6 report-only in CI. R3.6 with contain: 0 dropped intervals, busy 11.62% and 14.63%, max script 4.1 and 3.87 ms. 7 mock baselines refreshed.
+- sd-reviewer: fix-then-merge, fix-then-merge, then merge (third iteration).
+### U5 accessibility pass
+- Commits cfbf31b, 0d89322, 615631a, b4a7bd0. Substitute WCAG 2.1 AA checklist in docs/A11Y-P3.md (design:accessibility-review is not installed in the sprint container; the user runs it once on the laptop). Fixed: 1.4.10 reflow at 320 px, 1.4.11 control borders, 4.1.3 hidden-attention status region, 4.1.2 header glyph. Logged: infinite working-dot pulse (2.2.2), no screen reader run, zoom approximated by viewport. Mock Playwright 23 pass; vitest 208.
 ### U6 BOARD-FEEDBACK template
 - docs/BOARD-FEEDBACK.md created for the user's three days of use.
 
@@ -51,3 +57,7 @@
 - LOW packages/web/scripts/e2e-live.sh:190: Playwright container runs as root with the whole sprint-1-work volume read-write (documented exception) (security re-review).
 - LOW .github/workflows/ci.yml: actions pinned by tag, not commit SHA (security re-review; infra unit later).
 - Contract: session_id accepts any non-empty string; the web client rejects __proto__/constructor/prototype, the contract schema could require the UUID form (security review; contract owner).
+- MINOR packages/web/src/components/SessionCard.tsx:48: cards that mount already waiting play the arrival glow (page load, reconnect remount, filter change). Opacity only, once. Design owner to confirm.
+- MINOR packages/web/src/alerts/start.ts:63: a toast dismissed while the page is closed is re-created once as a silent same-tag replace on next load (non-persistent notifications cannot report this).
+- MINOR packages/web/src/styles/index.css:113: under prefers-reduced-motion, sd-arrive is never cleared until the card leaves attention; if the user turns reduced motion off meanwhile, the glow plays late. Cosmetic.
+- A11Y: working-dot pulse is infinite with no on-page pause (WCAG 2.2.2); stops under reduced motion; design owner decides whether to cap at 5 s.
