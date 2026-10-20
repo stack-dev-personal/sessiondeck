@@ -77,3 +77,45 @@ compact event-loop: max timer lag 577.45 ms, histogram max 578.81 ms, peak RSS 1
 Definition of typical volume (from the header of packages/hub/scripts/bench-replay.ts): 2 hosts, 300 sessions (150 per host), 3,400 envelopes per session = 1,020,000 events spread over 30 days (about 34,000/day, 0.4/s average; bursts of 5-20/s with idle gaps, per the phase doc). Mix per session: 80% hook (golden session's non-lifecycle hooks cycled), 12% statusline (20 captured fixtures cycled), 3% liveness, 5% transcript (5 lines of 400-800 bytes); every session has a SessionStart and SessionEnd. Payloads are the captured fixtures' (avg 898 B here). The work-unit floor is 1,000,000 events across at least 2 hosts and 300 sessions.
 
 Note: compaction max batch is 578 ms (event-loop lag 577 ms), a stall on the hub if compaction runs on the serving process; no threshold is stated for it.
+
+## R2.4 ingest load
+
+Requirement: "Ingest p95 < 20 ms per batch of 100 at 1k envelopes/s on the laptop." Partial is fail.
+
+- Date: 2026-10-20, 23:46Z to 23:56Z. HEAD: aa80a18 (branch p2/hub-history).
+- Environment: Debian 12 in a WSL2 Linux sprint container (kernel 6.18.33.2-microsoft-standard-WSL2) on the laptop's Docker Desktop, AMD Ryzen AI 9 465 w/ Radeon 880M, 20 logical CPUs, 19 GB, node v22.23.3. This is NOT the Windows-native probe host. Other sprint containers share the machine. Runs were sequential, one process at a time, in the foreground.
+- Harness: `packages/hub/scripts/load-ingest.mjs`, open loop, latency from scheduled send to end of response. Each run: 709 batches of 100 over 70.8 s, first 5 s (50 batches) is warm-up, 659 batches (65,900 envelopes) measured, all with `--rate 1000 --duration 60 --batch 100 --p95-limit 20`. Default target is an in-process Fastify server with a real SQLite file (WAL, checkpoint 100 ms), client in the same process (can only overstate latency).
+- Load avg is the 1-minute `uptime` value before / after the run.
+
+Commands (from the repo root):
+
+1. `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20 --verify-live`
+2. same flags with `--with-retention` instead of `--verify-live` (default backlog: 599,984 events older than the window), three times
+3. same flags with `--hot-session`
+4. `HUB_ENV_FILE=<scratch env file> SD_HUB_PUBLISH_PORT=18787 docker compose -p sd-1-s4 -f infra/docker-compose.yml up -d --build hub`, then the same flags plus `--verify-live --url http://172.27.0.2:8787 --token-file <scratch file> --allow-insecure` (container IP; token in a mode 600 scratch file, never printed); then `docker compose -p sd-1-s4 -f infra/docker-compose.yml down -v` and scratch files removed.
+
+| Run | p50 ms | p95 ms | p99 ms | max ms | requests (measured) | failures | load avg before / after | Result |
+|---|---|---|---|---|---|---|---|---|
+| 1 Sustained, `--verify-live` | 8.20 | 10.91 | 11.82 | 13.82 | 659 | 0 | 0.35 / 0.13 | PASS |
+| 2a `--with-retention` run 1 | 7.97 | 11.30 | 12.43 | 19.86 | 659 | 0 | 0.13 / 0.48 | PASS |
+| ... during compaction (405 batches) | 6.73 | 10.31 | 11.66 | 19.86 | 405 | 0 | | |
+| ... outside compaction (254) | 8.67 | 11.84 | 12.92 | 14.16 | 254 | 0 | | |
+| 2b `--with-retention` run 2 | 7.72 | 11.23 | 12.73 | 20.24 | 659 | 0 | 0.48 / 0.43 | PASS |
+| ... during compaction (439) | 6.89 | 10.48 | 12.73 | 20.24 | 439 | 0 | | |
+| ... outside compaction (220) | 8.72 | 11.63 | 12.63 | 14.31 | 220 | 0 | | |
+| 2c `--with-retention` run 3 | 7.86 | 11.68 | 14.55 | 21.39 | 659 | 0 | 0.43 / 0.52 | PASS |
+| ... during compaction (391) | 7.59 | 11.39 | 15.00 | 21.39 | 391 | 0 | | |
+| ... outside compaction (268) | 8.09 | 11.71 | 13.33 | 14.68 | 268 | 0 | | |
+| 3 `--hot-session` (one session_id) | 9.68 | 12.76 | 15.23 | 29.79 | 659 | 0 | 0.56 / 0.68 | PASS |
+| 4 Containerized hub (compose, container IP), `--verify-live` | 9.03 | 12.89 | 17.24 | 19.38 | 659 | 0 | 2.64 / 2.66 | PASS |
+
+Compaction in runs 2a to 2c: 599,984 events in 6000 batches, 40.4 s / 43.8 s / 39.0 s (14.8k, 13.7k, 15.4k events/s), compaction batch max 21.97 / 14.84 / 15.92 ms, 0 forced batches, 0 old events left. Achieved rate 1001 envelopes/s in every run. All 659 measured batches ok in every run; no errors by status; the in-process hub logged 0 warn/error in runs 1 and 2.
+
+Notes:
+
+- Run 3: the hub log shows many "statusline for another host ignored" warnings (4,236 warn/error lines). That is an artifact of sending both synthetic hosts under one session_id (a statusLine from the second host is ignored); not an ingest failure. All 70,900 envelopes were accepted.
+- Run 4: the host 1-minute load was 2.64 at the start because the image build and container start had just run (above the 1.5 threshold). The run passed, so no rerun was triggered by the rule; the number is therefore recorded as taken under some host load, and it is the highest p95 of the five, but still well under the limit. The container log had 0 warn/error lines.
+- `--verify-live`: 116 sessions live of 119 created, the expected value (3 ended under 10 min before the check).
+- Margin: worst p95 is 12.89 ms against 20 ms (about 36% headroom). Worst single batch is 29.79 ms (hot session), which is a max, not a p95.
+
+Verdict: R2.4 PASS in this environment on all five runs (p95 10.91 to 12.89 ms, 0 failures, 1k envelopes/s sustained, including during compaction, with a hot session, and against the containerized hub over the network path). Laptop-native confirmation (Windows host, Docker Desktop or a hub run natively) is still advisable: this is a Linux VM on the laptop sharing CPUs with other containers, and the Windows filesystem and antivirus behavior of the real deployment are not exercised. A pass here is a strong indication, not a measurement of the target host.
