@@ -57,3 +57,39 @@ jobs:
         shell: pwsh
         run: pnpm -F @sessiondeck/scripts test:sprint
         timeout-minutes: 3
+
+  e2e-web:
+    name: e2e-web (Playwright smoke, mock build)
+    # Visual baselines in packages/web/e2e/__screenshots__ were generated in this exact image;
+    # any other image renders fonts differently and the screenshot comparisons fail.
+    # Budget (minutes): install 3 + mock build 1 + suite 5 = 9; 15 leaves a margin.
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    env:
+      HOME: /root
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: playwright smoke (R3.2, R3.4, R3.5, R3.7, R3.8)
+        working-directory: packages/web
+        # github.workspace expands to the host path in container jobs; the shell variable is the in-container path.
+        run: SCREENS_DIR="$GITHUB_WORKSPACE/e2e-screens" node node_modules/@playwright/test/cli.js test
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-screens
+          path: e2e-screens
+          if-no-files-found: warn
+      - name: upload playwright results (actual, expected, diff)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-results
+          path: /tmp/sd-pw-results
+          if-no-files-found: warn
