@@ -1,7 +1,7 @@
 // Transcript tailer (R1.6).
 //
 // Adapted from cctop.
-//   Source repo: cctop (Dean Langsam), commit 6ec6256
+//   Source repo: https://github.com/DeanLa/cctop, commit 6ec6256
 //   Path:        plugin/scripts/cctop-poller.py, function read_new_jsonl_lines
 //   License:     MIT, Copyright (c) 2025 Dean Langsam
 //   Changes:     ported from Python to TypeScript; asynchronous fs; byte offsets kept per
