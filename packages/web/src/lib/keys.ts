@@ -1,15 +1,11 @@
 import { useEffect } from "react";
+import { useUi } from "../store/ui";
 
 /** True when the event target is somewhere the user types; shortcuts must not fire there. */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
-}
-
-/** True inside a modal dialog (the detail drawer): board shortcuts must not fire there. */
-export function isInModal(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && target.closest('[aria-modal="true"]') !== null;
 }
 
 /**
@@ -25,7 +21,8 @@ export function useShortcuts(map: Record<string, () => void>): void {
         e.metaKey ||
         e.altKey ||
         isTypingTarget(e.target) ||
-        isInModal(e.target)
+        // A modal (the detail drawer) is open: board keys are blocked wherever focus is.
+        useUi.getState().selectedSessionId !== null
       )
         return;
       const fn = map[e.key];

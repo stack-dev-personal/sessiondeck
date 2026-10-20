@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import { formatClockSec, formatDuration, formatReset, formatTokens } from "../lib/format";
 import { STATE_VOCAB } from "../lib/state-vocab";
@@ -150,32 +150,46 @@ export function DetailDrawer({
     closeRef.current?.focus();
   }, []);
 
+  // Everything behind the modal is inert while it is open, so focus cannot reach it.
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
+    const dlg = ref.current;
+    const siblings = dlg?.parentElement ? Array.from(dlg.parentElement.children) : [];
+    const marked = siblings.filter(
+      (el) => el !== dlg && !el.classList.contains("sd-scrim") && !el.hasAttribute("inert"),
+    );
+    for (const el of marked) el.setAttribute("inert", "");
+    return () => {
+      for (const el of marked) el.removeAttribute("inert");
+    };
+  }, []);
+
+  // Document-level so it works wherever focus is, including document.body after a click on text.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.defaultPrevented) {
         e.preventDefault();
         onClose();
+        return;
+      }
+      const root = ref.current;
+      if (e.key !== "Tab" || !root) return;
+      const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      const inside = root.contains(active);
+      if (e.shiftKey && (active === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !inside)) {
+        e.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
-
-  const trap = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab" || !ref.current) return;
-    const items = Array.from(ref.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (!first || !last) return;
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || !ref.current.contains(active))) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || !ref.current.contains(active))) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
 
   const { tasks, git } = s;
   const prHref = git.pr ? safeHref(git.pr.url) : null;
@@ -190,7 +204,6 @@ export function DetailDrawer({
         aria-labelledby={titleId}
         data-testid="detail-drawer"
         data-session-id={s.session_id}
-        onKeyDown={trap}
         style={{ width: "var(--drawer-w)" }}
         className="sd-drawer fixed right-0 top-0 z-40 flex h-full max-w-full flex-col border-l border-border bg-surface-1 text-sm"
       >

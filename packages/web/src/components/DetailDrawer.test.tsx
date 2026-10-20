@@ -123,6 +123,70 @@ describe("open and close", () => {
 });
 
 describe("keys while the drawer is open", () => {
+  it("with focus on body (clicked plain text), c and t do nothing and Tab stays inside", async () => {
+    mount();
+    await userEvent.click(card("a"));
+    (document.activeElement as HTMLElement).blur();
+    expect(document.body).toHaveFocus();
+    await userEvent.keyboard("ct");
+    expect(useUi.getState().compact).toBe(false);
+    expect(useUi.getState().theme).toBe("dark");
+    await userEvent.tab();
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+    (document.activeElement as HTMLElement).blur();
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
+  });
+
+  it("header and main are inert while open and restored after close", async () => {
+    mount();
+    const main = document.querySelector("main")!;
+    const header = document.querySelector("header")!;
+    await userEvent.click(card("a"));
+    expect(main).toHaveAttribute("inert");
+    expect(header).toHaveAttribute("inert");
+    await userEvent.keyboard("{Escape}");
+    expect(main).not.toHaveAttribute("inert");
+    expect(header).not.toHaveAttribute("inert");
+  });
+
+  it("switching the open session remounts the drawer (raw state reset, focus on close)", async () => {
+    mount();
+    await userEvent.click(card("a"));
+    await userEvent.click(screen.getByRole("button", { name: /envelopes/ }));
+    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    act(() => useUi.getState().openSession("b"));
+    expect(screen.getByRole("dialog", { name: "name-b" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: /close/i })).toHaveFocus();
+  });
+
+  it("removing the open session closes the drawer and focuses the nearest card", async () => {
+    mount();
+    await userEvent.click(card("b"));
+    act(() => {
+      useBoard.setState({ sessions: { a: snap("a"), c: snap("c") } });
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(useUi.getState().selectedSessionId).toBeNull();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toHaveAttribute("data-testid", "session-card");
+  });
+
+  it("cards announce the dialog and hint that Enter opens details", () => {
+    mount();
+    for (const c of screen.getAllByTestId("session-card")) {
+      expect(c).toHaveAttribute("aria-haspopup", "dialog");
+      expect(c).toHaveAccessibleDescription("Enter opens details");
+    }
+  });
+
   it("c, t, j, k typed inside do not toggle compact or theme or move cards", async () => {
     mount();
     await userEvent.click(card("a"));

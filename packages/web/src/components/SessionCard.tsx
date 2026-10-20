@@ -1,4 +1,4 @@
-import { memo, type KeyboardEvent } from "react";
+import { memo, useId, type KeyboardEvent } from "react";
 import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { basename, formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
@@ -10,8 +10,10 @@ export const MAX_DOTS = 5;
 type Open = ((sessionId: string) => void) | undefined;
 
 /** Click and Enter (not auto-repeat) on the card itself open the detail drawer. */
-function openHandlers(id: string, onOpen: Open) {
+function openHandlers(id: string, onOpen: Open, hintId: string) {
   return {
+    "aria-haspopup": "dialog" as const,
+    "aria-describedby": hintId,
     "data-session-id": id,
     onClick: () => onOpen?.(id),
     onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
@@ -132,6 +134,7 @@ function SessionCardImpl({
   exceeds200k?: boolean | null;
   onOpen?: (sessionId: string) => void;
 }) {
+  const hintId = useId();
   const { project, name, active, vocab } = cardInfo(s);
   const meters = metersFor(s, now, exceeds200k);
   const badge = BADGE[s.state];
@@ -146,12 +149,15 @@ function SessionCardImpl({
       tabIndex={0}
       aria-label={ariaName(s)}
       data-testid="session-card"
-      {...openHandlers(s.session_id, onOpen)}
+      {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
       data-density="full"
       style={{ height: "var(--card-h)" }}
       className={`sd-card flex flex-col justify-between overflow-hidden rounded-lg border border-border bg-surface-1 px-s-3 py-s-2 text-sm ${stateClasses(s.state)}`}
     >
+      <span id={hintId} className="sr-only">
+        Enter opens details
+      </span>
       <div data-row="1" className={`${ROW} justify-between`}>
         <span className={`${ROW} min-w-0`}>
           <StateChip state={s.state} detail={s.state_detail} />
@@ -238,6 +244,7 @@ function CompactCardImpl({
   exceeds200k?: boolean | null;
   onOpen?: (sessionId: string) => void;
 }) {
+  const hintId = useId();
   const { project, name, active, vocab } = cardInfo(s);
   const meters = metersFor(s, now, exceeds200k);
   return (
@@ -245,12 +252,15 @@ function CompactCardImpl({
       tabIndex={0}
       aria-label={ariaName(s)}
       data-testid="session-card"
-      {...openHandlers(s.session_id, onOpen)}
+      {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
       data-density="compact"
       style={{ height: "var(--card-compact-h)" }}
       className={`sd-card ${ROW} gap-s-3 rounded border border-border bg-surface-1 px-s-3 text-sm ${stateClasses(s.state)}`}
     >
+      <span id={hintId} className="sr-only">
+        Enter opens details
+      </span>
       <span data-slot="state" className={`num shrink-0 ${vocab.textClass}`} title={vocab.label}>
         <span aria-hidden="true" className={s.state === "working" ? "sd-pulse" : ""}>
           {vocab.glyph}
