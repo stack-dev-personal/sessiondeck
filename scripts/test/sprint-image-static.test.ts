@@ -209,6 +209,27 @@ describe("sprint entrypoint", () => {
     expect(filter).not.toMatch(/gsub|sub\(|match\(/);
   });
 
+  it("exports the nested-session token mirror after require_var and before launching claude", () => {
+    const exportLine = 'export SPRINT_CLAUDE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN"';
+    const exports = entrypoint.split("\n").filter((line) => line === exportLine);
+    expect(exports).toHaveLength(1);
+    const exportAt = entrypoint.indexOf(`\n${exportLine}\n`);
+    const requireAt = entrypoint.indexOf("\nrequire_var CLAUDE_CODE_OAUTH_TOKEN\n");
+    expect(requireAt).toBeGreaterThan(-1);
+    expect(exportAt).toBeGreaterThan(requireAt);
+    expect(exportAt).toBeLessThan(entrypoint.indexOf('claude -p "$('));
+  });
+
+  it("never prints or writes the token mirror, and the pre-stage does not read it", () => {
+    const lines = entrypoint.split("\n").filter((l) => l.includes("SPRINT_CLAUDE_OAUTH_TOKEN"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) {
+      expect(line).not.toMatch(/\b(echo|printf|log|die|tee)\b/);
+      expect(line).not.toContain(">");
+    }
+    expect(precheck).not.toContain("SPRINT_CLAUDE_OAUTH_TOKEN");
+  });
+
   it("states that the non-root user is not a security boundary", () => {
     expect(entrypoint).toContain("NOT a security boundary");
     expect(entrypoint).toContain("root-equivalent");
@@ -652,6 +673,28 @@ describe("sprint container harness", () => {
 
   it("checks the pre-stage with shellcheck as POSIX sh", () => {
     expect(harness).toContain("-s sh -x /mnt/entrypoint-precheck.sh");
+  });
+});
+
+describe("PROMPT-BOOK.md section 2 launch command", () => {
+  const book = readFileSync(join(repoRoot, "PROMPT-BOOK.md"), "utf8").replace(/\r\n/g, "\n");
+  const section = /\n## 2\. [\s\S]*?(?=\n## 3\. )/.exec(book)?.[0] ?? "";
+  const launch = /```\n([\s\S]*?)\n```/.exec(section)?.[1] ?? "";
+
+  it("sets the OAuth token from the mirror directly before claude -p and reads no stdin", () => {
+    expect(launch).toContain("claude -p");
+    expect(launch).toContain(
+      'CLAUDE_CODE_OAUTH_TOKEN="$SPRINT_CLAUDE_OAUTH_TOKEN" claude -p "$(cat /state/{SPRINT_ID}/prompts/{SESSION_ID}.md)"',
+    );
+    expect(launch).toContain("</dev/null");
+    expect(launch.indexOf("</dev/null")).toBeLessThan(launch.indexOf("| tee"));
+  });
+
+  it("keeps the agent, permission flag, stream format and the session log tee", () => {
+    expect(launch).toContain("--agent sd-orchestrator");
+    expect(launch).toContain("--dangerously-skip-permissions");
+    expect(launch).toContain("--output-format stream-json --verbose");
+    expect(launch).toContain("| tee /state/{SPRINT_ID}/logs/{SESSION_ID}.jsonl");
   });
 });
 
