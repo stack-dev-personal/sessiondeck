@@ -49,3 +49,8 @@ Security gate: not required for S2 (MINI-SPRINT-ORDER security_gated: false). Th
 ### U1-fix-lock review (after restart)
 - b799eb2 generation-numbered lock (tombstone on release). Iteration 1: sd-reviewer merge (3 MINOR), sd-security-reviewer gate pass (1 MEDIUM, 3 LOW). Fixed all in 7fd9b0a (overflow refusal, re-scan after create, recheck after recreate, READY handshake, lstat-bounded readRaw, ensurePrivateDir).
 - Iteration 2 on b799eb2..7fd9b0a: sd-reviewer merge, sd-security-reviewer gate pass. lock-race.proc 10/10 isolated runs, about 17 s per file.
+
+### Freeze and restart 2026-10-20 ~15:11Z
+- The Docker Desktop VM ran out of memory and the sprint container froze (conductor: orphaned parallel vitest runs); the user restarted it and the run was killed during U1 verify (not a session failure). Resumed 2026-10-20 after 16:08Z. Tree clean at 04cea5e, no vitest processes left.
+- Conductor memory rule adopted for the rest of the session: one foreground test process at a time, --maxWorkers=2 or fewer, check `pgrep -f vitest` before each run, no test fan-out across subagents; stall means write a question, not retry. Consequence: U2 and U3 run one after the other, not in parallel.
+- Next: U1 verify (R1.4 lock race, R1.5 full 10 min outage), then U2, U3, U4, U5, U6.
