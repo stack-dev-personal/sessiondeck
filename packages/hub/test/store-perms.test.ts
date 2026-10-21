@@ -50,10 +50,10 @@ describe.skipIf(!posix)("db directory modes", () => {
 describe("production pragmas", () => {
   it("a fresh file database opens with synchronous = NORMAL (1), not FULL", () => {
     // The suite wraps Store.open to run with synchronous = OFF; use the unwrapped original.
-    const original = (Store as unknown as Record<symbol, (p: string) => Store>)[
+    const original = (Store as unknown as Record<symbol, ((p: string) => Store) | undefined>)[
       Symbol.for("sessiondeck.test.original-open")
     ];
-    expect(original).toBeTypeOf("function");
+    if (!original) throw new Error("fast-sqlite setup did not expose the original Store.open");
     tmp = mkdtempSync(path.join(os.tmpdir(), "hub-sync-"));
     const store = original(path.join(tmp, "h.sqlite"));
     try {
