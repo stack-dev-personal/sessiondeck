@@ -436,3 +436,42 @@ INFRA-1 verification (2026-10-20, branch p0/sprint-auth, worktree `C:/Users/stac
 | R0.8 deny rules and `guard.mjs` active inside the container | none runnable here; check at the same relaunch by issuing one command the guard blocks and confirming it is refused | Not run | unverifiable (open, check at the Sprint 1 relaunch) | 2026-10-20 01:00Z |
 
 INFRA-1 result: 4 pass / 0 fail / 2 unverifiable (1 needs laptop confirmation, 1 open).
+
+# FIX-5 (R0.5 test budget), HEAD dbb1e33, range 03ddab7..dbb1e33
+
+Verified 2026-10-21T18:45Z by sd-verifier. Host: Debian 12 on WSL2, node v22.23.3, 20 logical CPUs (2-vCPU proxy via `taskset -c 0-1`). Raw outputs: /state/1/gate/FIX-5/verify-*.txt.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R0.5 install and static gates | `pnpm install --frozen-lockfile`; `pnpm -r typecheck`; `pnpm -r lint`; `pnpm lint:root` | install "Lockfile is up to date"; typecheck, lint, lint:root all exit 0 (verify-install.txt, verify-static.txt) | pass | 2026-10-21T18:33Z |
+| R0.5 format | `pnpm format:check`, then `git ls-files \| xargs pnpm exec prettier --check --ignore-unknown` | format:check exit 1, but all 174 warnings are under untracked `wt/` (0 outside wt/). Tracked files: "All matched files use Prettier code style!" (verify-format-tracked.txt) | pass (tracked files; wt/ untracked, not ours) | 2026-10-21T18:34Z |
+| R0.5 full suite, all CPUs | `pnpm -r test` | exit 0, wall 17 s. contract 1090 pass/1 skip (28 files); hub 282 (21 files); probe 311 pass/1 skip (11); web 214 (20); scripts 575 pass/7 skip (28 files, 1 skipped) (verify-test-full.txt) | pass | 2026-10-21T18:35Z |
+| R0.5 full suite, 2-vCPU proxy | `taskset -c 0-1 pnpm -r test` | exit 0, wall 41 s (budget 60 s). Same counts as above (verify-test-2cpu.txt). Host load average was 4.96 at start (other sessions), so this is a pessimistic proxy | pass (local) | 2026-10-21T18:36Z |
+| R0.5 measurements | read /state/1/gate/FIX-5/f1-2cpu-summary.md, f1-cpu-summary.md | 2-CPU proxy, workspaceConcurrency 2 / sort false: 29.1, 30.8 s; conc 3: 31.7, 31.0; conc 5: 36.6; conc 8: 35.8, 34.6; conc 3 + maxWorkers=1: 42.6, 39.6; topological order conc 2: 32.1, 34.1. All rc=0. Sum of package CPU ~59.5 s, /2 vCPU ~30 s, matches wall. Per-package pool/maxWorkers/coverage-include tuning (threads, forks, maxWorkers 1/2) found no meaningful CPU savings (web 12.7 to 20.3 s, scripts 9.7 to 11.9 s regardless; hub threads breaks 1 test; coverage costs ~1 CPU s in contract). The suite is CPU-bound at about 30 s on 2 cores | pass (local evidence) | 2026-10-21 |
+| R0.5 CI history | read /state/1/gate/FIX-5/f1-ci-package-durations.txt, /state/1/gate/03-ci.log, 03-ci-head-failed.log | Repo is private: hosted runners have 2 vCPUs. Before the fix, 03-ci.log shows "test (R0.5 budget 60 s)" failing on ubuntu node 22 and 24 (1m21s, 1m34s) and a failure on windows node 22 (2m50s). At 03ddab7 (03-ci-head-failed.log): windows-latest node 22 and node 24 jobs failed (3m28s, 3m02s) on the test step timeout; ubuntu node 22 passed (6m16s), e2e-web-live passed | fail at 03ddab7 (windows-latest step timeout), pending CI for dbb1e33. NOT marked pass | 2026-10-21 |
+| R0.5 CI at dbb1e33 | none runnable here (orchestrator pushes after this verification) | not run | pending-CI | 2026-10-21 |
+
+Count: 5 pass (local) / 1 fail (CI at 03ddab7) / 0 unverifiable, 1 pending-CI. R0.5 overall stays open until CI at dbb1e33 is green on windows-latest.
+
+## FIX-5 resume (R0.5 option A), HEAD 45ec370
+
+Verified 2026-10-21T19:28:06Z by sd-verifier. Host: Debian 12 on WSL2, node v22.23.3, 20 logical CPUs (2-vCPU proxy via `taskset -c 0,1`), pwsh absent, load average 2 to 3.5 from other sessions. Decision: R0.5 option A (/state/1/answers/FIX-5.md); phase doc note 2026-10-21 in docs/planning/phases/phase-0-contract.md. Raw outputs: /state/1/gate/FIX-5/verify2-*.txt. No file under packages/web, packages/hub or infra changed since dbb1e33.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R0.5 install | `pnpm install --frozen-lockfile` | "Lockfile is up to date", wall 0.26 s (verify2-install.txt) | pass | 2026-10-21T19:28:06Z |
+| R0.5 typecheck | `pnpm -r typecheck` | exit 0, wall 9.5 s (verify2-typecheck.txt) | pass | 2026-10-21T19:28:06Z |
+| R0.5 lint | `pnpm -r lint` | exit 0, wall 7.8 s (verify2-lint.txt) | pass | 2026-10-21T19:28:06Z |
+| R0.5 step, all CPUs | `pnpm -r test` | exit 0, wall 14.5 s (< 60 s). contract 1090 pass/1 skip (28 files); hub 282 (21); probe 311 pass/1 skip (11); web 214 (20); scripts 324 pass/3 skip (18 files, 1 skipped) (verify2-test-full.txt) | pass (local) | 2026-10-21T19:28:06Z |
+| R0.5 step, 2-vCPU proxy | `taskset -c 0,1 pnpm -r test` | exit 0, wall 32.7 s (< 60 s). Same counts, 0 failures (verify2-test-2cpu.txt) | pass (local) | 2026-10-21T19:28:06Z |
+| CI step: probe processes | `pnpm -F @sessiondeck/probe test:proc` | exit 0, 146 pass/4 skip (11 files), wall 39.5 s (limit 5 min) (verify2-probe-proc.txt) | pass (local) | 2026-10-21T19:28:06Z |
+| CI step: scripts processes | `pnpm -F @sessiondeck/scripts test:proc` | exit 0, 258 pass/4 skip (11 files), wall 4.6 s (limit 5 min) (verify2-scripts-proc.txt) | pass (local) | 2026-10-21T19:28:06Z |
+| CI step: guard timing | `pnpm -F @sessiondeck/scripts test:guard-timing:ci` | exit 0, 81 pass (3 files), single attempt, wall 12.5 s (limit 7 min) (verify2-guard-timing.txt) | pass (local) | 2026-10-21T19:28:06Z |
+| CI step: sprint tooling | `pnpm -F @sessiondeck/scripts test:sprint` | pwsh is ABSENT in this container: exit 0 but 205 pass/79 skip (3 of 13 files skipped); the skipped rows are the PowerShell ones. In CI the step uses `shell: pwsh` so it cannot silently skip there. Wall 2.9 s (verify2-sprint.txt) | pass (local, pwsh rows not run here) | 2026-10-21T19:28:06Z |
+| Every scripts test file runs in exactly one CI step | `pnpm -F @sessiondeck/scripts exec vitest run test/test-split.test.ts test/ci-steps.test.ts` | 2 files, 14 tests pass (6 + 8) (verify2-split-ci-steps.txt) | pass | 2026-10-21T19:28:06Z |
+| R0.5 step layout | all rows above | Both `pnpm -r test` runs under 60 s with 0 failures; every split step passes | pass (local, step layout) | 2026-10-21T19:28:06Z |
+| R0.5 CI green on both OSes | GitHub Actions at 45ec370 | not runnable: Actions cannot start any job (account billing block) | pending CI (Actions billing block) | 2026-10-21T19:28:06Z |
+
+Correction to f1a-static.txt: the sum of the five step timeout-minutes in .github/workflows/ci.yml (check job) is 21 min (R0.5 1 + probe processes 5 + scripts processes 5 + guard timing 7 + sprint tooling 3). The 31 in f1a-static.txt is the job budget from the ci.yml comment, which also counts setup/install 5 and static gates 5; the job limit is 40 min.
+
+Count: 10 pass (local) / 0 fail / 0 unverifiable, 1 pending CI (Actions billing block). R0.5 CI row stays open until Actions runs.

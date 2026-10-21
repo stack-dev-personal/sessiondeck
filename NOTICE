@@ -10,7 +10,7 @@ copied), is in docs/planning/01-architecture.md section 9.
 Planned MIT sources (copyright holders as stated in their LICENSE files):
 - stravu/crystal                         https://github.com/stravu/crystal
 - DeanLa/cctop                           https://github.com/DeanLa/cctop
-- martinwickman/ccmonitor                https://github.com/martinwickman/ccmonitor (confirm LICENSE file before copying)
+- martinwickman/ccmonitor                https://github.com/martinwickman/ccmonitor
 - ccusage/ccusage (tag v19.0.3)          https://github.com/ccusage/ccusage
 - Maciek-roboblog/Claude-Code-Usage-Monitor  https://github.com/Maciek-roboblog/Claude-Code-Usage-Monitor
 - sirmalloc/ccstatusline                 https://github.com/sirmalloc/ccstatusline
@@ -32,3 +32,11 @@ Actual borrowings (update as code lands):
 - appaquet/ccmon src/status-writer.ts → packages/contract/src/transitions.ts (MIT, Copyright (c) 2026 Andre-Philippe Paquet, commit 0758fa2)
 - DeanLa/cctop plugin/scripts/cctop-hook.sh → packages/contract/src/transitions.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256)
 - martinwickman/ccmonitor internal/hook/hook.go, internal/session/session.go → packages/contract/src/state.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a)
+- simple10/agents-observe app/server/src/utils/event-signature.ts → packages/hub/src/ingest/signature.ts (MIT, Copyright (c) 2025 Joe Johnston, commit b3a7238b3913976c10da052f75c73e29ad084c61, sliding 5 s window instead of fixed bucket)
+- ryoppippi/ccusage apps/ccusage/src/adapter/claude/data-loader.ts, apps/ccusage/src/date-utils.ts, apps/ccusage/src/pricing-fetcher.ts, packages/internal/src/pricing.ts → packages/hub/src/usage/usage.ts, packages/hub/src/pricing/pricing.ts (MIT, Copyright (c) 2025 ryoppippi, tag v19.0.3; valibot to zod, rows from transcript_lines instead of files)
+- BerriAI/litellm model_prices_and_context_window.json → packages/hub/src/pricing/litellm-claude.json (MIT, Copyright (c) 2023 Berri AI, trimmed to Claude/Anthropic models and the fields the hub reads, fetched 2026-10-20)
+- simple10/agents-observe hooks/scripts/hook.sh → packages/probe/src/hook.ts (MIT, Copyright (c) 2025 Joe Johnston, commit b3a7238; pattern only: minimal work, never print, always exit 0)
+- sirmalloc/ccstatusline src/utils/windows-code-page.ts → packages/probe/src/win-utf8.ts (MIT, Copyright (c) 2025 Matthew Breedlove, commit 3d94211; chcp 65001 made absolute-path, conditional, time-bounded)
+- DeanLa/cctop plugin/scripts/cctop-poller.py (read_new_jsonl_lines) → packages/probe/src/daemon/transcript.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256; ported to TypeScript, per-(session, agent) byte offsets persisted, complete lines only, replace detection reworked)
+- martinwickman/ccmonitor internal/hook/hook.go (findParentPID) → packages/probe/src/daemon/proc-info.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a; ported from Go to TypeScript via the description quoted in docs/planning/01-architecture.md section 3.2, with an injectable process table)
+- martinwickman/ccmonitor internal/hook/hook.go (cleanupSamePID) → packages/probe/src/daemon/liveness.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a; behaviour only, implementation original)

@@ -1,0 +1,71 @@
+{
+  "snapshots": {
+    "fef17e22-168c-4fef-8964-9af573b7f2e9": {
+      "session_id": "fef17e22-168c-4fef-8964-9af573b7f2e9",
+      "host": "golden-host",
+      "cwd": "<HOME>/projects/<PROJECT_A>",
+      "project_dir": null,
+      "session_name": null,
+      "model": {
+        "id": "claude-fable-5-1",
+        "display_name": "claude-fable-5-1"
+      },
+      "effort": null,
+      "state": "ended",
+      "state_since": 1760001770000,
+      "state_detail": null,
+      "started_at": 1760000006000,
+      "last_event_at": 1760001770000,
+      "ended_reason": "clear",
+      "pid": null,
+      "context": {
+        "used_pct": null,
+        "window": null,
+        "input": null,
+        "output": null
+      },
+      "rate_limits": {
+        "five_hour": null,
+        "seven_day": null,
+        "captured_at": null
+      },
+      "cost": {
+        "usd": null,
+        "duration_ms": null,
+        "lines_added": null,
+        "lines_removed": null
+      },
+      "subagents": [
+        {
+          "agent_id": "750bc48c804160940",
+          "agent_type": "general-purpose",
+          "started_at": 1760001140000,
+          "ended_at": 1760001434000,
+          "tokens": null,
+          "context_window": null,
+          "model": null
+        }
+      ],
+      "tasks": {
+        "total": 0,
+        "completed": 0,
+        "last_subject": null
+      },
+      "git": {
+        "branch": null,
+        "worktree": null,
+        "pr": null
+      },
+      "last_assistant_message": "<TEXT 813>",
+      "last_prompt": "<TEXT 28>",
+      "prompt_cache": null,
+      "compactions": 0,
+      "tracking": {
+        "last_tool": null,
+        "permission": null
+      }
+    }
+  },
+  "samples": [],
+  "transcript_lines": []
+}

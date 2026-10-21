@@ -1,0 +1,20 @@
+{
+  "name": "@sessiondeck/probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sessiondeck/contract": "workspace:*"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "test:proc": "vitest run -c vitest.proc.config.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "harness:outage": "node scripts/harness-daemon-outage.mjs",
+    "harness:integration-hub": "node scripts/harness-integration-hub.mjs",
+    "bench:hook": "node scripts/bench-hook.mjs",
+    "bench:statusline": "node scripts/bench-statusline.mjs"
+  }
+}

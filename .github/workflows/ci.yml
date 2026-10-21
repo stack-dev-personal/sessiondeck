@@ -16,10 +16,10 @@ jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
     # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
-    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 = 21;
-    # 30 leaves a margin of 9 for a cold cache on a slow Windows runner. The job limit must stay
-    # above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
-    timeout-minutes: 30
+    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe processes 5 = 31;
+    # 40 (raised from 35 for the scripts processes step) leaves a margin of 9 for a cold cache on a slow Windows
+    # runner. The job limit must stay above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
+    timeout-minutes: 40
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,6 +43,24 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
+      - name: test probe processes (R1.2 R1.3 R1.4 R1.5 R1.6 R1.7 R1.8 R1.9 R1.10, outside R0.5)
+        # Spawn-heavy probe suites (hook robustness, 50-process stress, statusline, CLI install/config,
+        # daemon lock race, daemon e2e, autostart incl. the windows-latest real Task Scheduler case)
+        # split from `pnpm -r test` after they timed out the R0.5 step on windows-latest. Budget: 9.4 s
+        # wall locally; 4x for a Windows runner is about 38 s; vitest start-up and the esbuild build
+        # in globalSetup add about 30 s, so about 70 s; 5 min (300 s) leaves generous headroom.
+        run: pnpm -F @sessiondeck/probe test:proc
+        timeout-minutes: 5
+      - name: test scripts processes (R0.5 split, outside the budget)
+        # Scripts suites that start real node processes (guard-rules, capture-*, fixture-tools,
+        # fixture-leak, fixture-scrub-keys, install-*; about 66 spawns; list PROC_TESTS in
+        # scripts/vitest.config.ts) split from `pnpm -r test` after it timed out on 2-vCPU windows-latest
+        # (FIX-5, user decision R0.5 option A). Budget: 5.4 s wall locally (258 tests, 11 files, 20 s of test time
+        # over the workers); maxWorkers = 2 x cores (4 on a 2-vCPU runner), as the default run; 4x for a
+        # Windows runner is about 22 s; vitest start-up adds about 30 s, so
+        # about 55 s; 5 min (300 s) leaves generous headroom for a 2-vCPU runner.
+        run: pnpm -F @sessiondeck/scripts test:proc
+        timeout-minutes: 5
       - name: test guard timing (outside R0.5 budget, up to 3 attempts)
         # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only
         # when every failed test failed on a timing bound; any other failure fails the step at once.
@@ -57,3 +75,102 @@ jobs:
         shell: pwsh
         run: pnpm -F @sessiondeck/scripts test:sprint
         timeout-minutes: 3
+
+  e2e-web:
+    name: e2e-web (Playwright smoke, mock build)
+    # Visual baselines in packages/web/e2e/__screenshots__ were generated in this exact image;
+    # any other image renders fonts differently and the screenshot comparisons fail.
+    # Budget (minutes): install 3 + mock build 1 + suite 5 = 9; 15 leaves a margin.
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    env:
+      HOME: /root
+      CI: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: playwright smoke (R3.2, R3.4, R3.5, R3.7, R3.8)
+        working-directory: packages/web
+        # github.workspace expands to the host path in container jobs; the shell variable is the in-container path.
+        run: SCREENS_DIR="$GITHUB_WORKSPACE/e2e-screens" node node_modules/@playwright/test/cli.js test
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-screens
+          path: e2e-screens
+          if-no-files-found: warn
+      - name: upload playwright results (actual, expected, diff)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-results
+          path: /tmp/sd-pw-results
+          if-no-files-found: warn
+
+  e2e-web-live:
+    name: e2e-web-live (Playwright, live hub)
+    # Not inside a container: packages/web/scripts/e2e-live.sh drives docker itself (builds the hub
+    # image, starts hub, ws-gate and the pinned Playwright image on a private network, removes them).
+    # Budget (minutes): install 3 + hub image build 4 + suite 5 = 12; 20 leaves a margin.
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    env:
+      SD_E2E_SCREENS_OUT: ${{ github.workspace }}/e2e-live-screens
+      SD_E2E_RESULTS_OUT: ${{ github.workspace }}/e2e-live-results
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: live playwright specs (R3.1, R3.3, R3.9)
+        # The script generates its own random hub token; nothing secret is passed in.
+        # R3.6 is skipped here: its dropped-frame rule is too tight for shared runners. It is gated in
+        # the verifier's container run (VERIFY-P3.md) and reported by the next step.
+        env:
+          SD_E2E_SKIP_PERF: "1"
+        run: bash packages/web/scripts/e2e-live.sh
+      - name: R3.6 perf trace (report-only)
+        continue-on-error: true
+        env:
+          SD_E2E_SKIP_PERF: "0"
+          SD_E2E_ARGS: R3.6
+          SD_E2E_PREFIX: sd-1-S6-perf
+          SD_E2E_SCREENS_OUT: ${{ github.workspace }}/e2e-live-perf-screens
+          SD_E2E_RESULTS_OUT: ${{ github.workspace }}/e2e-live-perf-results
+        run: bash packages/web/scripts/e2e-live.sh
+      - name: upload R3.6 perf trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-perf
+          path: e2e-live-perf-screens
+          if-no-files-found: warn
+      - name: upload R3.6 perf results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-perf-results
+          path: e2e-live-perf-results
+          if-no-files-found: warn
+      - name: upload live screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-screens
+          path: e2e-live-screens
+          if-no-files-found: warn
+      - name: upload live playwright results (actual, expected, diff)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-live-results
+          path: e2e-live-results
+          if-no-files-found: warn

@@ -52,6 +52,8 @@ Out:
 - R0.8 `scripts/sprint/run-sprint.ps1 -Sprint smoke` produces `.sprint/smoke/status.json` with state green within two minutes on Docker Desktop for Windows; the renderer has a test per package block in `MINI-SPRINT-ORDER.md`; tokens enter only through `.sprint/env`.
 - R0.7 At least 50 raw fixtures across at least 12 distinct hook events, plus 20 statusLine samples, committed under `packages/contract/fixtures/`, secrets scrubbed (fixtures are reviewed by `sd-security-reviewer` before commit).
 
+Note 2026-10-21 (FIX-5, user decision R0.5 option A): `pnpm -r test` timed out on 2-vCPU `windows-latest` runners. The scripts suites that start real node processes (about 66 spawns: guard-rules, capture-entry, capture-fixtures, capture-hardening, capture-install, fixture-leak, fixture-scrub-keys, fixture-tools, install-deploy, install-guards, install-recognition; list `PROC_TESTS` in `scripts/vitest.config.ts`) now run in their own CI step, `pnpm -F @sessiondeck/scripts test:proc`, outside the 60 s budget, like the probe `test:proc`, the guard timing step (decision 13) and the sprint tooling step. Every test still runs in CI; `scripts/test/test-split.test.ts` asserts that each test file is in exactly one of the four runs.
+
 ## Definition of done
 - [ ] All R0.x pass in CI on `main`.
 - [ ] `packages/contract` has 100% line coverage on `state.ts` and `envelope.ts`.

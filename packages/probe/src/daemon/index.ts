@@ -1,0 +1,271 @@
+import { chmodSync, mkdirSync } from "node:fs";
+import type { Envelope } from "@sessiondeck/contract";
+import pkg from "../../package.json" with { type: "json" };
+import { type ProbeConfig, readConfig } from "../config/config.ts";
+import { hostOs } from "../envelope.ts";
+import {
+  daemonDir,
+  daemonLockPath,
+  daemonLogPath,
+  daemonStatePath,
+  outboxDir,
+  probeConfigFile,
+  rejectedDir,
+  spoolDir,
+} from "../paths.ts";
+import type { SpoolLine } from "../spool-format.ts";
+import { ulid } from "../ulid.ts";
+import { Forwarder, MAX_BATCH_ENVELOPES, MAX_BATCH_MS, MAX_BODY_BYTES } from "./forwarder.ts";
+import { createFileLogger } from "./log.ts";
+import { checkHubUrl, INSECURE_HUB_WARNING } from "./hub-url.ts";
+import { LOCK_TOUCH_MS, type Lock, type LockDeps, acquireLock } from "./lock.ts";
+import { createOutbox } from "./outbox.ts";
+import type { ComponentContext, DaemonComponent, Logger } from "./types.ts";
+
+export type { ComponentContext, DaemonComponent, Logger } from "./types.ts";
+
+export const HEARTBEAT_MS = 30_000;
+export const DAEMON_VERSION: string = pkg.version;
+
+export interface DaemonOptions {
+  /** Probe home; every daemon file lives under it. */
+  home: string;
+  /** Config source; default reads `<home>/probe.json` before each send attempt. */
+  config?: ProbeConfig | (() => Promise<ProbeConfig | undefined> | ProbeConfig | undefined);
+  components?: DaemonComponent[];
+  /** Test seam for the lock primitives. */
+  lockDeps?: Partial<LockDeps>;
+  fetch?: typeof fetch;
+  now?: () => number;
+  /** Resolves after ms or when the signal aborts. Injectable so tests can run time fast. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  rng?: () => number;
+  pollMs?: number;
+  batchMs?: number;
+  maxBatch?: number;
+  maxBodyBytes?: number;
+  requestTimeoutMs?: number;
+  backoffCapMs?: number;
+  /** 0 disables the heartbeat timer (the first heartbeat is still queued at start). */
+  heartbeatMs?: number;
+  /** Also write log lines to stderr. */
+  stderr?: boolean;
+  /** Caps for the rejected-batch directory. */
+  rejectedMaxFiles?: number;
+  rejectedMaxBytes?: number;
+  /** Lock touch interval (default LOCK_TOUCH_MS; tests shorten it). */
+  lockTouchMs?: number;
+  /** Called (once) when another process took over the lock; the daemon has already stopped. */
+  onLockLost?: () => void;
+}
+
+export interface DaemonHandle {
+  /** Queues a daemon-originated envelope (no seq) for forwarding. */
+  enqueue(line: SpoolLine): void;
+  /** Envelopes read or journaled but not acknowledged. */
+  pending(): number;
+  /** Next seq to be assigned (the committed value). */
+  nextSeq(): number;
+  /** Graceful stop: components stop, the lock is released. */
+  stop(): Promise<void>;
+  /** Stops without flushing or stopping components (test stand-in for a crash); releases the lock. */
+  kill(): Promise<void>;
+}
+
+const realSleep = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const t = setTimeout(done, ms);
+    function done(): void {
+      signal.removeEventListener("abort", done);
+      clearTimeout(t);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+
+/** The probe home and its daemon, outbox, rejected and spool directories are user-only (POSIX). */
+function hardenDirs(home: string): void {
+  for (const d of [home, daemonDir(home), outboxDir(home), rejectedDir(home), spoolDir(home)]) {
+    mkdirSync(d, { recursive: true, mode: 0o700 });
+    if (process.platform !== "win32") chmodSync(d, 0o700);
+  }
+}
+
+/** Starts the daemon; undefined when another daemon already holds the lock for this home. */
+export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | undefined> {
+  const home = opts.home;
+  const now = opts.now ?? Date.now;
+  mkdirSync(daemonDir(home), { recursive: true, mode: 0o700 });
+  const acquired = acquireLock(daemonLockPath(home), opts.lockDeps);
+  if (!acquired) return undefined;
+  const lock: Lock = acquired;
+  if (!lock.touch()) return undefined; // taken over at once: not ours, leave it alone
+  try {
+    hardenDirs(home);
+  } catch (e) {
+    lock.release(); // do not leave the lock behind for a daemon that never ran
+    throw e;
+  }
+  const fileLog = createFileLogger(daemonLogPath(home), now);
+  const log: Logger = opts.stderr
+    ? (l, m) => {
+        fileLog(l, m);
+        process.stderr.write(`${l} ${m}\n`);
+      }
+    : fileLog;
+
+  const getConfig =
+    typeof opts.config === "function"
+      ? opts.config
+      : opts.config !== undefined
+        ? (): ProbeConfig => opts.config as ProbeConfig
+        : (): Promise<ProbeConfig | undefined> => readConfig(probeConfigFile(home));
+
+  const enqueueRaw = createOutbox(outboxDir(home), now);
+  const components = opts.components ?? [];
+  let hostName = "unknown";
+  try {
+    hostName = (await getConfig())?.host ?? hostName;
+  } catch (e) {
+    log("error", `config unreadable: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  try {
+    const c0 = await getConfig();
+    if (c0?.hubUrl) {
+      const chk = checkHubUrl(c0.hubUrl, c0.allowInsecureHub === true);
+      if (chk.ok && chk.insecure) log("warn", INSECURE_HUB_WARNING);
+    }
+  } catch {
+    // reported above
+  }
+
+  /** Components whose start() succeeded; only these see spool lines and get stopped. */
+  const active: DaemonComponent[] = [];
+  let timer: NodeJS.Timeout | undefined;
+  const timers: { lock?: NodeJS.Timeout } = {};
+  let ended = false;
+  const onLost = (): void => {
+    log("error", "daemon lock was taken over by another process; stopping");
+    void finish(true).then(() => opts.onLockLost?.());
+  };
+  const fwd = new Forwarder({
+    statePath: daemonStatePath(home),
+    spoolDir: spoolDir(home),
+    outboxDir: outboxDir(home),
+    rejectedDir: rejectedDir(home),
+    getConfig,
+    log,
+    fetch: opts.fetch ?? globalThis.fetch,
+    now,
+    sleep: opts.sleep ?? realSleep,
+    rng: opts.rng ?? Math.random,
+    pollMs: opts.pollMs ?? 50,
+    batchMs: opts.batchMs ?? MAX_BATCH_MS,
+    maxBatch: opts.maxBatch ?? MAX_BATCH_ENVELOPES,
+    maxBodyBytes: opts.maxBodyBytes ?? MAX_BODY_BYTES,
+    requestTimeoutMs: opts.requestTimeoutMs ?? 5000,
+    ...(opts.rejectedMaxFiles !== undefined ? { rejectedMaxFiles: opts.rejectedMaxFiles } : {}),
+    ...(opts.rejectedMaxBytes !== undefined ? { rejectedMaxBytes: opts.rejectedMaxBytes } : {}),
+    ...(opts.backoffCapMs !== undefined ? { backoffCapMs: opts.backoffCapMs } : {}),
+    fence: () => lock.verify(),
+    onFenced: () => {
+      if (!ended) onLost();
+    },
+    onSpoolLine: (env: Envelope) => {
+      for (const c of active) c.onSpoolLine?.(env);
+    },
+  });
+
+  const heartbeat = async (): Promise<void> => {
+    let lag = 0;
+    try {
+      lag = await fwd.lagBytes();
+    } catch {
+      // lag is informational
+    }
+    enqueueRaw({
+      v: 1,
+      id: ulid(now()),
+      kind: "probe",
+      host: hostName,
+      os: hostOs(),
+      session_id: null,
+      ts: now(),
+      payload: {
+        type: "heartbeat",
+        pid: process.pid,
+        version: DAEMON_VERSION,
+        spool_lag_bytes: lag,
+        pending: fwd.pendingCount(),
+      },
+    });
+  };
+
+  const ctx: ComponentContext = { home, host: hostName, log, enqueue: enqueueRaw };
+  // Components start before the forwarder so no spool line reaches one that has not started. A
+  // component that cannot start is logged and left out; hook forwarding must survive it.
+  for (const c of components) {
+    try {
+      await c.start?.(ctx);
+      active.push(c);
+    } catch (e) {
+      log(
+        "error",
+        `component ${c.name} did not start: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  const lockTimer = setInterval(() => {
+    if (ended || lock.touch()) return;
+    onLost();
+  }, opts.lockTouchMs ?? LOCK_TOUCH_MS);
+  lockTimer.unref();
+  timers.lock = lockTimer;
+  try {
+    await fwd.start();
+    await heartbeat();
+    if ((opts.heartbeatMs ?? HEARTBEAT_MS) > 0) {
+      timer = setInterval(
+        () => void heartbeat().catch(() => undefined),
+        opts.heartbeatMs ?? HEARTBEAT_MS,
+      );
+      timer.unref();
+    }
+  } catch (e) {
+    // Fatal: stop the forwarder and the components that did start, and release the lock.
+    await finish(true).catch(() => undefined);
+    throw e;
+  }
+  log("info", `daemon started pid=${process.pid} home=${home}`);
+
+  async function finish(graceful: boolean): Promise<void> {
+    if (ended) return;
+    ended = true;
+    if (timer) clearInterval(timer);
+    if (timers.lock) clearInterval(timers.lock);
+    try {
+      await fwd.stop();
+      if (graceful) {
+        for (const c of active) {
+          try {
+            await c.stop?.();
+          } catch (e) {
+            log("error", `component ${c.name} stop: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        log("info", "daemon stopped");
+      }
+    } finally {
+      lock.release();
+    }
+  }
+
+  return {
+    enqueue: enqueueRaw,
+    pending: () => fwd.pendingCount(),
+    nextSeq: () => fwd.nextSeq(),
+    stop: () => finish(true),
+    kill: () => finish(false),
+  };
+}

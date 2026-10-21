@@ -1,0 +1,20 @@
+# Used by BuildKit for packages/hub/Dockerfile (context is the repo root).
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!packages/contract/package.json
+!packages/contract/src
+!packages/contract/tsconfig.json
+!packages/hub/package.json
+!packages/hub/src
+!packages/hub/scripts/bundle.mjs
+!packages/hub/tsconfig.json
+!tsconfig.base.json
+
+# Re-exclude sensitive material even inside allowed directories (last match wins).
+**/.env*
+**/probe.json
+**/*.sqlite*
+**/node_modules
+**/fixtures/raw

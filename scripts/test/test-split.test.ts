@@ -2,12 +2,17 @@ import { readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import defaultConfig, { GUARD_TIMING_TESTS, SPRINT_TOOLING_TESTS } from "../vitest.config";
+import defaultConfig, {
+  GUARD_TIMING_TESTS,
+  PROC_TESTS,
+  SPRINT_TOOLING_TESTS,
+} from "../vitest.config";
 import guardTimingConfig from "../vitest.guard-timing.config";
+import procConfig from "../vitest.proc.config";
 import sprintConfig from "../vitest.sprint.config";
 
-// Guards the split between three runs: the default run (R0.5 budget), the sprint tooling run and
-// the guard timing run (conductor decision 13). Every test file must be in exactly one of them.
+// Guards the split between four runs: the default run (R0.5 budget), the process-spawning run (FIX-5),
+// the sprint tooling run and the guard timing run (conductor decision 13). Every test file must be in exactly one of them.
 // Each config must use the same glob as the default run's exclude list.
 const scriptsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SPRINT_GLOB = "test/sprint-*.test.ts";
@@ -30,8 +35,9 @@ function testFiles(): string[] {
 const defaultExclude = defaultConfig.test?.exclude ?? [];
 const sprintInclude = sprintConfig.test?.include ?? [];
 const guardTimingInclude = guardTimingConfig.test?.include ?? [];
+const procInclude = procConfig.test?.include ?? [];
 
-type RunName = "default" | "sprint" | "guard-timing";
+type RunName = "default" | "sprint" | "guard-timing" | "proc";
 
 /** Every run whose config selects the file. A file must have exactly one. */
 function runsOf(file: string): RunName[] {
@@ -40,6 +46,7 @@ function runsOf(file: string): RunName[] {
   if (!excluded.some((re) => re.test(file))) runs.push("default");
   if (sprintInclude.map(globToRegExp).some((re) => re.test(file))) runs.push("sprint");
   if (guardTimingInclude.map(globToRegExp).some((re) => re.test(file))) runs.push("guard-timing");
+  if (procInclude.map(globToRegExp).some((re) => re.test(file))) runs.push("proc");
   return runs;
 }
 
@@ -47,7 +54,13 @@ describe("test split (default run vs sprint tooling run vs guard timing run)", (
   it("uses the same glob in each config, and nothing else is excluded or included", () => {
     expect(SPRINT_TOOLING_TESTS).toBe(SPRINT_GLOB);
     expect(GUARD_TIMING_TESTS).toBe(GUARD_TIMING_GLOB);
-    expect(defaultExclude).toEqual([NODE_MODULES_GLOB, SPRINT_GLOB, GUARD_TIMING_GLOB]);
+    expect(defaultExclude).toEqual([
+      NODE_MODULES_GLOB,
+      SPRINT_GLOB,
+      GUARD_TIMING_GLOB,
+      ...PROC_TESTS,
+    ]);
+    expect(procInclude).toEqual(PROC_TESTS);
     expect(sprintInclude).toEqual([SPRINT_GLOB]);
     expect(guardTimingInclude).toEqual([GUARD_TIMING_GLOB]);
   });
@@ -77,10 +90,19 @@ describe("test split (default run vs sprint tooling run vs guard timing run)", (
     expect(files.filter((file) => runsOf(file)[0] === "default").length).toBeGreaterThan(0);
   });
 
-  it("keeps the functional guard tests and the retry classifier tests in the default run", () => {
-    expect(runsOf("test/guard-rules.test.ts")).toEqual(["default"]);
+  it("keeps the retry classifier tests in the default run and the hook-spawning guard tests in the proc run", () => {
+    expect(runsOf("test/guard-rules.test.ts")).toEqual(["proc"]);
     expect(runsOf("test/guard-retry-classify.test.ts")).toEqual(["default"]);
     expect(runsOf("test/test-split.test.ts")).toEqual(["default"]);
+  });
+
+  it("lists only existing test files in the proc run, each exactly once", () => {
+    const files = testFiles();
+    expect(new Set(PROC_TESTS).size).toBe(PROC_TESTS.length);
+    for (const file of PROC_TESTS) expect(files, file).toContain(file);
+    expect(files.filter((file) => runsOf(file)[0] === "proc").sort()).toEqual(
+      [...PROC_TESTS].sort(),
+    );
   });
 
   it("matches the globs the way the configs do", () => {
