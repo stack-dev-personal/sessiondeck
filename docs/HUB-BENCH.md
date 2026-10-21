@@ -74,6 +74,8 @@ compact event-loop: max timer lag 577.45 ms, histogram max 578.81 ms, peak RSS 1
 | Reducer exceptions | 0 | 0 |
 | Compaction (cutoff 15 d) | 528,794 events, 5,288 batches, p50 2.79 ms, p99 43.35 ms, max 578.33 ms | none stated |
 
+Re-run at HEAD e25cef3 (2026-10-21T00:05Z, same machine, same command): replay 8.70 s (117,228 events/s), peak RSS 169.2 MB, DB 1627.3 MB, 0 reducer exceptions; compaction (cutoff 15 d) 528,718 events, 5,288 batches, 25.3 s, p50 1.07 ms, p99 12.12 ms, max batch 29.02 ms, max timer lag 38.67 ms. Faster than the table above after the compaction pacing and generator changes; still PASS against < 60 s.
+
 Definition of typical volume (from the header of packages/hub/scripts/bench-replay.ts): 2 hosts, 300 sessions (150 per host), 3,400 envelopes per session = 1,020,000 events spread over 30 days (about 34,000/day, 0.4/s average; bursts of 5-20/s with idle gaps, per the phase doc). Mix per session: 80% hook (golden session's non-lifecycle hooks cycled), 12% statusline (20 captured fixtures cycled), 3% liveness, 5% transcript (5 lines of 400-800 bytes); every session has a SessionStart and SessionEnd. Payloads are the captured fixtures' (avg 898 B here). The work-unit floor is 1,000,000 events across at least 2 hosts and 300 sessions.
 
 Note: compaction max batch is 578 ms (event-loop lag 577 ms), a stall on the hub if compaction runs on the serving process; no threshold is stated for it.
