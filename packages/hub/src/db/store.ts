@@ -98,8 +98,7 @@ export class Store {
     const created = file ? mkdirSync(dir, { recursive: true, mode: 0o700 }) : undefined;
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
-    // A fresh file reports FULL after the WAL switch (NORMAL only after a reopen): set it
-    // explicitly so every run commits with the level the R2.4 load numbers assume.
+    // Explicit, so the level does not depend on the SQLITE_DEFAULT_WAL_SYNCHRONOUS build flag.
     db.pragma("synchronous = NORMAL");
     if (file && process.platform !== "win32") {
       // Payloads and raw transcript lines may hold secrets: owner-only.

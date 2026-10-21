@@ -68,6 +68,9 @@ function ingested(seq: Seq, size = 40): { store: Store } {
     }
     expect(t.store.countEvents()).toBe(seq.envelopes.length);
     image = t.store.db.serialize();
+    // Works only because tempStore() is in-memory: serialize() of a WAL file database keeps
+    // header bytes 18/19 = 2 and `new Database(image)` then fails with SQLITE_CANTOPEN.
+    expect(image[18]).toBe(1);
     t.cleanup();
     images.set(key, image);
   }

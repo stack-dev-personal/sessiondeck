@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
 import { Store } from "../src/db/store.ts";
 
 const posix = process.platform !== "win32";
@@ -48,17 +49,22 @@ describe.skipIf(!posix)("db directory modes", () => {
 });
 
 describe("production pragmas", () => {
-  it("a fresh file database opens with synchronous = NORMAL (1), not FULL", () => {
+  it("Store.open sets synchronous = NORMAL explicitly", () => {
     // The suite wraps Store.open to run with synchronous = OFF; use the unwrapped original.
     const original = (Store as unknown as Record<symbol, ((p: string) => Store) | undefined>)[
       Symbol.for("sessiondeck.test.original-open")
     ];
     if (!original) throw new Error("fast-sqlite setup did not expose the original Store.open");
+    // The level cannot be observed after open: SQLite_DEFAULT_WAL_SYNCHRONOUS=1 in this build
+    // drops the connection to NORMAL on its first transaction anyway. Pin the call itself.
+    const spy = vi.spyOn(Database.prototype, "pragma");
     tmp = mkdtempSync(path.join(os.tmpdir(), "hub-sync-"));
     const store = original(path.join(tmp, "h.sqlite"));
     try {
+      const calls = spy.mock.calls.map((c) => String(c[0]));
+      expect(calls).toContain("journal_mode = WAL");
+      expect(calls).toContain("synchronous = NORMAL");
       expect(store.db.pragma("synchronous", { simple: true })).toBe(1);
-      expect(store.db.pragma("journal_mode", { simple: true })).toBe("wal");
     } finally {
       store.close();
     }

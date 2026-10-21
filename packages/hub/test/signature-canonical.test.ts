@@ -69,7 +69,14 @@ describe("quoted-key cache bound (S1)", () => {
       expect(canonicalJson({ [k]: 1 })).toBe(`{${JSON.stringify(k)}:1}`);
     }
     expect(quotedKeyCacheSize()).toBe(before);
-    canonicalJson({ short_key_for_cache: 1 });
-    expect(quotedKeyCacheSize()).toBe(before + 1);
+    // Order-independent: the cache is shared across files in a worker (isolate: false), so use a
+    // key unique to this run and only require growth by at most one and a correct result.
+    const mid = quotedKeyCacheSize();
+    const short = `short_${Math.random().toString(36).slice(2)}`;
+    expect(canonicalJson({ [short]: 1 })).toBe(`{${JSON.stringify(short)}:1}`);
+    const grown = quotedKeyCacheSize() - mid;
+    expect(grown === 0 || grown === 1).toBe(true);
+    expect(canonicalJson({ [short]: 2 })).toBe(`{${JSON.stringify(short)}:2}`);
+    expect(quotedKeyCacheSize()).toBe(mid + grown);
   });
 });
