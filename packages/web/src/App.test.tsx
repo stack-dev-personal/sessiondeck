@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it } from "vitest";
 import { App } from "./App";
 import { useBoard } from "./store/board";
-import { useUi } from "./store/ui";
+import { DEFAULT_SETTINGS, useUi } from "./store/ui";
 import { STATE_VOCAB } from "./lib/state-vocab";
 import { SESSION_STATES, createSnapshot } from "@sessiondeck/contract";
 
@@ -20,7 +20,7 @@ describe("shell", () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.setAttribute("data-theme", "dark");
-    useUi.setState({ theme: "dark", compact: false });
+    useUi.setState({ theme: "dark", compact: false, settings: DEFAULT_SETTINGS });
     useBoard.setState({ sessions: {}, connection: "mock" });
   });
 
@@ -64,12 +64,20 @@ describe("shell", () => {
     expect(hosts.textContent).toBe("alphazeta");
   });
 
+  it("header connection glyph is decorative, the word carries the status", () => {
+    useBoard.setState({ connection: "open" });
+    mount();
+    const el = screen.getByTestId("connection");
+    expect(el).toHaveTextContent("● connected");
+    expect(el.querySelector("[aria-hidden='true']")?.textContent).toBe("●");
+  });
+
   it("settings save to localStorage and survive a reload of the store", async () => {
     mount("/settings");
     await userEvent.type(screen.getByLabelText("Hub URL"), "http://hub:8787");
     await userEvent.click(screen.getByLabelText(/notifications/i));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(screen.getByRole("status")).toHaveTextContent("Saved");
+    expect(screen.getByText(/Saved/)).toBeInTheDocument();
     const stored = JSON.parse(window.localStorage.getItem("sd.settings")!);
     expect(stored).toMatchObject({ hubUrl: "http://hub:8787", notifications: true });
   });
@@ -124,5 +132,33 @@ describe("shell keys and surfaces", () => {
     });
     mount();
     expect(screen.getByTestId("session-card")).toHaveClass("bg-surface-1");
+  });
+});
+
+describe("disconnect banner", () => {
+  beforeEach(() => {
+    useBoard.setState({ sessions: {}, connection: "mock", retryAt: null });
+  });
+
+  it("is absent when open or mock, shows icon and text when closed, and clears on open", () => {
+    mount();
+    const banner = screen.getByTestId("connection-banner");
+    expect(banner).toHaveAttribute("aria-live", "polite");
+    expect(banner).toBeEmptyDOMElement();
+    act(() => useBoard.getState().setConnection("closed", Date.now() + 4000));
+    expect(banner).toHaveTextContent(/Disconnected, reconnecting in [1-4]s/);
+    expect(banner).toHaveTextContent("✖");
+    expect(screen.getByTestId("connection")).toHaveTextContent("disconnected");
+    act(() => useBoard.getState().setConnection("connecting"));
+    expect(banner).toHaveTextContent("Reconnecting");
+    act(() => useBoard.getState().setConnection("open"));
+    expect(banner).toBeEmptyDOMElement();
+    expect(screen.getByTestId("connection")).toHaveTextContent("● connected");
+  });
+
+  it("takes no layout flow space (fixed overlay)", () => {
+    mount();
+    act(() => useBoard.getState().setConnection("closed", null));
+    expect(screen.getByTestId("connection-banner").parentElement!.className).toContain("fixed");
   });
 });

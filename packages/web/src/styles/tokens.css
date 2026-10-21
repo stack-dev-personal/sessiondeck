@@ -3,6 +3,7 @@
   /* surfaces */
   --bg: #0e1116;            --surface-1: #151a21;   --surface-2: #1c232c;   --surface-3: #242d38;
   --border: #2a3441;        --border-strong: #3b4858;
+  --border-control: #6f7c8b; /* non-text 3:1 on bg, surface-1..3 (WCAG 1.4.11); not in 03-design-system.md yet */
   /* text */
   --fg: #e6edf3;            --fg-muted: #9aa7b4;    --fg-faint: #7c8792;
   /* states (the state machine, in color) */
@@ -31,6 +32,7 @@
 [data-theme="light"] {
   --bg: #f6f8fa; --surface-1: #ffffff; --surface-2: #f0f3f6; --surface-3: #e6eaef;
   --border: #d0d7de; --border-strong: #afb8c1;
+  --border-control: #77818b;
   --fg: #1f2328; --fg-muted: #59636e; --fg-faint: #6e757d;
   --state-working: #0969da; --state-waiting: #9a6700; --state-idle: #1a7f37; --state-error: #cf222e; --state-ended: #6e7781; --state-exited: #8250df; --state-starting: #6e757d;
   --meter-ok: #1a7f37; --meter-warn: #9a6700; --meter-high: #cf222e; --meter-track: #d0d7de;

@@ -7,19 +7,37 @@ export interface Settings {
   hubUrl: string;
   token: string;
   notifications: boolean;
+  /** Short tone per attention state, each opt-in. */
+  sounds: { waiting_permission: boolean; waiting_input: boolean };
+  /** One global mute that silences every tone without losing the per-state choices. */
+  muted: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { hubUrl: "", token: "", notifications: false };
+export const DEFAULT_SETTINGS: Settings = {
+  hubUrl: "",
+  token: "",
+  notifications: false,
+  sounds: { waiting_permission: false, waiting_input: false },
+  muted: false,
+};
 
 export function loadSettings(): Settings {
   const raw = readStored(STORAGE_KEYS.settings);
   if (raw === null) return DEFAULT_SETTINGS;
   try {
     const p = JSON.parse(raw) as Partial<Settings>;
+    const snd = (typeof p.sounds === "object" && p.sounds !== null ? p.sounds : {}) as Partial<
+      Settings["sounds"]
+    >;
     return {
       hubUrl: typeof p.hubUrl === "string" ? p.hubUrl : "",
       token: typeof p.token === "string" ? p.token : "",
       notifications: p.notifications === true,
+      sounds: {
+        waiting_permission: snd.waiting_permission === true,
+        waiting_input: snd.waiting_input === true,
+      },
+      muted: p.muted === true,
     };
   } catch {
     return DEFAULT_SETTINGS;

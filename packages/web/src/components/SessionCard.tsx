@@ -1,7 +1,8 @@
-import { memo, useId, type KeyboardEvent } from "react";
+import { memo, useId, useState, type AnimationEvent, type KeyboardEvent } from "react";
 import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
+import { displayNameOf, projectOf } from "../lib/attention";
 import { STATE_VOCAB } from "../lib/state-vocab";
-import { basename, formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
+import { formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
 import { Meter, MeterValue, metersFor } from "./Meter";
 import { StateChip } from "./StateChip";
 
@@ -34,16 +35,34 @@ const BADGE: Partial<Record<SessionState, string>> = {
 
 /** Derived, display-ready fields shared by the full and compact card. */
 export function cardInfo(s: SessionSnapshot) {
-  const project = basename(s.project_dir) ?? basename(s.cwd) ?? s.session_id;
-  const name = s.session_name ?? project;
+  const project = projectOf(s);
+  const name = displayNameOf(s);
   const active = s.subagents.filter((a) => a.ended_at === null).length;
   return { project, name, active, vocab: STATE_VOCAB[s.state] };
 }
 
-export function stateClasses(state: SessionState): string {
+/**
+ * One-time arrival glow: `arrive` is true from the render where the card enters attention (or
+ * mounts in it) until the glow's animationend. Moving the card in the DOM later does not replay it.
+ */
+export function useArrive(attention: boolean) {
+  const [arrive, setArrive] = useState(attention);
+  const [prev, setPrev] = useState(attention);
+  if (prev !== attention) {
+    setPrev(attention);
+    setArrive(attention);
+  }
+  const onAnimationEnd = (e: AnimationEvent<HTMLElement>) => {
+    if (e.animationName === "sd-glow") setArrive(false);
+  };
+  return { arrive: arrive && attention, onAnimationEnd };
+}
+
+export function stateClasses(state: SessionState, arrive = false): string {
   const v = STATE_VOCAB[state];
   const cls: string[] = [];
   if (v.attention) cls.push("sd-attention");
+  if (v.attention && arrive) cls.push("sd-arrive");
   if (state === "ended" || state === "exited") cls.push("sd-dim");
   return cls.join(" ");
 }
@@ -98,6 +117,7 @@ function TaskProgress({ s, bar }: { s: SessionSnapshot; bar: boolean }) {
       {bar ? (
         <span
           aria-hidden="true"
+          data-slot="task-bar"
           className={`h-1.5 w-10 overflow-hidden rounded-sm ${
             none
               ? "border border-dashed border-border-strong"
@@ -136,6 +156,7 @@ function SessionCardImpl({
 }) {
   const hintId = useId();
   const { project, name, active, vocab } = cardInfo(s);
+  const { arrive, onAnimationEnd } = useArrive(vocab.attention);
   const meters = metersFor(s, now, exceeds200k);
   const badge = BADGE[s.state];
   const activity = s.last_assistant_message?.replace(/\s+/g, " ").trim() || null;
@@ -151,9 +172,11 @@ function SessionCardImpl({
       data-testid="session-card"
       {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
+      data-attention={vocab.attention ? "true" : undefined}
       data-density="full"
       style={{ height: "var(--card-h)" }}
-      className={`sd-card flex flex-col justify-between overflow-hidden rounded-lg border border-border bg-surface-1 px-s-3 py-s-2 text-sm ${stateClasses(s.state)}`}
+      className={`sd-card flex flex-col justify-between overflow-hidden rounded-lg border border-border bg-surface-1 px-s-3 py-s-2 text-sm ${stateClasses(s.state, arrive)}`}
+      onAnimationEnd={onAnimationEnd}
     >
       <span id={hintId} className="sr-only">
         Enter opens details
@@ -188,6 +211,7 @@ function SessionCardImpl({
       </div>
       <div
         data-row="3"
+        data-slot="meters"
         className="grid grid-cols-[1.7fr_1fr_1fr] gap-s-2 overflow-hidden whitespace-nowrap"
       >
         {meters.map((m) => (
@@ -252,6 +276,7 @@ function CompactCardImpl({
 }) {
   const hintId = useId();
   const { project, name, active, vocab } = cardInfo(s);
+  const { arrive, onAnimationEnd } = useArrive(vocab.attention);
   const meters = metersFor(s, now, exceeds200k);
   return (
     <article
@@ -260,14 +285,20 @@ function CompactCardImpl({
       data-testid="session-card"
       {...openHandlers(s.session_id, onOpen, hintId)}
       data-state={s.state}
+      data-attention={vocab.attention ? "true" : undefined}
       data-density="compact"
       style={{ height: "var(--card-compact-h)" }}
-      className={`sd-card ${ROW} gap-s-3 rounded border border-border bg-surface-1 px-s-3 text-sm ${stateClasses(s.state)}`}
+      className={`sd-card ${ROW} gap-s-3 rounded border border-border bg-surface-1 px-s-3 text-sm ${stateClasses(s.state, arrive)}`}
+      onAnimationEnd={onAnimationEnd}
     >
       <span id={hintId} className="sr-only">
         Enter opens details
       </span>
-      <span data-slot="state" className={`num shrink-0 ${vocab.textClass}`} title={vocab.label}>
+      <span
+        data-slot="state"
+        className={`num w-36 shrink-0 truncate ${vocab.textClass}`}
+        title={vocab.label}
+      >
         <span aria-hidden="true" className={s.state === "working" ? "sd-pulse" : ""}>
           {vocab.glyph}
         </span>{" "}
@@ -282,7 +313,7 @@ function CompactCardImpl({
       <span data-slot="agents" className="num w-20 shrink-0 text-right text-fg-muted">
         {active} {active === 1 ? "agent" : "agents"}
       </span>
-      <span className="shrink-0">
+      <span data-slot="tasks-slot" className="flex w-16 shrink-0 justify-end">
         <TaskProgress s={s} bar={false} />
       </span>
     </article>

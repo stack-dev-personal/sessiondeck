@@ -123,7 +123,7 @@ export function Meter({ m }: { m: MeterModel }) {
       data-level={m.level ?? "na"}
       className="flex min-w-0 items-center gap-s-1"
     >
-      <span aria-hidden="true" className="w-6 shrink-0 text-fg-faint">
+      <span aria-hidden="true" data-slot="label" className="w-6 shrink-0 text-fg-faint">
         {m.label}
       </span>
       <span

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { createSnapshot } from "@sessiondeck/contract";
 import { describe, expect, it } from "vitest";
 import { statusLines } from "./mock/fixtures";

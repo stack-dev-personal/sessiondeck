@@ -13,6 +13,7 @@ export default {
         "surface-3": v("surface-3"),
         border: v("border"),
         "border-strong": v("border-strong"),
+        "border-control": v("border-control"),
         fg: v("fg"),
         "fg-muted": v("fg-muted"),
         "fg-faint": v("fg-faint"),

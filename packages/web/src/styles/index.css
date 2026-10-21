@@ -52,6 +52,52 @@ body {
   }
 }
 
+/*
+ * Narrow viewports (single-column board, WCAG 1.4.10 reflow at 320 px): the three meters no longer
+ * fit with their bars, so the bars go and the numbers and cues stay in full. Wide layouts unchanged.
+ */
+@media (max-width: 30rem) {
+  .sd-card [data-slot="meters"] {
+    /*
+     * Fixed tracks, never content-sized: a value arriving must not move a column (R3.2). The
+     * 5h and 7d tracks fit label, "100%" and cue; ctx takes the rest and may ellipsise its
+     * secondary "of 200k" / "200k+" tail (full text in title and aria-label), never the percent.
+     */
+    grid-template-columns: minmax(0, 1fr) 4.5rem 4.5rem;
+  }
+  /* The label is a constant per meter, so letting it size to its text moves nothing (R3.2). */
+  .sd-card [data-slot="label"] {
+    width: auto;
+  }
+  .sd-card [data-slot="bar"],
+  .sd-card [data-slot="task-bar"] {
+    display: none;
+  }
+}
+
+/*
+ * Compact rows hold fixed-width items (state 9rem, three 3.5rem meters, agents 5rem, tasks 4rem;
+ * the name takes the rest) that need about 528 px of content width (456 px of items plus six
+ * 12 px gaps). Compact rows are a single full-width column, so the card content box is the
+ * viewport minus about 58 px; wrapping at 40rem (640 px) leaves the unwrapped row at least
+ * 580 px, so it never clips (R3.2, R3.7). Below that the items wrap onto extra lines. Every item
+ * has a fixed width (text truncates inside it), so null to value or a state change moves
+ * nothing; height is min 36 px and stable per viewport. Viewport media query, not a container
+ * query: the card's `contain` rule is unchanged.
+ */
+@media (max-width: 40rem) {
+  .sd-card[data-density="compact"] {
+    height: auto !important;
+    min-height: var(--card-compact-h);
+    flex-wrap: wrap;
+    row-gap: var(--s-1);
+    padding-block: var(--s-1);
+  }
+  .sd-card[data-density="compact"] [data-slot="name"] {
+    flex: 1 1 8rem;
+  }
+}
+
 /* Card geometry: fixed so values arriving never move the grid (design system principle 3). */
 :root {
   --card-h: 10rem;
@@ -60,33 +106,60 @@ body {
   --spark-h: 40px;
 }
 
+/*
+ * The arrival glow animates opacity only (compositor, no repaint per frame). It used to animate
+ * box-shadow, which repaints the card on every frame for 400 ms, and a card that moves in the
+ * board is re-attached and replays it (R3.6).
+ */
 @keyframes sd-glow {
-  0% {
-    box-shadow:
-      0 0 0 1px var(--accent-attention),
-      0 0 0 0 var(--accent-attention);
+  0%,
+  100% {
+    opacity: 0;
   }
   40% {
-    box-shadow:
-      0 0 0 1px var(--accent-attention),
-      0 0 10px 3px var(--accent-attention);
-  }
-  100% {
-    box-shadow:
-      0 0 0 1px var(--accent-attention),
-      0 0 0 0 transparent;
+    opacity: 1;
   }
 }
 
-/* Attention: steady 1px ring, plus a one-time 400 ms glow on arrival. */
+/*
+ * Card layout, paint and style are isolated: a text change in one card (elapsed clock, meters) no
+ * longer invalidates the whole board (R3.6). The card's own ring and outline are not clipped by its
+ * own paint containment.
+ */
+.sd-card {
+  contain: layout paint style;
+}
+
+/*
+ * Attention: steady 1px ring plus a 4 px inset stripe on the left edge (a shape cue that survives
+ * grayscale; the badge and the state word are the other cues), and a one-time 400 ms glow on
+ * arrival. Shadows only, so the card box never changes size.
+ */
 .sd-attention {
   border-color: var(--accent-attention);
-  box-shadow: 0 0 0 1px var(--accent-attention);
+  position: relative;
+  box-shadow:
+    0 0 0 1px var(--accent-attention),
+    inset 4px 0 0 0 var(--accent-attention);
+}
+
+.sd-attention::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 12px 3px var(--accent-attention);
+  opacity: 0;
+}
+
+/* Only while the card carries sd-arrive (set on entering attention, removed at animationend). */
+.sd-attention.sd-arrive::after {
   animation: sd-glow 400ms var(--ease) 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sd-attention {
+  .sd-attention.sd-arrive::after {
     animation: none;
   }
 }

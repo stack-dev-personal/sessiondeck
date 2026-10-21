@@ -107,6 +107,37 @@ describe("SessionCard states", () => {
     expect(screen.getByTestId("session-card")).not.toHaveClass("sd-attention");
   });
 
+  it("the arrival glow plays once per attention transition, not on re-insertion", () => {
+    const glowEnd = (el: HTMLElement) => {
+      // jsdom has no AnimationEvent: give a plain event the field React reads.
+      const ev = Object.assign(new Event("animationend", { bubbles: true }), {
+        animationName: "sd-glow",
+      });
+      act(() => {
+        el.dispatchEvent(ev);
+      });
+    };
+    const { rerender } = render(<SessionCard s={snap({ state: "working" })} now={NOW} />);
+    const card = () => screen.getByTestId("session-card");
+    expect(card()).not.toHaveClass("sd-arrive");
+    rerender(<SessionCard s={snap({ state: "waiting_permission" })} now={NOW} />);
+    expect(card()).toHaveClass("sd-arrive");
+    glowEnd(card());
+    expect(card()).not.toHaveClass("sd-arrive");
+    // deltas while waiting, and moving the node in the DOM, do not replay it
+    rerender(<SessionCard s={snap({ state: "waiting_permission", last_event_at: 5 })} now={NOW} />);
+    const parent = card().parentElement!;
+    parent.appendChild(card());
+    expect(card()).not.toHaveClass("sd-arrive");
+    // the other attention state is the same stay in attention
+    rerender(<SessionCard s={snap({ state: "waiting_input" })} now={NOW} />);
+    expect(card()).not.toHaveClass("sd-arrive");
+    // leaving and entering again plays it again
+    rerender(<SessionCard s={snap({ state: "working" })} now={NOW} />);
+    rerender(<SessionCard s={snap({ state: "waiting_input" })} now={NOW} />);
+    expect(card()).toHaveClass("sd-arrive");
+  });
+
   it("only the working dot pulses", () => {
     const { container, rerender } = render(
       <SessionCard s={snap({ state: "working" })} now={NOW} />,

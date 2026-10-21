@@ -129,3 +129,7 @@ Count: all R2.x rows re-run pass; verified by CI: R0.5 Windows budget; needs lap
 # FIX-3 re-confirmation (merge p3/board-mock)
 
 Verified 2026-10-21T01:59:45Z by sd-verifier. Staged merge of p3/board-mock (S5) into sprint/1-mvp, base 88d9c07. Command: `git diff --cached --quiet 88d9c07 -- packages/hub packages/probe packages/contract`, exit 0 (empty diff: hub, probe and contract are byte-identical to 88d9c07). Full suite on the merged tree: /state/1/gate/FIX-3/test.txt, Test Files 28 passed | 1 skipped, Tests 575 passed | 7 skipped, exit 0. Benches not rerun (diff empty). All existing R2.x rows still PASS: no source they cover changed. Result: PASS (no regression). Evidence for the diff check is the exit code only; it was not saved to a file.
+
+# FIX-4 re-confirmation (merge p3/board-live)
+
+Verified 2026-10-21T02:12:20Z by sd-verifier. Staged merge of p3/board-live (S6) into sprint/1-mvp, base fb803a6. Command: `git diff --cached --quiet fb803a6 -- packages/hub packages/probe packages/contract scripts`, exit 0 (empty diff: S6 changes only packages/web, docs, e2e screenshots and ci.yml). Full suite on the merged tree: /state/1/gate/FIX-4/test.txt, contract 1090, hub 282, probe 311, web 214, scripts 575, exit 0; typecheck and lint exit 0. Benches not rerun (diff empty). All existing R2.x rows still PASS. Result: PASS (no regression). Evidence for the diff check: /state/1/gate/FIX-4/verify-p1p2-diff.txt.
