@@ -34,13 +34,42 @@ export function ulid(n: number): string {
   return `0${s}`;
 }
 
+// File reads and directory scans are the dominant cost of building a sequence on Windows (many
+// small files, antivirus). Fixtures are immutable during a run: read each once per worker and
+// parse per call so callers still get their own mutable copy.
+const textCache = new Map<string, string>();
+function fixtureText(rel: string): string {
+  let t = textCache.get(rel);
+  if (t === undefined) {
+    t = readFileSync(path.join(FIXTURES, rel), "utf8");
+    textCache.set(rel, t);
+  }
+  return t;
+}
+
 export function readJson(rel: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(path.join(FIXTURES, rel), "utf8")) as Record<string, unknown>;
+  return JSON.parse(fixtureText(rel)) as Record<string, unknown>;
+}
+
+const listCache = new Map<string, string[]>();
+function cachedReaddir(abs: string): string[] {
+  let l = listCache.get(abs);
+  if (l === undefined) {
+    l = readdirSync(abs);
+    listCache.set(abs, l);
+  }
+  return l;
+}
+
+/** Sequences are deterministic: build each once per worker, hand out deep copies. */
+function memoSeq(build: () => Seq): () => Seq {
+  let cached: Seq | undefined;
+  return () => structuredClone((cached ??= build()));
 }
 
 function listJson(dir: string): string[] {
   const abs = path.join(FIXTURES, dir);
-  return readdirSync(abs)
+  return cachedReaddir(abs)
     .filter((f) => f.endsWith(".json"))
     .sort()
     .map((f) => `${dir}/${f}`);
@@ -91,7 +120,7 @@ class Builder {
 }
 
 function goldenPayloads(): Record<string, unknown>[] {
-  return readFileSync(path.join(FIXTURES, "sessions/golden-session.jsonl"), "utf8")
+  return fixtureText("sessions/golden-session.jsonl")
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -99,14 +128,16 @@ function goldenPayloads(): Record<string, unknown>[] {
 
 export const GOLDEN_SESSION_ID = "fef17e22-168c-4fef-8964-9af573b7f2e9";
 
-export function goldenSession(): Seq {
+export const goldenSession = memoSeq(build_goldenSession);
+function build_goldenSession(): Seq {
   const b = new Builder("golden-host");
   for (const p of goldenPayloads()) b.push("hook", p);
   return { name: "golden-session", host: b.host, envelopes: b.envelopes };
 }
 
 /** Every hook fixture (captured and synthetic), one envelope each, grouped by session in the oracle. */
-export function fixtureMix(): Seq {
+export const fixtureMix = memoSeq(build_fixtureMix);
+function build_fixtureMix(): Seq {
   const b = new Builder("mix-host");
   const dirs = readdirSync(FIXTURES)
     .filter(
@@ -128,7 +159,8 @@ export function fixtureMix(): Seq {
 }
 
 /** All five kinds on one session, plus a second session that is reported dead. */
-export function allKinds(): Seq {
+export const allKinds = memoSeq(build_allKinds);
+function build_allKinds(): Seq {
   const b = new Builder("kinds-host");
   const hooks = goldenPayloads();
   const S = GOLDEN_SESSION_ID;
@@ -175,7 +207,8 @@ export function allKinds(): Seq {
 }
 
 /** Session B starts under the pid of session A: A ends as superseded. */
-export function supersede(): Seq {
+export const supersede = memoSeq(build_supersede);
+function build_supersede(): Seq {
   const b = new Builder("super-host");
   const start = readJson("SessionStart/01-startup.json");
   b.push("hook", { ...start, session_id: "sess-A" });
@@ -192,7 +225,8 @@ export function supersede(): Seq {
  * session_id it carries, so the 25 fixtures fold into 10 sessions. A SubagentStart hook for each
  * task id precedes the first subagents fixture that names it, so applySubagents has rows to update.
  */
-export function allStatusLines(): Seq {
+export const allStatusLines = memoSeq(build_allStatusLines);
+function build_allStatusLines(): Seq {
   const b = new Builder("status-host");
   for (const f of listJson("statusLine")) b.push("statusline", readJson(f));
   const started = new Set<string>();

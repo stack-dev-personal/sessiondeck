@@ -23,7 +23,7 @@ const waitFor = async (cond: () => boolean, ms = 5000): Promise<void> => {
   const end = Date.now() + ms;
   while (!cond()) {
     if (Date.now() > end) throw new Error("timed out");
-    await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 10));
   }
 };
 

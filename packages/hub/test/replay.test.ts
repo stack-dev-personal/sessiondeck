@@ -14,7 +14,7 @@ import {
   runRetention,
   startRetentionTimer,
 } from "../src/retention.ts";
-import { batch, makeHub, mkEnv, type TestHub } from "./support/hub.ts";
+import { mkEnv } from "./support/hub.ts";
 import { SEQUENCES, readJson, type Seq } from "./support/sequences.ts";
 import { tempStore } from "./helpers.ts";
 
@@ -42,28 +42,32 @@ function derived(store: Store): { sessions: unknown[]; samples: unknown[]; lines
   };
 }
 
-let hub: TestHub | undefined;
 const cleanups: (() => void)[] = [];
-afterEach(async () => {
-  await hub?.cleanup();
-  hub = undefined;
+afterEach(() => {
   for (const c of cleanups.splice(0)) c();
 });
 
-async function ingested(seq: Seq): Promise<TestHub> {
-  const h = await makeHub();
-  hub = h;
+/**
+ * Ingests through the Ingestor in batches of 40, the code path POST /ingest runs. The HTTP layer
+ * (auth, validation, limits) is covered by the ingest tests and is not what replay is compared to.
+ */
+function ingested(seq: Seq): { store: Store } {
+  const t = tempStore();
+  cleanups.push(t.cleanup);
+  t.store.migrate();
+  const ing = new Ingestor(t.store, capture());
   for (let i = 0; i < seq.envelopes.length; i += 40) {
-    expect((await h.post(batch(seq.envelopes.slice(i, i + 40), seq.host))).statusCode).toBe(200);
+    ing.ingest(seq.host, seq.envelopes.slice(i, i + 40));
   }
-  return h;
+  expect(t.store.countEvents()).toBe(seq.envelopes.length);
+  return t;
 }
 
 describe("R2.9 replay", () => {
   for (const make of SEQUENCES) {
     const seq = make();
     it(`${seq.name}: replay equals the ingest-time rows exactly, with 0 reducer exceptions`, async () => {
-      const h = await ingested(seq);
+      const h = ingested(seq);
       const before = derived(h.store);
       const log = capture();
       const r = replay(h.store, log, { maxOpenSessionsPerHost: OPEN });
@@ -77,7 +81,7 @@ describe("R2.9 replay", () => {
 
   it("repairs corrupted snapshots (recovery) and equals the golden file", async () => {
     const seq = SEQUENCES[0]!();
-    const h = await ingested(seq);
+    const h = ingested(seq);
     const good = derived(h.store);
     h.store.db.prepare("UPDATE sessions SET snapshot = '{\"bad\":true}', state = 'x'").run();
     replay(h.store, capture(), { maxOpenSessionsPerHost: OPEN });
@@ -86,7 +90,7 @@ describe("R2.9 replay", () => {
 
   it("is atomic: an error mid-replay leaves the old snapshots", async () => {
     const seq = SEQUENCES[0]!();
-    const h = await ingested(seq);
+    const h = ingested(seq);
     h.store.db.prepare("UPDATE sessions SET snapshot = '{\"old\":true}'").run();
     const old = derived(h.store);
     expect(() =>
@@ -418,15 +422,17 @@ describe("R2.9 cli", () => {
     const file = path.join(dir, "hub.sqlite");
     const s = Store.open(file);
     s.migrate();
+    // The CLI output is under test, not the volume: a prefix keeps the file I/O small.
     const seq = SEQUENCES[0]!();
-    new Ingestor(s, capture()).ingest(seq.host, seq.envelopes);
+    const envelopes = seq.envelopes.slice(0, 40);
+    new Ingestor(s, capture()).ingest(seq.host, envelopes);
     s.close();
     const out: string[] = [];
     const log = capture();
     expect(await runCli(["replay", "--db", file], {}, (l) => out.push(l), log)).toBe(0);
     expect(out[0]).toMatch(
       new RegExp(
-        `^replay: sessions=\\d+ events=${seq.envelopes.length} samples=\\d+ elapsed_ms=\\d+ reducer_exceptions=0$`,
+        `^replay: sessions=\\d+ events=${envelopes.length} samples=\\d+ elapsed_ms=\\d+ reducer_exceptions=0$`,
       ),
     );
     out.length = 0;

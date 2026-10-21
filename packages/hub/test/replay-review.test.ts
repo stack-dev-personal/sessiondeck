@@ -270,8 +270,9 @@ describe("K3 concurrent compactors and the lease", () => {
     const f = file();
     const s = Store.open(f.path);
     s.migrate();
+    // The CLI gate is what is under test, not the volume: a prefix keeps the file I/O small.
     const seq = SEQUENCES[0]!();
-    new Ingestor(s, capture()).ingest(seq.host, seq.envelopes);
+    new Ingestor(s, capture()).ingest(seq.host, seq.envelopes.slice(0, 40));
     s.setLease("hub-1", Date.now() + 60_000);
     s.close();
     const out: string[] = [];
