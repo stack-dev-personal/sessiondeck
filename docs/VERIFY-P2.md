@@ -109,3 +109,19 @@ Tree: sprint/1-mvp at 0e321fe plus staged uncommitted merge of p1/probe-hook. Li
 | R0.5 | CI step "test (R0.5 budget 60 s)" | verified by CI (rows above); not re-run on the merged tree, local wall 5.25 s for scripts, hub 4.0 s | n/a |
 
 Count: all re-run rows pass; verified by CI: R0.5 Windows budget; needs laptop: R2.4 and R2.9 laptop-native numbers.
+
+## Re-confirmation on sprint/1-mvp merge of p1/probe-daemon (FIX-2, 2026-10-21)
+
+Tree: sprint/1-mvp at 3d6167c plus staged uncommitted merge of p1/probe-daemon. Same commands as FIX-1; evidence under /state/1/gate/FIX-2/.
+
+| ID | Command | Result | Evidence |
+|---|---|---|---|
+| R2.1, R2.2, R2.3, R2.6, R2.7, R2.8 (unit), R2.9 and R2.10 suites | hub tests via `pnpm -r test` (reused) | pass (21 files, 282 passed) | /state/1/gate/FIX-2/test.txt |
+| R2.5 | `node packages/hub/scripts/ws-harness.mjs` | pass: fan-out 200 deltas p50 3.23 p95 9.42 max 94.89 ms (gate 100), dup 0, missing 0; reconnect dup 0 missing 0. Max is close to the gate; in-process timing varies run to run (FIX-1 max 32.01) | verify-ws-harness.txt |
+| R2.8 container, R2.5 container | `node packages/hub/scripts/container-smoke.mjs` | pass ("SMOKE PASS"; ws-harness vs container p95 2.69 max 23.65 ms, dup 0 missing 0; arm64 skipped, no buildx/qemu). Script uses its own prefix sd-1-S3-; container and volume removed by the script | verify-container-smoke.txt |
+| R2.4 | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` | pass: p95 12.99 ms (< 20), 70900 accepted, 0 duplicates, hub log 0 warn/error. Container, not the laptop | verify-load.txt |
+| R2.9 | `cd packages/hub && node scripts/bench-replay.mjs --dir /tmp/sd-1-FIX-2-bench` | pass: replay 17948 ms (< 60000), reducer exceptions 0. The default dir /tmp/sd-1-S4-bench held a stale 1.7 GB db from FIX-1, so the default run failed at generate ("generated events were deduplicated"); that attempt is kept as verify-replay-stale-dir-attempt.txt. The script does not clear its dir; the fresh dir /tmp/sd-1-FIX-2-bench was left in place because the guard blocks rm -rf outside the repo | verify-replay.txt |
+| R2.10 | `node packages/hub/scripts/ccusage-compare.mjs packages/hub/test/fixtures/transcripts --tz UTC,Asia/Tokyo` | pass: all rows ok, 0.000000% delta (fixtures only) | verify-ccusage.txt |
+
+Count: all R2.x rows re-run pass; verified by CI: R0.5 Windows budget; needs laptop: R2.4 and R2.9 laptop-native numbers.
+

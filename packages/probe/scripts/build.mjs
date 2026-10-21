@@ -11,6 +11,9 @@ const entries = {
   statusline: "src/statusline.ts",
   subagents: "src/subagents.ts",
   probe: "src/cli.ts",
+  daemon: "src/daemon/main.ts",
+  // Test and harness helper: exports appendSpoolLines so the loss harness writes with the real spool writer.
+  "spool-writer": "src/spool-writer.ts",
 };
 
 await build({

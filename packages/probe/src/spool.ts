@@ -36,7 +36,14 @@ export function parseSpoolLine(text: string): ParsedSpoolLine {
     return { ok: false, error: "not-an-object" };
   }
   const res = EnvelopeSchema.safeParse({ ...(raw as Record<string, unknown>), seq: 0 });
-  if (!res.success) return { ok: false, error: res.error.issues[0]?.message ?? "invalid-envelope" };
+  if (!res.success) {
+    // Fixed codes only: zod messages can echo the received value (which may be a secret).
+    const issue = res.error.issues[0];
+    return {
+      ok: false,
+      error: issue ? `schema:${issue.path.join(".") || "root"}` : "invalid-envelope",
+    };
+  }
   const line: Partial<typeof res.data> = { ...res.data };
   delete line.seq;
   return { ok: true, line: line as SpoolLine };

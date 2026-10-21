@@ -101,6 +101,132 @@ A replaced `statusLine`/`subagentStatusLine` is restored only if the recorded va
 one in the backup taken at install; otherwise the key is removed and the backup path is printed.
 `install-state.json` entries that do not fit the schema are ignored.
 
+## Daemon
+
+The daemon is the only networked part of the probe on the laptop. The hook appends one line to the
+spool and exits; the daemon does the slow work:
+
+- reads the spool in order, assigns `seq`, and POSTs batches (up to 200 envelopes or 250 ms) to the
+  hub with exponential backoff capped at 30 s plus jitter; a batch is never dropped, and a restart
+  resends nothing that was acknowledged;
+- tails Claude Code transcripts (main and subagent) by byte offset, and resets on a replaced file;
+- checks the Claude process of every session with `process.kill(pid, 0)` every 10 s (EPERM counts
+  as alive) and reports `alive: false` when it is gone;
+- sends a host heartbeat.
+
+```
+probe daemon run [--home <dir>] [--stderr]    # foreground, until Ctrl+C; a second copy for the same home exits 0
+probe daemon install [--home <dir>] [--no-start]
+probe daemon uninstall [--home <dir>]
+```
+
+`probe install` does not register the daemon. It prints a one-line hint, because starting a
+background process at every logon is a separate decision from adding hooks. Run
+`probe daemon install` once when you want it.
+
+### Liveness: known gaps and accepted degraded modes
+
+- **Unreadable process table on Windows (accepted degraded mode).** If the registration-time
+  process snapshot (PowerShell, 8 s timeout) fails, the pid is kept as a candidate and retried, one
+  snapshot per 10 s tick, up to 6 times. Until a retry succeeds the session is not tracked, so a
+  death in that window produces no `alive: false` envelope. Bound: after one failed first snapshot,
+  tracking starts up to about 26 s after `SessionStart` (8 s timeout, up to 10 s to the tick, up to
+  8 s for the retry snapshot), and up to about 70 s if all 6 retries are used. Once tracked, a death
+  is caught within 11.5 s (10 s tick plus 1.5 s grace) by `kill(pid, 0)`, which does not use
+  PowerShell, so the 15 s bound holds even on a loaded laptop. A table that stays unreadable for all
+  retries leaves the session unconfirmed.
+- **The retry only helps when the reported pid is claude itself** (exec-form hook install). With a
+  shell-wrapped hook the shell has usually exited by the time of the retry, so the pid cannot be
+  walked to claude.
+- **A snapshot that overflows `maxBuffer` is not retried**; it recurs on every read.
+- **macOS:** a `ps` timeout at registration is final (no retry). macOS is not a first-class target.
+
+### Autostart
+
+- **Windows**: a per-user Task Scheduler task named `SessionDeckProbeDaemon`. Trigger: at logon of the
+  current user (`DOMAIN\user`). Principal: that user, interactive logon, run level Limited (not
+  elevated); no password is stored and no admin rights are needed by design. Settings: no execution
+  time limit, runs on battery. Task Scheduler only restarts a task that fails to start, so the
+  restart is done by `launch-daemon.vbs` in the probe home: `wscript.exe` runs it, it starts
+  `node daemon.mjs` with window style 0 and waits (the task shows as running while the daemon
+  lives), and after a non-zero exit it starts the daemon again, waiting 5 s, then 10 s, doubling up
+  to 60 s (reset after a run of 10 minutes or more). Exit 0 ends the launcher: that is a graceful
+  stop, or another daemon already holding the lock for this home, so there is no tight loop.
+  Install first lists the tasks (locale-independent), and only touches a task of that name when its
+  definition is ours (Description and launcher path); a foreign task of the same name is refused
+  with exit 1, for install and for uninstall. When our task is already registered, install ends the
+  running instance, rewrites the launcher and the task, and starts it. It runs
+  `schtasks.exe /Create /TN SessionDeckProbeDaemon /XML <file> /F` (so installing twice leaves one
+  task) and then `/Run`; uninstall runs `/End` and `/Delete /F`, and succeeds when the task is absent
+  (any other query failure, such as access denied, exits 1 and keeps the launcher).
+  `/End` stops the launcher (wscript) but not necessarily the `node.exe` it started, which would keep
+  the daemon lock. So after `/End`, reinstall and uninstall stop the daemon itself: they read the
+  newest `daemon\daemon.lock[.N]` under the probe home for the pid, act only when that file was
+  touched in the last 60 s (a live daemon touches it every 10 s, so a stale file with a reused pid is
+  ignored) and `tasklist` shows the pid as `node.exe`, then run `taskkill /PID <pid> /F` and wait up to
+  10 s for it to go. The daemon keeps its state in atomic files and the next daemon judges the dead
+  pid's lock stale, so a forced stop loses nothing. If the daemon will not stop, reinstall exits 1
+  before writing anything; uninstall reports it and still removes the task. (The launcher keeps
+  treating exit 0 as "stop", including lock contention; the stop-the-daemon step is what prevents a
+  second launcher from meeting a live old daemon.) The schtasks, wscript, tasklist and taskkill
+  paths are fixed at `C:\Windows\System32` and the Windows directory is never taken from the
+  environment: a `SystemRoot`, `SYSTEMROOT` or `windir` that names anything else (a Windows
+  installed on `D:\Windows`, or a planted value) is refused with a message saying so, and
+  `probe daemon run` remains available there. On Windows `--home` must be the default probe home or a
+  folder beneath it, for install and for uninstall (the launcher runs at every logon and no ACL is
+  set elsewhere); the user's home is `os.homedir()` (`USERPROFILE`), the same source the hooks and the
+  default probe home use. Paths containing `%` are refused. On Linux an existing `--home` must be
+  owned by you and not group or world writable. Files are written to a fresh temp name and renamed
+  over the target (mode 0600), never through a symlink; the temp file is removed if the write fails.
+  Check the task:
+  ```
+  schtasks /Query /TN SessionDeckProbeDaemon /V /FO LIST
+  Get-ScheduledTask -TaskName SessionDeckProbeDaemon | Get-ScheduledTaskInfo
+  schtasks /Query /TN SessionDeckProbeDaemon /XML
+  ```
+  The task definition lives in the Task Scheduler store; everything else the daemon and installer
+  write is under `%LOCALAPPDATA%\sessiondeck`. The task points at the absolute `node.exe` and
+  `dist\daemon.mjs` it was installed from: after moving the repo or changing Node, run
+  `probe daemon install` again.
+- **Linux**: a systemd user unit `~/.config/systemd/user/sessiondeck-probe.service`
+  (`Restart=on-failure`, `ExecStart` with absolute, quoted node and script paths). Install writes it,
+  then `systemctl --user daemon-reload` and `enable --now`; uninstall does `disable --now`, removes
+  the file and reloads. No root. Without a user bus (containers, ssh without a session) install
+  still writes the unit, prints how to start it, and exits 0. Check it:
+  ```
+  systemctl --user status sessiondeck-probe.service
+  journalctl --user -u sessiondeck-probe.service
+  ```
+- **macOS**: not supported yet; the commands print that and exit non-zero. Use `probe daemon run`.
+
+### Daemon state and logs
+
+Everything is under the probe home (Windows `%LOCALAPPDATA%\sessiondeck`, Linux and WSL2
+`~/.local/state/sessiondeck`, or the `--home` it was started with), in `daemon/`:
+
+| File                  | Purpose                                                              |
+| --------------------- | -------------------------------------------------------------------- |
+| `daemon.log`          | the daemon's log (rotated once at 5 MiB to `daemon.log.1`); read this first |
+| `daemon.lock`         | one daemon per home                                                  |
+| `state.json`          | spool cursor, next `seq`, the batch in flight (atomically replaced)  |
+| `outbox/`             | envelopes the daemon itself produced (heartbeat, liveness, transcript) |
+| `rejected/`           | batches the hub refused with a non-retryable 4xx (capped)            |
+| `liveness.json`       | tracked Claude processes                                             |
+| `transcript-offsets.json` | per-file byte offsets of the transcript tailer                   |
+
+Hub URL, token and host come from `probe.json`; the daemon sends nothing until they are set, and
+refuses an `http://` hub that is not loopback unless `allowInsecureHub` is true.
+
+### Which transcripts are tailed
+
+The daemon tails only transcript files whose real path is under
+`<CLAUDE_CONFIG_DIR or ~/.claude>/projects`, as seen by the daemon's own environment (D-S2-10).
+Paths from the spool (`transcript_path`, `agent_transcript_path`) are checked against that root and
+never used to pick one. A session started with a different `CLAUDE_CONFIG_DIR` than the daemon's is
+refused and logged, not tailed. If you use a non-default config directory, start the daemon with the
+same `CLAUDE_CONFIG_DIR`. For the scheduled task or unit, that means setting it in your user
+environment (Windows: `setx CLAUDE_CONFIG_DIR <dir>`, then log on again) so the daemon sees it.
+
 ## Where files live
 
 Probe home: Windows `<user profile>\AppData\Local\sessiondeck` (neither the CLI nor the hook reads `LOCALAPPDATA`; the profile comes from `os.homedir()`, which reads `USERPROFILE` on Windows and `HOME` elsewhere: an accepted residual for a hook entry without `--home`, since install always writes `--home`); Linux and WSL2 `~/.local/state/sessiondeck`.
