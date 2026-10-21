@@ -56,7 +56,8 @@ jobs:
         # fixture-leak, fixture-scrub-keys, install-*; about 66 spawns; list PROC_TESTS in
         # scripts/vitest.config.ts) split from `pnpm -r test` after it timed out on 2-vCPU windows-latest
         # (FIX-5, user decision R0.5 option A). Budget: 5.4 s wall locally (258 tests, 11 files, 20 s of test time
-        # over the workers); 4x for a Windows runner is about 22 s; vitest start-up adds about 30 s, so
+        # over the workers); maxWorkers = 2 x cores (4 on a 2-vCPU runner), as the default run; 4x for a
+        # Windows runner is about 22 s; vitest start-up adds about 30 s, so
         # about 55 s; 5 min (300 s) leaves generous headroom for a 2-vCPU runner.
         run: pnpm -F @sessiondeck/scripts test:proc
         timeout-minutes: 5

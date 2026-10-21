@@ -9,8 +9,9 @@ export const SPRINT_TOOLING_TESTS = "test/sprint-*.test.ts";
 // Second rule: every test/guard-timing*.test.ts file bounds the guard hook's own run time
 // (matchMs, workMs, rawMs, growth ratios) and runs in its own CI step (vitest.guard-timing.config.ts,
 // `pnpm test:guard-timing:ci`), outside the R0.5 budget, with bounded retries of timing failures
-// only (conductor decision 13). The functional guard rule tests (guard-rules.test.ts) spawn the hook and are in PROC_TESTS. The classifier of those retries is guard-retry-classify.test.ts, which is NOT
-// guard-timing* and so stays in the default run too.
+// only (conductor decision 13). The functional guard rule tests (guard-rules.test.ts) spawn the hook and are in PROC_TESTS.
+// The classifier of those retries is guard-retry-classify.test.ts, which is NOT guard-timing*
+// and so stays in the default run.
 export const GUARD_TIMING_TESTS = "test/guard-timing*.test.ts";
 
 // Third rule: the suites that start real node processes (about 66 spawns: guard hook, capture and
