@@ -11,6 +11,9 @@ const marked = Store as unknown as Record<symbol, boolean>;
 if (!marked[FLAG]) {
   marked[FLAG] = true;
   const open = Store.open.bind(Store);
+  // The unwrapped production Store.open, for the test that pins its real synchronous level.
+  (Store as unknown as Record<symbol, unknown>)[Symbol.for("sessiondeck.test.original-open")] =
+    open;
   Store.open = (dbPath: string): Store => {
     const store = open(dbPath);
     if (dbPath !== ":memory:") store.db.pragma("synchronous = OFF");

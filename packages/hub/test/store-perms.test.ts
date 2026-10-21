@@ -46,3 +46,21 @@ describe.skipIf(!posix)("db directory modes", () => {
     expect(mode(tmp)).toBe(0o755);
   });
 });
+
+describe("production pragmas", () => {
+  it("a fresh file database opens with synchronous = NORMAL (1), not FULL", () => {
+    // The suite wraps Store.open to run with synchronous = OFF; use the unwrapped original.
+    const original = (Store as unknown as Record<symbol, (p: string) => Store>)[
+      Symbol.for("sessiondeck.test.original-open")
+    ];
+    expect(original).toBeTypeOf("function");
+    tmp = mkdtempSync(path.join(os.tmpdir(), "hub-sync-"));
+    const store = original(path.join(tmp, "h.sqlite"));
+    try {
+      expect(store.db.pragma("synchronous", { simple: true })).toBe(1);
+      expect(store.db.pragma("journal_mode", { simple: true })).toBe("wal");
+    } finally {
+      store.close();
+    }
+  });
+});
