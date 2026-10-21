@@ -1,0 +1,29 @@
+# Used by BuildKit only (the legacy builder reads the repo-root .dockerignore instead; keep both in sync).
+# Deny everything, allow only what infra/web/Dockerfile copies.
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!packages/contract/package.json
+!packages/contract/tsconfig.json
+!packages/contract/src
+!packages/web/package.json
+!packages/web/tsconfig.json
+!packages/web/index.html
+!packages/web/vite.config.ts
+!packages/web/tailwind.config.ts
+!packages/web/postcss.config.js
+!packages/web/playwright.config.ts
+!packages/web/src
+!packages/web/scripts
+!packages/web/e2e/*.ts
+!infra/web/nginx.conf
+!infra/web/05-validate-sd-env.sh
+!infra/web/Dockerfile
+
+**/.env*
+**/probe.json
+**/*.sqlite*
+**/node_modules
+**/fixtures/raw

@@ -25,7 +25,13 @@ export interface TestHub {
 export async function makeHub(
   env: Record<string, string> = {},
   now?: () => number,
-  extra: { heartbeatMs?: number; maxBufferedBytes?: number; refuseFallbackMs?: number } = {},
+  extra: {
+    heartbeatMs?: number;
+    maxBufferedBytes?: number;
+    refuseFallbackMs?: number;
+    wallClock?: () => number;
+    activity?: import("../../src/ingest/activity.ts").IngestActivity;
+  } = {},
 ): Promise<TestHub> {
   const t = tempStore();
   t.store.migrate();

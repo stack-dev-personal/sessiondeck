@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isValidTimeZone } from "./usage/usage.ts";
 
 export interface HubConfig {
   token: string;
@@ -19,12 +20,73 @@ export interface HubConfig {
   /** D-S3-14. Per-principal read limit (GET routes and WS upgrades), requests per second and burst. */
   readRate: number;
   readBurst: number;
+  /** Extra per-principal limit on /history/* (each call aggregates every stored usage row). */
+  historyRate: number;
+  historyBurst: number;
   /** Concurrent WS /stream clients; further upgrades get 503. */
   maxWsClients: number;
   /** HUB_ALLOWED_ORIGINS; when non-empty, an upgrade with any other Origin is refused (403). */
   allowedOrigins: string[];
   /** New sessions for a host are not created once it has this many open (non-ended) sessions. */
   maxOpenSessionsPerHost: number;
+  /** HUB_PRICING_FILE: LiteLLM-shaped pricing file; highest precedence, disables the fetch. */
+  pricingFile?: string;
+  /** HUB_PRICING_FETCH (default on): fetch LiteLLM prices once at startup, in the background. */
+  pricingFetch: boolean;
+  /**
+   * HUB_TIMEZONE: IANA zone used to bucket history days when a request gives no `tz`. Unset means
+   * the process-local zone, which is ccusage's default.
+   */
+  timezone?: string;
+  /** HUB_EVENT_RETENTION_DAYS: events older than this are folded into baselines and deleted. */
+  eventRetentionDays: number;
+  /** HUB_SAMPLE_RETENTION_DAYS: statusline samples older than this are deleted. */
+  sampleRetentionDays: number;
+  /** HUB_RETENTION_INTERVAL_MS: time between retention passes; 0 disables the timer. */
+  retentionIntervalMs: number;
+  /** HUB_MAX_CLOCK_SKEW_MS: ingest rejects an envelope whose ts is further ahead of the hub clock. */
+  maxClockSkewMs: number;
+  /** HUB_COMPACT_BATCH_SIZE / HUB_COMPACT_BATCH_MS: events and fold time budget per compaction batch. */
+  compactBatchSize: number;
+  compactBatchBudgetMs: number;
+  /** HUB_COMPACT_MAX_EVENTS: events compacted per pass (0 = no cap); a backlog drains over several passes. */
+  compactMaxEvents: number;
+}
+
+/** What the replay and compact subcommands need; no token, no network settings. */
+export interface RetentionSettings {
+  dbPath: string;
+  eventRetentionDays: number;
+  sampleRetentionDays: number;
+  retentionIntervalMs: number;
+  maxOpenSessionsPerHost: number;
+  maxClockSkewMs: number;
+  compactBatchSize: number;
+  compactBatchBudgetMs: number;
+  /** HUB_COMPACT_MAX_EVENTS: events compacted per pass (0 = no cap); a backlog drains over several passes. */
+  compactMaxEvents: number;
+}
+
+function nonNegInt(env: Record<string, string | undefined>, name: string, dflt: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return dflt;
+  const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(n)) throw new Error(`${name} must be a non-negative integer`);
+  return n;
+}
+
+export function loadRetentionSettings(env: Record<string, string | undefined>): RetentionSettings {
+  return {
+    dbPath: env["HUB_DB_PATH"] ?? path.join(".", "data", "hub.sqlite"),
+    eventRetentionDays: posInt(env, "HUB_EVENT_RETENTION_DAYS", 30),
+    sampleRetentionDays: posInt(env, "HUB_SAMPLE_RETENTION_DAYS", 30),
+    retentionIntervalMs: nonNegInt(env, "HUB_RETENTION_INTERVAL_MS", 3_600_000),
+    maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
+    maxClockSkewMs: skewMs(env),
+    compactBatchSize: posInt(env, "HUB_COMPACT_BATCH_SIZE", 100),
+    compactBatchBudgetMs: posInt(env, "HUB_COMPACT_BATCH_MS", 10),
+    compactMaxEvents: nonNegInt(env, "HUB_COMPACT_MAX_EVENTS", 1_000_000),
+  };
 }
 
 export const MIN_TOKEN_LENGTH = 16;
@@ -38,6 +100,28 @@ function posInt(env: Record<string, string | undefined>, name: string, dflt: num
   const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`${name} must be a positive integer`);
   return n;
+}
+
+export const MIN_CLOCK_SKEW_MS = 60_000;
+export const MAX_CLOCK_SKEW_MS = 7 * 86_400_000;
+
+/** HUB_MAX_CLOCK_SKEW_MS: one minute to seven days; outside that range startup fails. */
+function skewMs(env: Record<string, string | undefined>): number {
+  const n = posInt(env, "HUB_MAX_CLOCK_SKEW_MS", 86_400_000);
+  if (n < MIN_CLOCK_SKEW_MS || n > MAX_CLOCK_SKEW_MS) {
+    throw new Error(
+      `HUB_MAX_CLOCK_SKEW_MS must be between ${MIN_CLOCK_SKEW_MS} and ${MAX_CLOCK_SKEW_MS}`,
+    );
+  }
+  return n;
+}
+
+function bool(env: Record<string, string | undefined>, name: string, dflt: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return dflt;
+  if (raw === "1" || raw === "true") return true;
+  if (raw === "0" || raw === "false") return false;
+  throw new Error(`${name} must be 0, 1, true or false`);
 }
 
 export function loadConfig(env: Record<string, string | undefined>): HubConfig {
@@ -61,7 +145,23 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
   ] as const) {
     if (v < MIN_BUCKET) throw new Error(`${name} must be at least ${MIN_BUCKET} (max batch size)`);
   }
+  const timezone = env["HUB_TIMEZONE"];
+  if (timezone !== undefined && timezone !== "" && !isValidTimeZone(timezone)) {
+    throw new Error("HUB_TIMEZONE must be an IANA time zone name");
+  }
+  const pricingFile = env["HUB_PRICING_FILE"];
+  const retention = loadRetentionSettings(env);
   return {
+    eventRetentionDays: retention.eventRetentionDays,
+    sampleRetentionDays: retention.sampleRetentionDays,
+    retentionIntervalMs: retention.retentionIntervalMs,
+    maxClockSkewMs: retention.maxClockSkewMs,
+    compactBatchSize: retention.compactBatchSize,
+    compactBatchBudgetMs: retention.compactBatchBudgetMs,
+    compactMaxEvents: retention.compactMaxEvents,
+    ...(pricingFile !== undefined && pricingFile !== "" ? { pricingFile } : {}),
+    ...(timezone !== undefined && timezone !== "" ? { timezone } : {}),
+    pricingFetch: bool(env, "HUB_PRICING_FETCH", true),
     token,
     ingestRate,
     ingestBurst,
@@ -69,6 +169,8 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     hostBurst,
     readRate: posInt(env, "HUB_READ_RATE", 50),
     readBurst: posInt(env, "HUB_READ_BURST", 100),
+    historyRate: posInt(env, "HUB_HISTORY_RATE", 1),
+    historyBurst: posInt(env, "HUB_HISTORY_BURST", 2),
     maxWsClients: posInt(env, "HUB_MAX_WS_CLIENTS", 64),
     allowedOrigins: (env["HUB_ALLOWED_ORIGINS"] ?? "")
       .split(",")

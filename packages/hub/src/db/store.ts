@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -52,6 +53,15 @@ export interface SampleRow {
   seven_day_resets: number | null;
 }
 
+export interface UsageFeedRow {
+  rid: number;
+  session_id: string;
+  agent_id: string;
+  line_no: number;
+  raw: string | null;
+  project_dir: string | null;
+}
+
 export interface TranscriptLineRow {
   session_id: string;
   agent_id: string;
@@ -88,6 +98,8 @@ export class Store {
     const created = file ? mkdirSync(dir, { recursive: true, mode: 0o700 }) : undefined;
     const db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
+    // Explicit, so the level does not depend on the SQLITE_DEFAULT_WAL_SYNCHRONOUS build flag.
+    db.pragma("synchronous = NORMAL");
     if (file && process.platform !== "win32") {
       // Payloads and raw transcript lines may hold secrets: owner-only.
       // Only tighten a directory this process created; never touch a pre-existing one.
@@ -155,7 +167,16 @@ export class Store {
       SessionRow | undefined;
   }
 
+  /** Bumped whenever a write changes some session's project_dir (usage index staleness signal). */
+  projectsVersion = 0;
+  /** Number of listSessionProjects() scans (test observability). */
+  projectScans = 0;
+
   upsertSession(row: SessionRow): void {
+    const prev = this.stmt("SELECT project_dir FROM sessions WHERE session_id = ?").get(
+      row.session_id,
+    ) as { project_dir: string | null } | undefined;
+    if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
     this.stmt(
       `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at)
        VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at)
@@ -165,14 +186,25 @@ export class Store {
     ).run(row);
   }
 
-  /** An event with this signature and |ts - ts'| < windowMs exists (events_signature_ts index, a range seek). */
-  hasSignatureWithin(signature: string, ts: number, windowMs: number): boolean {
+  /**
+   * An event with this signature and |ts - ts'| < windowMs exists. Equal signatures share a
+   * session_id (it is part of the hashed material), so the seek is a range on events_session_ts_sig
+   * (session_id, ts, signature) and the signature is compared inside the index.
+   */
+  hasSignatureWithin(
+    signature: string,
+    sessionId: string | null,
+    ts: number,
+    windowMs: number,
+  ): boolean {
     return (
-      this.stmt("SELECT 1 AS x FROM events WHERE signature = ? AND ts > ? AND ts < ? LIMIT 1").get(
-        signature,
-        ts - windowMs,
-        ts + windowMs,
-      ) !== undefined
+      (sessionId === null
+        ? this.stmt(
+            "SELECT 1 AS x FROM events WHERE session_id IS NULL AND ts > ? AND ts < ? AND signature = ? LIMIT 1",
+          ).get(ts - windowMs, ts + windowMs, signature)
+        : this.stmt(
+            "SELECT 1 AS x FROM events WHERE session_id = ? AND ts > ? AND ts < ? AND signature = ? LIMIT 1",
+          ).get(sessionId, ts - windowMs, ts + windowMs, signature)) !== undefined
     );
   }
 
@@ -274,6 +306,29 @@ export class Store {
         ).all(sessionId, agentId, after, limit) as TranscriptLineRow[]);
   }
 
+  /**
+   * Usage feed for the cost index. transcript_lines is append-only (inserts never update), so the
+   * rowid is a high-water mark: pass the last rowid seen, get the next rows in rowid order.
+   * `raw` is null for rows without a usage block ('"usage":{' is also ccusage's own line filter)
+   * so the caller can advance past them without copying them. SQLite-specific (rowid).
+   */
+  listUsageLinesAfter(afterRowid: number, limit: number): UsageFeedRow[] {
+    return this.stmt(
+      `SELECT t.rowid AS rid, t.session_id, t.agent_id, t.line_no,
+              CASE WHEN instr(t.raw, '"usage":{') > 0 THEN t.raw END AS raw,
+              (SELECT s.project_dir FROM sessions s WHERE s.session_id = t.session_id) AS project_dir
+       FROM transcript_lines t WHERE t.rowid > ? ORDER BY t.rowid LIMIT ?`,
+    ).all(afterRowid, limit) as UsageFeedRow[];
+  }
+
+  /** Current project_dir of every session that has one (usage index staleness check). */
+  listSessionProjects(): { session_id: string; project_dir: string }[] {
+    this.projectScans++;
+    return this.stmt(
+      "SELECT session_id, project_dir FROM sessions WHERE project_dir IS NOT NULL",
+    ).all() as { session_id: string; project_dir: string }[];
+  }
+
   /** Configured projects plus every project_dir seen on a session. */
   listProjects(limit: number): ProjectRow[] {
     return this.stmt(
@@ -288,6 +343,121 @@ export class Store {
 
   listHosts(limit: number): HostRow[] {
     return this.stmt("SELECT * FROM hosts ORDER BY host LIMIT ?").all(limit) as HostRow[];
+  }
+
+  /** Write transaction taken up front (BEGIN IMMEDIATE): other writers wait, then fail with SQLITE_BUSY. */
+  writeTransaction<T>(fn: () => T): T {
+    return this.db.transaction(fn).immediate();
+  }
+
+  /** Compaction watermark: envelopes with ts below it were compacted away. Null before any compaction. */
+  getCompactionCut(): number | null {
+    const r = this.stmt("SELECT cut_ts FROM compaction_state WHERE id = 1").get() as
+      { cut_ts: number } | undefined;
+    return r === undefined ? null : r.cut_ts;
+  }
+
+  /** Raises the watermark (never lowers it) and adds to the running count of compacted events. */
+  advanceCompaction(cutTs: number, compacted: number, now: number): void {
+    this.stmt(
+      `INSERT INTO compaction_state (id, cut_ts, compacted_events, updated_at) VALUES (1, @cutTs, @compacted, @now)
+       ON CONFLICT(id) DO UPDATE SET
+         cut_ts = CASE WHEN excluded.cut_ts > compaction_state.cut_ts THEN excluded.cut_ts ELSE compaction_state.cut_ts END,
+         compacted_events = compaction_state.compacted_events + excluded.compacted_events,
+         updated_at = excluded.updated_at`,
+    ).run({ cutTs, compacted, now });
+  }
+
+  listBaselines(): { session_id: string; snapshot: string }[] {
+    return this.stmt("SELECT session_id, snapshot FROM session_baselines").all() as {
+      session_id: string;
+      snapshot: string;
+    }[];
+  }
+
+  upsertBaseline(sn: SessionSnapshot, now: number): void {
+    this.stmt(
+      `INSERT INTO session_baselines (session_id, snapshot, updated_at, host, state) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at,
+         host = excluded.host, state = excluded.state`,
+    ).run(sn.session_id, JSON.stringify(sn), now, sn.host, sn.state);
+  }
+
+  getBaseline(sessionId: string): string | undefined {
+    const r = this.stmt("SELECT snapshot FROM session_baselines WHERE session_id = ?").get(
+      sessionId,
+    ) as { snapshot: string } | undefined;
+    return r?.snapshot;
+  }
+
+  listOpenBaselinesForHost(host: string): string[] {
+    return (
+      this.stmt("SELECT snapshot FROM session_baselines WHERE host = ? AND state <> 'ended'").all(
+        host,
+      ) as { snapshot: string }[]
+    ).map((r) => r.snapshot);
+  }
+
+  countOpenBaselinesForHost(host: string): number {
+    return (
+      this.stmt(
+        "SELECT COUNT(*) AS n FROM session_baselines WHERE host = ? AND state <> 'ended'",
+      ).get(host) as { n: number }
+    ).n;
+  }
+
+  /** The serving hub's lease, or undefined when none was ever written or it was released. */
+  getLease(): { holder: string; expires_at: number } | undefined {
+    return this.stmt("SELECT holder, expires_at FROM hub_lease WHERE id = 1").get() as
+      { holder: string; expires_at: number } | undefined;
+  }
+
+  setLease(holder: string, expiresAt: number): void {
+    this.stmt(
+      `INSERT INTO hub_lease (id, holder, expires_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at`,
+    ).run(holder, expiresAt);
+  }
+
+  /** Releases the lease if this holder still owns it. */
+  clearLease(holder: string): void {
+    this.stmt("DELETE FROM hub_lease WHERE id = 1 AND holder = ?").run(holder);
+  }
+
+  /**
+   * Events in ingest order (rowid; the table is append-only, so rowid is insertion order), rowid >
+   * after. SQLite-specific: Phase 7 needs an explicit ingest sequence column on Postgres.
+   */
+  listEventsAfterRowid(after: number, limit: number): (EventRow & { rid: number })[] {
+    return this.stmt(
+      "SELECT rowid AS rid, * FROM events WHERE rowid > ? ORDER BY rowid LIMIT ?",
+    ).all(after, limit) as (EventRow & { rid: number })[];
+  }
+
+  countEvents(): number {
+    return (this.stmt("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
+  }
+
+  /** Deletes the contiguous rowid range [from, to] of events. */
+  deleteEventsRowidRange(from: number, to: number): number {
+    return this.stmt("DELETE FROM events WHERE rowid >= ? AND rowid <= ?").run(from, to).changes;
+  }
+
+  /**
+   * Deletes up to limit statusline samples with ts < cutoff or ts > maxTs (statusline_samples_ts);
+   * the second bound removes samples stamped in the future, which would otherwise never age out.
+   */
+  deleteSamplesOutside(cutoffMs: number, maxTs: number, limit: number): number {
+    return this.stmt(
+      `DELETE FROM statusline_samples WHERE (session_id, ts) IN
+         (SELECT session_id, ts FROM statusline_samples WHERE ts < ? OR ts > ? LIMIT ?)`,
+    ).run(cutoffMs, maxTs, limit).changes;
+  }
+
+  /** Replay only: drops every session row (the caller re-inserts inside the same transaction). */
+  deleteAllSessions(): void {
+    this.stmt("DELETE FROM sessions").run();
+    this.projectsVersion++;
   }
 
   close(): void {

@@ -36,4 +36,50 @@ DROP INDEX events_signature;
 CREATE INDEX sessions_host_state ON sessions(host, state);
 `,
   },
+  {
+    version: 3,
+    name: "retention_baselines",
+    // Compaction deletes events older than the retention window after folding them into one
+    // baseline snapshot per session; replay starts from these baselines and applies the remaining
+    // events. compaction_state is a single row (id = 1): cut_ts is the watermark, ingest treats an
+    // envelope older than it as already seen (its id and signature are gone with the event).
+    // statusline_samples_ts serves the bounded retention delete (the primary key leads with session_id).
+    sql: `
+CREATE TABLE session_baselines (session_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE TABLE compaction_state (id INTEGER PRIMARY KEY, cut_ts BIGINT NOT NULL, compacted_events BIGINT NOT NULL, updated_at BIGINT NOT NULL);
+CREATE INDEX statusline_samples_ts ON statusline_samples(ts);
+`,
+  },
+  {
+    version: 4,
+    name: "baseline_index_and_lease",
+    // Compaction folds each batch against the baselines table itself (inside the batch's write
+    // transaction), so the open-session cap and the supersede pid index need host and state as
+    // columns. The backfill uses SQLite json_extract; the Postgres twin of this file (Phase 7)
+    // uses snapshot::json ->> 'host'. hub_lease is a single row (id = 1): the serving hub
+    // refreshes expires_at every few seconds; replay and compact refuse while it is fresh.
+    sql: `
+ALTER TABLE session_baselines ADD COLUMN host TEXT;
+ALTER TABLE session_baselines ADD COLUMN state TEXT;
+UPDATE session_baselines SET host = json_extract(snapshot, '$.host'), state = json_extract(snapshot, '$.state');
+CREATE INDEX session_baselines_host_state ON session_baselines(host, state);
+CREATE TABLE hub_lease (id INTEGER PRIMARY KEY, holder TEXT NOT NULL, expires_at BIGINT NOT NULL);
+`,
+  },
+  {
+    version: 5,
+    name: "dedup_index_by_session",
+    // R2.4. The 5 s duplicate check ran on events(signature, ts). A signature is a hash, so every
+    // insert dirtied a random leaf of that index: about 100 of the ~200 WAL pages a batch of 100
+    // wrote, and about a third of its CPU. The signature material includes session_id, so equal
+    // signatures always share a session: the check now seeks (session_id, ts) and compares the
+    // signature inside the same index entries (covering, no table reads). Inserts append at the
+    // tail of the session's range. The new index also serves everything events_session_ts did
+    // (it is a strict prefix), so both old indexes are dropped. Valid on SQLite and Postgres.
+    sql: `
+CREATE INDEX events_session_ts_sig ON events(session_id, ts, signature);
+DROP INDEX events_signature_ts;
+DROP INDEX events_session_ts;
+`,
+  },
 ];

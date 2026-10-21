@@ -36,3 +36,59 @@
 4. Not re-run in this pass: the no-outbound-network grep of packages/hub/src and the live curl checks recorded in earlier versions of this file; the hub src is unchanged since fab329c except tests and vitest config (`git diff fab329c HEAD -- packages/hub` touches only test files and vitest.config.ts).
 5. The earlier PR run 39456320083 (HEAD ea03c31) failed: windows-latest node 22, R0.5 step, packages/contract state-file-cli-merge.test.ts "reports a lock that stays held, without sleeping for real" timed out at 5000 ms (200 fs-bound poll rounds). U8 (ad73c91) passes pollMs 1000 in the two contract lock tests; the same matrix is green at ad73c91 (runs above). The ea03c31 failure is a contract test timeout, not a hub failure.
 6. At ad73c91 `pnpm -r test` was run twice in sequence (second only to capture counts), both exit 0, same counts; `pnpm -r lint` exit 0.
+
+## S4 (p2/hub-history)
+
+- Branch p2/hub-history, HEAD 695c605. Run 2026-10-20T17:22Z. Machine and node as in docs/HUB-BENCH.md.
+
+| ID | Command | Evidence | Verdict |
+|---|---|---|---|
+| R2.10 Cost history per session and per day matches ccusage `session` output for the same transcripts within 1% | `pnpm -F @sessiondeck/hub exec vitest run --maxWorkers=2 test/usage-cost.test.ts`; `node packages/hub/scripts/ccusage-compare.mjs packages/hub/test/fixtures/transcripts --tz UTC,Asia/Tokyo`; same harness on a snapshot of real transcripts with the full LiteLLM table (sha256 5a5243a5...eed8), UTC | vitest 31 passed. Fixtures: 4 runs (UTC and Tokyo, file and late order), every row ok, max delta 0.000000%, token deltas 0, "PASS: all deltas within tolerance". Real: 5 sessions, 1 day, ccusage 25.502192 USD vs hub 25.502192, max delta 0.000000% (session and day), token deltas 0, both order modes, PASS; models claude-opus-5-5 and claude-sonnet-5-5 both priced non-zero. Details in docs/HUB-BENCH.md section "R2.10 cost comparison vs ccusage 19.0.3". Caveat: real data is one UTC day, so day-bucket coverage on real data is thin; the fixtures cover 4 days and two time zones. | pass |
+| R2.9 `hub replay` rebuilds all snapshots from events in under 60 s for 30 days of your typical volume | `cd packages/hub && node scripts/bench-replay.mjs` (defaults), HEAD d02c41e, 2026-10-20, Linux container on WSL2 | events=1020000, sessions=300, hosts=2, DB 1645.6 MB; `replay elapsed: 12690 ms (12.7 s)  target < 60000 ms: PASS`; 80378 events/s; peak RSS 170.0 MB; reducer exceptions 0. Typical volume definition and compaction numbers in docs/HUB-BENCH.md section "R2.9 replay bench". Caveat: measured in the container, not on the laptop; laptop number to be confirmed by the user. | pass |
+| Scope: retention + replay (events older than 30 days compacted to snapshots, configurable; replay command) | `pnpm -F @sessiondeck/hub exec vitest run --maxWorkers=2 test/replay.test.ts test/replay-review.test.ts test/ingest-golden.test.ts`; CLI: `pnpm -F @sessiondeck/hub replay --db <tmp>` and `compact --db <tmp>` on a 6000-event temp DB | vitest 3 files, 73 passed (33 + 15 + 25). CLI: `replay: sessions=10 events=2400 samples=258 elapsed_ms=126 reducer_exceptions=0` (events=2400 because the bench had already compacted 3600 at a 15 d cutoff); `compact: events=0 batches=0 sessions=0 samples_deleted=4 elapsed_ms=1 max_batch_ms=0 reducer_exceptions=0` (nothing left to compact). Note: `pnpm ... replay -- --db` fails with exit 2; use `replay --db <path>` without `--`. Compaction of 528,794 events on the 1M DB is in the bench section. | pass |
+| R2.4 "Ingest p95 < 20 ms per batch of 100 at 1k envelopes/s on the laptop." | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` with `--verify-live`; with `--with-retention` (x3, 600k backlog); with `--hot-session`; and against the compose hub (`--url http://<container-ip>:8787 --token-file ... --allow-insecure`). HEAD aa80a18, 2026-10-20T23:46Z to 23:56Z, WSL2 Linux container (not the Windows host) | Sustained: `p50 8.20 p95 10.91 p99 11.82 max 13.82`, 659 batches ok, `R2.4 ingest p95 < 20 ms per batch of 100: PASS (p95 10.91 ms)`. Retention x3: p95 11.30 / 11.23 / 11.68 (during compaction 10.31 / 10.48 / 11.39), max 19.86 to 21.39, 0 failures. Hot session: p95 12.76, max 29.79. Container: p95 12.89, max 19.38, 0 failures (host load 2.64 at start, passed). All exit 0, 1001 envelopes/s achieved. Full table in docs/HUB-BENCH.md section "R2.4 ingest load". Caveat: not the Windows-native host; laptop-native confirmation still advisable. | pass |
+
+### S4 session close (HEAD e25cef3, run 2026-10-20T23:57Z to 2026-10-21T00:32Z)
+
+Machine and node as in docs/HUB-BENCH.md. One test process at a time, `--maxWorkers=2`, per-package sequential (`--workspace-concurrency=1`). Verifier: sd-verifier run by the session-close pass; nothing was fixed in this pass.
+
+| ID / check | Command | Evidence | Verdict |
+|---|---|---|---|
+| Suite: tests | `pnpm -r --workspace-concurrency=1 test -- --maxWorkers=2` | exit 0. contract 28 files, 1090 passed, 1 skipped; scripts 21 files, 281 passed; hub 28 files passed + 1 skipped, 575 passed, 7 skipped (the hub package printed its summary twice in the log; same counts). | pass |
+| Suite: typecheck | `pnpm -r --workspace-concurrency=1 typecheck` | exit 0 (`tsc --noEmit` x3) | pass |
+| Suite: lint | `pnpm -r --workspace-concurrency=1 lint` | exit 0 (`eslint .` x3) | pass |
+| R2.10 at HEAD | `pnpm -F @sessiondeck/hub exec vitest run --maxWorkers=2 test/usage-cost.test.ts`; `node packages/hub/scripts/ccusage-compare.mjs packages/hub/test/fixtures/transcripts --tz UTC,Asia/Tokyo` | vitest 31 passed. Fixtures: 3 sessions, 4 days, every row ok, max delta 0.000000%, token deltas 0, "PASS: all deltas within tolerance". Same numbers as the 695c605 run. The ccusage 19.0.3 reference under /tmp had been cleaned up; re-fetched with `npm pack ccusage@19.0.3` into /tmp/sd-s4-refs/ccusage-npm (default path of the script). Real-transcript comparison NOT re-run (snapshot and full LiteLLM table were deleted); `git diff 695c605 HEAD -- packages/hub/src` touches no cost/usage/pricing file, so the earlier real-data row (25.502192 vs 25.502192, 0% delta) stands as recorded. | pass |
+| R2.9 at HEAD | `cd packages/hub && node scripts/bench-replay.mjs` (defaults) | events=1020000, sessions=300, hosts=2, DB 1627.3 MB, `replay elapsed: 8701 ms (8.7 s)  target < 60000 ms: PASS`, 117228 events/s, peak RSS 169.2 MB, reducer exceptions 0. Earlier: 12.7 s, 80378 events/s. Compaction (cutoff 15 d): 528718 events, 5288 batches, 25314 ms, p50 1.07 ms, p99 12.12 ms, max batch 29.02 ms, max timer lag 38.67 ms (earlier max batch 578 ms). Bench DB removed. | pass |
+| Integration check 1 (compose hub) | `docker compose -p sd-1-s4 -f infra/docker-compose.yml up -d --build hub` with scratch env file; `node packages/hub/scripts/load-ingest.mjs --speed 10 --events 180000 --span-min 30 --url http://172.27.0.2:8787 --token-file <tmp> --allow-insecure --verify-live` | Host port 127.0.0.1:18787 unreachable from the sprint container, container IP used. Container `sd-1-s4-hub-1` healthy; GET /health 200; no-token GET /sessions 401. Replayed day: 179988 envelopes, 53 sessions, 2 hosts, accepted 179988, duplicates 0, errors none, p95 15.71 ms, 1799 batches ok. `GET /sessions?live=1` -> 200, 6 sessions, matching the expected 6 (ended under 10 min ago); `GET /sessions` returned all 53. `down -v` removed container, volume and network. container-smoke.mjs not re-run (R2.8 row above stands). | pass |
+| Compose web (phase-2 DoD: compose runs hub and web static build) | scratch worktree /tmp/sd-1-S4-webproof from HEAD + `git merge origin/p3/board-mock` (0ebe8ee); `docker compose -p sd-1-s4w -f infra/docker-compose.yml up -d --build` | The merge conflicted only in pnpm-lock.yaml (68 hunks); resolved in the scratch tree by taking HEAD's lock and running `pnpm install --lockfile-only`. NOTE for the integrator: merging p3/board-mock after p2/hub-history will conflict on pnpm-lock.yaml; regenerate it. Both images built (web: pnpm install, tsc, vite build). Both containers healthy. GET web `/` -> 200, 414 B `index.html` (`<title>sessiondeck</title>`, `/assets/index-BaK0dY3K.js`), CSP and security headers present; asset 200 (262,977 B); hub `/health` -> 200 `{"ok":true}`. Torn down with `down -v`, worktree removed, nothing pushed. packages/web is not on p2/hub-history, so this is proven on the scratch merge only. | pass |
+| R2.4 | rows above (load harness, 2026-10-20T23:46Z); at close, replay-mode load against the compose hub | p95 15.71 ms on the compose hub in replay mode at ~342 envelopes/s (not the 1k/s gate); the 1k/s sustained result (p95 10.91 ms) and the container 1k/s result (p95 12.89 ms) were recorded at aa80a18. Not re-run at e25cef3: the only commit after aa80a18 is docs (`git diff aa80a18 HEAD --stat` shows docs only). Laptop-native confirmation still advisable. | pass |
+| Scope: statusline_samples retention / 30-day compaction / replay command | included in the suite above (replay.test.ts, replay-review.test.ts, ingest-golden.test.ts, retention tests) and the bench compaction run | suite green; bench compacted 528718 events and replay rebuilt 300 sessions with 0 reducer exceptions | pass |
+
+Cleanup: no `sd-1-s4*` container, volume or network remains; scratch token and env files deleted. Images `sessiondeck-hub:dev` and `sessiondeck-web:dev` stay in the local image cache.
+
+### S4 re-confirmation at c187737 (run 2026-10-21T01:04Z to 01:06Z)
+
+Commits since e25cef3: f7724f5, 7990481, 9cff0ca (test-only speedups for the Windows R0.5 budget), c187737 (test hardening), 68d3c1f (production: `Store.open` sets `synchronous = NORMAL` explicitly; sd-reviewer showed the effective level was already NORMAL after the first transaction because better-sqlite3 is built with SQLITE_DEFAULT_WAL_SYNCHRONOUS=1).
+
+| Check | Command | Key output | Verdict |
+|---|---|---|---|
+| Suite (R2.9, R2.10) | `pnpm -r --workspace-concurrency=1 test -- --maxWorkers=2` (single process, foreground; run twice, same result) | hub 28 files, 1090 passed, 1 skipped; contract 21 files, 282 passed; scripts 28 files, 575 passed, 7 skipped (1 file skipped); exit 0 | R2.9 pass, R2.10 pass |
+| Typecheck | `pnpm -r typecheck` | contract, hub, scripts Done; exit 0 | pass |
+| Lint | `pnpm -r lint` | contract, hub, scripts Done; exit 0 | pass |
+| R2.4 sustained | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` | 70900 envelopes accepted, 0 errors, 0 duplicates; p50 8.99, p95 12.28, p99 15.38, max 26.18 ms; achieved 1001/s over 65.8 s; pragmas synchronous=1 (NORMAL), wal; hub log 0 warn/error; "PASS (p95 12.28 ms)" | pass |
+| R0.5 CI | `gh run view 39524443261 --json jobs` (push), `gh run view 39524449217 --json jobs` (pull_request); both headSha c187737, all jobs success | see below | pass |
+
+uptime: before the load run `01:04:36 up 2 days, 20:36, load average: 4.63, 1.72, 1.14` (load elevated by the preceding typecheck and lint); after `01:05:50 up 2 days, 20:37, load average: 1.55, 1.42, 1.08`.
+
+R0.5 step "test (R0.5 budget 60 s)" durations (budget 60 s):
+
+| Job | push 39524443261 | pull_request 39524449217 |
+|---|---|---|
+| ubuntu node 22 | 25 s | 26 s |
+| ubuntu node 24 | 21 s | 24 s |
+| windows node 22 | 52 s | 46 s |
+| windows node 24 | 38 s | 47 s |
+
+Windows range 38 to 52 s against 33 to 45 s on the sprint base 78b3ba8 (run 39459664795). Note: the Windows R0.5 margin is thin (worst case 52 s of 60 s, 8 s headroom) and about 5 to 7 s slower than the base.
+
+Verdicts: R2.4 pass, R2.9 (suite) pass, R2.10 (suite) pass, R0.5 (CI) pass.

@@ -145,7 +145,10 @@ describe("D-S3-6 last_seq is the batch's acknowledged max", () => {
 });
 
 describe("indexes (migration 2)", () => {
-  const SIG = "SELECT 1 AS x FROM events WHERE signature = ? AND ts > ? AND ts < ? LIMIT 1";
+  const SIG =
+    "SELECT 1 AS x FROM events WHERE session_id = ? AND ts > ? AND ts < ? AND signature = ? LIMIT 1";
+  const SIG_NULL =
+    "SELECT 1 AS x FROM events WHERE session_id IS NULL AND ts > ? AND ts < ? AND signature = ? LIMIT 1";
   const OPEN = "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')";
   const plan = (sql: string, ...args: unknown[]) =>
     (h.store.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as { detail: string }[]).map(
@@ -155,13 +158,20 @@ describe("indexes (migration 2)", () => {
   it("the plans below are the SQL store.ts really runs", () => {
     const src = readFileSync(path.join(HUB_ROOT, "src/db/store.ts"), "utf8");
     expect(src).toContain(`"${SIG}"`);
+    expect(src).toContain(`"${SIG_NULL}"`);
     expect(src).toContain(`"${OPEN}"`);
   });
 
-  it("the signature window is an index range seek on (signature, ts)", () => {
-    const d = plan(SIG, "sig", 1, 2);
-    expect(d.join("\n")).toMatch(/events_signature_ts \(signature=\? AND ts>\? AND ts<\?\)/);
-    expect(d.some((x) => /^SCAN/.test(x))).toBe(false);
+  it("the signature window is a covering range seek on (session_id, ts, signature)", () => {
+    for (const [sql, args] of [
+      [SIG, ["s", 1, 2, "sig"]],
+      [SIG_NULL, [1, 2, "sig"]],
+    ] as const) {
+      const d = plan(sql, ...args);
+      expect(d.join("\n")).toMatch(/COVERING INDEX events_session_ts_sig \(session_id/);
+      expect(d.join("\n")).toMatch(/ts>\? AND ts<\?/);
+      expect(d.some((x) => /^SCAN/.test(x))).toBe(false);
+    }
   });
 
   it("the open-sessions lookup uses sessions_host_state and never scans the table", () => {

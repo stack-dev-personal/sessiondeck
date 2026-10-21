@@ -35,6 +35,9 @@ export function registerIngest(
     hostLimiter: RateLimiter;
     /** D-S3-5 (c): new hosts are refused once the hosts table holds this many. */
     maxHosts: number;
+    /** Hub clock and the allowed lead of an envelope ts over it (HUB_MAX_CLOCK_SKEW_MS). */
+    now: () => number;
+    maxClockSkewMs: number;
     sanitize: (err: FastifyError, req: FastifyRequest, reply: FastifyReply) => unknown;
   },
 ): void {
@@ -67,6 +70,18 @@ export function registerIngest(
       const boundsReason = checkBounds(host, envelopes);
       if (boundsReason !== null) return bad(reply, boundsReason);
       if (envelopes.some((e) => e.host !== host)) return bad(reply, "host_mismatch");
+      // The contract bounds ts only below; a far-future ts would pin compaction and sample
+      // pruning behind it. The batch is refused whole, like any other bound violation.
+      const latest = deps.now() + deps.maxClockSkewMs;
+      const future = envelopes.findIndex((e) => e.ts > latest);
+      if (future >= 0) {
+        // Counts only: no payload, no ids, no timestamps echoed from the batch.
+        req.log.warn(
+          { host: host.slice(0, 64), index: future, count: envelopes.length },
+          "batch rejected: envelope ts too far in the future",
+        );
+        return bad(reply, `envelopes[${future}].ts: too_far_in_future`);
+      }
 
       // (c) Synchronous from here to ingest(): the count and the insert cannot interleave.
       if (deps.store.getHost(host) === undefined && deps.store.countHosts() >= deps.maxHosts) {
@@ -78,7 +93,12 @@ export function registerIngest(
 
       const r = deps.ingestor.ingest(host, envelopes);
       // last_seq is the batch's acknowledged max (see Ingestor.ingest), never a stored max.
-      const res: IngestResponse = { accepted: r.accepted, last_seq: r.last_seq };
+      // expired (older than the compaction watermark, acknowledged but not stored) is additive.
+      const res: IngestResponse & { expired?: number } = {
+        accepted: r.accepted,
+        last_seq: r.last_seq,
+        ...(r.expired > 0 ? { expired: r.expired } : {}),
+      };
       return reply.send(res);
     },
   );

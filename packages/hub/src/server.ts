@@ -10,7 +10,10 @@ import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
+import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
+import { PricingProvider, bundledTable } from "./pricing/loader.ts";
+import { IngestActivity } from "./ingest/activity.ts";
 import { registerStream, tokenFromProtocols } from "./stream.ts";
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
@@ -23,11 +26,18 @@ export function buildServer(opts: {
   logStream?: { write(msg: string): void };
   /** Test hook: clock for the rate limiter and the hosts.last_seen column. */
   now?: () => number;
+  /** Test hook: wall clock for the envelope-ts bound (defaults to Date.now, independent of `now`). */
+  wallClock?: () => number;
   /** Test hooks for WS /stream. */
   heartbeatMs?: number;
   maxBufferedBytes?: number;
   refuseFallbackMs?: number;
+  /** Cost history pricing; defaults to the bundled table. main.ts passes the configured one. */
+  pricing?: PricingProvider;
+  /** Shared with background work that yields to ingest (retention); created here when absent. */
+  activity?: IngestActivity;
 }): FastifyInstance {
+  const activity = opts.activity ?? new IngestActivity();
   const expected = digest(opts.config.token);
 
   const isAuthed = (header: string | string[] | undefined): boolean => {
@@ -88,13 +98,34 @@ export function buildServer(opts: {
   // D-S3-14: reads and upgrades share one per-principal bucket, separate from ingest's.
   const now = opts.now ?? Date.now;
   const readLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 16, now);
+  const historyLimiter = new RateLimiter(
+    opts.config.historyRate,
+    opts.config.historyBurst,
+    16,
+    now,
+  );
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
     const principal = principalOf(req.headers.authorization);
     if (principal === null) return deny(reply);
+    // Only authenticated ingest counts as activity, or a tokenless client could keep compaction from
+    // ever seeing quiet. Covers body read, handling and the reply: closed by the response's own
+    // 'close', which also fires when the client aborts, so a dropped connection cannot leave the
+    // counter raised.
+    if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
+      reply.raw.once("close", activity.begin());
+    }
     if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
       return reply.code(429).header("content-length", "0").send();
+    }
+    if (
+      (req.method === "GET" || req.method === "HEAD") &&
+      req.url.split("?")[0]?.startsWith("/history/") === true
+    ) {
+      if (!historyLimiter.take(principal, 1)) {
+        return reply.code(429).header("content-length", "0").send();
+      }
     }
   });
 
@@ -122,9 +153,17 @@ export function buildServer(opts: {
       now,
     ),
     maxHosts: opts.config.maxHosts,
+    now: opts.wallClock ?? Date.now,
+    maxClockSkewMs: opts.config.maxClockSkewMs,
     sanitize,
   });
   registerRead(app, opts.store, now);
+  registerCost(
+    app,
+    opts.store,
+    opts.pricing ?? new PricingProvider(bundledTable()),
+    opts.config.timezone,
+  );
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,
