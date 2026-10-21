@@ -153,3 +153,20 @@ Verified 2026-10-21T18:45Z by sd-verifier. Compose project sd-1-fix5, images ren
 R2.4 is not marked pass: the only passing numbers are the earlier clean-host runs in this file (p95 10.91 to 12.89 ms), not this fix. Requirement unchanged.
 
 Count: 6 pass / 1 fail (R2.4 under contention) / 1 unverifiable (BuildKit, needs-laptop-confirmation).
+
+## FIX-5 resume (R0.5 option A), HEAD 45ec370
+
+Verified 2026-10-21T19:28:06Z by sd-verifier. Compose project sd-1-fix5, images renamed via an override file (sd-1-fix5-hub:dev, sd-1-fix5-web:dev), throwaway token in /tmp/sd-1-fix5-verify, ports 18787 and 15173, classic builder (DOCKER_BUILDKIT=0). Raw outputs: /state/1/gate/FIX-5/verify2-compose-*.txt, verify2-cleanup.txt. User decision R2.4 option A (/state/1/answers/FIX-5.md).
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| Web and hub image build (classic) | `DOCKER_BUILDKIT=0 docker compose -p sd-1-fix5 -f infra/docker-compose.yml -f override.yml build` | exit 0, "Successfully built ce8b3bcf8185 / Successfully tagged sd-1-fix5-hub:dev", wall 47.7 s; web image built (verify2-compose-build.txt) | pass | 2026-10-21T19:28:06Z |
+| Stack up healthy | `compose up -d`, `compose ps` | both containers "(healthy)" after 21 s (verify2-compose-up.txt) | pass | 2026-10-21T19:28:06Z |
+| Hub GET /health 200 | `docker exec sd-1-fix5-hub-1 node -e fetch(.../health)` | "hub /health 200 {"ok":true}". Host loopback curl returns 000 (daemon not on this host's loopback, as in earlier runs), so probed in-container | pass (in-container) | 2026-10-21T19:28:06Z |
+| Web GET / 200 | `docker exec sd-1-fix5-web-1 wget -S -q -O /dev/null http://127.0.0.1:8080/` | "HTTP/1.1 200 OK, Server: nginx" | pass (in-container) | 2026-10-21T19:28:06Z |
+| Web runtime image has no e2e/spec files | `docker run --rm --entrypoint sh sd-1-fix5-web:dev -c 'find / -xdev ( -name "*.spec.*" -o -name "*.test.*" -o -name e2e -o -name load )'` | find printed nothing; html root holds 50x.html, assets, index.html | pass | 2026-10-21T19:28:06Z |
+| Cleanup | `compose down -v`, `docker rmi`, listing of containers, images, volumes, networks and /tmp | none named sd-1-fix5* remain; /tmp/sd-1-fix5-verify removed (verify2-compose-down.txt) | pass | 2026-10-21T19:28:06Z |
+| R2.4 ingest p95 < 20 ms per batch of 100 at 1k envelopes/s | not re-run (instructed). Evidence read: /state/1/gate/FIX-5/f3-load-*.log, verify-load-HEAD.txt, docs/HUB-BENCH.md section "FIX-5 (R2.4 at HEAD dbb1e33)" | Same-host runs: 0e321fe p95 28.46 / 20.56 / 25.85 ms; HEAD 47.89 / 163.64 / 22.54 ms; verify run at HEAD p95 32.41 ms. Neither revision meets 20 ms on this shared host; `git log 0e321fe..HEAD -- packages/hub packages/contract` empty, so no regression evidence. Earlier clean-host passes: p95 10.91 to 12.89 ms. Laptop command for the conductor at merge approval: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20`; a failure there blocks the merge to main | needs laptop confirmation (not pass, not fail) | 2026-10-21T19:28:06Z |
+| CI at 45ec370 | GitHub Actions | not runnable (billing block) | pending CI (Actions billing block) | 2026-10-21T19:28:06Z |
+
+Count: 6 pass / 0 fail / 0 unverifiable, 1 needs laptop confirmation (R2.4), 1 pending CI. The BuildKit allow-list row from the dbb1e33 section is unchanged (no buildx here; no infra file changed since dbb1e33).

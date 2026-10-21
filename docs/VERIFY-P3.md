@@ -239,3 +239,15 @@ Verified 2026-10-21T18:46Z by sd-verifier. Not re-run by me (live run needs a hu
 | R3.1 live, empty hub | read f4-e2e-live-empty.log | samples 35, 34, 13, 37, 11 ms; "R3.1 max 37 ms"; 1 passed, EXIT=0 | pass (orchestrator evidence) | 2026-10-21 |
 
 Count: 3 pass / 0 fail / 0 unverifiable. The web unit suite (214 tests) passes at HEAD (see VERIFY-P0 FIX-5).
+
+## FIX-5 resume (R0.5 option A), HEAD 45ec370
+
+Verified 2026-10-21T19:28:06Z by sd-verifier. `git diff --stat dbb1e33..45ec370 -- packages/web packages/hub infra` is empty (no web, hub or infra change since the R3.1 spec change). Raw: /state/1/gate/FIX-5/verify2-f4-live-seeded.txt, verify2-cleanup.txt.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R3.1 live on a hub that already holds sessions | Copy of packages/web/scripts/e2e-live.sh (kept in /tmp, not in the repo) with one added step: after the hub is healthy, POST 20 sessions (5 live, 15 ended) to /ingest. Run with `SD_E2E_PREFIX=sd-1-fix5-f4 SD_E2E_ARGS=R3.1 SD_E2E_SKIP_PERF=1 SD_E2E_WORK_VOLUME=sprint-1-work`: hub image built from packages/hub/Dockerfile, ws-gate and pinned Playwright container on a private network | "seed ingest 200 20 sessions, 5 live"; "R3.1 latency ms, 5 samples: 84, 24, 27, 20, 37"; "R3.1 max 84 ms" against the unchanged < 1000 ms check; "1 passed (15.4s)", exit 0 | pass | 2026-10-21T19:28:06Z |
+| Web unit suite | `pnpm -r test` (VERIFY-P0 FIX-5 resume) | web 20 files, 214 tests pass | pass | 2026-10-21T19:28:06Z |
+| Cleanup | listing of containers, images, volumes, networks named *fix5* | none remain (verify2-cleanup.txt) | pass | 2026-10-21T19:28:06Z |
+
+Count: 3 pass / 0 fail / 0 unverifiable.
