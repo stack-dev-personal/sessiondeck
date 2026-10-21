@@ -21,13 +21,13 @@ test("R3.1 a SessionStart posted to the hub shows as a card within 1 s", async (
   await configureHub(page);
   await page.goto("/board");
   await waitConnected(page);
-  await expect(page.getByTestId("session-card")).toHaveCount(0);
 
+  // The hub may already hold sessions: assert on this spec's own session ids only.
+  const ids: string[] = [];
   const samples: number[] = [];
-  let last = "";
   for (let i = 0; i < 5; i++) {
     const id = newSessionId();
-    last = id;
+    ids.push(id);
     const t0 = performance.now();
     await ingest([startEnv(id)]);
     await card(page, id).waitFor({ state: "visible", timeout: 5_000 });
@@ -36,7 +36,9 @@ test("R3.1 a SessionStart posted to the hub shows as a card within 1 s", async (
   console.log(`R3.1 latency ms (POST sent to card visible), 5 samples: ${samples.join(", ")}`);
   console.log(`R3.1 max ${Math.max(...samples)} ms`);
   expect(Math.max(...samples)).toBeLessThan(1000);
-  await expect(page.getByTestId("session-card")).toHaveCount(5);
-  await expect(card(page, last)).toHaveAttribute("data-state", /.+/);
+  for (const id of ids) {
+    await expect(card(page, id)).toBeVisible();
+    await expect(card(page, id)).toHaveAttribute("data-state", /.+/);
+  }
   await page.screenshot({ path: shot("R3.1.png") });
 });
