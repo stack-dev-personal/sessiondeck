@@ -155,3 +155,7 @@ Tree: sprint/1-mvp at 3d6167c plus staged uncommitted `git merge --no-ff p1/prob
 | Gates | frozen lockfile, typecheck, lint, `pnpm -r test` (reused) | pass (exit 0; contract 1090, hub 282, probe 311, scripts 575) | /state/1/gate/FIX-2/{frozen-lockfile,typecheck,lint,test}.txt |
 
 Count: 10 pass / 0 fail / 0 unverifiable (Windows-only parts verified by CI; R1.1 laptop number outstanding).
+
+# FIX-3 re-confirmation (merge p3/board-mock)
+
+Verified 2026-10-21T01:59:45Z by sd-verifier. Staged merge of p3/board-mock (S5) into sprint/1-mvp, base 88d9c07. Command: `git diff --cached --quiet 88d9c07 -- packages/hub packages/probe packages/contract`, exit 0 (empty diff: hub, probe and contract are byte-identical to 88d9c07). Full suite on the merged tree: /state/1/gate/FIX-3/test.txt, Test Files 28 passed | 1 skipped, Tests 575 passed | 7 skipped, exit 0. Benches not rerun (diff empty). All existing R1.x rows still PASS: no source they cover changed. Result: PASS (no regression). Evidence for the diff check is the exit code only; it was not saved to a file.

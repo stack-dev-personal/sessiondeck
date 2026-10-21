@@ -1,0 +1,130 @@
+@import "./tokens.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: 1.45;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes sd-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.sd-pulse {
+  animation: sd-pulse 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-pulse {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Card geometry: fixed so values arriving never move the grid (design system principle 3). */
+:root {
+  --card-h: 10rem;
+  --card-compact-h: 36px;
+  --drawer-w: 420px;
+  --spark-h: 40px;
+}
+
+@keyframes sd-glow {
+  0% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 0 0 var(--accent-attention);
+  }
+  40% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 10px 3px var(--accent-attention);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px var(--accent-attention),
+      0 0 0 0 transparent;
+  }
+}
+
+/* Attention: steady 1px ring, plus a one-time 400 ms glow on arrival. */
+.sd-attention {
+  border-color: var(--accent-attention);
+  box-shadow: 0 0 0 1px var(--accent-attention);
+  animation: sd-glow 400ms var(--ease) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-attention {
+    animation: none;
+  }
+}
+
+/*
+ * Ended and exited cards dim the surface layer only: a quieter border and fainter meter bars.
+ * Text, badges and glyphs keep full opacity on surface-1 so every token keeps its measured
+ * contrast (R3.7). Never put opacity or color on this class.
+ */
+.sd-dim {
+  border-color: color-mix(in srgb, var(--border) 50%, var(--bg));
+}
+.sd-dim [data-slot="bar"] {
+  opacity: 0.5;
+}
+
+/* Detail drawer: a fixed overlay (the board never reflows) that slides in from the right. */
+.sd-scrim {
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+
+@keyframes sd-slide-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.sd-drawer {
+  animation: sd-slide-in var(--t-base) var(--ease) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-drawer {
+    animation: none;
+  }
+}
