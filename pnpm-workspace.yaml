@@ -7,3 +7,7 @@ allowBuilds:
   esbuild: true
 # R0.5: run recursive scripts without topological ordering so package suites start together.
 sort: false
+# R0.5: pnpm's default runs only min(4, cpus) package scripts at once, and the runner showed two at a time,
+# so hub -> probe -> scripts ran as a serial chain behind web. All five suites start together; vitest's own
+# worker pools then share the cores (4-CPU proxy: 36.7 s with 2 at a time, 26.9 s with all five).
+workspaceConcurrency: 8
