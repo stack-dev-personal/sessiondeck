@@ -65,3 +65,30 @@ Machine and node as in docs/HUB-BENCH.md. One test process at a time, `--maxWork
 | Scope: statusline_samples retention / 30-day compaction / replay command | included in the suite above (replay.test.ts, replay-review.test.ts, ingest-golden.test.ts, retention tests) and the bench compaction run | suite green; bench compacted 528718 events and replay rebuilt 300 sessions with 0 reducer exceptions | pass |
 
 Cleanup: no `sd-1-s4*` container, volume or network remains; scratch token and env files deleted. Images `sessiondeck-hub:dev` and `sessiondeck-web:dev` stay in the local image cache.
+
+### S4 re-confirmation at c187737 (run 2026-10-21T01:04Z to 01:06Z)
+
+Commits since e25cef3: f7724f5, 7990481, 9cff0ca (test-only speedups for the Windows R0.5 budget), c187737 (test hardening), 68d3c1f (production: `Store.open` sets `synchronous = NORMAL` explicitly; sd-reviewer showed the effective level was already NORMAL after the first transaction because better-sqlite3 is built with SQLITE_DEFAULT_WAL_SYNCHRONOUS=1).
+
+| Check | Command | Key output | Verdict |
+|---|---|---|---|
+| Suite (R2.9, R2.10) | `pnpm -r --workspace-concurrency=1 test -- --maxWorkers=2` (single process, foreground; run twice, same result) | hub 28 files, 1090 passed, 1 skipped; contract 21 files, 282 passed; scripts 28 files, 575 passed, 7 skipped (1 file skipped); exit 0 | R2.9 pass, R2.10 pass |
+| Typecheck | `pnpm -r typecheck` | contract, hub, scripts Done; exit 0 | pass |
+| Lint | `pnpm -r lint` | contract, hub, scripts Done; exit 0 | pass |
+| R2.4 sustained | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` | 70900 envelopes accepted, 0 errors, 0 duplicates; p50 8.99, p95 12.28, p99 15.38, max 26.18 ms; achieved 1001/s over 65.8 s; pragmas synchronous=1 (NORMAL), wal; hub log 0 warn/error; "PASS (p95 12.28 ms)" | pass |
+| R0.5 CI | `gh run view 39524443261 --json jobs` (push), `gh run view 39524449217 --json jobs` (pull_request); both headSha c187737, all jobs success | see below | pass |
+
+uptime: before the load run `01:04:36 up 2 days, 20:36, load average: 4.63, 1.72, 1.14` (load elevated by the preceding typecheck and lint); after `01:05:50 up 2 days, 20:37, load average: 1.55, 1.42, 1.08`.
+
+R0.5 step "test (R0.5 budget 60 s)" durations (budget 60 s):
+
+| Job | push 39524443261 | pull_request 39524449217 |
+|---|---|---|
+| ubuntu node 22 | 25 s | 26 s |
+| ubuntu node 24 | 21 s | 24 s |
+| windows node 22 | 52 s | 46 s |
+| windows node 24 | 38 s | 47 s |
+
+Windows range 38 to 52 s against 33 to 45 s on the sprint base 78b3ba8 (run 39459664795). Note: the Windows R0.5 margin is thin (worst case 52 s of 60 s, 8 s headroom) and about 5 to 7 s slower than the base.
+
+Verdicts: R2.4 pass, R2.9 (suite) pass, R2.10 (suite) pass, R0.5 (CI) pass.
