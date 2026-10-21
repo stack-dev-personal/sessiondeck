@@ -121,3 +121,21 @@ Notes:
 - Margin: worst p95 is 12.89 ms against 20 ms (about 36% headroom). Worst single batch is 29.79 ms (hot session), which is a max, not a p95.
 
 Verdict: R2.4 PASS in this environment on all five runs (p95 10.91 to 12.89 ms, 0 failures, 1k envelopes/s sustained, including during compaction, with a hot session, and against the containerized hub over the network path). Laptop-native confirmation (Windows host, Docker Desktop or a hub run natively) is still advisable: this is a Linux VM on the laptop sharing CPUs with other containers, and the Windows filesystem and antivirus behavior of the real deployment are not exercised. A pass here is a strong indication, not a measurement of the target host.
+
+## FIX-5 (R2.4 at HEAD dbb1e33)
+
+Machine: Debian 12 (WSL2 kernel 6.18.33.2-microsoft-standard-WSL2), AMD Ryzen AI 9 465 w/ Radeon 880M, 20 logical CPUs, 20 GB RAM, node v22.23.3. Shared host: other sessions were running (load average 3.29 before, 1.45 after my run).
+
+Command: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20`
+
+| Run | Revision | p50 ms | p95 ms | p99 ms | max ms | Result |
+|---|---|---|---|---|---|---|
+| verifier, 2026-10-21T18:41Z | dbb1e33 | 16.01 | 32.41 | 41.33 | 50.90 | FAIL (limit 20) |
+| orchestrator 1 | 0e321fe | 13.69 | 28.46 | 39.21 | 77.06 | FAIL |
+| orchestrator 2 | 0e321fe | 11.45 | 20.56 | 25.60 | 30.77 | FAIL |
+| orchestrator 3 | 0e321fe | 12.29 | 25.85 | 41.92 | 177.35 | FAIL |
+| orchestrator 1 | dbb1e33 | 14.52 | 47.89 | 185.69 | 298.02 | FAIL |
+| orchestrator 2 | dbb1e33 | 11.77 | 163.64 | 2635.53 | 3167.53 | FAIL |
+| orchestrator 3 | dbb1e33 | 11.34 | 22.54 | 36.80 | 54.74 | FAIL |
+
+`git log 0e321fe..HEAD -- packages/hub packages/contract` is empty and hub's resolved dependencies are identical, so there is no regression versus 0e321fe; the failures are host contention. Earlier clean-host runs in this file passed (p95 10.91 to 12.89 ms). Verdict for FIX-5: R2.4 fail on this host, needs-laptop-confirmation. Raw: /state/1/gate/FIX-5/verify-load-HEAD.txt, f3-load-*.log.

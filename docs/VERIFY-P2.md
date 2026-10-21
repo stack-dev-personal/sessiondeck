@@ -133,3 +133,23 @@ Verified 2026-10-21T01:59:45Z by sd-verifier. Staged merge of p3/board-mock (S5)
 # FIX-4 re-confirmation (merge p3/board-live)
 
 Verified 2026-10-21T02:12:20Z by sd-verifier. Staged merge of p3/board-live (S6) into sprint/1-mvp, base fb803a6. Command: `git diff --cached --quiet fb803a6 -- packages/hub packages/probe packages/contract scripts`, exit 0 (empty diff: S6 changes only packages/web, docs, e2e screenshots and ci.yml). Full suite on the merged tree: /state/1/gate/FIX-4/test.txt, contract 1090, hub 282, probe 311, web 214, scripts 575, exit 0; typecheck and lint exit 0. Benches not rerun (diff empty). All existing R2.x rows still PASS. Result: PASS (no regression). Evidence for the diff check: /state/1/gate/FIX-4/verify-p1p2-diff.txt.
+
+# FIX-5 (web image build and compose stack, R2.4 load), HEAD dbb1e33, range 03ddab7..dbb1e33
+
+Verified 2026-10-21T18:45Z by sd-verifier. Compose project sd-1-fix5, images renamed via an override file (sd-1-fix5-hub:dev, sd-1-fix5-web:dev), throwaway token in /tmp/sd-1-fix5-verify, ports 18787 and 15173. Classic builder only (DOCKER_BUILDKIT=0; buildx is not installed). Raw outputs: /state/1/gate/FIX-5/verify-compose-*.txt, verify-load-HEAD.txt.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| Web image build (classic) incl. new `COPY packages/web/e2e/load/*.ts` | `DOCKER_BUILDKIT=0 docker compose -p sd-1-fix5 -f infra/docker-compose.yml -f override.yml build` | "Successfully built db7e03b1b5dc / Successfully tagged sd-1-fix5-hub:dev"; both images present: sd-1-fix5-hub:dev, sd-1-fix5-web:dev (90.6 MB) (verify-compose-build.txt) | pass | 2026-10-21T18:37Z |
+| Stack healthy | `docker compose ... up -d`, poll `docker inspect` health | hub=healthy web=healthy after 10 s (verify-compose-up.txt) | pass | 2026-10-21T18:41Z |
+| Hub GET /health 200 | `docker exec sd-1-fix5-hub-1 node -e fetch(.../health)` | "hub /health 200 {"ok":true}". Host loopback curl to published ports returns 000 (daemon not on this host's loopback, same as earlier runs), so probed in-container | pass (in-container) | 2026-10-21T18:41Z |
+| Web GET / 200 | `docker exec sd-1-fix5-web-1 wget -S -q -O /dev/null http://127.0.0.1:8080/` | "HTTP/1.1 200 OK, Server: nginx" | pass (in-container) | 2026-10-21T18:41Z |
+| Runtime web image has no e2e/spec files | `docker run --rm --entrypoint sh sd-1-fix5-web:dev -c 'find / -xdev -name "*.spec.*" -o -name "*.test.*" -o -name e2e -o -name load ...'` | find printed nothing; html root holds only 50x.html, assets, index.html | pass | 2026-10-21T18:41Z |
+| Cleanup | `compose down -v`; `docker rmi`; `docker ps -a --filter name=sd-1-fix5` | 0 containers, 0 images, 0 volumes remain (verify-compose-down.txt) | pass | 2026-10-21T18:42Z |
+| BuildKit allow-list `infra/web/Dockerfile.dockerignore` (`!packages/web/e2e/load/*.ts`) | none runnable here (no buildx). Diff reviewed: same line added to root .dockerignore and the Dockerfile COPY | not run | needs-laptop-confirmation | 2026-10-21 |
+| R2.4 ingest p95 < 20 ms per batch of 100 | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` (single run at HEAD, nothing else of mine running; uptime before 3.29 / after 1.45 load avg, other sessions active on the host) | p50 16.01 p95 32.41 p99 41.33 max 50.90 ms; 70900 accepted, 0 errors, 0 warn/error hub log lines; "R2.4 ingest p95 < 20 ms per batch of 100: FAIL (p95 32.41 ms)" (verify-load-HEAD.txt) | fail (no regression vs 0e321fe; host contention); needs-laptop-confirmation | 2026-10-21T18:42Z |
+| R2.4 same-host comparison (orchestrator runs) | read /state/1/gate/FIX-5/f3-load-{0e321fe,HEAD}-run{1,2,3}.log; `git log 0e321fe..HEAD -- packages/hub packages/contract` | 0e321fe p95 28.46 / 20.56 / 25.85 ms; HEAD 47.89 / 163.64 / 22.54 ms. The git log is empty and hub's resolved deps are identical (per the orchestrator, f3-bisect-install.log). Neither revision meets 20 ms on this contended host | fail (both revisions); no regression evidence | 2026-10-21 |
+
+R2.4 is not marked pass: the only passing numbers are the earlier clean-host runs in this file (p95 10.91 to 12.89 ms), not this fix. Requirement unchanged.
+
+Count: 6 pass / 1 fail (R2.4 under contention) / 1 unverifiable (BuildKit, needs-laptop-confirmation).

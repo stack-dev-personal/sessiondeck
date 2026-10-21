@@ -436,3 +436,19 @@ INFRA-1 verification (2026-10-20, branch p0/sprint-auth, worktree `C:/Users/stac
 | R0.8 deny rules and `guard.mjs` active inside the container | none runnable here; check at the same relaunch by issuing one command the guard blocks and confirming it is refused | Not run | unverifiable (open, check at the Sprint 1 relaunch) | 2026-10-20 01:00Z |
 
 INFRA-1 result: 4 pass / 0 fail / 2 unverifiable (1 needs laptop confirmation, 1 open).
+
+# FIX-5 (R0.5 test budget), HEAD dbb1e33, range 03ddab7..dbb1e33
+
+Verified 2026-10-21T18:45Z by sd-verifier. Host: Debian 12 on WSL2, node v22.23.3, 20 logical CPUs (2-vCPU proxy via `taskset -c 0-1`). Raw outputs: /state/1/gate/FIX-5/verify-*.txt.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R0.5 install and static gates | `pnpm install --frozen-lockfile`; `pnpm -r typecheck`; `pnpm -r lint`; `pnpm lint:root` | install "Lockfile is up to date"; typecheck, lint, lint:root all exit 0 (verify-install.txt, verify-static.txt) | pass | 2026-10-21T18:33Z |
+| R0.5 format | `pnpm format:check`, then `git ls-files \| xargs pnpm exec prettier --check --ignore-unknown` | format:check exit 1, but all 174 warnings are under untracked `wt/` (0 outside wt/). Tracked files: "All matched files use Prettier code style!" (verify-format-tracked.txt) | pass (tracked files; wt/ untracked, not ours) | 2026-10-21T18:34Z |
+| R0.5 full suite, all CPUs | `pnpm -r test` | exit 0, wall 17 s. contract 1090 pass/1 skip (28 files); hub 282 (21 files); probe 311 pass/1 skip (11); web 214 (20); scripts 575 pass/7 skip (28 files, 1 skipped) (verify-test-full.txt) | pass | 2026-10-21T18:35Z |
+| R0.5 full suite, 2-vCPU proxy | `taskset -c 0-1 pnpm -r test` | exit 0, wall 41 s (budget 60 s). Same counts as above (verify-test-2cpu.txt). Host load average was 4.96 at start (other sessions), so this is a pessimistic proxy | pass (local) | 2026-10-21T18:36Z |
+| R0.5 measurements | read /state/1/gate/FIX-5/f1-2cpu-summary.md, f1-cpu-summary.md | 2-CPU proxy, workspaceConcurrency 2 / sort false: 29.1, 30.8 s; conc 3: 31.7, 31.0; conc 5: 36.6; conc 8: 35.8, 34.6; conc 3 + maxWorkers=1: 42.6, 39.6; topological order conc 2: 32.1, 34.1. All rc=0. Sum of package CPU ~59.5 s, /2 vCPU ~30 s, matches wall. Per-package pool/maxWorkers/coverage-include tuning (threads, forks, maxWorkers 1/2) found no meaningful CPU savings (web 12.7 to 20.3 s, scripts 9.7 to 11.9 s regardless; hub threads breaks 1 test; coverage costs ~1 CPU s in contract). The suite is CPU-bound at about 30 s on 2 cores | pass (local evidence) | 2026-10-21 |
+| R0.5 CI history | read /state/1/gate/FIX-5/f1-ci-package-durations.txt, /state/1/gate/03-ci.log, 03-ci-head-failed.log | Repo is private: hosted runners have 2 vCPUs. Before the fix, 03-ci.log shows "test (R0.5 budget 60 s)" failing on ubuntu node 22 and 24 (1m21s, 1m34s) and a failure on windows node 22 (2m50s). At 03ddab7 (03-ci-head-failed.log): windows-latest node 22 and node 24 jobs failed (3m28s, 3m02s) on the test step timeout; ubuntu node 22 passed (6m16s), e2e-web-live passed | fail at 03ddab7 (windows-latest step timeout), pending CI for dbb1e33. NOT marked pass | 2026-10-21 |
+| R0.5 CI at dbb1e33 | none runnable here (orchestrator pushes after this verification) | not run | pending-CI | 2026-10-21 |
+
+Count: 5 pass (local) / 1 fail (CI at 03ddab7) / 0 unverifiable, 1 pending-CI. R0.5 overall stays open until CI at dbb1e33 is green on windows-latest.

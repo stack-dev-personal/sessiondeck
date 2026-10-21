@@ -227,3 +227,15 @@ Runs on the merged tree:
 | R3.9 | live e2e R3.9.spec.ts (TCP gate cut, banner, resync, no stale working card) | PASS (2.8s) | verify-e2e-live.txt; R3.9-banner.png, R3.9.png |
 
 Count: 9 pass / 0 fail / 0 unverifiable. Tests were run one process at a time (vitest maxWorkers=2, Playwright workers=1); no test process left running.
+
+# FIX-5 (R3.1 spec change), HEAD dbb1e33, range 03ddab7..dbb1e33
+
+Verified 2026-10-21T18:46Z by sd-verifier. Not re-run by me (live run needs a hub plus a build; the evidence below was produced by the orchestrator against live hubs). Raw evidence: /state/1/gate/FIX-5/f4-e2e-live-seeded.log, f4-e2e-live-empty.log.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R3.1 spec change | `git diff 03ddab7..dbb1e33 -- packages/web/e2e/R3.1.spec.ts` | Removed the `session-card count 0` and `count 5` assertions (broke on a hub that already holds sessions); now asserts visible plus `data-state` for each of this spec's own 5 session ids. Latency check unchanged: 5 samples, `card(...).waitFor({ state: "visible", timeout: 5_000 })`, `expect(Math.max(...samples)).toBeLessThan(1000)` | pass (inspection) | 2026-10-21T18:46Z |
+| R3.1 live, seeded hub (20 sessions) | read f4-e2e-live-seeded.log | samples 36, 33, 12, 38, 11 ms; "R3.1 max 38 ms"; 1 passed, EXIT=0 | pass (orchestrator evidence) | 2026-10-21 |
+| R3.1 live, empty hub | read f4-e2e-live-empty.log | samples 35, 34, 13, 37, 11 ms; "R3.1 max 37 ms"; 1 passed, EXIT=0 | pass (orchestrator evidence) | 2026-10-21 |
+
+Count: 3 pass / 0 fail / 0 unverifiable. The web unit suite (214 tests) passes at HEAD (see VERIFY-P0 FIX-5).
