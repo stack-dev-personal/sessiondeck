@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import type { Envelope } from "@sessiondeck/contract";
 import { Store } from "../src/db/store.ts";
 import { runCli } from "../src/cli.ts";
@@ -48,19 +49,34 @@ afterEach(() => {
 });
 
 /**
- * Ingests through the Ingestor in batches of 40, the code path POST /ingest runs. The HTTP layer
- * (auth, validation, limits) is covered by the ingest tests and is not what replay is compared to.
+ * Ingests through the Ingestor in batches of `size`, the code path POST /ingest runs. The HTTP
+ * layer (auth, validation, limits) is covered by the ingest tests and is not what replay is
+ * compared to. Each (sequence, batch size) is ingested once per worker and kept as a serialized
+ * database image; every call returns its own private in-memory copy, so tests may mutate freely
+ * (R0.5 budget: the same five sequences were ingested 15 times).
  */
-function ingested(seq: Seq): { store: Store } {
-  const t = tempStore();
-  cleanups.push(t.cleanup);
-  t.store.migrate();
-  const ing = new Ingestor(t.store, capture());
-  for (let i = 0; i < seq.envelopes.length; i += 40) {
-    ing.ingest(seq.host, seq.envelopes.slice(i, i + 40));
+const images = new Map<string, Buffer>();
+function ingested(seq: Seq, size = 40): { store: Store } {
+  const key = `${seq.name}:${size}`;
+  let image = images.get(key);
+  if (!image) {
+    const t = tempStore();
+    t.store.migrate();
+    const ing = new Ingestor(t.store, capture());
+    for (let i = 0; i < seq.envelopes.length; i += size) {
+      ing.ingest(seq.host, seq.envelopes.slice(i, i + size));
+    }
+    expect(t.store.countEvents()).toBe(seq.envelopes.length);
+    image = t.store.db.serialize();
+    t.cleanup();
+    images.set(key, image);
   }
-  expect(t.store.countEvents()).toBe(seq.envelopes.length);
-  return t;
+  const db = new Database(image);
+  db.pragma("foreign_keys = ON");
+  // Store's constructor is private to keep production callers on Store.open.
+  const store = new (Store as unknown as new (d: Database.Database) => Store)(db);
+  cleanups.push(() => store.close());
+  return { store };
 }
 
 describe("R2.9 replay", () => {
@@ -463,10 +479,7 @@ describe("R2.9 compaction over the Phase 0 fixture sequences", () => {
     const seq = make();
     for (const frac of [0.3, 0.7, 2]) {
       it(`${seq.name}: cut at ${frac < 1 ? `${frac * 100}%` : "end"} then replay equals ingest`, async () => {
-        const t = tempStore();
-        cleanups.push(t.cleanup);
-        t.store.migrate();
-        new Ingestor(t.store, capture()).ingest(seq.host, seq.envelopes);
+        const t = ingested(seq, seq.envelopes.length);
         const before = derived(t.store);
         const idx = Math.min(seq.envelopes.length - 1, Math.floor(seq.envelopes.length * frac));
         const cutoffMs = frac >= 1 ? Number.MAX_SAFE_INTEGER : seq.envelopes[idx]!.ts;

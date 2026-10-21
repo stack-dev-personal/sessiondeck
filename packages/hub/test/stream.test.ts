@@ -378,7 +378,7 @@ describe("slow client", () => {
 
 describe("heartbeat", () => {
   it("terminates a client that stops answering pings; a healthy one stays", async () => {
-    await boot({}, { heartbeatMs: 500 });
+    await boot({}, { heartbeatMs: 200 });
     const dead = await connect({ autoPong: false });
     const live = await connect();
     let livePings = 0;
