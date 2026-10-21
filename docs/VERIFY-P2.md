@@ -92,3 +92,20 @@ R0.5 step "test (R0.5 budget 60 s)" durations (budget 60 s):
 Windows range 38 to 52 s against 33 to 45 s on the sprint base 78b3ba8 (run 39459664795). Note: the Windows R0.5 margin is thin (worst case 52 s of 60 s, 8 s headroom) and about 5 to 7 s slower than the base.
 
 Verdicts: R2.4 pass, R2.9 (suite) pass, R2.10 (suite) pass, R0.5 (CI) pass.
+
+## Re-confirmation on sprint/1-mvp merge (FIX-1, 2026-10-21)
+
+Tree: sprint/1-mvp at 0e321fe plus staged uncommitted merge of p1/probe-hook. Linux WSL2 container, node v22.23.3, Docker available. One test process at a time, `--maxWorkers=2`. Hub suite is now 21 files, 282 passed (earlier rows recorded other counts for different commits).
+
+| ID | Command | Result | Evidence |
+|---|---|---|---|
+| R2.1, R2.2, R2.3, R2.6, R2.7, R2.8 (unit) , R2.9 and R2.10 suites | `pnpm -F @sessiondeck/hub test -- --maxWorkers=2` | pass (21 files, 282 passed, 0 failed) | /state/1/gate/FIX-1/verify-hub-test.txt |
+| R2.5 | `node packages/hub/scripts/ws-harness.mjs` | pass: fan-out 200 deltas p50 1.30 p95 3.16 max 32.01 ms (gate 100), dup 0, missing 0; reconnect dup 0 missing 0 | /state/1/gate/FIX-1/verify-ws-harness.txt |
+| R2.8 container, R2.5 container | `node packages/hub/scripts/container-smoke.mjs` | pass ("SMOKE PASS"; auth, persistence, uid 10001, mode 0600, healthcheck; ws-harness vs container p95 2.53 max 40.92 ms, dup 0 missing 0; arm64 skipped, no buildx/qemu) | /state/1/gate/FIX-1/verify-container-smoke.txt |
+| R2.4 | `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20` | pass: p95 12.22 ms (< 20), p99 15.16, max 25.83, 1001 env/s, 70900 events, hub log 0 warn/error. Container, not the Windows laptop | /state/1/gate/FIX-1/verify-load.txt |
+| R2.9 | `cd packages/hub && node scripts/bench-replay.mjs` | pass: 1,020,000 events, replay 10683 ms (< 60000), reducer exceptions 0 | /state/1/gate/FIX-1/verify-replay.txt |
+| R2.10 | `node packages/hub/scripts/ccusage-compare.mjs packages/hub/test/fixtures/transcripts --tz UTC,Asia/Tokyo` | pass: every row ok, 0.000000% delta, token deltas 0 (fixtures only; real-transcript comparison not re-run, snapshot deleted) | /state/1/gate/FIX-1/verify-ccusage.txt |
+| Gates | typecheck, lint, test (root) | pass (exit 0) | /state/1/gate/FIX-1/{typecheck,lint,test}.txt |
+| R0.5 | CI step "test (R0.5 budget 60 s)" | verified by CI (rows above); not re-run on the merged tree, local wall 5.25 s for scripts, hub 4.0 s | n/a |
+
+Count: all re-run rows pass; verified by CI: R0.5 Windows budget; needs laptop: R2.4 and R2.9 laptop-native numbers.
