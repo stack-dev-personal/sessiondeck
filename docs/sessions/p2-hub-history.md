@@ -60,3 +60,16 @@ Hub units run one after another (one package, and the memory rule allows one tes
 - Review 2: sd-reviewer merge (minors fixed in 01b6e01: tracker after auth, abort test, CLI capped, HUB.md table, fallback test). sd-security-reviewer pass. Review 3 on 01b6e01: merge.
 - Executor results (quiet host): sustained p95 12.26 ms; with-retention 600k x3 p95 during compaction 11.45 / 10.40 / 10.67 ms, backlog drained 39 to 42 s; hot session p95 12.88 ms. Busy host (load 1.7 to 3.7, other sessions building) gave 16.8 to 30.2 ms overall, slow outside compaction too.
 - Deferred: Fastify requestTimeout/connectionTimeout unset (token holder can trickle a body; bounded by the 250 ms yield) -> S3 owner / Phase 7 hardening; checkpoint test does not assert worker terminate (MINOR); compose-container harness not re-run after fix 1 (verifier runs it).
+
+### U4 verify and session close
+- R2.4 pass at e25cef3 (sd-verifier): sustained p95 10.91 ms, with-retention x3 11.30 / 11.23 / 11.68 ms, hot session 12.76 ms, compose container 12.89 ms, 0 failures. docs/HUB-BENCH.md "R2.4 ingest load".
+- Session close (sd-verifier, 8fb55cd): pnpm -r test/typecheck/lint exit 0; R2.9 replay 8.7 s; R2.10 delta 0.000000% (fixtures; real-transcript row from 695c605 stands, cost code unchanged); integration check 1 on compose hub pass (53 sessions, live=1 returns 6); compose web pass via scratch merge with origin/p3/board-mock (pnpm-lock.yaml conflicts, regenerate at merge).
+- PR #12 opened against sprint/1-mvp.
+
+### CI fix: R0.5 Windows budget
+- PR CI at 8fb55cd: windows-latest node 24 test step timed out at 60 s twice. Cause: S4 hub tests (hub suite 5.8 s on base, 33 s on this branch on that runner).
+- Fixes by sd-executor-hub, test-only: f7724f5 (fixture cache, in-memory replay ingest, synchronous=OFF test setup), 7990481 (one ingest per sequence per worker, image copies). 9cff0ca and c187737 (review fixes) followed.
+- Production fix 68d3c1f: Store.open sets synchronous = NORMAL explicitly. Found by sd-reviewer; effective level was already NORMAL after the first transaction.
+- Reviews: f7724f5 merge; 68d3c1f..9cff0ca fix-then-merge (pragma test did not pin the fix, 200 ms heartbeat flake risk, image header, cache test order); c187737 merge.
+- CI at c187737 green, 8/8 jobs (runs 39524443261, 39524449217); Windows R0.5 step 38 to 52 s vs 33 to 45 s on base. Margin is thin, a sprint-level concern once S1/S2/S6 tests join.
+- Re-confirmation (sd-verifier, 3e6dd1e): suite exit 0, R2.4 sustained p95 12.28 ms.
