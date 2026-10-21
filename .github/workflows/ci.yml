@@ -16,10 +16,10 @@ jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
     # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
-    # format:check and the fixture gate 5 + test 1 + guard timing 7 + sprint tooling 3 + probe processes 5 = 26;
-    # 35 (raised from 30 for the probe step) leaves a margin of 9 for a cold cache on a slow Windows
+    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe processes 5 = 31;
+    # 40 (raised from 35 for the scripts processes step) leaves a margin of 9 for a cold cache on a slow Windows
     # runner. The job limit must stay above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
-    timeout-minutes: 35
+    timeout-minutes: 40
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -50,6 +50,15 @@ jobs:
         # wall locally; 4x for a Windows runner is about 38 s; vitest start-up and the esbuild build
         # in globalSetup add about 30 s, so about 70 s; 5 min (300 s) leaves generous headroom.
         run: pnpm -F @sessiondeck/probe test:proc
+        timeout-minutes: 5
+      - name: test scripts processes (R0.5 split, outside the budget)
+        # Scripts suites that start real node processes (guard-rules, capture-*, fixture-tools,
+        # fixture-leak, fixture-scrub-keys, install-*; about 66 spawns; list PROC_TESTS in
+        # scripts/vitest.config.ts) split from `pnpm -r test` after it timed out on 2-vCPU windows-latest
+        # (FIX-5, user decision R0.5 option A). Budget: 5.4 s wall locally (258 tests, 11 files, 20 s of test time
+        # over the workers); 4x for a Windows runner is about 22 s; vitest start-up adds about 30 s, so
+        # about 55 s; 5 min (300 s) leaves generous headroom for a 2-vCPU runner.
+        run: pnpm -F @sessiondeck/scripts test:proc
         timeout-minutes: 5
       - name: test guard timing (outside R0.5 budget, up to 3 attempts)
         # Timing rows moved out of the R0.5 step (decision 13). The runner reruns the whole run only

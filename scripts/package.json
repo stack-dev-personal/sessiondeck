@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:proc": "vitest run --config vitest.proc.config.ts",
     "test:sprint": "vitest run --config vitest.sprint.config.ts",
     "test:guard-timing": "vitest run --config vitest.guard-timing.config.ts",
     "test:guard-timing:ci": "node ci/guard-timing-retry.mjs",
