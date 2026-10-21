@@ -28,6 +28,7 @@ COPY packages/web/tsconfig.json packages/web/index.html packages/web/vite.config
 COPY packages/web/src packages/web/src
 COPY packages/web/scripts packages/web/scripts
 COPY packages/web/e2e/*.ts packages/web/e2e/
+COPY packages/web/e2e/load/*.ts packages/web/e2e/load/
 RUN pnpm -F @sessiondeck/web build
 
 FROM ${NGINX_IMAGE} AS runtime
