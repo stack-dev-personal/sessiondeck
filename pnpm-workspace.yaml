@@ -7,7 +7,10 @@ allowBuilds:
   esbuild: true
 # R0.5: run recursive scripts without topological ordering so package suites start together.
 sort: false
-# R0.5: pnpm's default runs only min(4, cpus) package scripts at once, and the runner showed two at a time,
-# so hub -> probe -> scripts ran as a serial chain behind web. All five suites start together; vitest's own
-# worker pools then share the cores (4-CPU proxy: 36.7 s with 2 at a time, 26.9 s with all five).
-workspaceConcurrency: 8
+# R0.5: GitHub-hosted runners for this private repo have 2 vCPUs, so pnpm's default is 2 package scripts
+# at once; each suite then brings its own vitest workers. Measured on a 2-CPU proxy (taskset -c 0-1),
+# two runs each, all green: 2 at a time 29.1 and 30.8 s, 3 at a time 31.7 and 31.0 s, 5 at a time 36.6 s,
+# 8 at a time 35.8 and 34.6 s, 3 at a time with --maxWorkers=1 42.6 and 39.6 s. Without `sort: false`
+# (topological order) 2 at a time took 32.1 and 34.1 s. More concurrency only adds contention on 2 cores
+# (an earlier 4+ suites-at-once run on default workers timed out and SIGKILLed web).
+workspaceConcurrency: 2
