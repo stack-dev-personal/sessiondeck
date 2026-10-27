@@ -23,6 +23,7 @@ import { resolveHostName } from "../host.ts";
 import { ensurePrivateDir } from "./atomic.ts";
 import { HOOK_EVENTS, MARKER } from "./events.ts";
 import { type ExePlan, ExeError, installExe, planExe, pruneExeDir } from "./exe.ts";
+import { exeHomeRefusal } from "./home-check.ts";
 import {
   type Ctx,
   type Runtime,
@@ -44,7 +45,7 @@ import {
   serialize,
 } from "./settings-io.ts";
 import { realSlash } from "./real-path.ts";
-import { getEntry, isInHome, putEntry } from "./state.ts";
+import { getEntry, isInHome, otherExeDirs, putEntry } from "./state.ts";
 import { isDeepStrictEqual } from "node:util";
 
 export interface RunIo {
@@ -169,27 +170,27 @@ export function buildCtx(distDir: string, homeDir: string, host: string, exe?: E
   const dir = realSlash(distDir);
   const home = realSlash(homeDir);
   const ctx: Ctx = { hookPath: `${dir}/hook.mjs`, home, host };
-  // An exe is the command word itself. A space would need quoting, and a quoted command word does
-  // not run in PowerShell without `&`, so such a path skips the status commands like any unsafe one.
-  const exeUnsafe = exe !== undefined && Object.values(exe.paths).some((p) => p.includes(" "));
-  const statusline = exeUnsafe
-    ? undefined
-    : shellCommand(exe ? [exe.paths.statusline] : ["node", `${dir}/statusline.mjs`], home, host);
-  const subagents = exeUnsafe
-    ? undefined
-    : shellCommand(exe ? [exe.paths.subagents] : ["node", `${dir}/subagents.mjs`], home, host);
+  // The statusLine command runs in Git Bash or PowerShell, and a quoted first word works in only one
+  // of them. So an exe path that needs quoting (a space) gets the Node form for the two status
+  // commands (`node "<dist script>"`, what --runtime node writes); the hooks, which are argv, keep
+  // the exe form.
+  const exeInShell = exe !== undefined && !Object.values(exe.paths).some((p) => p.includes(" "));
+  const statusProgram = (name: "statusline" | "subagents"): string[] =>
+    exe !== undefined && exeInShell ? [exe.paths[name]] : ["node", `${dir}/${name}.mjs`];
+  const statusline = shellCommand(statusProgram("statusline"), home, host);
+  const subagents = shellCommand(statusProgram("subagents"), home, host);
   if (exe) {
     ctx.hookExe = exe.paths.hook;
     ctx.exeDir = realSlash(exe.dir);
+    if (!exeInShell) ctx.statusRuntime = "node";
   }
   if (statusline !== undefined) ctx.statuslineCommand = statusline;
   if (subagents !== undefined) ctx.subagentsCommand = subagents;
   if (statusline === undefined || subagents === undefined) {
     // Hooks are argv and never reach a shell; only the shell-run status commands need safe paths.
-    const bad = [exe ? realSlash(exe.dir) : dir, home].filter(
-      (p) => !isShellSafe(p) || (exe !== undefined && p.includes(" ")),
-    );
-    ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(dir)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + ~ -, no ~ at the start); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
+    const program = exe !== undefined && exeInShell ? realSlash(exe.dir) : dir;
+    const bad = [program, home].filter((p) => !isShellSafe(p));
+    ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(program)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + ~ -, no ~ at the start); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
   }
   return ctx;
 }
@@ -264,10 +265,24 @@ async function install(args: Args, io: RunIo): Promise<number> {
       resolveHostName(),
     ...(existing?.allowInsecureHub === true ? { allowInsecureHub: true } : {}),
   };
-  // Exe form: hash the source exes now (read-only; refuses before anything is written).
+  // Exe form: Claude Code runs this binary on every hook, so the home must not be swappable by
+  // another account (same rule as `daemon install`); then hash the sources (read-only).
+  if (runtime === "exe") {
+    const refusal = await exeHomeRefusal(e, home);
+    if (refusal) {
+      throw new ExeError(
+        `refusing the exe form in ${home}: ${refusal}. Use the default home, or --runtime node`,
+      );
+    }
+  }
   const exePlan =
     runtime === "exe" ? await planExe(io.distDir, home, str(args.flags, "--exe-dir")) : undefined;
   const ctx = buildCtx(io.distDir, home, validateHostName(cfg.host), exePlan);
+  if (ctx.statusRuntime === "node") {
+    io.out(
+      "notice: the exe path contains a space, so statusLine and subagentStatusLine use the Node form (node + dist script); hooks use the exe",
+    );
+  }
 
   // Settings first, read-only: a malformed file aborts before anything is written.
   const loaded = await loadSettings(settingsPath);
@@ -308,7 +323,7 @@ async function install(args: Args, io: RunIo): Promise<number> {
   await putEntry(stateFile, loaded.path, { ...result.entry, backups });
   // The settings now point away from the previous exe directory; remove it (ours, recorded only).
   if (prior?.exeDir && prior.exeDir !== result.entry.exeDir) {
-    const note = await pruneExeDir(prior.exeDir, home);
+    const note = await pruneExeDir(prior.exeDir, home, await otherExeDirs(stateFile, loaded.path));
     if (note) io.out(`notice: ${note}`);
   }
   io.out(
@@ -423,7 +438,12 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
     io.out(`no settings file at ${loaded.path}; nothing to remove`);
   }
   if (entry?.exeDir) {
-    const note = await pruneExeDir(entry.exeDir, home);
+    // A home taken from the hook entries (settings data) that is not the CLI default is not trusted
+    // with a recursive delete.
+    const note =
+      inferred && home !== probeHome(e)
+        ? `not removing ${entry.exeDir}: the home ${home} was inferred from the installed hook entries; pass --home <dir> to remove it`
+        : await pruneExeDir(entry.exeDir, home, await otherExeDirs(stateFile, loaded.path));
     if (note) io.out(`notice: ${note}`);
   }
   if (entry || !inferred) await putEntry(stateFile, loaded.path, undefined);

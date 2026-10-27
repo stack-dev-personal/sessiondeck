@@ -10,7 +10,8 @@
 // Bun is a build tool only (MIT); no code is copied. The exe never autoloads .env or bunfig.toml
 // from the cwd (Claude Code runs hooks with cwd = the user's project).
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,9 +82,23 @@ const programs = [
   ...(selection.includeFloor ? [["bun-floor", `${root}/scripts/bun-floor.mjs`]] : []),
 ];
 
+// SHA-256 of the dist bundles these exes are built from; `probe install` refuses exes that do not
+// match the current dist/*.mjs (sources.json next to the exes).
+const sources = {};
+for (const bundle of ["hook.mjs", "statusline.mjs", "subagents.mjs"]) {
+  const file = `${root}/dist/${bundle}`;
+  if (!existsSync(file)) fail(`missing ${file}; run pnpm build first`);
+  sources[bundle] = createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
 for (const t of targets) {
   const outDir = `${root}/dist/exe/${t.dir}`;
   mkdirSync(outDir, { recursive: true });
+  writeFileSync(
+    `${outDir}/sources.json`,
+    `${JSON.stringify(sources, null, 2)}
+`,
+  );
   for (const [name, entry] of programs) {
     if (!existsSync(entry)) fail(`missing ${entry}; run pnpm build first`);
     const outfile = `${outDir}/${name}${t.ext}`;

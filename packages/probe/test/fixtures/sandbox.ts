@@ -26,7 +26,8 @@ export interface Sandbox {
 export function sandbox(fixture?: string, normalize = false): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "sd-install-"));
   const configDir = join(root, "claude");
-  const home = join(root, "probe-home");
+  // Under the fake profile at the CLI default spot, so the exe form's home-safety check accepts it.
+  const home = join(root, "home", "AppData", "Local", "sessiondeck");
   const fakeHome = join(root, "home");
   mkdirSync(configDir, { recursive: true });
   mkdirSync(fakeHome, { recursive: true });

@@ -25,6 +25,8 @@ export interface InstallEntry {
   runtime?: Runtime;
   /** Exe directory this install copied (exe form only); the only directory prune may remove. */
   exeDir?: string;
+  /** "node" when the status commands use the Node form although the hooks use the exe (a path with a space). */
+  statusRuntime?: "node";
 }
 
 export type Runtime = "exe" | "node";
@@ -43,6 +45,8 @@ export interface Ctx {
   /** Absent when a path is unsafe in a shell command line; then the key is skipped. */
   statuslineCommand?: string;
   subagentsCommand?: string;
+  /** Exe form only: the status commands were written in the Node form (the exe path needs quoting). */
+  statusRuntime?: "node";
   /** Why the status commands are absent (names the path). */
   statusSkipReason?: string;
 }
@@ -202,6 +206,7 @@ export function applyInstall(
       createdFile: prior?.createdFile ?? !fileExisted,
       runtime: ctx.hookExe === undefined ? "node" : "exe",
       ...(ctx.exeDir === undefined ? {} : { exeDir: ctx.exeDir }),
+      ...(ctx.statusRuntime === undefined ? {} : { statusRuntime: ctx.statusRuntime }),
     },
   };
 }
