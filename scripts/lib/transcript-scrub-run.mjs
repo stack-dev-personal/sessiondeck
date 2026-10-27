@@ -58,7 +58,7 @@ function listFiles(dir) {
 
 /**
  * @param {string} rawDir @param {string} outDir @param {string} name
- * @param {{ users: string[], emails: string[], accounts: string[] }} literals
+ * @param {import("./transcript-scrub-text.mjs").Literals} literals
  */
 export function scrubFixture(rawDir, outDir, name, literals) {
   const files = listFiles(rawDir);
@@ -131,19 +131,22 @@ export function runTranscripts(raw, out) {
     }
   const literals = discoverLiterals(all);
   console.log(
-    `literals: users ${literals.users.length}, emails ${literals.emails.length}, accounts ${literals.accounts.length}`,
+    `literals: users ${literals.users.length}, emails ${literals.emails.length}, accounts ${literals.accounts.length}, fragments ${literals.fragments.length}`,
   );
   let unknown = 0;
+  let fragmentHits = 0;
   for (const n of names) {
     const r = scrubFixture(join(root, n), join(out, "transcripts"), n, literals);
     console.log(
       `${n}: rows ${r.st.rows}, files ${r.st.files}, src ${r.st.srcBytes}, out ${r.st.outBytes}, sha256 ${r.digest.slice(0, 16)}`,
     );
+    fragmentHits += r.scrubber.text.fragmentHits;
     for (const [path, c] of [...r.scrubber.unknownKeys].sort()) {
       console.error(`UNKNOWN KEY ${n} ${path}: ${c}`);
       unknown += 1;
     }
   }
+  console.log(`fragment replacements: ${fragmentHits}`);
   if (unknown > 0)
     console.error(`UNKNOWN KEYS (${unknown} paths): review, then add to lib/fixture-keys.mjs`);
   return unknown > 0 ? 1 : 0;

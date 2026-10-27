@@ -8,11 +8,17 @@ import { BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
 
 const RUN = String.raw`[^\s"'\`<>|*?(){}\[\],;]*`;
 const SEP = String.raw`(?:[\\/]|%5[Cc]|%2[Ff])`;
+// A drive or home path may contain spaces ("My Documents"), and where a folder name ends is not
+// knowable, so after the first space the match runs on to a quote, backtick, tab, newline or the
+// end of the string. Over-cutting prose after a path is accepted; leaving a folder name is not.
+const SPACE_TAIL = String.raw`(?:[ ][^"'\`\n\r\t<>|*?]*)?`;
 const ABS_PATH = new RegExp(
   [
-    String.raw`(?<![A-Za-z0-9])[A-Za-z](?::|%3[Aa])${SEP}${RUN}`,
+    String.raw`(?<![A-Za-z0-9])[A-Za-z](?::|%3[Aa])${SEP}${RUN}${SPACE_TAIL}`,
+    String.raw`(?<![A-Za-z0-9_.:/\\~$-])\/(?:(?:mnt\/)?[A-Za-z]\/)?(?:[Uu]sers|home)\/${RUN}${SPACE_TAIL}`,
     String.raw`(?<![A-Za-z0-9_.:/\\~$-])\/(?=[A-Za-z0-9._@-]+\/)${RUN}`,
-    String.raw`(?<![A-Za-z0-9])[A-Za-z]--Users-[A-Za-z0-9._-]+`,
+    // no lookbehind: the folder name can be glued to the word before it once separators are lost
+    String.raw`[A-Za-z]--Users-[A-Za-z0-9._-]+`,
   ].join("|"),
   "g",
 );
@@ -46,7 +52,7 @@ const looksLikeSecret = (/** @type {string} */ run) =>
   /[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run);
 
 /**
- * @typedef {{ users?: string[], emails?: string[], accounts?: string[] }} Literals
+ * @typedef {{ users?: string[], emails?: string[], accounts?: string[], fragments?: string[], folders?: string[] }} Literals
  */
 
 export class TextScrubber {
@@ -68,6 +74,11 @@ export class TextScrubber {
     this.accountRe = sweep(this.accounts, true);
     // The user name must not survive anywhere, so it is replaced inside longer words too.
     this.userRe = sweep(this.users, false);
+    // Pieces of the account names (fix A): substrings, any case, inside longer words too.
+    this.fragmentRe = sweep(long(literals.fragments), false);
+    this.folderRe = sweep(long(literals.folders), true);
+    /** Number of fragment replacements made so far (reported by the run as a number only). */
+    this.fragmentHits = 0;
   }
 
   /** @param {string} m */
@@ -105,6 +116,13 @@ export class TextScrubber {
     s = s.replace(EMAIL, "<EMAIL>");
     if (this.accountRe) s = s.replace(this.accountRe, "<ACCOUNT>");
     if (this.userRe) s = s.replace(this.userRe, "<ACCOUNT>");
+    if (this.folderRe) s = s.replace(this.folderRe, "<DIR>");
+    if (this.fragmentRe) {
+      s = s.replace(this.fragmentRe, () => {
+        this.fragmentHits += 1;
+        return "<ACCOUNT>";
+      });
+    }
     return s;
   }
 

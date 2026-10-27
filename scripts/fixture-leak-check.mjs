@@ -5,6 +5,9 @@
  *
  *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>]
  *
+ * transcripts/ gets its own text, structure and account-literal checks (lib/transcript-leak-*.mjs).
+ * To prove the CI path locally, point --raw at a directory that does not exist; raw/ is never moved.
+ *
  * The default run also scans docs/CONTRACT.md with the text checks (not the payload structure check).
  *
  * With raw/ present the user name and project directory names are derived from it at run time;
@@ -44,6 +47,16 @@ console.log(`files scanned: ${r.files}`);
 console.log(
   `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped})`,
 );
+if (r.transcripts) {
+  const t = r.transcripts;
+  console.log(
+    `transcripts: files=${t.files} rows=${t.rows} raw=${t.literals.rawPresent ? "yes" : "no"} account-literals=${t.literals.accounts} fragments=${t.literals.fragments} folders=${t.literals.folders} hook-literals=${t.literals.hook}`,
+  );
+  const tc = Object.entries(t.byCategory).sort();
+  console.log(
+    `  transcript findings: ${tc.length === 0 ? "0" : tc.map(([c, n]) => `${c}=${n}`).join(" ")}`,
+  );
+}
 for (const [c, n] of Object.entries(r.byCategory).sort()) console.log(`  ${c}: ${n}`);
 for (const f of r.perFile.slice(0, 50)) console.log(`  ${f.file}: ${f.category} x${f.count}`);
 console.log(r.total === 0 ? "PASS: no leaks found" : `FAIL: ${r.total} finding(s)`);

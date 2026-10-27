@@ -2,6 +2,8 @@
 // come from the raw rows and git config, live in memory only, and are never printed or written.
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
+import { deriveFragments } from "./transcript-scrub-fragments.mjs";
+import { deriveFolders } from "./transcript-scrub-folders.mjs";
 
 const HOME_USER = /(?:^|[\\/])(?:Users|home)[\\/]+([^\\/\s"']+)|[A-Za-z]--Users-([A-Za-z0-9._]+)/g;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
@@ -44,9 +46,10 @@ function ownersIn(url) {
 /**
  * Collects literals from parsed raw rows.
  * @param {Iterable<unknown>} rows
- * @returns {{ users: string[], emails: string[], accounts: string[] }}
+ * @param {string} [vocabulary] lower-cased public text that exempts folder names (default: tracked repo files)
+ * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[] }}
  */
-export function discoverLiterals(rows) {
+export function discoverLiterals(rows, vocabulary) {
   const users = new Set();
   const emails = new Set();
   const accounts = new Set();
@@ -77,7 +80,8 @@ export function discoverLiterals(rows) {
       for (const [k, child] of Object.entries(v)) walk(child, k);
     }
   };
-  for (const row of rows) walk(row, "");
+  const all = [...rows];
+  for (const row of all) walk(row, "");
 
   const gitEmail = git(["config", "user.email"]);
   if (gitEmail) {
@@ -94,9 +98,15 @@ export function discoverLiterals(rows) {
   }
   accounts.add(hostname()); // the machine name usually embeds the user name
   const keep = (/** @type {Set<string>} */ s) => [...s].filter((x) => x.length >= 3).sort();
+  const accountList = keep(accounts).filter((x) => x.length >= MIN_LITERAL);
+  const userList = keep(users);
   return {
-    users: keep(users),
+    users: userList,
     emails: keep(emails),
-    accounts: keep(accounts).filter((x) => x.length >= MIN_LITERAL),
+    accounts: accountList,
+    // Pieces of every name above (fix A): swept from free text as substrings.
+    fragments: deriveFragments([...userList, ...accountList]),
+    // Folder names from raw paths that also show up in prose and are not public vocabulary.
+    folders: deriveFolders(all, [...userList, ...accountList], vocabulary),
   };
 }

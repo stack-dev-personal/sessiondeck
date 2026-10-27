@@ -232,9 +232,13 @@ add(["agentType", "subagent_type", "attributionAgent", "agentSetting"], {
   kind: "agent",
   why: "agent type (custom names numbered)",
 });
-add(["skill", "attributionSkill", "recipient", "to", "hookName", "session_name"], {
+add(["skill", "attributionSkill", "recipient", "to", "session_name"], {
   kind: "name",
   why: "user-chosen name, numbered",
+});
+add(["hookName"], {
+  kind: "hookName",
+  why: "hook name: <HookEventName> or <HookEventName>:<built-in tool> verbatim, else numbered",
 });
 add(
   [

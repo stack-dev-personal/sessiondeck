@@ -6,6 +6,7 @@
 // in TRANSCRIPT_KEYS becomes "<KEY_n>" and is reported in unknownKeys so a person reviews it.
 import { BUILTIN_AGENTS, BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
 import { TRANSCRIPT_KEYS } from "./fixture-keys.mjs";
+import { isStructuralHookName } from "./transcript-scrub-hookname.mjs";
 import { Mapper } from "./fixture-scrub-paths.mjs";
 import {
   DROP_KEYS,
@@ -103,6 +104,8 @@ export class TranscriptScrubber {
         return this.mapper.mapAgent(v, BUILTIN_AGENTS);
       case "name":
         return this.#named(v);
+      case "hookName":
+        return isStructuralHookName(v) ? v : this.#named(v);
       case "tool":
         return this.mapper.mapTool(v, BUILTIN_TOOLS);
       case "mcp":
