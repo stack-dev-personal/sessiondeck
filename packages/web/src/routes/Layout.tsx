@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { LayoutMenu } from "../components/layout/LayoutMenu";
 import { LayoutView } from "../components/layout/LayoutView";
+import { ManageDialog, SaveDialog } from "../components/layout/SavedDialogs";
 import { isPresetName, MAX_PROJECT_COLUMNS, type PresetName } from "../layout/presets";
 import { panesOf } from "../layout/spec";
 import { LAYOUT_KEYS, useShortcuts } from "../lib/keys";
 import { projectDirsByAttention } from "../lib/attention";
 import { useBoard } from "../store/board";
+import { viewerHost } from "../layout/saved";
 import { useLayout } from "../store/layout";
+import { useSaved } from "../store/saved";
 
 /**
  * Layout mode. `?preset=<name>` applies a builtin once and is then removed from the URL, so a
@@ -36,8 +39,33 @@ export function Layout() {
     setParams((p) => (p.delete("preset"), p), { replace: true });
   }, [wanted, waiting, projects, applyPreset, setParams]);
 
-  const keys = useMemo(() => ({ [LAYOUT_KEYS.menu]: () => setOpen((o) => !o) }), []);
+  const [dialog, setDialog] = useState<"save" | "manage" | null>(null);
+  const host = useMemo(() => viewerHost(sessions), [sessions]);
+  const toggleCompactAll = useLayout((s) => s.toggleCompactAll);
+  const compacted = useLayout((s) => s.snapshot !== null);
+  const press = useSaved((s) => s.press);
+  const savedCount = useSaved((s) => s.rows.length);
+  const savedStatus = useSaved((s) => s.status);
+  // The host is read at key time so a hotkey never closes over a stale board.
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const keys = useMemo(() => {
+    if (dialog !== null) return {};
+    const map: Record<string, () => void> = {
+      [LAYOUT_KEYS.menu]: () => setOpen((o) => !o),
+      [LAYOUT_KEYS.save]: () => setDialog("save"),
+      [LAYOUT_KEYS.manage]: () => setDialog("manage"),
+      [LAYOUT_KEYS.compactAll]: toggleCompactAll,
+    };
+    for (const k of LAYOUT_KEYS.slots) map[k] = () => void press(Number(k), hostRef.current);
+    return map;
+  }, [dialog, toggleCompactAll, press]);
   useShortcuts(keys);
+  // Notices newer than this route's mount (an old load error is shown by the status chip instead).
+  const noticeAtMount = useRef(useSaved.getState().notice?.n ?? 0);
+  const notice = useSaved((s) =>
+    s.notice && s.notice.n > noticeAtMount.current ? s.notice : null,
+  );
   // Count the projects that have no column, not a difference of totals: the session set can change
   // after the preset was applied, so a column may point at a project that is gone.
   const shownDirs = new Set<string>();
@@ -53,6 +81,30 @@ export function Layout() {
         <span className="num text-sm text-fg-muted" data-testid="pane-count">
           {panesOf(spec).length} {panesOf(spec).length === 1 ? "pane" : "panes"}
         </span>
+        <button
+          type="button"
+          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          aria-pressed={compacted}
+          onClick={toggleCompactAll}
+          data-testid="compact-all"
+        >
+          {compacted ? "Restore panes (Shift+C)" : "Compact all (Shift+C)"}
+        </button>
+        <button
+          type="button"
+          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          onClick={() => setDialog("save")}
+        >
+          Save (s)
+        </button>
+        <button
+          type="button"
+          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          onClick={() => setDialog("manage")}
+        >
+          Saved: {savedCount}
+          {savedStatus === "offline" ? " (cached)" : ""} (m)
+        </button>
         {spec.id === "by-project" && hidden > 0 ? (
           <span className="num text-sm text-fg-muted" data-testid="projects-more">
             {`+${hidden} more ${hidden === 1 ? "project" : "projects"} (most urgent ${MAX_PROJECT_COLUMNS} shown)`}
@@ -63,10 +115,19 @@ export function Layout() {
             Waiting for projects
           </span>
         ) : null}
+        <output
+          className={`num ml-auto min-w-[16rem] max-w-[32rem] truncate text-sm ${notice?.tone === "error" ? "text-state-error" : "text-fg-muted"}`}
+          data-testid="layout-notice"
+          role="status"
+        >
+          {notice ? `${notice.tone === "error" ? "✖" : "ℹ"} ${notice.text}` : ""}
+        </output>
       </div>
       <div className="min-h-0 flex-1 bg-border">
         <LayoutView spec={spec} />
       </div>
+      {dialog === "save" ? <SaveDialog host={host} onClose={() => setDialog(null)} /> : null}
+      {dialog === "manage" ? <ManageDialog onClose={() => setDialog(null)} /> : null}
     </div>
   );
 }
