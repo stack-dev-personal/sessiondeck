@@ -13,7 +13,7 @@
 | U1 hub projects, roll-up, phases, project view API | R5.1, R5.5, R5.6 | sd-executor-hub | packages/hub/**, docs/ATLAS.md | - | done (merge; verifier 3 pass hub side) |
 | U2 hub FTS5 search + latency bench (+U2b perf fix) | R5.4 | sd-executor-hub | packages/hub/**, docs/HUB-BENCH.md | U1 | done (merge; R5.4 hub side pass) |
 | U3 web project view, inline phase + project edit (+U3h hub CORS) | R5.1, R5.5, R5.6 | sd-executor-web, sd-executor-hub | packages/web/**, packages/hub/** | U1 | done (merge; verifier R5.1 R5.5 R5.6 pass) |
-| U4 web session list + Ctrl+K palette | R5.4 | sd-executor-web | packages/web/** | U2, U3 | pending |
+| U4 web session list + Ctrl+K palette | R5.4 | sd-executor-web | packages/web/** | U2, U3 | done (merge; verifier R5.4 pass) |
 | U5 close: full suite, integration checks, VERIFY-P5, PR | all | sd-verifier | docs/VERIFY-P5.md | U1-U4 | pending |
 
 Concurrency allowed: 1, so units run sequentially.
@@ -78,3 +78,14 @@ Concurrency allowed: 1, so units run sequentially.
 - The sprint container was stopped at 2026-10-27T19:18Z mid-U4. No status was written at exit; no answer file for this relaunch.
 - Worktree held uncommitted U4 changes (web: CommandPalette, SessionList route, highlight, sessionList lib, R5.4 e2e specs, modified store/keys/App/atlas api, refreshed R3 baselines). Resumed U4 by having sd-executor-web inspect and finish the diff.
 - main moved to 2426e6d (PR #14, probe Bun hook exe); origin/sprint/3-organize includes it; final rebase picks it up.
+
+### U4 web session list + Ctrl+K palette (R5.4 web side), resumed after relaunch
+- Executor: sd-executor-web. Inspected the interrupted diff, kept it, added list XSS test and missing screenshots. Commits cf900a8, 5a9d54c, 6ed5186, e2b85d1 (feature), ef14232 (fix 1), e37aca7 (fix 2).
+- 8 R3 baselines refreshed: header gained a Sessions link and a Search (Ctrl+K) button (reviewer confirmed).
+- Review: iteration 1 fix-then-merge (MAJOR: Enter before debounced results opened a stale hit); iteration 2 merge with two minors (surrogate cut throws, held Enter lost on error) fixed; iteration 3 merge.
+- Security (not gated; untrusted titles/snippets rendered): Gate pass. No HTML sinks; highlight builds text nodes only.
+- Decision: palette debounce cut from 80 to 40 ms; typed-to-results at 80 ms was 98.8 ms median, at 40 ms 54 ms median / 60 ms max live.
+- Verifier: R5.4 pass. Hub route p95 21.7-22.6 ms (2,336 docs); live palette round trip median 12.7 ms; typed-to-results median 53.8 ms; mock 7 passed, live 1 passed, keyboard only. Screens: /state/3/screens/S9/R5.4-*.png.
+- Web tests: 302.
+
+- U4 [MINOR] deferred: packages/web/src/components/CommandPalette.tsx:229: Enter after an error retries even if the query changed within the debounce window; the new query's results then do not auto-open (user presses Enter again). Fix: store errorFor and retry only when it equals q.
