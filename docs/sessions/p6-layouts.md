@@ -39,3 +39,17 @@
 - Decision: hotkey scope is per host pin; a pinned layout wins over an unpinned one on its host, exposed as `active_hotkey` on GET and PUT rows.
 - GET /layouts p95 1.56 ms in-process with 50 rows.
 - Deferred: pre-existing `/history` and `/ingest` raw-URL prefix checks in server.ts can be bypassed with percent-encoding (security LOW, predates this branch; S9 edits that file); hub-side spec validation looser than web's (LOW, web validates every row); Phase 7 Postgres notes (READ COMMITTED slot race, BIGINT as string) in db/layouts.ts.
+### U2b hub CORS for browser REST (R6.3): reviewed
+- Found by the U3 executor: the hub sent no CORS headers, so the web app (:5173) could not call /layouts on the hub (:8787). The web only used WS before this phase.
+- Commits 99dcb87, 91eefe9. Files: packages/hub/src/cors.ts (new), src/server.ts (one line before the bearer hook), src/config.ts (HUB_ALLOWED_ORIGINS validated at startup), test/cors.test.ts, test/config.test.ts, docs/HUB.md.
+- Behavior: on only when HUB_ALLOWED_ORIGINS is non-empty (compose default is the two localhost:5173 origins); exact-origin reflection, Vary: Origin, no credentials; preflight GET/HEAD/PUT/DELETE with Authorization/Content-Type on /layouts and read routes; /ingest and /stream never CORS-enabled.
+- Review: sd-reviewer merge; sd-security-reviewer gate pass twice.
+- Deferred to rebase: S9 adds GET /search and PATCH /projects/:id, /sessions/:id/project, /sessions/:id/phase; add them to the CORS scope when rebasing (sd-reviewer SHOULD). Optional LOWs: suggest the normalized origin in the config error; IPv6 and uppercase-host test cases.
+
+### U3 saved layouts client, hotkeys 1-9, Shift+C (R6.3, R6.5): reviewed, verify with U4
+- Commits 596ce83, 25a888a, ddd7807, b6e7afd, 756562e; fixes 9561744, 6b78e12, edcd31f, 9748caa.
+- Review: iteration 1 fix-then-merge (6 MAJOR, 5 MINOR, all fixed); iteration 2 merge.
+- Decision: the viewer host is an explicit Settings value (default none = only unpinned layouts answer 1-9); not inferred from session activity.
+- Decision: Shift+C rules: switching layout discards the snapshot; manual expand of one pane and resizes while compacted keep it (restore wins); the snapshot persists across reload; saving while compacted saves the pre-compact layout.
+- Switch timing (keydown to next frame with new panes): fake hub max 31-64 ms, live hub (real CORS, no relay) max 48.3 ms. One unreproduced full-suite failure of the per-sample 100 ms assertion.
+- Carry-over to U4: re-load after a write cancels an in-flight fetch; warm-up press before timing samples; keyboard test that reaches row 149's Open.
