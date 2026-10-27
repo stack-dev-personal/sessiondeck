@@ -53,6 +53,9 @@ describe("windowOf (R6.4)", () => {
   });
 });
 
+/** scrollTop (negative, column-reverse) that puts row index `first` at the top of the view. */
+const scrollTopFor = (count: number, first: number) => -(count * ROW_H - VIEW_H - first * ROW_H);
+
 describe("ActivityList windowing (R6.4)", () => {
   it("mounts only the visible rows plus overscan for 500 rows", () => {
     render(<ActivityList rows={rows(0, ACTIVITY_CAP)} />);
@@ -66,60 +69,91 @@ describe("ActivityList windowing (R6.4)", () => {
 
   it("scrolling re-windows to the rows under the viewport", () => {
     render(<ActivityList rows={rows(0, ACTIVITY_CAP)} />);
-    scrollTops.set(log(), 100 * ROW_H);
+    scrollTops.set(log(), scrollTopFor(500, 100));
     fireEvent.scroll(log());
     expect(screen.getByText("row 100")).toBeInTheDocument();
     expect(screen.getByText("row 109")).toBeInTheDocument();
     expect(screen.queryByText("row 499")).toBeNull();
     expect(mounted().length).toBeLessThanOrEqual(10 + 2 * OVERSCAN);
   });
+
+  it("pinned, the list never writes the scroll position (no forced layout per row)", () => {
+    const writes = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get: () => 0,
+      set: writes,
+    });
+    const { rerender } = render(<ActivityList rows={rows(0, 50)} />);
+    for (let n = 51; n < 120; n++) rerender(<ActivityList rows={rows(0, n)} />);
+    expect(writes).not.toHaveBeenCalled();
+    expect(screen.getByText("row 118")).toBeInTheDocument();
+  });
 });
 
 describe("ActivityList pinning (R6.4)", () => {
+  const pinned = () => screen.getByTestId("activity-list").getAttribute("data-pinned");
+
   it("follows new rows while pinned, stops when the user scrolls up, resumes on Jump to latest", () => {
     const { rerender } = render(<ActivityList rows={rows(0, 50)} />);
-    expect(log().scrollTop).toBe((50 - 10) * ROW_H);
-    expect(screen.getByTestId("activity-list")).toHaveAttribute("data-pinned", "true");
+    expect(pinned()).toBe("true");
+    expect(screen.getByText("row 49")).toBeInTheDocument();
 
     rerender(<ActivityList rows={rows(0, 60)} />);
-    expect(log().scrollTop).toBe((60 - 10) * ROW_H);
+    expect(log().scrollTop).toBe(0);
     expect(screen.getByText("row 59")).toBeInTheDocument();
 
-    // The user scrolls up.
-    scrollTops.set(log(), 10 * ROW_H);
+    // The user scrolls up so that row 10 is the first one in view.
+    scrollTops.set(log(), scrollTopFor(60, 10));
     fireEvent.scroll(log());
-    expect(screen.getByTestId("activity-list")).toHaveAttribute("data-pinned", "false");
+    expect(pinned()).toBe("false");
+    expect(screen.getByText("row 10")).toBeInTheDocument();
     rerender(<ActivityList rows={rows(0, 70)} />);
-    expect(log().scrollTop).toBe(10 * ROW_H);
+    // The view stayed on row 10 although ten rows arrived below it.
+    expect(log().scrollTop).toBe(scrollTopFor(70, 10));
     expect(screen.getByText("row 10")).toBeInTheDocument();
     expect(screen.queryByText("row 69")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Jump to latest/ }));
-    expect(log().scrollTop).toBe((70 - 10) * ROW_H);
-    expect(screen.getByTestId("activity-list")).toHaveAttribute("data-pinned", "true");
+    expect(log().scrollTop).toBe(0);
+    expect(pinned()).toBe("true");
+    expect(screen.getByText("row 69")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    // Pinned again: new rows follow.
+    rerender(<ActivityList rows={rows(0, 75)} />);
+    expect(screen.getByText("row 74")).toBeInTheDocument();
+  });
+
+  it("scrolling back to the bottom pins again", () => {
+    render(<ActivityList rows={rows(0, 100)} />);
+    scrollTops.set(log(), scrollTopFor(100, 20));
+    fireEvent.scroll(log());
+    expect(pinned()).toBe("false");
+    scrollTops.set(log(), 0);
+    fireEvent.scroll(log());
+    expect(pinned()).toBe("true");
   });
 
   it("End pins again, Home goes to the top (keyboard)", () => {
     render(<ActivityList rows={rows(0, 100)} />);
-    scrollTops.set(log(), 5 * ROW_H);
+    scrollTops.set(log(), scrollTopFor(100, 5));
     fireEvent.scroll(log());
-    expect(screen.getByTestId("activity-list")).toHaveAttribute("data-pinned", "false");
+    expect(pinned()).toBe("false");
     fireEvent.keyDown(log(), { key: "End" });
-    expect(screen.getByTestId("activity-list")).toHaveAttribute("data-pinned", "true");
-    expect(log().scrollTop).toBe(90 * ROW_H);
-    fireEvent.keyDown(log(), { key: "Home" });
+    expect(pinned()).toBe("true");
     expect(log().scrollTop).toBe(0);
+    fireEvent.keyDown(log(), { key: "Home" });
+    expect(log().scrollTop).toBe(-(100 * ROW_H - VIEW_H));
   });
 
   it("keeps the reader's rows in view when the ring buffer drops old ones while unpinned", () => {
     const { rerender } = render(<ActivityList rows={rows(0, ACTIVITY_CAP)} />);
-    scrollTops.set(log(), 200 * ROW_H);
+    scrollTops.set(log(), scrollTopFor(ACTIVITY_CAP, 200));
     fireEvent.scroll(log());
     expect(screen.getByText("row 200")).toBeInTheDocument();
-    // 30 rows appended, the oldest 30 dropped: row 200 now sits 30 rows higher.
+    // 30 rows appended, the oldest 30 dropped: row 200 now sits at index 170.
     act(() => rerender(<ActivityList rows={rows(30, ACTIVITY_CAP + 30)} />));
-    expect(log().scrollTop).toBe(170 * ROW_H);
+    expect(log().scrollTop).toBe(scrollTopFor(ACTIVITY_CAP, 170));
     expect(screen.getByText("row 200")).toBeInTheDocument();
   });
 });
