@@ -13,6 +13,9 @@ const run = (label, args) => {
 };
 const t0 = Date.now();
 run("build:exe", [join(root, "scripts", "build-exe.mjs")]);
-const vitest = join(dirname(createRequire(join(root, "package.json")).resolve("vitest/package.json")), "vitest.mjs");
+const vitest = join(
+  dirname(createRequire(join(root, "package.json")).resolve("vitest/package.json")),
+  "vitest.mjs",
+);
 run("exe tests", [vitest, "run", "-c", "vitest.proc.config.ts", "test/hook-exe.proc.test.ts"]);
 console.log(`[test:exe] total wall time: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
