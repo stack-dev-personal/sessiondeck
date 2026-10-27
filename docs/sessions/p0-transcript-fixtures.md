@@ -33,3 +33,11 @@
 
 Decision (orchestrator): fixture ids (uuid, parentUuid, sessionId, message.id, tool_use ids, agentId) are kept verbatim, not remapped as in S0b. They are random identifiers, not personal data, and S7 needs every cross-file link intact; remapping risks breaking a link held in an unlisted field. Account, org, user and request identifiers become placeholders.
 Decision (orchestrator): the scrubbed transcripts are committed only after the security gate passes (as S0b did). U2 commits tooling only; the fixture files stay untracked until U5.
+
+### U2 transcript scrub mode (R0.7)
+- Executor sd-executor-contract, commit 6a4c07b (tooling only): `--transcripts` in scripts/fixture-scrub.mjs, scripts/lib/transcript-scrub-{core,rules,text,literals,run,readme}.mjs, TRANSCRIPT_KEY_REASONS and TRANSCRIPT_KEYS in fixture-keys.mjs (hook-mode KNOWN_KEYS untouched), mapEncodedFolder in fixture-scrub-paths.mjs, packages/contract/test/helpers.ts excludes transcripts, scripts/test/transcript-scrub.test.ts (30 tests, synthetic).
+- Results: scripts 365 pass, 1 fail (fixture-gate.test.ts, because the hook-mode leak check scans the new untracked transcripts directory; passes 34/34 with it moved aside; U3 fixes); contract 1091 pass; typecheck, lint, prettier clean. Two scrub runs byte-identical.
+- Output (untracked): 01 606 rows 0.67 MB, 02 1754 rows 1.44 MB, 03 3548 rows 2.91 MB, 04 4561 rows 3.84 MB, 05 4059 rows 3.92 MB; 12.8 MB total from 31.6 MB.
+- Dropped to `<BLOB n>`: wire and request bodies, classifier request and context, system prompts, tool schemas, hook additional context, file backups, rawContent, diagnostics.
+- Executor-reported residue, sent to U3 as blocking: fragments of the user's email local part and git account name survive inside some free text (substring sweep missing for account names); hookName is numbered, which loses a structural value.
+- Process: the first heartbeat was killed by the 10-minute default background limit during U2, so the status file went without updates for about 15 minutes. Restarted with a 60-minute limit.
