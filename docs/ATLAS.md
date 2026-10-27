@@ -93,3 +93,32 @@ curl -s -X PATCH ... -d '{"phase":"Hardening"}' .../sessions/<session_id>/phase
 
 UI: the project and phase controls land with the S9 web work (inline edit on the session row and
 the project header); they call the same endpoints.
+
+## Search (R5.4)
+
+`GET /search?q=&limit=` (default limit 20, max 50; `q` at most 200 characters; bearer auth and the read
+rate limit like every other GET). Response: `{results:[{kind:'session'|'project'|'phase', id, project_id,
+title, snippet, state?, score}], took_ms}`. For a phase hit, `id` is the phase label and `project_id` its project.
+
+Index: migration 7 creates `search_fts` (FTS5, `unicode61 remove_diacritics 2`, prefix index `2 3`) and
+`search_docs` (maps `(kind, ref_id)` to the FTS rowid and keeps a digest of the indexed text). Documents:
+
+| Kind | Title | Body |
+|------|-------|------|
+| session | session name, else the directory name | last prompt, last assistant message, `outcome` / `archive.outcome` when the snapshot has one, effective phase, branch, session id |
+| project | name | directory name, `vault_collection` |
+| phase | the phase label | the project name |
+
+`indexSessionText` (`src/atlas/search.ts`) is the one place that decides what a session contributes; S9b
+extends it for archived captures (their `outcome` is already read). The index is rewritten only when the
+indexed text of a row changed (`upsertSession` compares digests), and on project PATCH, phase PATCH and
+project reassignment. `Store.migrate` indexes anything missing on open (idempotent); `hub replay` clears
+session and phase documents with the sessions table and the re-inserts rebuild them.
+
+Query handling: the user string is never passed to MATCH. Letters and digits runs are the tokens (max 8, 64
+characters each); each is quoted, all must match, and the last is a prefix (`"tok"*`). Quotes, `NEAR`, `AND`,
+`column:`, parentheses and `*` are therefore plain words or separators. A query with no token (empty, `*`)
+returns the most recent sessions and up to 5 projects. Ranking is bm25 (title weighted 8x body); live
+sessions (not ended, exited or archived) score 1.5x.
+
+Listeners on the hub emitter (`atlas`, `batch`) must not throw; the stream listener contains its own errors.

@@ -139,3 +139,21 @@ Command: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --
 | orchestrator 3 | dbb1e33 | 11.34 | 22.54 | 36.80 | 54.74 | FAIL |
 
 `git log 0e321fe..HEAD -- packages/hub packages/contract` is empty and hub's resolved dependencies are identical, so there is no regression versus 0e321fe; the failures are host contention. Earlier clean-host runs in this file passed (p95 10.91 to 12.89 ms). Verdict for FIX-5: R2.4 fail on this host, needs-laptop-confirmation. Raw: /state/1/gate/FIX-5/verify-load-HEAD.txt, f3-load-*.log.
+
+## Search (R5.4)
+
+Requirement: search returns in < 100 ms for your data size. Threshold: p95 < 100 ms at the route.
+
+Data: 2,000 sessions (about 300 archived harness captures plus live history, x6 margin on the expected size) over 50 projects, 2,336 search documents (sessions, projects, phases), on a SQLite file in the temp directory. The contract fixtures carry scrubbed text (`<TEXT 1792>`), so texts are generated deterministically from a 3,000-word vocabulary at the fixture sizes (names of 3 to 6 words, prompts of about 200 characters, last assistant messages of about 1,800 characters, archived outcomes of 300). 200 queries: prefix (3 letters), single word, two words, two words plus a 2-letter prefix, no-hit, phase label, empty (recent). Each is timed through `GET /search` with `fastify.inject` (auth, rate limiter, zod, route, serialization) and again at `Store.search`; 20 warm-up queries first. The route runs each query before the store does, so the store column carries the first-touch page cost and is not faster than the route column.
+
+Command: `pnpm -F @sessiondeck/hub bench:search` (equivalently `node packages/hub/scripts/bench-search.mjs`); the same run is asserted by `test/search.R5.4.bench.test.ts`.
+
+Machine: Linux a931702caf2a 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026 x86_64; AMD Ryzen AI 9 465 w/ Radeon 880M; node v22.23.3; shared host, load average 1.7 at the time.
+
+| Run | Route p50 ms | Route p95 ms | Route max ms | Store p50 ms | Store p95 ms | Store max ms |
+|---|---|---|---|---|---|---|
+| 1 | 3.47 | 21.19 | 38.30 | 1.80 | 23.58 | 42.93 |
+| 2 | 3.16 | 19.54 | 33.95 | 1.89 | 25.71 | 30.12 |
+| 3 | 2.33 | 14.03 | 22.01 | 1.23 | 16.69 | 24.76 |
+
+Slowest class is the 3-letter prefix (p50 about 20 ms, p95 about 35 ms at the route): it matches many documents and builds a snippet from each candidate. Everything else is under 25 ms at p95. Verdict: R5.4 latency PASS with about 5x headroom against the 100 ms limit. Index cost on ingest: a session's index entry is written only when its indexed text changed.

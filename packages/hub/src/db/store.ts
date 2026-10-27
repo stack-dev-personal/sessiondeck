@@ -2,7 +2,9 @@ import type { SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { inferProject, projectIdOf } from "../atlas/infer.ts";
+import { buildMatch, indexSessionText } from "../atlas/search.ts";
 import { migrations } from "./migrations.ts";
 
 export interface HostRow {
@@ -166,6 +168,7 @@ export class Store {
     // Path inference is code, not SQL: assign projects to rows that predate migration 6.
     // Runs on every open at version >= 6 (cheap when nothing is NULL), so a crash between migration 6 and the backfill heals.
     if (this.schemaVersion() >= 6) this.backfillAtlas();
+    if (this.schemaVersion() >= 7) this.backfillSearch();
     return applied;
   }
 
@@ -225,9 +228,13 @@ export class Store {
     const row = this.stmt("SELECT id FROM projects WHERE project_dir = ?").get(key) as {
       id: string | null;
     };
-    if (row.id !== null) return row.id;
+    if (row.id !== null) {
+      this.indexProject(row.id);
+      return row.id;
+    }
     const id = this.freeProjectId(key);
     this.stmt("UPDATE projects SET id = ? WHERE project_dir = ?").run(id, key);
+    this.indexProject(id);
     return id;
   }
 
@@ -272,9 +279,11 @@ export class Store {
   projectScans = 0;
 
   upsertSession(row: SessionRow): void {
-    const prev = this.stmt("SELECT project_dir, project_id FROM sessions WHERE session_id = ?").get(
-      row.session_id,
-    ) as { project_dir: string | null; project_id: string | null } | undefined;
+    const prev = this.stmt(
+      "SELECT project_dir, project_id, phase_label FROM sessions WHERE session_id = ?",
+    ).get(row.session_id) as
+      | { project_dir: string | null; project_id: string | null; phase_label: string | null }
+      | undefined;
     if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
     // The project is re-derived only for a new row or when project_dir changed (cwd never does):
     // the hot path of an unchanged session adds no parse and no write.
@@ -309,6 +318,220 @@ export class Store {
       project_id: projectId,
       phase_label: phaseLabel,
     });
+    // R5.4: the index follows the row, written only when the indexed text changed.
+    this.indexSession(row.session_id, row.snapshot, projectId, prev?.phase_label ?? phaseLabel);
+  }
+
+  // ---- R5.4 search index (FTS5) ------------------------------------------------------------
+
+  /** Writes one search document unless its text is unchanged. Returns true when the index changed. */
+  private putDoc(
+    kind: string,
+    refId: string,
+    projectId: string | null,
+    title: string,
+    body: string,
+  ): boolean {
+    const hash = createHash("sha1")
+      .update(`${projectId ?? ""}\u0000${title}\u0000${body}`)
+      .digest("hex");
+    const cur = this.stmt("SELECT id, hash FROM search_docs WHERE kind = ? AND ref_id = ?").get(
+      kind,
+      refId,
+    ) as { id: number; hash: string } | undefined;
+    if (cur?.hash === hash) return false;
+    let id: number;
+    if (cur === undefined) {
+      id = Number(
+        this.stmt(
+          "INSERT INTO search_docs (kind, ref_id, project_id, hash) VALUES (?, ?, ?, ?)",
+        ).run(kind, refId, projectId, hash).lastInsertRowid,
+      );
+    } else {
+      id = cur.id;
+      this.stmt("DELETE FROM search_fts WHERE rowid = ?").run(id);
+      this.stmt("UPDATE search_docs SET project_id = ?, hash = ? WHERE id = ?").run(
+        projectId,
+        hash,
+        id,
+      );
+    }
+    this.stmt(
+      "INSERT INTO search_fts (rowid, kind, ref_id, project_id, title, body) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(id, kind, refId, projectId, title, body);
+    return true;
+  }
+
+  private dropDoc(kind: string, refId: string): void {
+    const cur = this.stmt("SELECT id FROM search_docs WHERE kind = ? AND ref_id = ?").get(
+      kind,
+      refId,
+    ) as { id: number } | undefined;
+    if (cur === undefined) return;
+    this.stmt("DELETE FROM search_fts WHERE rowid = ?").run(cur.id);
+    this.stmt("DELETE FROM search_docs WHERE id = ?").run(cur.id);
+  }
+
+  /** Indexes a session (and its phase document when the text changed). Never throws on a bad snapshot. */
+  private indexSession(
+    sessionId: string,
+    snapshot: string,
+    projectId: string | null,
+    manualPhase: string | null,
+  ): void {
+    let snap: Record<string, unknown>;
+    try {
+      const v: unknown = JSON.parse(snapshot);
+      if (typeof v !== "object" || v === null) return;
+      snap = v as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    const t = indexSessionText(snap, sessionId, manualPhase);
+    if (!this.putDoc("session", sessionId, projectId, t.title, t.body)) return;
+    if (t.phase !== null && projectId !== null) this.putPhaseDoc(projectId, t.phase);
+  }
+
+  private putPhaseDoc(projectId: string, phase: string): void {
+    const name = (
+      this.stmt("SELECT COALESCE(name, '') AS name FROM projects WHERE id = ?").get(projectId) as
+        { name: string } | undefined
+    )?.name;
+    this.putDoc("phase", `${projectId}/${phase}`, projectId, phase, name ?? "");
+  }
+
+  private indexProject(id: string): void {
+    const p = this.stmt(
+      "SELECT project_dir, COALESCE(name, '') AS name, vault_collection FROM projects WHERE id = ?",
+    ).get(id) as { project_dir: string; name: string; vault_collection: string | null } | undefined;
+    if (p === undefined) return;
+    const base = p.project_dir.split("/").filter(Boolean).at(-1) ?? "";
+    this.putDoc(
+      "project",
+      id,
+      id,
+      p.name || base,
+      [base, p.vault_collection ?? ""].filter((x) => x !== "").join("\n"),
+    );
+  }
+
+  /** Re-derives the phase documents of one project from its sessions (adds new, drops unused). */
+  private reindexProjectPhases(projectId: string | null): void {
+    if (projectId === null) return;
+    const live = new Set<string>();
+    for (const r of this.listProjectSessionSnapshots(projectId, 100_000)) {
+      try {
+        const t = indexSessionText(
+          JSON.parse(r.snapshot) as Record<string, unknown>,
+          r.session_id,
+          r.phase_label,
+        );
+        if (t.phase !== null) live.add(t.phase);
+      } catch {
+        // unreadable snapshot: contributes no phase
+      }
+    }
+    for (const phase of live) this.putPhaseDoc(projectId, phase);
+    const prefix = `${projectId}/`;
+    const have = this.stmt(
+      "SELECT ref_id FROM search_docs WHERE kind = 'phase' AND project_id = ?",
+    ).all(projectId) as { ref_id: string }[];
+    for (const d of have)
+      if (!live.has(d.ref_id.slice(prefix.length))) this.dropDoc("phase", d.ref_id);
+  }
+
+  private reindexSession(sessionId: string): void {
+    const r = this.getSession(sessionId);
+    if (r !== undefined)
+      this.indexSession(sessionId, r.snapshot, r.project_id ?? null, r.phase_label ?? null);
+  }
+
+  /**
+   * Indexes every project and session that has no document yet (first open after migration 7, or
+   * healing after a crash). Idempotent; an open with nothing missing costs two anti-join probes.
+   */
+  backfillSearch(): number {
+    return this.transaction(() => {
+      let n = 0;
+      for (const p of this.stmt(
+        `SELECT id FROM projects p WHERE id IS NOT NULL AND NOT EXISTS
+           (SELECT 1 FROM search_docs d WHERE d.kind = 'project' AND d.ref_id = p.id)`,
+      ).all() as {
+        id: string;
+      }[]) {
+        this.indexProject(p.id);
+        n++;
+      }
+      // Paged by primary key: indexing writes while the cursor would still be open.
+      let after = "";
+      for (;;) {
+        const page = this.stmt(
+          `SELECT session_id, snapshot, project_id, phase_label FROM sessions s
+           WHERE session_id > ? AND NOT EXISTS
+             (SELECT 1 FROM search_docs d WHERE d.kind = 'session' AND d.ref_id = s.session_id)
+           ORDER BY session_id LIMIT 500`,
+        ).all(after) as {
+          session_id: string;
+          snapshot: string;
+          project_id: string | null;
+          phase_label: string | null;
+        }[];
+        if (page.length === 0) break;
+        for (const r of page) {
+          this.indexSession(r.session_id, r.snapshot, r.project_id, r.phase_label);
+          n++;
+        }
+        after = page[page.length - 1]!.session_id;
+      }
+      return n;
+    });
+  }
+
+  /** Ranked matches for an already-built MATCH expression (see buildMatch); live sessions rank higher. */
+  searchMatch(match: string, limit: number): SearchHit[] {
+    const rows = this.stmt(
+      `SELECT search_fts.kind AS kind, search_fts.ref_id AS ref_id, search_fts.project_id AS project_id,
+              search_fts.title AS title, snippet(search_fts, -1, '', '', '...', 16) AS snippet,
+              s.state AS state,
+              -bm25(search_fts, 0, 0, 0, 8, 1) *
+                CASE WHEN s.state IS NOT NULL AND s.state NOT IN ('ended', 'exited', 'archived')
+                     THEN 1.5 ELSE 1 END AS score
+       FROM search_fts LEFT JOIN sessions s ON search_fts.kind = 'session' AND s.session_id = search_fts.ref_id
+       WHERE search_fts MATCH ?
+       ORDER BY score DESC, search_fts.rowid LIMIT ?`,
+    ).all(match, limit) as SearchRow[];
+    return rows.map(toHit);
+  }
+
+  /** Free-text search: the safe MATCH is built here; an empty query (or one with no tokens) returns recent items. */
+  search(q: string, limit: number): SearchHit[] {
+    const match = buildMatch(q);
+    return match === null ? this.searchRecent(limit) : this.searchMatch(match, limit);
+  }
+
+  /** Most recently active sessions, then (at most 5) most recently active projects. */
+  searchRecent(limit: number): SearchHit[] {
+    const projects = (
+      this.stmt(
+        `SELECT 'project' AS kind, p.id AS ref_id, p.id AS project_id, COALESCE(p.name, p.project_dir) AS title,
+                '' AS snippet, NULL AS state, 0 AS score
+         FROM projects p WHERE p.id IS NOT NULL
+         ORDER BY COALESCE((SELECT MAX(last_event_at) FROM sessions WHERE project_id = p.id), 0) DESC, p.id
+         LIMIT ?`,
+      ).all(Math.min(5, limit)) as SearchRow[]
+    ).map(toHit);
+    const sessions = (
+      this.stmt(
+        `SELECT 'session' AS kind, s.session_id AS ref_id, s.project_id AS project_id, f.title AS title,
+                substr(f.body, 1, 120) AS snippet, s.state AS state, 0 AS score
+         FROM (SELECT session_id, project_id, state, last_event_at FROM sessions
+               ORDER BY last_event_at DESC, session_id LIMIT ?) s
+              JOIN search_docs d ON d.kind = 'session' AND d.ref_id = s.session_id
+              JOIN search_fts f ON f.rowid = d.id
+         ORDER BY s.last_event_at DESC, s.session_id`,
+      ).all(Math.max(0, limit - projects.length)) as SearchRow[]
+    ).map(toHit);
+    return [...sessions, ...projects];
   }
 
   /**
@@ -517,6 +740,8 @@ export class Store {
           id,
         );
       }
+      this.indexProject(id);
+      if (patch.name !== undefined) this.reindexProjectPhases(id);
       return true;
     });
   }
@@ -536,6 +761,9 @@ export class Store {
       ).run(sessionId, projectId, Date.now());
       const pid = this.resolveProjectId(sessionId, row.project_dir, () => cwdOf(row.snapshot));
       this.stmt("UPDATE sessions SET project_id = ? WHERE session_id = ?").run(pid, sessionId);
+      this.reindexSession(sessionId);
+      this.reindexProjectPhases(row.project_id ?? null);
+      this.reindexProjectPhases(pid);
       return true;
     });
   }
@@ -549,6 +777,8 @@ export class Store {
          ON CONFLICT(session_id) DO UPDATE SET phase = excluded.phase, updated_at = excluded.updated_at`,
       ).run(sessionId, phase, Date.now());
       this.stmt("UPDATE sessions SET phase_label = ? WHERE session_id = ?").run(phase, sessionId);
+      this.reindexSession(sessionId);
+      this.reindexProjectPhases(this.getSession(sessionId)?.project_id ?? null);
       return true;
     });
   }
@@ -735,12 +965,51 @@ export class Store {
   /** Replay only: drops every session row (the caller re-inserts inside the same transaction). */
   deleteAllSessions(): void {
     this.stmt("DELETE FROM sessions").run();
+    // The index of sessions and phases is rebuilt by the re-inserts; project documents stay.
+    this.stmt(
+      "DELETE FROM search_fts WHERE rowid IN (SELECT id FROM search_docs WHERE kind <> 'project')",
+    ).run();
+    this.stmt("DELETE FROM search_docs WHERE kind <> 'project'").run();
     this.projectsVersion++;
   }
 
   close(): void {
     this.db.close();
   }
+}
+
+export interface SearchHit {
+  kind: "session" | "project" | "phase";
+  id: string;
+  project_id: string | null;
+  title: string;
+  snippet: string;
+  state?: string;
+  score: number;
+}
+
+interface SearchRow {
+  kind: SearchHit["kind"];
+  ref_id: string;
+  project_id: string | null;
+  title: string;
+  snippet: string;
+  state: string | null;
+  score: number;
+}
+
+function toHit(r: SearchRow): SearchHit {
+  const hit: SearchHit = {
+    kind: r.kind,
+    // A phase document is keyed "<project_id>/<phase>"; the phase label is its public id.
+    id: r.kind === "phase" ? r.ref_id.slice(r.ref_id.indexOf("/") + 1) : r.ref_id,
+    project_id: r.project_id,
+    title: r.title,
+    snippet: r.snippet.replace(/\s+/g, " ").trim(),
+    score: Math.round(r.score * 1000) / 1000,
+  };
+  if (r.state !== null) hit.state = r.state;
+  return hit;
 }
 
 function cwdOf(snapshot: string): string | null {

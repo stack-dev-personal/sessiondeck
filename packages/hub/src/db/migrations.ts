@@ -100,4 +100,21 @@ CREATE INDEX sessions_project ON sessions(project_id, state);
 CREATE TABLE session_overrides (session_id TEXT PRIMARY KEY, project_id TEXT, phase TEXT, updated_at BIGINT NOT NULL);
 `,
   },
+  {
+    version: 7,
+    name: "search_fts",
+    // R5.4. FTS5 is SQLite-only: the Postgres twin of this file (Phase 7, same number) uses a
+    // tsvector column with a GIN index. search_docs maps (kind, ref_id) to the FTS rowid so a row is
+    // replaced by rowid, never by a scan; hash is the digest of the indexed text, so the ingest hot
+    // path writes the index only when that text changed. Stored rows are filled by Store.migrate
+    // (the text is derived from snapshots in code, like the project backfill).
+    sql: `
+CREATE TABLE search_docs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ref_id TEXT NOT NULL, project_id TEXT, hash TEXT NOT NULL);
+CREATE UNIQUE INDEX search_docs_ref ON search_docs(kind, ref_id);
+CREATE VIRTUAL TABLE search_fts USING fts5(
+  kind UNINDEXED, ref_id UNINDEXED, project_id UNINDEXED, title, body,
+  tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3');
+CREATE INDEX sessions_last_event ON sessions(last_event_at);
+`,
+  },
 ];

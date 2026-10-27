@@ -30,6 +30,8 @@
     "gen:golden": "node scripts/bundle.mjs scripts/gen-golden.ts dist/gen-golden.mjs && node dist/gen-golden.mjs",
     "replay": "node scripts/bundle.mjs src/main.ts dist/main.mjs && node dist/main.mjs replay",
     "compact": "node scripts/bundle.mjs src/main.ts dist/main.mjs && node dist/main.mjs compact",
-    "load": "node scripts/load-ingest.mjs"
+    "load": "node scripts/load-ingest.mjs",
+    "bench:search": "node scripts/bench-search.mjs",
+    "harness:atlas": "node scripts/atlas-harness.mjs"
   }
 }

@@ -11,6 +11,7 @@ import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
 import { registerAtlas } from "./routes/atlas.ts";
+import { registerSearch } from "./routes/search.ts";
 import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
@@ -176,6 +177,7 @@ export function buildServer(opts: {
     ingestor.events,
     app.log,
   );
+  registerSearch(app, opts.store);
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,
