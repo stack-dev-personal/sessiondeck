@@ -24,3 +24,10 @@
 
 ## Units
 
+### U1 layout engine (R6.1): done, re-verify at close
+- Commits ff36d9f, b21f9e6, ef80999, fix 29fe34e; verify 1c3a118.
+- Files: packages/web/src/layout/*, store/layout.ts, components/layout/*, routes/Layout.tsx, e2e/R6.1.spec.ts; header link added (R3 baselines regenerated, reviewer diffed them pixel by pixel: header-only change).
+- react-resizable-panels 4.15.0 (MIT) kept; ratios live in the spec, library gets defaultLayout and setLayout.
+- Review: iteration 1 fix-then-merge (3 SHOULD, 4 NIT, all fixed); iteration 2 merge.
+- Verifier: R6.1 pass (289 vitest, 15 Playwright), screenshots /state/3/screens/S10/R6.1-*.png.
+- Deferred to U4: "+N more" hidden-project count (reviewer SHOULD, Layout.tsx:41); by-project cards clipped in narrow columns at 1440x900 (verifier flag, orchestrator looked at the PNG). Solo strip overflow is intended (design 5.4: strip horizontally scrollable).
