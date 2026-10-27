@@ -7,7 +7,7 @@ Branch p5/atlas-core, HEAD acd2556 (rebased on origin/sprint/3-organize 18a5871)
 | Requirement | Command | Key output | Result | Timestamp |
 |---|---|---|---|---|
 | R5.1 Every live session belongs to exactly one project; worktree sessions roll up to the repo project. | `pnpm -r test` (hub atlas.R5.1, atlas.fix1; web atlas.test.ts); mock Playwright `e2e/R5.1.spec.ts` in container sd-3-S9-final-pw-mock | hub 30 files / 419 tests pass; mock R5.1: 3 passed (worktree session under repo project, keyboard reassign + undo, light theme). Screens R5.1.png, R5.1-light.png exist | pass | 2026-10-27T20:30Z |
-| R5.4 Search returns results in < 100 ms for your data size; palette navigates with keyboard only. | `pnpm -F @sessiondeck/hub test:bench`; `node packages/hub/scripts/bench-search.mjs`; mock `e2e/R5.4.spec.ts`; live `e2e-live.sh` (R5.4-live) | test:bench 1 passed, worst class p95 common-multi 22.97 ms. bench-search (n=400, 2000 sessions, 2336 docs): route p50 5.34 p95 17.57 max 25.59 ms; worst class p95 common-multi 39.53 ms; `PASS route p95 < 100 ms overall and per class`. Mock R5.4: 7 passed (keyboard-only). Live R5.4-live passed: hub tookMs max 1.18 ms, browser round trip median 12.1 ms max 14.9 ms, typed-to-results median 55.4 ms max 56.8 ms. Screens R5.4-palette, -results, -sessions, -live .png and latency JSONs exist | pass | 2026-10-27T20:40Z |
+| R5.4 Search returns results in < 100 ms for your data size; palette navigates with keyboard only. | `pnpm -F @sessiondeck/hub test:bench`; `node packages/hub/scripts/bench-search.mjs`; mock `e2e/R5.4.spec.ts` in mcr.microsoft.com/playwright:v1.63.0-noble (sd-3-S9-reverify-pw); web test, typecheck, lint, lint:root | HEAD 637bbc2: web test 302 passed (30 files), typecheck, lint, lint:root all exit 0. test:bench 1 passed, worst class p95 common-multi 41.68 ms (max 77.50). bench-search (n=400, 2000 sessions): worst class p95 common-multi 34.16 ms, overall route within limit; `PASS route p95 < 100 ms overall and per class`. Mock R5.4: 7 passed (keyboard-only). Live R5.4-live not re-run (last passed at acd2556: tookMs max 1.18 ms, typed-to-results median 55.4 ms) | pass | 2026-10-27T21:12Z |
 | R5.5 Phase labels are editable inline and survive hub restart. | mock `e2e/R5.5.spec.ts`; live R5.5-live (hub container restarted by the host poller) | Mock R5.5: 2 passed. Live R5.5-live: 1 passed (manual label survives hub restart and reload). R5.5-live.png viewed: row shows "Hardening 35641 manual" on the live project view. R5.5.png exists | pass | 2026-10-27T20:40Z |
 | R5.6 Project view shows: live sessions, last 20 archived, totals (sessions, hours, cost from history), active branches. | web vitest ProjectView.test.tsx (13), hub atlas.R5.6; mock `e2e/R5.6.spec.ts` | Mock R5.6: 3 passed (dark, light, phases and projects list; axe none on all). R5.6-projects.png viewed: 8 projects, named, colored, session and live counts. R5.6.png and R5.6-light.png exist (dated 19:55, not regenerated: the mock container writes screenshots to its /tmp, not copied out; the spec passed again) | pass | 2026-10-27T20:30Z |
 | R5.2, R5.3 | n/a | belong to S9b | S9b | n/a |
@@ -30,13 +30,17 @@ Skips (not failures): scripts/test/install-shortpath.test.ts (2 tests) is Window
 - Live suite `SD_E2E_PREFIX=sd-3-S9-final SD_E2E_WORK_VOLUME=sprint-3-work packages/web/scripts/e2e-live.sh`, all live specs including R3.6 perf: 6 passed (R3.1 max 69 ms, R3.3, R3.6 0 long tasks and 0 failed posts, R3.9, R5.4-live, R5.5-live). Screens copied to /state/3/screens/S9/.
 - Palette keyboard-only: R5.4 specs contain no click, hover or mouse calls (verified earlier by grep); 7 mock plus 1 live pass.
 
+- Re-verification at HEAD 637bbc2 after effd3a9 (CI fix to CommandPalette.tsx and e2e/R5.4.spec.ts): R5.4 re-run, pass (see the R5.4 row). Other rows are as of acd2556. Screens copied to /state/3/screens/S9/.
+
 ## Phase DoD
 
 | Item | Result |
 |---|---|
-| docs/ATLAS.md explains how projects and phases are inferred and how to fix a mis-assignment | pass on content: sections on project key (project_dir, cwd, Unassigned; worktree path-shape roll-up rules), phase inference (manual, name, branch), "Fixing a mis-assignment" with curl for PATCH project, undo, rename/recolor, phase. Minor staleness: the last paragraph says the UI controls "land with the S9 web work" although the UI now exists |
+| docs/ATLAS.md explains how projects and phases are inferred and how to fix a mis-assignment | pass on content: sections on project key (project_dir, cwd, Unassigned; worktree path-shape roll-up rules), phase inference (manual, name, branch), "Fixing a mis-assignment" with curl for PATCH project, undo, rename/recolor, phase. Staleness note resolved: the UI controls paragraph was fixed in b2c754d and a908666; ATLAS.md now has an "In the UI" section and ends with "The UI controls call these same endpoints." |
 | Real projects (bb2dash, quant-edge, agentic-harness, this one) appear named and colored with archives attached | needs laptop confirmation (needs the laptop and S9b archives) |
 
 ## Cleanup
 
 All sd-3-S9-final* containers, network and image removed (docker ps, network ls, images checked: none left). Nothing committed.
+
+Re-verify run: container sd-3-S9-reverify-pw was run with --rm; no containers, networks or volumes created by it remain.
