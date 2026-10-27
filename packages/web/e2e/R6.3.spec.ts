@@ -145,7 +145,7 @@ test.describe("R6.3 fake hub", () => {
     await waitForReplayDone(page);
     await page.keyboard.press("s");
     await page.getByRole("textbox", { name: "Name" }).fill("Keys");
-    await page.keyboard.press("Tab");
+    // Name, slot, then Cancel: the pin box is disabled with no Viewer host and is skipped.
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: /Cancel/ })).toBeFocused();
@@ -158,6 +158,45 @@ test.describe("R6.3 fake hub", () => {
     await page.screenshot({ path: shot("R6.3-manage-dialog.png") });
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("manage-dialog")).toHaveCount(0);
+  });
+});
+
+test.describe("R6.3 Viewer host setting", () => {
+  test.skip(LIVE.hubUrl !== "", "mock build only");
+
+  test("R6.3 Viewer host: default none, choose a known host, saved, the dialog pins to it", async ({
+    page,
+  }) => {
+    const hub = new FakeHub();
+    await hub.install(page);
+    await freezeClock(page);
+    await page.goto("/layout?replay=fast");
+    await waitForReplayDone(page);
+    // None: the pin box is disabled and says where to set it.
+    await page.keyboard.press("s");
+    await expect(
+      page.getByRole("checkbox", { name: /Pin to the Viewer host \(none set/ }),
+    ).toBeDisabled();
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("link", { name: /settings/i }).click();
+    const sel = page.getByRole("combobox", { name: "Viewer host" });
+    await expect(sel).toHaveValue("");
+    const host = (await sel.locator("option").nth(1).getAttribute("value"))!;
+    await sel.selectOption(host);
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByTestId("settings-saved")).toContainText("Saved");
+    await page.screenshot({ path: shot("R6.3-viewer-host.png") });
+
+    await page.getByRole("link", { name: /layout/i }).click();
+    await page.keyboard.press("s");
+    const pin = page.getByRole("checkbox", { name: new RegExp(`Pin to Viewer host ${host}`) });
+    await expect(pin).toBeEnabled();
+    await pin.check();
+    await page.getByRole("textbox", { name: "Name" }).fill("Pinned");
+    await page.getByRole("textbox", { name: "Name" }).press("Enter");
+    await page.getByTestId("save-dialog").waitFor({ state: "detached" });
+    expect(hub.rows[0]?.host).toBe(host);
   });
 });
 
@@ -187,26 +226,21 @@ test.describe("R6.3 real hub", () => {
   }) => {
     await clean();
     await configureHub(page);
-    // The hub sends no CORS headers for REST today (reported, hub is out of this unit's paths), so the
-    // browser's cross-origin call is relayed by Playwright with the headers added. The request, the
-    // bearer, the body and the real hub's answers are untouched.
-    await page.route(`${LIVE.hubUrl}/layouts**`, async (route) => {
-      const cors = {
-        "access-control-allow-origin": "*",
-        "access-control-allow-headers": "authorization, content-type",
-        "access-control-allow-methods": "GET, PUT, DELETE, OPTIONS",
-      };
-      if (route.request().method() === "OPTIONS")
-        return route.fulfill({ status: 204, headers: cors });
-      const res = await route.fetch({
-        url: route.request().url().replace(LIVE.hubUrl, LIVE.directUrl),
-      });
-      return route.fulfill({ response: res, headers: { ...res.headers(), ...cors } });
+    // No relay: the browser (origin localhost:5174) makes the real cross-origin call, preflight
+    // included. The hub answers with its CORS allowlist (HUB_ALLOWED_ORIGINS in scripts/e2e-live.sh).
+    const hubOrigin = new URL(LIVE.hubUrl).origin; // the URL class lowercases the host
+    const allowOrigins: (string | undefined)[] = [];
+    page.on("response", (r) => {
+      if (r.request().method() === "PUT" && r.url().startsWith(`${hubOrigin}/layouts/`))
+        allowOrigins.push(r.headers()["access-control-allow-origin"]);
     });
     await saveThree(page, async () => {
       await page.goto("/layout");
       await waitConnected(page);
     });
+    // Three real cross-origin PUTs, each answered with the exact origin of the page (not *).
+    expect(allowOrigins).toEqual(Array(3).fill(new URL(page.url()).origin));
+    expect(allowOrigins[0]).not.toBe(new URL(LIVE.hubUrl).origin);
     const rows = await get();
     expect(rows.map((r) => r.hotkey).sort()).toEqual([1, 2, 3]);
     await page.reload();
