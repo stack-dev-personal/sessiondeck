@@ -6,6 +6,37 @@ import type { PathEnv } from "../paths.ts";
 const WORLD_OR_GROUP_WRITABLE = 0o022;
 const STICKY = 0o1000;
 
+type StatFn = (path: string) => Promise<{ uid: number; mode: number } | undefined>;
+
+/**
+ * POSIX only. The nearest existing ancestor of `home` (its parent, or higher when the parent is
+ * missing too) must be owned by `uid` or root and not group/world writable unless sticky; else
+ * another user could rename the directory we are about to create or already use.
+ * Pure over `stat` and `uid` so it is testable on any OS.
+ */
+export async function parentRefusal(
+  home: string,
+  uid: number | undefined,
+  stat: StatFn,
+): Promise<string | undefined> {
+  let dir = dirname(home);
+  for (;;) {
+    const st = await stat(dir);
+    if (st) {
+      if (uid !== undefined && st.uid !== uid && st.uid !== 0) {
+        return `the parent ${dir} of ${home} is owned by another user; they could swap the directory`;
+      }
+      if ((st.mode & WORLD_OR_GROUP_WRITABLE) !== 0 && (st.mode & STICKY) === 0) {
+        return `the parent ${dir} of ${home} is group or world writable (and not sticky); another user could swap the directory`;
+      }
+      return undefined;
+    }
+    const up = dirname(dir);
+    if (up === dir) return undefined;
+    dir = up;
+  }
+}
+
 /**
  * Why this probe home may not hold the exes Claude Code runs on every hook, or undefined when it
  * may. Same rule as `probe daemon install` (autostart homeRefusal): on Windows the home must be the
@@ -25,10 +56,5 @@ export async function exeHomeRefusal(e: PathEnv, home: string): Promise<string |
   const deps = { e: env, out: () => undefined, err: () => undefined, exec: realExec, fs: realFs };
   const refusal = await homeRefusal(e.platform, home, env, deps, true);
   if (refusal || e.platform === "win32") return refusal;
-  const parent = dirname(home);
-  const st = await realFs.statPath(parent);
-  if (st && (st.mode & WORLD_OR_GROUP_WRITABLE) !== 0 && (st.mode & STICKY) === 0) {
-    return `the parent of ${home} is group or world writable (and not sticky); another user could swap the directory`;
-  }
-  return undefined;
+  return parentRefusal(home, uid, (p) => realFs.statPath(p));
 }

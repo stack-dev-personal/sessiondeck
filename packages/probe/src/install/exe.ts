@@ -171,10 +171,13 @@ export function isOurExeDir(dir: string, home: string): boolean {
 const norm = (p: string): string => (process.platform === "win32" ? p.toLowerCase() : p);
 const sameDir = (a: string, b: string): boolean => norm(realResolve(a)) === norm(realResolve(b));
 
+/** placeOne's temp name: `.<file>.<pid>.<8 hex>.tmp`. */
+const STRAY_TEMP = /^\.(hook|statusline|subagents)(\.exe)?\.\d+\.[0-9a-f]{8}\.tmp$/;
+
 /** Only the exes themselves and our own stray temp copies may be in a directory prune removes. */
-function isOurExeEntry(name: string): boolean {
+export function isOurExeEntry(name: string): boolean {
   const exes = EXE_NAMES.flatMap((n) => [n, `${n}.exe`]);
-  return exes.includes(name) || /^..+.tmp$/.test(name);
+  return exes.includes(name) || STRAY_TEMP.test(name);
 }
 
 /**

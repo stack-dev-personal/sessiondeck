@@ -11,7 +11,7 @@
 // from the cwd (Claude Code runs hooks with cwd = the user's project).
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveHostBun } from "./bun-resolve.mjs";
@@ -68,11 +68,9 @@ for (const bundle of ["hook.mjs", "statusline.mjs", "subagents.mjs"]) {
 for (const t of targets) {
   const outDir = `${root}/dist/exe/${t.dir}`;
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(
-    `${outDir}/sources.json`,
-    `${JSON.stringify(sources, null, 2)}
-`,
-  );
+  // Absent until every program of this target compiled, so a failed build never leaves new
+  // hashes beside an old exe.
+  rmSync(`${outDir}/sources.json`, { force: true });
   for (const [name, entry] of programs) {
     if (!existsSync(entry)) fail(`missing ${entry}; run pnpm build first`);
     const outfile = `${outDir}/${name}${t.ext}`;
@@ -92,4 +90,5 @@ for (const t of targets) {
     const mb = (statSync(outfile).size / 1048576).toFixed(1);
     console.log(`built ${t.dir}/${name}${t.ext} ${mb} MB`);
   }
+  writeFileSync(`${outDir}/sources.json`, `${JSON.stringify(sources, null, 2)}\n`);
 }

@@ -184,7 +184,7 @@ describe("review 1, finding 4: uninstall does not trust a forged exeDir", () => 
     const sb = sandbox(harnessFixture);
     await runCli(exeInstall(standIns(sb.root)), sb.env);
     const [dir] = binDirs(sb.home);
-    writeFileSync(join(sb.home, "bin", dir as string, `.hook${EXT}.1.abcd.tmp`), "x");
+    writeFileSync(join(sb.home, "bin", dir as string, `.hook${EXT}.1.abcd1234.tmp`), "x");
     expect((await runCli(["uninstall"], sb.env)).code).toBe(0);
     expect(binDirs(sb.home)).toHaveLength(0);
   });

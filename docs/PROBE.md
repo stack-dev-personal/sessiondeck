@@ -21,7 +21,8 @@ checkout you intend to keep; rerun `install` after moving it (it replaces its ow
 
 ```
 pnpm -F @sessiondeck/probe test        # fast in-process unit tests: no child processes, no build
-pnpm -F @sessiondeck/probe test:proc   # every suite that spawns the built entries (*.proc.test.ts)
+pnpm -F @sessiondeck/probe test:proc   # suites that spawn the built entries (*.proc.test.ts), except the exe suites
+pnpm -F @sessiondeck/probe test:proc:exe # the real-exe suites (*-exe*.proc.test.ts), one file at a time; needs build:exe, SD_REQUIRE_EXE=1 in CI
 ```
 
 `test:proc` uses `vitest.proc.config.ts`, which builds `dist/` first (global setup) and has long
@@ -96,7 +97,7 @@ code either way, so no behavior fork.
 - Home safety: the exe form applies the same rule as `probe daemon install`. On Windows the home must
   be the profile default or beneath it (a folder such as `C:sd` inherits "Authenticated Users:
   Modify" and another account could swap `hook.exe`); on POSIX it must be owned by you and not
-  group/world writable, and so must its parent (a sticky parent such as `/tmp` is accepted).
+  group/world writable. Its parent (or, when the home or parent does not exist yet, the nearest existing ancestor) must be owned by you or root and not group/world writable (a sticky one such as `/tmp` is accepted).
   Otherwise install exits 1 before writing anything; `--runtime node` is not restricted.
 - Environment: the compiled exe honors Bun runtime variables (`BUN_INSPECT`, `BUN_OPTIONS`,
   `BUN_CONFIG_*`) the way the Node form honors `NODE_OPTIONS`. Whoever can set them can already run

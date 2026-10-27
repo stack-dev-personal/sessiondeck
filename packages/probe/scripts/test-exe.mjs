@@ -1,4 +1,4 @@
-// Builds the exes, then runs only the exe variants of the R1.2 / R1.3 suites; prints wall time.
+// Builds the exes, then runs the exe suites (test:proc:exe config, serial); prints wall time.
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -17,5 +17,5 @@ const vitest = join(
   dirname(createRequire(join(root, "package.json")).resolve("vitest/package.json")),
   "vitest.mjs",
 );
-run("exe tests", [vitest, "run", "-c", "vitest.proc.config.ts", "test/hook-exe.proc.test.ts"]);
+run("exe tests", [vitest, "run", "-c", "vitest.proc.exe.config.ts"]);
 console.log(`[test:exe] total wall time: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
