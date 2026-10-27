@@ -54,9 +54,28 @@
 - Benches are recorded by sd-verifier (owner of docs/*-BENCH.md), not the executor.
 - Branch not pushed while blocked (keeps Actions minutes; the worktree is local to the conductor's laptop).
 
+
+### Resume units (2026-10-27)
+- U3 exe-form install (sd-executor-probe), d20dc61: exes copied to <home>/bin/<12-hex content hash>/ (temp, SHA-256 check, rename); exec-form hooks;  fallback; install-state records runtime and exeDir.
+- U4 exe variants of R1.2/R1.3 (sd-executor-probe), 92f03ac; U4b host-aware build-exe and , 537c87d.
+- U5 dated notes under A15, A2 and open question 2, and under R1.1/R1.11 in the phase doc (sd-executor-contract), 2196a5a. CI exe step de240b2, 66ae3c7, 6b551de. Format fix 4f3d5af.
+- Review round 1: sd-reviewer fix-then-merge (BLOCKING on this log cleared: orchestrator-written; 4 MAJOR, 2 MINOR). sd-security-reviewer Gate: pass (2 MEDIUM, 4 LOW). All fixed in aeb9b2d (install) and b6b6a61 (build/tests).
+- Review round 2: sd-reviewer fix-then-merge (2 MAJOR: exe suites in the timing pool, POSIX parent owner; 2 MINOR). Fixed in 7fec9d2; CI runs only  (6.8 s) to stay under the one-minute rule.
+- Review round 3: sd-reviewer **merge** (1 MINOR, stand-in install tests left CI; fixed 5614ffb).
+- Verify (sd-verifier), 1ab4ee8: R1.2, R1.3, R1.8, R1.10 pass; R1.11 linux-x64 build pass, WSL2 part not applicable (user); R1.1 FAIL on the loaded host today: hook.exe p95 146.6 (first after rebuild), 81.2, 104.7, 112.7, 95.8 ms with 16-17 containers and CPU 40-90%; bun-floor 63.8 / 128.4 / 72.8 (the floor itself crossed 100 ms, so host load dominates). Earlier rounds 80.5 / 79.6 / 79.9 pass < 100 ms.
+
 ## Decisions made (resume, 2026-10-27)
 - 2026-10-27, user answer to .sprint/1/questions/A15.md (via the conductor, .sprint/1/answers/A15.md): **option B**. R1.1 on native Windows is judged at hook p95 < 100 ms (the phase doc's SessionEnd ceiling). Recorded as a dated note under A15 in 00-open-decisions.md (original text untouched) and a dated note under the R1.1 line in phase-1-probe.md (line itself untouched). VERIFY-P1 judges the exe against < 100 ms. Session continues as option A: U3, U4, U5, reviews, VERIFY rows, PR. The conductor still runs a quiet-laptop bench with the user before the real install.
 - 2026-10-27, user on R1.11/WSL2: "they run on windows with subagents being connected to wsl2 containers for development and testing." Conductor's reading: every Claude Code session runs natively on Windows; WSL2 is only Docker Desktop's backend. Keep the linux-x64 exe build; in VERIFY-P1 mark the WSL2-distro install and bridge part of R1.11 "not applicable to the current setup (user, 2026-10-27)"; add a dated note under A2 / open question 2 in 00-open-decisions.md; delete no R1.11 code or tests.
+
+- Status commands fall back to the Node form when the exe path has a space (statusLine runs under Git Bash or PowerShell; a quoted first word cannot work in both). Hooks stay exe form.
+- Accepted the Windows compiler fallback in scripts/bun-resolve.mjs: the postinstall copy of bun.exe is used only when its SHA-256 equals a pin checked against the pnpm store sha512 for @oven/bun-windows-x64@1.4.4; the pin must move with every Bun bump (a test enforces version match).
+- CI runs only the hook exe suite (R1.2/R1.3); statusline, subagents, autoload and real-exe install suites run locally (VERIFY-P1, A15 section).
+- R1.1 not judged pass from today's loaded bench: the verifier's FAIL stands; the quiet-laptop bench the conductor runs with the user decides it before the real install.
+
+## Deferred findings (resume)
+- sd-security-reviewer LOW: Bun runtime env vars (BUN_INSPECT, BUN_OPTIONS, BUN_CONFIG_*) are honored like NODE_OPTIONS; documented in docs/PROBE.md, no code change.
+- Leftover %TEMP%sd-install-* folders (about 3.5 GB) from test runs before b6b6a61; not deleted by this session (deletes outside the repo are off limits). The user can remove them.
 
 ## Blocked
 - 2026-10-27: R1.1 exe p95 at the 80 ms line under load. Question: .sprint/1/questions/A15.md (default A). Resume at U3.
