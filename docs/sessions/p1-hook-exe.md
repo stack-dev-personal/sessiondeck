@@ -56,11 +56,11 @@
 
 
 ### Resume units (2026-10-27)
-- U3 exe-form install (sd-executor-probe), d20dc61: exes copied to <home>/bin/<12-hex content hash>/ (temp, SHA-256 check, rename); exec-form hooks;  fallback; install-state records runtime and exeDir.
-- U4 exe variants of R1.2/R1.3 (sd-executor-probe), 92f03ac; U4b host-aware build-exe and , 537c87d.
+- U3 exe-form install (sd-executor-probe), d20dc61: exes copied to <home>/bin/<12-hex content hash>/ (temp, SHA-256 check, rename); exec-form hooks; `--runtime node` fallback; install-state records runtime and exeDir.
+- U4 exe variants of R1.2/R1.3 (sd-executor-probe), 92f03ac; U4b host-aware build-exe and `build:exe:host`, 537c87d.
 - U5 dated notes under A15, A2 and open question 2, and under R1.1/R1.11 in the phase doc (sd-executor-contract), 2196a5a. CI exe step de240b2, 66ae3c7, 6b551de. Format fix 4f3d5af.
 - Review round 1: sd-reviewer fix-then-merge (BLOCKING on this log cleared: orchestrator-written; 4 MAJOR, 2 MINOR). sd-security-reviewer Gate: pass (2 MEDIUM, 4 LOW). All fixed in aeb9b2d (install) and b6b6a61 (build/tests).
-- Review round 2: sd-reviewer fix-then-merge (2 MAJOR: exe suites in the timing pool, POSIX parent owner; 2 MINOR). Fixed in 7fec9d2; CI runs only  (6.8 s) to stay under the one-minute rule.
+- Review round 2: sd-reviewer fix-then-merge (2 MAJOR: exe suites in the timing pool, POSIX parent owner; 2 MINOR). Fixed in 7fec9d2; CI runs only `test:proc:exe hook-exe` (6.8 s) to stay under the one-minute rule.
 - Review round 3: sd-reviewer **merge** (1 MINOR, stand-in install tests left CI; fixed 5614ffb).
 - Verify (sd-verifier), 1ab4ee8: R1.2, R1.3, R1.8, R1.10 pass; R1.11 linux-x64 build pass, WSL2 part not applicable (user); R1.1 FAIL on the loaded host today: hook.exe p95 146.6 (first after rebuild), 81.2, 104.7, 112.7, 95.8 ms with 16-17 containers and CPU 40-90%; bun-floor 63.8 / 128.4 / 72.8 (the floor itself crossed 100 ms, so host load dominates). Earlier rounds 80.5 / 79.6 / 79.9 pass < 100 ms.
 
