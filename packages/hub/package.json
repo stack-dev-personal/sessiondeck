@@ -21,6 +21,7 @@
     "build": "tsc --noEmit",
     "start": "node scripts/bundle.mjs src/main.ts dist/main.mjs && node dist/main.mjs",
     "test": "vitest run",
+    "test:bench": "vitest run --config vitest.bench.config.ts --no-file-parallelism",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "container:smoke": "node scripts/container-smoke.mjs",

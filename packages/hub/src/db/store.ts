@@ -92,6 +92,17 @@ const INDEXED_AS_MAX = 4096;
 const SEARCH_MAX_FAILURES = 3;
 const SEARCH_QUARANTINE_MS = 60_000;
 const SEARCH_FLUSH_MS = 200;
+const FLUSH_STATE_MAX = 4096;
+
+/** Sets a key in an insertion-ordered map capped at FLUSH_STATE_MAX, evicting the oldest. */
+function capSet<V>(m: Map<string, V>, k: string, v: V): void {
+  m.delete(k);
+  m.set(k, v);
+  if (m.size > FLUSH_STATE_MAX) {
+    const oldest = m.keys().next().value;
+    if (oldest !== undefined) m.delete(oldest);
+  }
+}
 
 export class Store {
   readonly db: Database.Database;
@@ -455,14 +466,28 @@ export class Store {
       this.flushTimer = undefined;
     }
     if (this.closed) return;
-    if (this.stmt("SELECT 1 FROM sessions WHERE search_dirty = 1 LIMIT 1").get() === undefined)
+    const now = Date.now();
+    for (const [id, at] of this.quarantined)
+      if (now - at >= SEARCH_QUARANTINE_MS) this.quarantined.delete(id);
+    const dirty = (
+      this.stmt("SELECT COUNT(*) AS n FROM sessions WHERE search_dirty = 1").get() as { n: number }
+    ).n;
+    if (dirty === 0) {
+      this.flushFailures.clear();
+      this.quarantined.clear();
       return;
+    }
+    // Only quarantined rows are dirty: nothing to do until one expires or a new row is flagged.
+    if (dirty <= this.quarantined.size) return;
     this.indexedPending.clear();
+    // project -> sessions that asked for its phase documents to be rebuilt
+    const projects = new Map<string, Set<string>>();
+    const seen = new Set<string>();
     try {
-      this.transaction(() => {
-        const projects = new Set<string>();
-        let after = "";
-        for (;;) {
+      let after = "";
+      for (;;) {
+        // One transaction per page: an interrupted open keeps the progress of finished pages.
+        const last = this.transaction(() => {
           const page = this.stmt(
             `SELECT session_id, snapshot, project_id, phase_label FROM sessions
              WHERE search_dirty = 1 AND session_id > ? ORDER BY session_id LIMIT 500`,
@@ -472,16 +497,18 @@ export class Store {
             project_id: string | null;
             phase_label: string | null;
           }[];
-          if (page.length === 0) break;
+          if (page.length === 0) return null;
           for (const r of page) {
-            const q = this.quarantined.get(r.session_id);
-            if (q !== undefined) {
-              if (Date.now() - q < SEARCH_QUARANTINE_MS) continue;
-              this.quarantined.delete(r.session_id);
-            }
+            seen.add(r.session_id);
+            if (this.quarantined.has(r.session_id)) continue;
+            const want = (p: string): void => {
+              let set = projects.get(p);
+              if (set === undefined) projects.set(p, (set = new Set()));
+              set.add(r.session_id);
+            };
             try {
               this.transaction(() => {
-                this.indexSession(r.session_id, r.snapshot, r.project_id, r.phase_label, projects);
+                this.indexSession(r.session_id, r.snapshot, r.project_id, r.phase_label, want);
                 this.stmt(
                   "UPDATE sessions SET search_dirty = 0 WHERE session_id = ? AND search_dirty = 1",
                 ).run(r.session_id);
@@ -492,32 +519,46 @@ export class Store {
               const n = (this.flushFailures.get(r.session_id) ?? 0) + 1;
               if (n >= SEARCH_MAX_FAILURES) {
                 this.flushFailures.delete(r.session_id);
-                this.quarantined.set(r.session_id, Date.now());
+                capSet(this.quarantined, r.session_id, Date.now());
                 this.onSearchFlushError(
                   new Error(`search index quarantined session ${r.session_id}`, { cause: err }),
                 );
               } else {
-                this.flushFailures.set(r.session_id, n);
+                capSet(this.flushFailures, r.session_id, n);
                 this.onSearchFlushError(err);
               }
             }
           }
-          after = page[page.length - 1]!.session_id;
-        }
-        for (const p of projects) {
-          try {
-            this.transaction(() => this.reindexProjectPhases(p));
-          } catch (err) {
-            this.onSearchFlushError(err);
+          return page[page.length - 1]!.session_id;
+        });
+        if (last === null) break;
+        after = last;
+      }
+      for (const [p, sessionIds] of projects) {
+        try {
+          this.transaction(() => this.reindexProjectPhases(p));
+        } catch (err) {
+          // The stale phase document must be rebuilt: keep these sessions dirty and uncached.
+          this.onSearchFlushError(err);
+          for (const id of sessionIds) {
+            this.indexedPending.delete(id);
+            this.indexedAs.delete(id);
           }
+          this.transaction(() => {
+            for (const id of sessionIds)
+              this.stmt("UPDATE sessions SET search_dirty = 1 WHERE session_id = ?").run(id);
+          });
         }
-      });
+      }
     } catch (err) {
-      this.indexedPending.clear(); // rolled back: the flags are dirty again, the cache must not claim otherwise
+      this.indexedPending.clear(); // the cache is only a hint; a miss takes the safe path
       throw err;
     }
     for (const [id, v] of this.indexedPending) this.rememberIndexed(id, v);
     this.indexedPending.clear();
+    for (const id of [...this.flushFailures.keys()])
+      if (!seen.has(id)) this.flushFailures.delete(id);
+    for (const id of [...this.quarantined.keys()]) if (!seen.has(id)) this.quarantined.delete(id);
   }
 
   /**
@@ -530,7 +571,7 @@ export class Store {
     snapshot: string,
     projectId: string | null,
     manualPhase: string | null,
-    reindex?: Set<string>,
+    reindex?: (projectId: string) => void,
   ): void {
     let snap: Record<string, unknown> | null = null;
     try {
@@ -546,12 +587,17 @@ export class Store {
     // Recorded only once the document write succeeded; inside a flush it is applied after commit.
     if (reindex !== undefined) this.indexedPending.set(sessionId, { phase: t.phase, projectId });
     else this.rememberIndexed(sessionId, { phase: t.phase, projectId });
-    if (was === null) return;
+    if (was === null) {
+      // Text unchanged. With no cache entry (restart, or an earlier flush died after writing the
+      // document but before the project's phases were rebuilt) the phases may still be stale.
+      if (reindex !== undefined && last === undefined && projectId !== null) reindex(projectId);
+      return;
+    }
     if (was.existed && reindex !== undefined) {
       // A renamed phase or a moved session can leave a phase document nobody supports any more.
       if (last === undefined || last.phase !== t.phase || was.prevProject !== projectId) {
-        if (projectId !== null) reindex.add(projectId);
-        if (was.prevProject !== null) reindex.add(was.prevProject);
+        if (projectId !== null) reindex(projectId);
+        if (was.prevProject !== null) reindex(was.prevProject);
         return;
       }
     }

@@ -127,6 +127,8 @@ CREATE INDEX sessions_last_event ON sessions(last_event_at);
     sql: `
 ALTER TABLE sessions ADD COLUMN search_dirty INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX sessions_search_dirty ON sessions(session_id) WHERE search_dirty = 1;
+-- Entries left stale by the earlier in-memory pending design are repaired on the next open (unchanged text is skipped by digest).
+UPDATE sessions SET search_dirty = 1;
 `,
   },
 ];
