@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { readStored, removeStored, STORAGE_KEYS, writeStored } from "../lib/storage";
-import { compactAll, setPaneCompact, setRatiosAt } from "../layout/ops";
+import {
+  assignSession,
+  compactAll,
+  setPaneCompact,
+  setRatiosAt,
+  unassignPane,
+} from "../layout/ops";
 import { buildPreset, type PresetName } from "../layout/presets";
 import { parse, serialize, validate, type LayoutSpec } from "../layout/spec";
 
@@ -45,6 +51,14 @@ export interface LayoutState {
   applyPreset: (name: PresetName, projects?: readonly string[]) => void;
   setRatios: (path: readonly number[], ratios: number[]) => void;
   setPaneCompact: (paneId: string, compact: boolean) => void;
+  /**
+   * Pane assignment (R6.6). While compact-all is on the same change is applied to the snapshot, so
+   * an assignment made then survives the restore (assignments are not part of "compact").
+   */
+  assign: (paneId: string, sessionId: string) => void;
+  unassign: (paneId: string) => void;
+  /** Replaces the layout with an auto-fit result (R6.2); like applyPreset it drops the snapshot. */
+  applyAutoFit: (spec: LayoutSpec) => void;
   /** Shift+C. */
   toggleCompactAll: () => void;
 }
@@ -86,6 +100,18 @@ export const useLayout = create<LayoutState>()((set, get) => {
       );
     },
     setPaneCompact: (id, compact) => commit(setPaneCompact(get().spec, id, compact)),
+    assign: (paneId, sessionId) => {
+      const { spec, snapshot } = get();
+      commit(
+        assignSession(spec, paneId, sessionId),
+        snapshot && assignSession(snapshot, paneId, sessionId),
+      );
+    },
+    unassign: (paneId) => {
+      const { spec, snapshot } = get();
+      commit(unassignPane(spec, paneId), snapshot && unassignPane(snapshot, paneId));
+    },
+    applyAutoFit: (spec) => commit(spec, null),
     toggleCompactAll: () => {
       const { spec, snapshot } = get();
       if (snapshot) commit(snapshot, null);

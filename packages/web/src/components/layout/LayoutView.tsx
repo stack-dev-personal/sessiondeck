@@ -30,6 +30,9 @@ import { PaneChrome } from "./PaneChrome";
 const MIN_PANE_PX = 96;
 const MIN_STRIP_PANE_PX = 64;
 
+/** Narrowest a project column may be (rem): a full session card (28rem) plus the pane padding. */
+export const PROJECT_COLUMN_REM = 30;
+
 const nodeId = (n: Node, i: number): string => (n.kind === "pane" ? n.id : `split:${i}`);
 const signature = (n: Node): string =>
   n.kind === "pane" ? n.id : `(${n.dir[0]}${n.children.map(signature).join(",")})`;
@@ -69,7 +72,11 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
     if (Object.keys(want).some((k) => Math.abs((have[k] ?? 0) - want[k]!) > 0.01))
       g.setLayout(want);
   }, [split]);
-  return (
+  // A column per project must stay readable (R6.1): below this width the whole row scrolls sideways
+  // instead of clipping the cards.
+  const columns =
+    horizontal && split.children.every((c) => c.kind === "pane" && c.type === "project");
+  const group = (
     <Group
       groupRef={ref}
       id={`g-${pathKey(path)}`}
@@ -102,6 +109,17 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
         ];
       })}
     </Group>
+  );
+  if (!columns) return group;
+  return (
+    <div className="h-full w-full overflow-x-auto overflow-y-hidden" data-testid="split-scroll">
+      <div
+        className="h-full"
+        style={{ minWidth: `${split.children.length * PROJECT_COLUMN_REM}rem` }}
+      >
+        {group}
+      </div>
+    </div>
   );
 }
 

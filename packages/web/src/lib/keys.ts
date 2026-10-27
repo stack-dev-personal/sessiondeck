@@ -73,12 +73,25 @@ export function useShortcuts(map: Record<string, () => void>): void {
  *                          (lowercase c stays the global board compact toggle)
  *   Tab                    reaches each pane's Compact/Expand button; Enter or Space toggles it
  *   Tab to a divider       Left/Right or Up/Down resize the two panes next to it (react-resizable-panels)
- * Later units add assignment keys here.
+ *   a                      arrange for N live sessions: the preset for the live count, the most
+ *                          urgent sessions placed in attention order (1 solo, 2 pair, 3 focus, 4 quad,
+ *                          5-6 and more grid6, 0 strip); ended and exited sessions are left out
+ *   p                      split by project: a column per project with a live session
+ *   Tab to a session pane  the pane takes a focus ring; there:
+ *   Enter or g             open the session picker: type to filter, Up/Down, Enter assigns, Esc cancels
+ *   Delete or Backspace    unassign the pane
+ *   (mouse)                drag a session card from the strip, a project pane or another pane's
+ *                          header onto a session pane; dropping on a pane that holds another session
+ *                          swaps the two. A session is in at most one session pane.
  */
 export const LAYOUT_KEYS = {
   menu: "l",
   save: "s",
   manage: "m",
   compactAll: "C",
+  arrange: "a",
+  byProject: "p",
+  pick: ["Enter", "g"] as readonly string[],
+  unassign: ["Delete", "Backspace"] as readonly string[],
   slots: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
 } as const;

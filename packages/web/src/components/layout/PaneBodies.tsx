@@ -6,6 +6,7 @@ import { STATE_VOCAB } from "../../lib/state-vocab";
 import { useBoard } from "../../store/board";
 import { useUi } from "../../store/ui";
 import { CompactCard, SessionCard } from "../SessionCard";
+import { sessionDragProps } from "./dnd";
 
 /** Fallback for the --strip-h token (one strip card) when it cannot be read, e.g. in jsdom. */
 const STRIP_H_FALLBACK = 36;
@@ -89,7 +90,11 @@ export function BoardPaneBody() {
           aria-label="Board strip"
         >
           {list.map((s) => (
-            <li key={s.session_id} className={strip ? "w-[37rem] shrink-0" : ""}>
+            <li
+              key={s.session_id}
+              className={strip ? "w-[37rem] shrink-0" : ""}
+              {...sessionDragProps(s.session_id)}
+            >
               <CompactCard
                 s={s}
                 now={now}
@@ -152,7 +157,7 @@ export function ProjectPaneBody({ projectDir }: { projectDir: string | undefined
         aria-label={`${label ?? projectDir} sessions`}
       >
         {mine.map((s) => (
-          <li key={s.session_id} className="min-w-0">
+          <li key={s.session_id} className="min-w-0" {...sessionDragProps(s.session_id)}>
             <SessionCard
               s={s}
               now={now}

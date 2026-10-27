@@ -1,8 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { LayoutMenu } from "../components/layout/LayoutMenu";
 import { LayoutView } from "../components/layout/LayoutView";
 import { ManageDialog, SaveDialog } from "../components/layout/SavedDialogs";
+import {
+  AUTOFIT_MAX_SESSIONS,
+  autoFit,
+  autoFitMore,
+  isLive,
+  type AutoFitMode,
+} from "../layout/autofit";
 import { isPresetName, MAX_PROJECT_COLUMNS, type PresetName } from "../layout/presets";
 import { panesOf } from "../layout/spec";
 import { LAYOUT_KEYS, useShortcuts } from "../lib/keys";
@@ -39,6 +46,20 @@ export function Layout() {
     setParams((p) => (p.delete("preset"), p), { replace: true });
   }, [wanted, waiting, projects, applyPreset, setParams]);
 
+  const arrange = useCallback((mode: AutoFitMode) => {
+    const all = Object.values(useBoard.getState().sessions);
+    const next = autoFit(all, mode);
+    useLayout.getState().applyAutoFit(next);
+    const n = all.filter(isLive).length;
+    useSaved
+      .getState()
+      .say(
+        "info",
+        mode === "project"
+          ? `Split ${n} live ${n === 1 ? "session" : "sessions"} by project.`
+          : `Arranged ${n} live ${n === 1 ? "session" : "sessions"}: ${next.name}.`,
+      );
+  }, []);
   const [dialog, setDialog] = useState<"save" | "manage" | null>(null);
   // The explicit Viewer host setting (Settings); null means only unpinned layouts resolve.
   const host = useUi((s) => s.settings.viewerHost);
@@ -57,10 +78,12 @@ export function Layout() {
       [LAYOUT_KEYS.save]: () => setDialog("save"),
       [LAYOUT_KEYS.manage]: () => setDialog("manage"),
       [LAYOUT_KEYS.compactAll]: toggleCompactAll,
+      [LAYOUT_KEYS.arrange]: () => arrange("count"),
+      [LAYOUT_KEYS.byProject]: () => arrange("project"),
     };
     for (const k of LAYOUT_KEYS.slots) map[k] = () => void press(Number(k), hostRef.current);
     return map;
-  }, [dialog, toggleCompactAll, press]);
+  }, [dialog, toggleCompactAll, press, arrange]);
   useShortcuts(keys);
   // Notices newer than this route's mount (an old load error is shown by the status chip instead).
   const noticeAtMount = useRef(useSaved.getState().notice?.n ?? 0);
@@ -72,6 +95,7 @@ export function Layout() {
   const shownDirs = new Set<string>();
   for (const p of panesOf(spec)) if (p.projectDir !== undefined) shownDirs.add(p.projectDir);
   const hidden = projects.filter((d) => !shownDirs.has(d)).length;
+  const moreLive = spec.id === "grid6" ? autoFitMore(Object.values(sessions)) : 0;
   const pick = (name: PresetName) => applyPreset(name, projects);
 
   return (
@@ -98,6 +122,24 @@ export function Layout() {
         <button
           type="button"
           className="num shrink-0 whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          onClick={() => arrange("count")}
+          title="Pick the preset for the number of live sessions and place the most urgent ones"
+          data-testid="arrange"
+        >
+          Arrange (a)
+        </button>
+        <button
+          type="button"
+          className="num shrink-0 whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          onClick={() => arrange("project")}
+          title="One column per project with a live session"
+          data-testid="split-by-project"
+        >
+          By project (p)
+        </button>
+        <button
+          type="button"
+          className="num shrink-0 whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
           onClick={() => setDialog("save")}
         >
           Save (s)
@@ -113,6 +155,11 @@ export function Layout() {
         {spec.id === "by-project" && hidden > 0 ? (
           <span className="num text-sm text-fg-muted" data-testid="projects-more">
             {`+${hidden} more ${hidden === 1 ? "project" : "projects"} (most urgent ${MAX_PROJECT_COLUMNS} shown)`}
+          </span>
+        ) : null}
+        {moreLive > 0 ? (
+          <span className="num text-sm text-fg-muted" data-testid="sessions-more">
+            {`+${moreLive} more live ${moreLive === 1 ? "session" : "sessions"} (most urgent ${AUTOFIT_MAX_SESSIONS} shown)`}
           </span>
         ) : null}
         {waiting ? (
