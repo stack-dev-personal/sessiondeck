@@ -6,6 +6,7 @@ import { DrawerHost } from "./components/DrawerHost";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
 import { Board } from "./routes/Board";
+import { Layout } from "./routes/Layout";
 import { Settings } from "./routes/Settings";
 import { useUi } from "./store/ui";
 
@@ -31,6 +32,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/board" replace />} />
             <Route path="/board" element={<Board />} />
+            <Route path="/layout" element={<Layout />} />
             <Route path="/settings" element={<Settings />} />
             {DevCards ? (
               <Route

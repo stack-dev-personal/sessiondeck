@@ -20,6 +20,9 @@ export function Header() {
         <NavLink to="/board" className={link}>
           Board
         </NavLink>
+        <NavLink to="/layout" className={link}>
+          Layout
+        </NavLink>
         <NavLink to="/settings" className={link}>
           Settings
         </NavLink>

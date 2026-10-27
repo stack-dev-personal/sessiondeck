@@ -35,3 +35,15 @@ export function useShortcuts(map: Record<string, () => void>): void {
     return () => window.removeEventListener("keydown", onKey);
   }, [map]);
 }
+
+/**
+ * Layout keys (Phase 6). Every layout action has a key; the mouse is optional.
+ *   l                      open the layout menu (on /layout)
+ *   Up / Down, Home / End  move in the menu; Enter applies the preset; Esc closes
+ *   Tab                    reaches each pane's Compact/Expand button; Enter or Space toggles it
+ *   Tab to a divider       Left/Right or Up/Down resize the two panes next to it (react-resizable-panels)
+ * Later units add Shift+C (compact all), 1-9 (saved layouts) and assignment keys here.
+ */
+export const LAYOUT_KEYS = {
+  menu: "l",
+} as const;

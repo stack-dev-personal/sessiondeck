@@ -201,3 +201,10 @@ body {
     animation: none;
   }
 }
+
+/* Layout pane geometry (design system 5.4): fixed, so data arriving never resizes a pane. */
+:root {
+  --pane-head-h: 28px;
+  --pane-gutter: 1px;
+  --strip-h: 36px;
+}
