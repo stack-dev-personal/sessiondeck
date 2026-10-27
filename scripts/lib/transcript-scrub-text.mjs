@@ -1,0 +1,123 @@
+// Free-text scrub for transcripts (R0.7, transcript extension): paths, tokens, emails and accounts
+// are replaced inside any string, then the string is cut to FREE_MAX characters.
+//
+// Literals (user name, email addresses, account names, organization ids) are supplied by the caller,
+// discovered at run time from the raw data and git config; nothing here names a real person.
+import { FREE_MAX } from "./transcript-scrub-rules.mjs";
+import { BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
+
+const RUN = String.raw`[^\s"'\`<>|*?(){}\[\],;]*`;
+const SEP = String.raw`(?:[\\/]|%5[Cc]|%2[Ff])`;
+const ABS_PATH = new RegExp(
+  [
+    String.raw`(?<![A-Za-z0-9])[A-Za-z](?::|%3[Aa])${SEP}${RUN}`,
+    String.raw`(?<![A-Za-z0-9_.:/\\~$-])\/(?=[A-Za-z0-9._@-]+\/)${RUN}`,
+    String.raw`(?<![A-Za-z0-9])[A-Za-z]--Users-[A-Za-z0-9._-]+`,
+  ].join("|"),
+  "g",
+);
+const ENCODED = /^[A-Za-z]--Users-/;
+const PATH_TAIL = /(?::\d+){1,2}$|[.:!]+$/;
+
+const TOKENS = [
+  /\b(?:sk|ghp|gho|ghs|ghu)[-_][^\s'"`]+/g,
+  /\b(?:npm|sbp|glpat|hf)_[A-Za-z0-9_-]{8,}/g,
+  /\bgithub_pat_[A-Za-z0-9_]{8,}/g,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{12,}/g,
+  /\bxox[a-z]-[A-Za-z0-9-]{8,}/g,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g,
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?/g,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  /(?<![A-Za-z0-9])[A-Fa-f0-9]{32,}(?![A-Za-z0-9])/g,
+];
+const RUN_32 = /(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_=-]{32,}(?![A-Za-z0-9+/_=-])/g;
+const MCP_TOOL = /\bmcp__([A-Za-z0-9][A-Za-z0-9_.-]*?)__([A-Za-z0-9_-]+)/g;
+const SECRET_PAIR =
+  /\b((?:api[_-]?key|secret|token|password|passwd|authorization)["']?\s*[:=]\s*["']?)([^\s"',;<]{6,})/gi;
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+const GIT_OWNER =
+  /\b((?:github\.com|gitlab\.com|bitbucket\.org)[:/]+|api\.github\.com\/(?:repos|users|orgs)\/)([A-Za-z0-9_.-]+)/gi;
+
+/** @param {string} s */
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A long run is a token only when it mixes upper case, lower case and digits (not a path or a kebab name). */
+const looksLikeSecret = (/** @type {string} */ run) =>
+  /[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run);
+
+/**
+ * @typedef {{ users?: string[], emails?: string[], accounts?: string[] }} Literals
+ */
+
+export class TextScrubber {
+  /** @param {import("./fixture-scrub-paths.mjs").Mapper} mapper @param {Literals} [literals] */
+  constructor(mapper, literals = {}) {
+    this.mapper = mapper;
+    const long = (/** @type {string[]|undefined} */ l) =>
+      [...new Set(l ?? [])].filter((x) => x.length >= 3).sort((a, b) => b.length - a.length);
+    this.emails = long(literals.emails);
+    this.accounts = long(literals.accounts);
+    this.users = long(literals.users);
+    /** @param {string[]} list @param {boolean} bounded */
+    const sweep = (list, bounded) => {
+      if (list.length === 0) return null;
+      const alt = list.map(escapeRe).join("|");
+      return new RegExp(bounded ? `(?<![A-Za-z0-9])(?:${alt})(?![A-Za-z0-9])` : `(?:${alt})`, "gi");
+    };
+    this.emailRe = sweep(this.emails, true);
+    this.accountRe = sweep(this.accounts, true);
+    // The user name must not survive anywhere, so it is replaced inside longer words too.
+    this.userRe = sweep(this.users, false);
+  }
+
+  /** @param {string} m */
+  #absolute(m) {
+    const t = PATH_TAIL.exec(m);
+    const tail = t ? t[0] : "";
+    const body = t ? m.slice(0, m.length - tail.length) : m;
+    const decoded = body
+      .replace(/%5[Cc]/g, "\\")
+      .replace(/%2[Ff]/g, "/")
+      .replace(/%3[Aa]/g, ":");
+    if (ENCODED.test(decoded)) return `${this.mapper.mapEncodedFolder(decoded)}${tail}`;
+    const norm = decoded
+      .split("\\")
+      .join("/")
+      .replace(
+        /^([A-Za-z]:\/+|\/+[A-Za-z]\/+|\/+)(users|home)(?=\/)/i,
+        (_m, a, b) => `${a}${b.toLowerCase() === "users" ? "Users" : "home"}`,
+      );
+    return `${this.mapper.mapPath(norm, "auto") ?? "<PATH>"}${tail}`;
+  }
+
+  /**
+   * Replaces paths, tokens, emails and accounts. Does not cut.
+   * @param {string} input
+   */
+  scrub(input) {
+    let s = input.replace(ABS_PATH, (m) => this.#absolute(m));
+    s = s.replace(MCP_TOOL, (m) => this.mapper.mapTool(m, BUILTIN_TOOLS));
+    for (const re of TOKENS) s = s.replace(re, "<REDACTED>");
+    s = s.replace(RUN_32, (run) => (looksLikeSecret(run) ? "<REDACTED>" : run));
+    s = s.replace(SECRET_PAIR, "$1<REDACTED>");
+    s = s.replace(GIT_OWNER, (m, host, owner) => (owner.startsWith("<") ? m : `${host}<ACCOUNT>`));
+    if (this.emailRe) s = s.replace(this.emailRe, "<EMAIL>");
+    s = s.replace(EMAIL, "<EMAIL>");
+    if (this.accountRe) s = s.replace(this.accountRe, "<ACCOUNT>");
+    if (this.userRe) s = s.replace(this.userRe, "<ACCOUNT>");
+    return s;
+  }
+
+  /**
+   * Free text: scrubbed, then cut to FREE_MAX characters plus "<TRUNCATED n>" (n = original length).
+   * @param {string} input
+   */
+  free(input) {
+    const s = this.scrub(input);
+    if (input.length <= FREE_MAX && s.length <= FREE_MAX) return s;
+    let end = FREE_MAX;
+    const last = s.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1; // never split a surrogate pair
+    return `${s.slice(0, end)}<TRUNCATED ${input.length}>`;
+  }
+}
