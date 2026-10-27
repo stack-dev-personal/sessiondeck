@@ -53,3 +53,9 @@
 - Decision: Shift+C rules: switching layout discards the snapshot; manual expand of one pane and resizes while compacted keep it (restore wins); the snapshot persists across reload; saving while compacted saves the pre-compact layout.
 - Switch timing (keydown to next frame with new panes): fake hub max 31-64 ms, live hub (real CORS, no relay) max 48.3 ms. One unreproduced full-suite failure of the per-sample 100 ms assertion.
 - Carry-over to U4: re-load after a write cancels an in-flight fetch; warm-up press before timing samples; keyboard test that reaches row 149's Open.
+### U4 auto-fit and pane assignment (R6.2, R6.6) plus carry-overs: reviewed
+- Commits c153425, fb1ad8a, 0548142, a858088; fix 939d2e1.
+- Auto-fit table: 0 strip, 1 solo, 2 pair, 3 focus (4th unassigned), 4 quad, 5 grid6 (6th unassigned), 6 grid6, 7+ grid6 with "+N more"; live = not ended/exited; assignment in attention order. Keys: a arrange, p by project, Enter/g picker on a focused session pane, Delete/Backspace unassign; native HTML5 drag.
+- Decision: dragging onto an occupied pane swaps; every spec change passes one choke point (commit) that dedupes session panes (first holder in reading order), including hub rows, localStorage, and the compact-all snapshot.
+- Review: iteration 1 fix-then-merge (1 BLOCKING duplicates on load paths, 4 SHOULD, 4 NIT, all fixed); iteration 2 merge.
+- Carry-over to U5: by-project edge fade too wide (hides the last visible column's header control); "N more columns" count assumes equal widths; PaneChrome selector should select only the name string.
