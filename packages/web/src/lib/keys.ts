@@ -10,7 +10,7 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * True when a single-key shortcut must not fire: auto-repeat, a modifier is held, the user is typing,
- * or a modal (the detail drawer, the command palette) is open.
+ * or a modal (the detail drawer, the command palette, a save/manage dialog) is open.
  */
 export function shouldIgnoreKey(e: KeyboardEvent): boolean {
   const ui = useUi.getState();
@@ -22,19 +22,33 @@ export function shouldIgnoreKey(e: KeyboardEvent): boolean {
     e.altKey ||
     isTypingTarget(e.target) ||
     ui.selectedSessionId !== null ||
-    ui.paletteOpen
+    ui.paletteOpen ||
+    ui.modalOpen
   );
 }
 
 /**
+ * The key a shortcut map is written in. A single letter takes its case from Shift alone, so Caps
+ * Lock does not swap c and C (event.key follows Caps Lock, event.shiftKey does not). Other keys
+ * (digits, Escape) are event.key as is. Layout independent: no event.code, so Dvorak and AZERTY work.
+ */
+export function keyName(e: Pick<KeyboardEvent, "key" | "shiftKey">): string {
+  return e.key.length === 1 && e.key.toLowerCase() !== e.key.toUpperCase()
+    ? e.shiftKey
+      ? e.key.toUpperCase()
+      : e.key.toLowerCase()
+    : e.key;
+}
+
+/**
  * Global single-key shortcuts. Ignored on auto-repeat, while typing and when Ctrl, Meta or Alt is held
- * (Ctrl+K is the command palette). Keys are matched on event.key.
+ * (Ctrl+K is the command palette). Keys are matched by keyName().
  */
 export function useShortcuts(map: Record<string, () => void>): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (shouldIgnoreKey(e)) return;
-      const fn = map[e.key];
+      const fn = map[keyName(e)];
       if (fn) {
         e.preventDefault();
         fn();
@@ -50,8 +64,9 @@ export function useShortcuts(map: Record<string, () => void>): void {
  * layout dialog is open.
  *   l                      open the layout menu
  *   Up / Down, Home / End  move in the menu; Enter applies the preset; Esc closes
- *   1 - 9                  switch to the saved layout in that slot (a layout pinned to the current
- *                          host beats an unpinned one); the status line names it
+ *   1 - 9                  switch to the saved layout in that slot (a layout pinned to the Viewer
+ *                          host from Settings beats an unpinned one; with no Viewer host only
+ *                          unpinned layouts open); the status line names it
  *   s                      save the current layout (name, slot, pin); Enter saves, Esc cancels
  *   m                      manage saved layouts: rename, reassign slot, delete, open
  *   Shift+C                compact every pane; again restores the previous layout exactly
