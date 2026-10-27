@@ -61,14 +61,34 @@ for (const [w, h] of SIZES) {
       const boxes = await paneBoxes(page);
       if (expected !== null) expect(boxes).toHaveLength(expected);
       else expect(boxes.length).toBeGreaterThanOrEqual(2);
+      // by-project with many columns scrolls sideways instead of squeezing the cards.
+      const scrolls = (await page.getByTestId("split-scroll").count()) > 0;
       for (const b of boxes) {
         expect(b.w, `${b.id} width`).toBeGreaterThan(40);
         expect(b.h, `${b.id} height`).toBeGreaterThan(40);
         // Panes sit inside the layout area (1 px for the gutters).
         expect(b.x).toBeGreaterThanOrEqual(Math.floor(area!.x) - 1);
         expect(b.y).toBeGreaterThanOrEqual(Math.floor(area!.y) - 1);
-        expect(b.x + b.w).toBeLessThanOrEqual(Math.ceil(area!.x + area!.width) + 1);
+        if (!scrolls) expect(b.x + b.w).toBeLessThanOrEqual(Math.ceil(area!.x + area!.width) + 1);
         expect(b.y + b.h).toBeLessThanOrEqual(Math.ceil(area!.y + area!.height) + 1);
+      }
+      if (scrolls) {
+        // Readable columns: every column holds a whole card (28 rem) and no card is cut off inside
+        // its pane. The row itself scrolls, and it stays inside the layout area.
+        const sc = page.getByTestId("split-scroll");
+        const m = await sc.evaluate((e) => ({ sw: e.scrollWidth, cw: e.clientWidth }));
+        expect(m.sw).toBeGreaterThan(m.cw);
+        const clipped = await page.locator('[data-pane-type="project"]').evaluateAll((panes) =>
+          panes.flatMap((p) => {
+            const pr = p.getBoundingClientRect();
+            return [...p.querySelectorAll('[data-testid="session-card"]')]
+              .map((c) => c.getBoundingClientRect())
+              .filter((r) => r.right > pr.right + 1 || r.left < pr.left - 1)
+              .map(() => p.getAttribute("data-pane-id"));
+          }),
+        );
+        expect(clipped).toEqual([]);
+        for (const b of boxes) expect(b.w, `${b.id} readable width`).toBeGreaterThanOrEqual(440);
       }
       // Fixed pane header geometry: 28 px on every pane.
       const heads = await page
