@@ -280,9 +280,14 @@ export class Store {
 
   upsertSession(row: SessionRow): void {
     const prev = this.stmt(
-      "SELECT project_dir, project_id, phase_label FROM sessions WHERE session_id = ?",
+      "SELECT project_dir, project_id, phase_label, snapshot FROM sessions WHERE session_id = ?",
     ).get(row.session_id) as
-      | { project_dir: string | null; project_id: string | null; phase_label: string | null }
+      | {
+          project_dir: string | null;
+          project_id: string | null;
+          phase_label: string | null;
+          snapshot: string;
+        }
       | undefined;
     if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
     // The project is re-derived only for a new row or when project_dir changed (cwd never does):
@@ -318,8 +323,18 @@ export class Store {
       project_id: projectId,
       phase_label: phaseLabel,
     });
-    // R5.4: the index follows the row, written only when the indexed text changed.
-    this.indexSession(row.session_id, row.snapshot, projectId, prev?.phase_label ?? phaseLabel);
+    // R5.4: the index follows the row. An unchanged snapshot in an unchanged project (the common
+    // case for a repeated update) costs no parse, hash or index probe; otherwise the document is
+    // rewritten only when its indexed text changed.
+    if (prev !== undefined && prev.snapshot === row.snapshot && prev.project_id === projectId)
+      return;
+    this.indexSession(
+      row.session_id,
+      row.snapshot,
+      projectId,
+      prev?.phase_label ?? phaseLabel,
+      prev === undefined ? undefined : { snapshot: prev.snapshot, projectId: prev.project_id },
+    );
   }
 
   // ---- R5.4 search index (FTS5) ------------------------------------------------------------
@@ -378,17 +393,30 @@ export class Store {
     snapshot: string,
     projectId: string | null,
     manualPhase: string | null,
+    prev?: { snapshot: string; projectId: string | null },
   ): void {
-    let snap: Record<string, unknown>;
-    try {
-      const v: unknown = JSON.parse(snapshot);
-      if (typeof v !== "object" || v === null) return;
-      snap = v as Record<string, unknown>;
-    } catch {
-      return;
-    }
+    const parse = (text: string): Record<string, unknown> | null => {
+      try {
+        const v: unknown = JSON.parse(text);
+        return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    };
+    const snap = parse(snapshot);
+    if (snap === null) return;
     const t = indexSessionText(snap, sessionId, manualPhase);
     if (!this.putDoc("session", sessionId, projectId, t.title, t.body)) return;
+    if (prev !== undefined) {
+      // A renamed phase or a moved session can leave a phase document nobody supports any more.
+      const old = parse(prev.snapshot);
+      const oldPhase = old === null ? null : indexSessionText(old, sessionId, manualPhase).phase;
+      if (oldPhase !== t.phase || prev.projectId !== projectId) {
+        this.reindexProjectPhases(prev.projectId);
+        if (projectId !== prev.projectId) this.reindexProjectPhases(projectId);
+        return;
+      }
+    }
     if (t.phase !== null && projectId !== null) this.putPhaseDoc(projectId, t.phase);
   }
 
@@ -489,17 +517,22 @@ export class Store {
 
   /** Ranked matches for an already-built MATCH expression (see buildMatch); live sessions rank higher. */
   searchMatch(match: string, limit: number): SearchHit[] {
+    // Ranking runs in the inner query on rowids only; snippet() is computed in the outer query for
+    // the top `limit` rows, so a broad match builds `limit` snippets, not one per matched row.
     const rows = this.stmt(
-      `SELECT search_fts.kind AS kind, search_fts.ref_id AS ref_id, search_fts.project_id AS project_id,
-              search_fts.title AS title, snippet(search_fts, -1, '', '', '...', 16) AS snippet,
-              s.state AS state,
-              -bm25(search_fts, 0, 0, 0, 8, 1) *
-                CASE WHEN s.state IS NOT NULL AND s.state NOT IN ('ended', 'exited', 'archived')
-                     THEN 1.5 ELSE 1 END AS score
-       FROM search_fts LEFT JOIN sessions s ON search_fts.kind = 'session' AND s.session_id = search_fts.ref_id
-       WHERE search_fts MATCH ?
-       ORDER BY score DESC, search_fts.rowid LIMIT ?`,
-    ).all(match, limit) as SearchRow[];
+      `SELECT search_fts.kind AS kind, search_fts.ref_id AS ref_id, search_fts.project_id AS project_id, search_fts.title AS title,
+              snippet(search_fts, -1, '', '', '...', 16) AS snippet, top.state AS state, top.score AS score
+       FROM (SELECT search_fts.rowid AS rid, s.state AS state,
+                    -bm25(search_fts, 0, 0, 0, 8, 1) *
+                      CASE WHEN s.state IS NOT NULL AND s.state NOT IN ('ended', 'exited', 'archived')
+                           THEN 1.5 ELSE 1 END AS score
+             FROM search_fts LEFT JOIN sessions s ON search_fts.kind = 'session' AND s.session_id = search_fts.ref_id
+             WHERE search_fts MATCH @m
+             ORDER BY score DESC, search_fts.rowid LIMIT @l) top
+            JOIN search_fts ON search_fts.rowid = top.rid
+       WHERE search_fts MATCH @m
+       ORDER BY top.score DESC, top.rid`,
+    ).all({ m: match, l: limit }) as SearchRow[];
     return rows.map(toHit);
   }
 

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rowOf } from "../src/ingest/ingestor.ts";
 import { buildMatch } from "../src/atlas/search.ts";
 import { AUTH, makeHub, seedSession, type TestHub } from "./support/hub.ts";
 
@@ -124,6 +125,41 @@ describe("R5.4 search", () => {
     expect((await search("mango")).body.results[0]).toMatchObject({ project_id: p2 });
   });
 
+  it("drops the old inferred phase document when ingest renames the phase", async () => {
+    seedSession(h.store, "s1", { session_name: "P4 foo", project_dir: "/r/a" });
+    expect((await search("p4")).body.results.some((x) => x.kind === "phase")).toBe(true);
+    seedSession(h.store, "s1", { session_name: "P5 foo", project_dir: "/r/a" });
+    expect((await search("p4")).body.results.filter((x) => x.kind === "phase")).toEqual([]);
+    expect((await search("p5")).body.results.filter((x) => x.kind === "phase").length).toBe(1);
+  });
+
+  it("moves the inferred phase document with a session whose project_dir changes on ingest", async () => {
+    seedSession(h.store, "s1", { session_name: "P5 foo", project_dir: "/r/a" });
+    seedSession(h.store, "s1", { session_name: "P5 foo", project_dir: "/r/b" });
+    const phases = (await search("p5")).body.results.filter((x) => x.kind === "phase");
+    expect(phases.length).toBe(1);
+    expect(phases[0]!.project_id).toBe(h.store.getSession("s1")!.project_id);
+  });
+
+  it("skips all index work for a byte-identical snapshot", async () => {
+    const snap = seedSession(h.store, "s1", { last_prompt: "kiwi" });
+    const spy = vi.spyOn(JSON, "parse");
+    try {
+      h.store.upsertSession(rowOf(snap));
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a one-character query returns recent items, not a prefix scan", async () => {
+    seed();
+    const r = await search("t");
+    expect(r.status).toBe(200);
+    expect(r.body.results.length).toBeGreaterThan(0); // recent items
+    expect(r.body.results.every((x) => x.snippet.length <= 120)).toBe(true);
+  });
+
   it("backfills an existing database on open", async () => {
     seed();
     h.store.db.exec("DELETE FROM search_fts; DELETE FROM search_docs;");
@@ -211,7 +247,9 @@ describe("R5.4 search", () => {
 
   it("treats operators as plain words", async () => {
     seed();
-    expect(buildMatch("NEAR(a b) title:x*")).toBe('"NEAR" "a" "b" "title" "x"*');
+    expect(buildMatch("NEAR(a b) title:x*")).toBe('"NEAR" "a" "b" "title" "x"');
+    expect(buildMatch("fix te")).toBe('"fix" "te"*');
+    expect(buildMatch("t")).toBeNull();
     expect(buildMatch("*")).toBeNull();
     expect((await search("billing NEAR")).body.results).toEqual([]); // NEAR is a required word
     expect((await search("title:billing")).body.results).toEqual([]); // "title" is a word, not a filter

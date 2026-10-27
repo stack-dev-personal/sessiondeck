@@ -40,6 +40,14 @@ const freePort = () =>
     });
   });
 
+// The hub child gets only what it needs to run, not the caller's whole environment.
+function minimalEnv() {
+  const keep = ["PATH", "HOME", "SystemRoot", "TEMP", "TMP", "TMPDIR", "USERPROFILE"];
+  return Object.fromEntries(
+    keep.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]),
+  );
+}
+
 let child = null;
 let base = "";
 const failures = [];
@@ -55,7 +63,7 @@ async function start() {
     cwd: hubDir,
     stdio: ["ignore", "ignore", "inherit"],
     env: {
-      ...process.env,
+      ...minimalEnv(),
       HUB_TOKEN: token,
       HUB_PORT: String(port),
       HUB_DB_PATH: dbPath,

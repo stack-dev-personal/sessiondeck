@@ -2,8 +2,10 @@
 //
 // Data size: the plan expects about 300 archived harness captures plus live history; the bench
 // seeds 2,000 sessions (about x6 margin) over 50 projects. The contract fixtures carry scrubbed
-// text ("<TEXT 1792>"), so the texts here are generated from a fixed 3,000-word vocabulary with a
-// skewed (Zipf-like) word choice, at the sizes the fixtures show: names of 3 to 6 words, prompts of
+// text ("<TEXT 1792>"), so the texts here are generated from a fixed vocabulary of 3,000 words
+// whose most frequent ranks are real English and prompt words (the, to, a, test, fix, file ...) and
+// whose tail is made up, drawn with Zipf (s = 1) frequencies, so stopwords occur in nearly every
+// document the way they do in real prompts. Sizes follow the fixtures the fixtures show: names of 3 to 6 words, prompts of
 // about 200 characters, last assistant messages of about 1,800 characters (fixture "<TEXT 1792>").
 // Everything is deterministic (fixed PRNG seed), so runs differ only by machine noise.
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
@@ -26,7 +28,7 @@ export const DEFAULTS: BenchOptions = {
   sessions: 2000,
   projects: 50,
   archived: 300,
-  queries: 200,
+  queries: 400,
   file: true,
 };
 
@@ -43,6 +45,7 @@ export interface BenchResult {
   route: Stats;
   store: Stats;
   perKind: Record<string, Stats>;
+  perKindStore: Record<string, Stats>;
   results_with_hits: number;
 }
 
@@ -58,6 +61,58 @@ function rng(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+export const COMMON_WORDS = [
+  "the",
+  "to",
+  "a",
+  "of",
+  "and",
+  "in",
+  "is",
+  "it",
+  "for",
+  "that",
+  "this",
+  "with",
+  "on",
+  "test",
+  "fix",
+  "file",
+  "add",
+  "run",
+  "be",
+  "not",
+  "you",
+  "i",
+  "we",
+  "can",
+  "use",
+  "code",
+  "please",
+  "update",
+  "check",
+  "make",
+  "error",
+  "new",
+  "from",
+  "all",
+  "if",
+  "are",
+  "as",
+  "at",
+  "tests",
+  "function",
+  "session",
+  "type",
+  "change",
+  "build",
+  "should",
+  "now",
+  "get",
+  "set",
+  "list",
+];
 
 function vocabulary(rand: () => number): string[] {
   const syl = [
@@ -82,14 +137,14 @@ function vocabulary(rand: () => number): string[] {
     "ox",
     "pra",
   ];
-  const words = new Set<string>();
+  const words = new Set<string>(COMMON_WORDS);
   while (words.size < 3000) {
     const n = 2 + Math.floor(rand() * 3);
     let w = "";
     for (let i = 0; i < n; i++) w += syl[Math.floor(rand() * syl.length)];
     words.add(w);
   }
-  return [...words];
+  return [...words]; // common words first = highest Zipf ranks
 }
 
 export function stats(xs: number[]): Stats {
@@ -102,7 +157,22 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
   const o = { ...DEFAULTS, ...opts };
   const rand = rng(20261027);
   const vocab = vocabulary(rand);
-  const word = (): string => vocab[Math.floor(Math.pow(rand(), 2.2) * vocab.length)]!;
+  // Zipf (s = 1) over the vocabulary rank: inverse CDF by binary search.
+  const cdf: number[] = [];
+  let acc = 0;
+  for (let i = 0; i < vocab.length; i++) cdf.push((acc += 1 / (i + 1)));
+  const word = (): string => {
+    const u = rand() * acc;
+    let lo = 0;
+    let hi = cdf.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cdf[mid]! < u) lo = mid + 1;
+      else hi = mid;
+    }
+    return vocab[lo]!;
+  };
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
   const text = (chars: number): string => {
     let s = "";
     while (s.length < chars) s += `${word()} `;
@@ -146,11 +216,15 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
     const docs = (store.db.prepare("SELECT COUNT(*) AS n FROM search_docs").get() as { n: number })
       .n;
 
-    // Query mix: prefix, single word, multi-token, no-hit, phase label, empty.
+    // Query mix by class. The first-keystroke classes (one character, common words, stopword
+    // prefixes) are the worst case: they match most documents.
     const queries: { kind: string; q: string }[] = [];
+    const letters = ["t", "a", "s", "f", "c", "p", "i", "e"];
+    const common = ["the", "to", "a", "test", "fix", "file", "of", "and"];
+    const stopPrefix = ["th", "te", "to", "fi", "fu", "se", "co", "an"];
     for (let i = 0; i < o.queries; i++) {
       const w = word();
-      switch (i % 6) {
+      switch (i % 10) {
         case 0:
           queries.push({ kind: "prefix", q: w.slice(0, 3) });
           break;
@@ -166,10 +240,25 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
         case 4:
           queries.push({ kind: "multi-prefix", q: `${word()} ${word()} ${word().slice(0, 2)}` });
           break;
+        case 5:
+          queries.push({ kind: "char1", q: pick(letters) });
+          break;
+        case 6:
+          queries.push({ kind: "common-word", q: pick(common) });
+          break;
+        case 7:
+          queries.push({ kind: "stop-prefix", q: pick(stopPrefix) });
+          break;
+        case 8:
+          queries.push({
+            kind: "common-multi",
+            q: `${pick(common)} ${pick(common)} ${pick(letters)}`,
+          });
+          break;
         default:
           queries.push({
-            kind: i % 12 === 5 ? "phase" : "empty",
-            q: i % 12 === 5 ? `p${1 + (i % 9)}` : "",
+            kind: i % 20 === 9 ? "phase" : "empty",
+            q: i % 20 === 9 ? `p${1 + (i % 9)}` : "",
           });
       }
     }
@@ -191,6 +280,7 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
       }
       const route: number[] = [];
       const st: number[] = [];
+      const stKind = new Map<string, number[]>();
       const byKind = new Map<string, number[]>();
       let withHits = 0;
       for (const { kind, q } of queries) {
@@ -206,7 +296,11 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
         if (body.results.length > 0) withHits++;
         const b = performance.now();
         store.search(q, 20);
-        st.push(performance.now() - b);
+        const sms = performance.now() - b;
+        st.push(sms);
+        const sl = stKind.get(kind) ?? [];
+        sl.push(sms);
+        stKind.set(kind, sl);
       }
       return {
         options: o,
@@ -215,6 +309,7 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
         route: stats(route),
         store: stats(st),
         perKind: Object.fromEntries([...byKind].map(([k, v]) => [k, stats(v)])),
+        perKindStore: Object.fromEntries([...stKind].map(([k, v]) => [k, stats(v)])),
         results_with_hits: withHits,
       };
     } finally {

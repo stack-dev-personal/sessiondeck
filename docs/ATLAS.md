@@ -111,14 +111,21 @@ Index: migration 7 creates `search_fts` (FTS5, `unicode61 remove_diacritics 2`, 
 
 `indexSessionText` (`src/atlas/search.ts`) is the one place that decides what a session contributes; S9b
 extends it for archived captures (their `outcome` is already read). The index is rewritten only when the
-indexed text of a row changed (`upsertSession` compares digests), and on project PATCH, phase PATCH and
+indexed text of a row changed (`upsertSession` skips a byte-identical snapshot outright, otherwise compares digests), and on project PATCH, phase PATCH and
 project reassignment. `Store.migrate` indexes anything missing on open (idempotent); `hub replay` clears
 session and phase documents with the sessions table and the re-inserts rebuild them.
 
 Query handling: the user string is never passed to MATCH. Letters and digits runs are the tokens (max 8, 64
-characters each); each is quoted, all must match, and the last is a prefix (`"tok"*`). Quotes, `NEAR`, `AND`,
+characters each); each is quoted, all must match, and the last is a prefix (`"tok"*`) only when it has at
+least 2 characters (a 1-character prefix would scan every term starting with that letter; it is matched as an
+exact word after other tokens, and alone it behaves like an empty query and returns recent items). Quotes, `NEAR`, `AND`,
 `column:`, parentheses and `*` are therefore plain words or separators. A query with no token (empty, `*`)
 returns the most recent sessions and up to 5 projects. Ranking is bm25 (title weighted 8x body); live
-sessions (not ended, exited or archived) score 1.5x.
+sessions (not ended, exited or archived) score 1.5x. Ranking runs on rowids only; `snippet()` is computed
+for the top `limit` rows afterwards. A phase document is removed when no session of its project infers or
+sets that phase any more, including when ingest renames the phase or moves a session to another project.
+
+Clients must render `title` and `snippet` as text only (never as HTML): both are raw transcript text and the
+snippet markers are empty, so the hub adds no markup and does no escaping.
 
 Listeners on the hub emitter (`atlas`, `batch`) must not throw; the stream listener contains its own errors.

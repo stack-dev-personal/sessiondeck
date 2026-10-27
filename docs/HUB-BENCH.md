@@ -142,6 +142,39 @@ Command: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --
 
 ## Search (R5.4)
 
+Requirement: search returns in < 100 ms for your data size. Threshold: p95 < 100 ms at the route, overall AND for every query class.
+
+Fix round 1 (2026-10-27) changes: a final token shorter than 2 characters is no longer prefix-matched (a lone 1-character query returns recent items), `snippet()` is computed only for the top `limit` rows after ranking, and the corpus now has English-like Zipf (s = 1) frequencies with real stopwords (the, to, a, of, test, fix, file ...) at the top ranks over a 3,000-word vocabulary, so common words occur in nearly every document. Same data size as before: 2,000 sessions (300 archived) over 50 projects, 2,336 documents, SQLite file in the temp directory. 400 queries in 11 classes (40 each; phase and empty 20 each): prefix (3 letters), word, multi (2 words), no-hit, multi-prefix, char1 (t, a, s, f, c, p, i, e), common-word (the, to, a, test, fix, file, of, and), stop-prefix (th, te, to, fi, fu, se, co, an), common-multi (two common words plus a letter), phase, empty. Timed through `GET /search` via `fastify.inject`; the store column is reported, not asserted.
+
+Command: `pnpm -F @sessiondeck/hub bench:search`; asserted (route overall and every class p95 < 100 ms) by `test/search.R5.4.bench.test.ts`.
+
+Machine: Linux WSL2 6.18.33.2, AMD Ryzen AI 9 465, node v22.23.3; shared host, load average 1 to 2 during the runs.
+
+Route p95 ms per class (p50 in brackets), three runs:
+
+| Class | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| overall | 20.09 (4.32) | 15.96 (3.80) | 19.15 (4.12) |
+| prefix | 20.70 (13.08) | 16.01 (11.38) | 20.92 (10.92) |
+| word | 22.51 (7.44) | 16.57 (6.84) | 19.27 (7.70) |
+| multi | 21.26 (3.55) | 14.97 (3.50) | 20.78 (3.95) |
+| no-hit | 1.48 (1.03) | 1.61 (0.99) | 1.52 (1.00) |
+| multi-prefix | 23.83 (3.34) | 15.95 (3.16) | 19.80 (3.21) |
+| char1 | 6.54 (3.91) | 5.35 (3.55) | 5.18 (4.00) |
+| common-word | 19.65 (12.50) | 17.70 (11.09) | 15.72 (12.72) |
+| stop-prefix | 21.54 (15.47) | 20.46 (14.55) | 20.80 (17.19) |
+| common-multi | 14.32 (1.31) | 14.05 (1.23) | 12.56 (1.36) |
+| phase | 3.14 (1.56) | 1.94 (1.41) | 4.14 (1.54) |
+| empty | 5.34 (4.07) | 9.10 (3.65) | 5.27 (3.77) |
+
+Store p95 (not asserted): 20.71, 18.03, 20.12 ms; max route 29.37 ms. Verdict: R5.4 latency PASS, worst class p95 about 24 ms, about 4x headroom. The reviewer's first-keystroke case (`t` over common-word text) was 101 ms p50 with the old query; it is now a recent-items lookup (char1 class p95 about 6 ms, which includes the 1-character queries and recent-items path).
+
+Index cost on ingest: an upsert whose snapshot is byte-identical (and project unchanged) now returns before any parse, hash or probe (it was about 43 microseconds per session per batch); a changed snapshot parses once and rewrites the document only when its indexed text changed.
+
+Load bench after this round (`pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20`, 2026-10-27, HEAD plus this change): p95 82.07 ms, then 352.84 ms (host load average 1.3 to 1.8). Both FAIL the 20 ms limit, and the figure is contention-dominated, not attributable to this change: an A/B on the same code with indexing short-circuited (temporary env switch, since removed) versus normal gave p95 72, 33 (index off) against 51, 68 (index on) at 40 s each, host load average 1 to 5. The same R2.4 FAIL-on-contended-host pattern is recorded under FIX-5 above (22 to 164 ms on identical commits). R2.4 therefore still needs a quiet-host or laptop confirmation; this round did not obtain a clean run in this container.
+
+### Superseded run (2026-10-27, before fix round 1)
+
 Requirement: search returns in < 100 ms for your data size. Threshold: p95 < 100 ms at the route.
 
 Data: 2,000 sessions (about 300 archived harness captures plus live history, x6 margin on the expected size) over 50 projects, 2,336 search documents (sessions, projects, phases), on a SQLite file in the temp directory. The contract fixtures carry scrubbed text (`<TEXT 1792>`), so texts are generated deterministically from a 3,000-word vocabulary at the fixture sizes (names of 3 to 6 words, prompts of about 200 characters, last assistant messages of about 1,800 characters, archived outcomes of 300). 200 queries: prefix (3 letters), single word, two words, two words plus a 2-letter prefix, no-hit, phase label, empty (recent). Each is timed through `GET /search` with `fastify.inject` (auth, rate limiter, zod, route, serialization) and again at `Store.search`; 20 warm-up queries first. The route runs each query before the store does, so the store column carries the first-touch page cost and is not faster than the route column.

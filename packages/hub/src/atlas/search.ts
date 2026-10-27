@@ -46,6 +46,7 @@ export function indexSessionText(
 export const MAX_QUERY_CHARS = 200;
 const MAX_TOKENS = 8;
 const MAX_TOKEN_CHARS = 64;
+const MIN_PREFIX = 2;
 
 /**
  * Tokens of a user query: runs of letters and digits (what the unicode61 tokenizer indexes).
@@ -61,10 +62,16 @@ export function queryTokens(q: string): string[] {
 /**
  * A safe FTS5 MATCH expression, or null when the query has no searchable token. Each token is a
  * quoted string (so NEAR, AND, OR, NOT and column names are plain words), all must match, and the
- * last one is a prefix so the palette works while typing.
+ * last one is a prefix (when at least 2 characters) so the palette works while typing.
  */
 export function buildMatch(q: string): string | null {
   const t = queryTokens(q);
   if (t.length === 0) return null;
-  return t.map((x, i) => `"${x}"${i === t.length - 1 ? "*" : ""}`).join(" ");
+  // A one-character final token is not prefix-matched (the prefix index starts at 2 characters, so
+  // "t"* would walk every term starting with t). Alone it yields no match expression at all (the
+  // caller shows recent items); after other tokens it is an exact word.
+  if (t.length === 1 && t[0]!.length < MIN_PREFIX) return null;
+  return t
+    .map((x, i) => `"${x}"${i === t.length - 1 && x.length >= MIN_PREFIX ? "*" : ""}`)
+    .join(" ");
 }
