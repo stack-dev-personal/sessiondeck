@@ -170,7 +170,7 @@ function ColorPicker({ color, onPick }: { color: string; onPick: (c: string) => 
         className={`${ctl} w-44`}
       >
         <option value="" disabled>
-          {isToken ? "Token" : `Custom ${color || "n/a"}`}
+          {isToken ? "Token" : color ? `Custom ${color}` : "none"}
         </option>
         {COLOR_TOKENS.map((t) => (
           <option key={t} value={t}>
@@ -186,7 +186,7 @@ function ColorPicker({ color, onPick }: { color: string; onPick: (c: string) => 
         type="text"
         value={hex}
         maxLength={7}
-        placeholder="#3e63dd"
+        placeholder="#rrggbb"
         spellCheck={false}
         aria-invalid={hex !== "" && !isValidColor(hex) ? true : undefined}
         onChange={(e) => setHex(e.target.value)}
@@ -232,8 +232,8 @@ export function ProjectView() {
         .join(","),
     [board, id],
   );
-  const detail = useLoad(() => atlasApi.getProject(id), `${id}:${memberKey}`);
-  const phases = useLoad(() => atlasApi.listPhases(id), `${id}:${memberKey}`);
+  const detail = useLoad(() => atlasApi.getProject(id), `${id}:${memberKey}`, id);
+  const phases = useLoad(() => atlasApi.listPhases(id), `${id}:${memberKey}`, id);
   const projects = useProjects(id);
   const changed = () => {
     detail.reload();

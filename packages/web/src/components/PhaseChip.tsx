@@ -32,7 +32,7 @@ export function PhaseChip({
       testId="phase-chip"
       className="w-44 shrink-0"
       value={source === "manual" ? (phase ?? "") : ""}
-      label={`Phase for ${name}: ${phase ?? "none"} (${word})`}
+      label={`Phase for ${name}: ${phase === null ? "none" : `${phase} (${word})`}`}
       hint="Enter saves, Escape cancels, empty restores the inferred phase"
       maxLength={PHASE_MAX}
       onSave={async (text) => {
@@ -41,11 +41,13 @@ export function PhaseChip({
       }}
     >
       <span data-slot="phase" className={`num truncate ${phase ? "" : "text-fg-muted"}`}>
-        {phase ?? "n/a"}
+        {phase ?? "none"}
       </span>
-      <span data-slot="phase-source" className="shrink-0 text-xs text-fg-muted">
-        {word}
-      </span>
+      {phase === null ? null : (
+        <span data-slot="phase-source" className="shrink-0 text-xs text-fg-muted">
+          {word}
+        </span>
+      )}
     </InlineEdit>
   );
 }

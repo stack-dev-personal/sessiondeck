@@ -324,9 +324,14 @@ function pick(a: AtlasSession): Record<string, unknown> {
   return r;
 }
 
+/** Survives minification; scripts/check-bundle.mjs asserts it is absent from non-mock builds. */
+export const ATLAS_MOCK_MARKER = "sd-mock-atlas-v1";
+
 /** Mock mode entry: installs the mock api and keeps the board's sessions annotated as they arrive. */
 export function installMockAtlas(store: UseBoundStore<StoreApi<BoardState>>): () => void {
   const m = createMockAtlas(store);
+  if (typeof document !== "undefined")
+    document.documentElement.dataset["mockAtlas"] = ATLAS_MOCK_MARKER;
   setAtlasApi(m.api);
   m.sync();
   const unsub = store.subscribe(m.sync);

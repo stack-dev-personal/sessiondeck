@@ -24,7 +24,7 @@ describe("PhaseChip", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows manual and n/a", () => {
+  it("shows manual and none", () => {
     const { unmount } = render(
       <PhaseChip session={session("s1", { phase: "Hardening", phase_source: "manual" })} />,
     );
@@ -32,8 +32,8 @@ describe("PhaseChip", () => {
     expect(screen.getByText("manual")).toBeInTheDocument();
     unmount();
     render(<PhaseChip session={session("s2")} />);
-    expect(screen.getByText("n/a")).toBeInTheDocument();
     expect(screen.getByText("none")).toBeInTheDocument();
+    expect(screen.queryByText("n/a")).toBeNull();
   });
 
   it("Enter saves through PATCH and returns focus to the chip", async () => {

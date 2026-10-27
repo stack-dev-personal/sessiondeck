@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 
@@ -99,57 +100,32 @@ export async function waitConnected(page: Page): Promise<void> {
 export const card = (page: Page, id: string) =>
   page.locator(`[data-testid="session-card"][data-session-id="${id}"]`);
 
+/** Directory shared with scripts/e2e-live.sh (the host side polls it); the Docker socket is NOT mounted. */
+export const HUB_RESTART_DIR = process.env["SD_E2E_RESTART_DIR"] ?? "";
+
 /**
- * The hub sends no CORS headers (the web app is normally served from the hub's origin or behind
- * one proxy). The live e2e serves the app from another origin than the hub, so REST calls from the
- * page are forwarded through Playwright, which is not subject to CORS, with CORS headers added.
- * WebSocket traffic is not touched.
+ * Restarts the hub process (container restart, same data volume). The Playwright container has no
+ * Docker access: this writes a request file into HUB_RESTART_DIR and waits for the ack the host-side
+ * poller in scripts/e2e-live.sh writes after `docker restart` of the hub container, then waits for
+ * /health.
  */
-export async function allowHubCors(page: Page): Promise<void> {
-  const hubOrigin = new URL(LIVE.hubUrl).origin;
-  await page.route(
-    (url) => url.origin === hubOrigin,
-    async (route) => {
-      const req = route.request();
-      const cors = {
-        "access-control-allow-origin": req.headers()["origin"] ?? "*",
-        "access-control-allow-headers": "authorization, content-type",
-        "access-control-allow-methods": "GET, PATCH, POST, OPTIONS",
-        "access-control-max-age": "60",
-      };
-      if (req.method() === "OPTIONS") {
-        await route.fulfill({ status: 204, headers: cors });
-        return;
-      }
-      const res = await route.fetch();
-      await route.fulfill({ response: res, headers: { ...res.headers(), ...cors } });
-    },
-  );
-}
-
-/** Name of the hub container, set by scripts/e2e-live.sh together with the docker socket mount. */
-export const HUB_CONTAINER = process.env["SD_E2E_HUB_CONTAINER"] ?? "";
-const DOCKER_SOCK = process.env["SD_E2E_DOCKER_SOCK"] ?? "/var/run/docker.sock";
-
-/** Restarts the hub process (container restart, same data volume) through the Docker Engine API. */
 export async function restartHub(): Promise<void> {
-  const { request } = await import("node:http");
-  const status = await new Promise<number>((resolve, reject) => {
-    const req = request(
-      {
-        socketPath: DOCKER_SOCK,
-        method: "POST",
-        path: `/containers/${encodeURIComponent(HUB_CONTAINER)}/restart?t=2`,
-      },
-      (res) => {
-        res.resume();
-        res.on("end", () => resolve(res.statusCode ?? 0));
-      },
-    );
-    req.on("error", reject);
-    req.end();
-  });
-  if (status !== 204) throw new Error(`hub restart failed: HTTP ${status}`);
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const req = `${HUB_RESTART_DIR}/restart.req`;
+  const ack = `${HUB_RESTART_DIR}/restart.ack`;
+  await rm(ack, { force: true });
+  await writeFile(req, id);
+  const ackDeadline = Date.now() + 60_000;
+  for (;;) {
+    try {
+      if ((await readFile(ack, "utf8")).trim() === id) break;
+    } catch {
+      /* not yet */
+    }
+    if (Date.now() > ackDeadline)
+      throw new Error("host did not acknowledge the hub restart in 60 s");
+    await new Promise((r) => setTimeout(r, 200));
+  }
   const deadline = Date.now() + 30_000;
   for (;;) {
     try {

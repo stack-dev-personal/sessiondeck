@@ -2,9 +2,8 @@ import { expect, test } from "@playwright/test";
 import { editPhaseWithKeyboard, sessionRow } from "./atlas-helpers";
 import { shot } from "./helpers";
 import {
-  HUB_CONTAINER,
+  HUB_RESTART_DIR,
   LIVE,
-  allowHubCors,
   card,
   configureHub,
   hubJson,
@@ -18,12 +17,13 @@ import {
 
 test.skip(LIVE.hubUrl === "", "live spec: set SD_E2E_HUB_URL (see playwright.config.ts)");
 test.skip(
-  HUB_CONTAINER === "",
-  "needs SD_E2E_HUB_CONTAINER and the docker socket (scripts/e2e-live.sh)",
+  HUB_RESTART_DIR === "",
+  "needs SD_E2E_RESTART_DIR, the host-side restart poller (scripts/e2e-live.sh)",
 );
 
 /**
- * R5.5 against a real hub: edit a phase inline with the keyboard, restart the hub process,
+ * R5.5 against a real hub, with real CORS (the app origin is in the hub's HUB_ALLOWED_ORIGINS, no
+ * request interception): edit a phase inline with the keyboard, restart the hub process,
  * reload the page, and the manual label is still there (it lives in session_overrides, outside the
  * replayable sessions table).
  */
@@ -31,7 +31,6 @@ test("R5.5 a manual phase label survives a hub restart and a page reload", async
   const id = newSessionId();
   await ingest([startEnv(id), promptEnv(id)]);
 
-  await allowHubCors(page);
   await configureHub(page);
   await page.goto("/board");
   await waitConnected(page);

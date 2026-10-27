@@ -96,6 +96,26 @@ describe("mergeLive", () => {
   });
 });
 
+describe("mergeLive grace", () => {
+  it("drops long-ended and archived board additions, keeps recently ended", () => {
+    const now = 10_000_000;
+    const board = {
+      old: snap("old", { project_id: "p1", state: "ended", state_since: now - 2 * 3_600_000 }),
+      exited: snap("exited", {
+        project_id: "p1",
+        state: "exited",
+        state_since: 0,
+        last_event_at: 5,
+      }),
+      arch: snap("arch", { project_id: "p1", state: "archived" as AtlasSession["state"] }),
+      recent: snap("recent", { project_id: "p1", state: "ended", state_since: now - 60_000 }),
+      run: snap("run", { project_id: "p1", state: "working" }),
+    };
+    const out = mergeLive([], board, "p1", now);
+    expect(out.map((s) => s.session_id).sort()).toEqual(["recent", "run"]);
+  });
+});
+
 describe("http client", () => {
   const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
   it("sends the bearer token and a JSON body, never the token in the URL", async () => {

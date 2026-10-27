@@ -108,7 +108,8 @@ export function InlineEdit({
             type="text"
             value={draft}
             maxLength={maxLength}
-            disabled={busy}
+            readOnly={busy}
+            aria-busy={busy || undefined}
             aria-label={label}
             aria-describedby={`${hintId}${error ? ` ${errId}` : ""}`}
             aria-invalid={error ? true : undefined}

@@ -69,9 +69,9 @@ describe("card and drawer show the project", () => {
     await waitFor(() => expect(api.setSessionPhase).toHaveBeenCalledWith("s1", "Hardening"));
     await user.selectOptions(strip.getByLabelText(/Move .* to project/), "p_b");
     await waitFor(() => expect(api.setSessionProject).toHaveBeenCalledWith("s1", "p_b"));
-    await waitFor(() =>
-      expect(useBoard.getState().sessions["s1"]).toMatchObject({ project_id: "p_b" }),
-    );
+    // The board follows the hub's WebSocket delta only; the PATCH response is not written into it
+    // (it could be older than a delta that already arrived).
+    expect(useBoard.getState().sessions["s1"]).not.toMatchObject({ project_id: "p_b" });
   });
 
   it("drawer without a router renders the project as plain text", () => {
