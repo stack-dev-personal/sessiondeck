@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { NavLink } from "react-router-dom";
+import { openPalette } from "./CommandPalette";
 import { selectHosts, useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
@@ -19,6 +20,9 @@ export function Header() {
       <nav className="flex gap-s-1 text-sm" aria-label="Main">
         <NavLink to="/board" className={link}>
           Board
+        </NavLink>
+        <NavLink to="/sessions" className={link}>
+          Sessions
         </NavLink>
         <NavLink to="/projects" className={link}>
           Projects
@@ -61,6 +65,15 @@ export function Header() {
           );
         })()}
       </span>
+      <button
+        type="button"
+        className={btn}
+        onClick={openPalette}
+        aria-haspopup="dialog"
+        aria-keyshortcuts="Control+K Meta+K"
+      >
+        Search (Ctrl+K)
+      </button>
       <button type="button" className={btn} onClick={toggleCompact} aria-pressed={compact}>
         {compact ? "Compact: on" : "Compact: off"} (c)
       </button>
