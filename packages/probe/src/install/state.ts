@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { ensurePrivateDir, writeFileAtomic } from "./atomic.ts";
 import { basename, dirname, resolve } from "node:path";
+import { isOurExeDir } from "./exe.ts";
 import { realResolve } from "./real-path.ts";
 import { BACKUP_RE } from "./settings-io.ts";
 import { type InstallEntry, STATUS_KEYS, type StatusKey, isRecord } from "./merge.ts";
@@ -55,7 +56,23 @@ export function parseEntry(raw: unknown, home?: string): InstallEntry | undefine
     const b = rawBackups[key];
     if (typeof b === "string" && (home === undefined || isInHome(b, home))) backups[key] = b;
   }
-  return { previous, createdEvents, createdHooksKey, createdFile, backups };
+  const runtime =
+    raw["runtime"] === "exe" || raw["runtime"] === "node" ? raw["runtime"] : undefined;
+  // A recorded exeDir is data from disk: it is kept only as <home>/bin/<hex>, never an arbitrary path.
+  const rawDir = typeof raw["exeDir"] === "string" ? raw["exeDir"] : undefined;
+  const exeDir =
+    rawDir !== undefined && home !== undefined && isOurExeDir(rawDir, home) ? rawDir : undefined;
+  const statusRuntime = raw["statusRuntime"] === "node" ? "node" : undefined;
+  return {
+    previous,
+    createdEvents,
+    createdHooksKey,
+    createdFile,
+    backups,
+    ...(runtime ? { runtime } : {}),
+    ...(exeDir ? { exeDir } : {}),
+    ...(statusRuntime ? { statusRuntime } : {}),
+  };
 }
 
 async function load(path: string): Promise<StateFile> {
@@ -92,4 +109,13 @@ export async function putEntry(
   else delete state.installs[settingsPath];
   await ensurePrivateDir(dirname(path));
   await writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+}
+
+/** Exe directories recorded by every install except the one for `exceptSettings`. */
+export async function otherExeDirs(path: string, exceptSettings: string): Promise<string[]> {
+  const dirs: string[] = [];
+  for (const [settings, entry] of Object.entries((await load(path)).installs)) {
+    if (settings !== exceptSettings && entry.exeDir) dirs.push(entry.exeDir);
+  }
+  return dirs;
 }

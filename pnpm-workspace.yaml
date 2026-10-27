@@ -3,6 +3,8 @@ packages:
   - scripts
 engineStrict: true
 allowBuilds:
+  # R1.1, A15: bun's postinstall copies the platform binary into node_modules/bun/bin.
+  bun: true
   better-sqlite3: true
   esbuild: true
 # R0.5: run recursive scripts without topological ordering so package suites start together.
@@ -14,3 +16,8 @@ sort: false
 # (topological order) 2 at a time took 32.1 and 34.1 s. More concurrency only adds contention on 2 cores
 # (an earlier 4+ suites-at-once run on default workers timed out and SIGKILLed web).
 workspaceConcurrency: 2
+# R1.11, A15: also fetch linux x64 glibc optional deps so Windows can cross-compile the WSL2 hook exe from a lockfile-pinned @oven/bun-linux-x64.
+supportedArchitectures:
+  os: [current, linux]
+  cpu: [current, x64]
+  libc: [current, glibc]

@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MAX_LINE_BYTES, parseSpoolLine } from "../src/spool.ts";
 import { dayFileName } from "../src/paths.ts";
 import { resolveHostName } from "../src/host.ts";
+import { BAD_INPUTS } from "./hook-cases.ts";
 import { fixturePerEvent, hookPath, readSpoolLines, runHook } from "./helpers.ts";
 
 const win32 = process.platform === "win32";
@@ -32,22 +33,7 @@ afterAll(() => rmSync(home, { recursive: true, force: true }));
 const tmp = (): string => mkdtempSync(join(tmpdir(), "sd-robust-x-"));
 
 describe("R1.2 hook never fails and never prints", () => {
-  const bad: [string, Buffer | string | null][] = [
-    ["empty stdin", ""],
-    ["closed stdin", null],
-    ["not json", "not json"],
-    ["array", "[]"],
-    ["empty object", "{}"],
-    ["null", "null"],
-    ["number", "42"],
-    ["invalid utf-8 bytes", Buffer.from([0xff, 0xfe, 0x7b, 0x80, 0xc3, 0x28])],
-    ["object missing session_id", '{"hook_event_name":"Stop"}'],
-    [
-      "1 MB json",
-      JSON.stringify({ session_id: "s", hook_event_name: "Stop", big: "x".repeat(1 << 20) }),
-    ],
-  ];
-  for (const [name, input] of bad) {
+  for (const [name, input] of BAD_INPUTS) {
     it(`exit 0, empty stdout, empty stderr: ${name}`, async () => {
       const r = await runHook(input, { home });
       expect(r.code).toBe(0);

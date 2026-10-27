@@ -6,10 +6,17 @@
   "dependencies": {
     "@sessiondeck/contract": "workspace:*"
   },
+  "devDependencies": {
+    "bun": "1.4.4"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:exe": "node scripts/build-exe.mjs",
+    "build:exe:host": "node scripts/build-exe.mjs --host-only",
     "test": "vitest run",
+    "test:exe": "node scripts/test-exe.mjs",
     "test:proc": "vitest run -c vitest.proc.config.ts",
+    "test:proc:exe": "vitest run -c vitest.proc.exe.config.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "harness:outage": "node scripts/harness-daemon-outage.mjs",

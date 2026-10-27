@@ -14,14 +14,15 @@ pnpm -F @sessiondeck/probe build
 ```
 
 This produces `dist/probe.mjs` (CLI), `dist/hook.mjs`, `dist/statusline.mjs`, `dist/subagents.mjs`.
-`probe install` registers the absolute path of the `dist/` it runs from, so install from the
+With `--runtime node`, `probe install` registers the absolute path of the `dist/` it runs from, so install from the
 checkout you intend to keep; rerun `install` after moving it (it replaces its own entries).
 
 ## Tests
 
 ```
 pnpm -F @sessiondeck/probe test        # fast in-process unit tests: no child processes, no build
-pnpm -F @sessiondeck/probe test:proc   # every suite that spawns the built entries (*.proc.test.ts)
+pnpm -F @sessiondeck/probe test:proc   # suites that spawn the built entries (*.proc.test.ts), except the exe suites
+pnpm -F @sessiondeck/probe test:proc:exe # the real-exe suites (*-exe*.proc.test.ts), one file at a time; needs build:exe, SD_REQUIRE_EXE=1 in CI
 ```
 
 `test:proc` uses `vitest.proc.config.ts`, which builds `dist/` first (global setup) and has long
@@ -60,6 +61,56 @@ node packages/probe/dist/probe.mjs install --hub http://192.168.1.20:8787 --toke
   exit, nothing changed.
 - The file is re-serialized with its own indent and trailing-newline style. A file that was
   hand-aligned (for example inline arrays) is normalised to plain `JSON.stringify` layout once.
+
+### Exe form (default) and the Node fallback
+
+`probe install` defaults to `--runtime exe`: the three Bun-compiled programs (hook, statusline,
+subagents) are copied from `dist/exe/windows-x64/*.exe` (Windows) or `dist/exe/linux-x64/*` (Linux,
+WSL2) into `<probe home>/bin/<12-hex content hash>/` and registered in exec form. `"command"` is the
+installed exe (realpath spelling, forward slashes) and `"args"` are the Node form's flags without the
+script: `["--home", "<home>", "--host", "<host>", "--sessiondeck-probe"]`. The statusLine and
+subagentStatusLine commands are `<exe> --home <home> --host <host> --sessiondeck-probe`. When the exe
+path contains a space (for example a Windows user "Jane Doe"), a quoted first word would not run in
+both Git Bash and PowerShell, so only those two commands are written in the Node form
+(`node "<dist script>" <same flags>`, exactly what `--runtime node` writes); hooks keep the exe form,
+install prints a notice, and `install-state.json` records `"statusRuntime": "node"`. Same source
+code either way, so no behavior fork.
+
+- Build the exes first: `pnpm -F @sessiondeck/probe build && pnpm -F @sessiondeck/probe build:exe`.
+  Bun 1.4.4 (MIT, pinned devDependency, used as a build tool only, no code copied) compiles them from
+  the same `dist/*.mjs` bundles the Node form runs, so there is no behavior fork. If an exe is
+  missing, install exits 1 naming that command and writes nothing (no settings, no config, no copy).
+- Copy: temp name in the target directory, SHA-256 of the copy checked against the source, then
+  rename. The directory is named by the content hash, so a new build lands in a new directory and
+  re-install works while a `hook.exe` is running (Windows locks running exes). Settings are switched
+  to the new directory, then the previous directory named in `install-state.json` is removed (best
+  effort, with a notice if a lock prevents it). Only a directory directly under `<home>/bin` named by
+  the install record is ever removed; uninstall removes the recorded directory too. The record is
+  validated when read (a forged `exeDir` is dropped), the directory must hold only the exes and stray
+  `.tmp` copies, a directory another settings file's install still records (the home is shared across
+  profiles) is kept, and uninstall does not prune when the home was inferred from the hook entries and
+  is not the CLI default (pass `--home`).
+- Freshness: `build:exe` writes `sources.json` (SHA-256 of `dist/hook.mjs`, `statusline.mjs`,
+  `subagents.mjs`) next to the exes. Install refuses exes whose bundles differ from the current
+  `dist/*.mjs` (or that have no `sources.json`) and names `pnpm -F @sessiondeck/probe build:exe`.
+  A custom `--exe-dir` is checked only when it has a `sources.json`.
+- Home safety: the exe form applies the same rule as `probe daemon install`. On Windows the home must
+  be the profile default or beneath it (a folder such as `C:sd` inherits "Authenticated Users:
+  Modify" and another account could swap `hook.exe`); on POSIX it must be owned by you and not
+  group/world writable. Its parent (or, when the home or parent does not exist yet, the nearest existing ancestor) must be owned by you or root and not group/world writable (a sticky one such as `/tmp` is accepted).
+  Otherwise install exits 1 before writing anything; `--runtime node` is not restricted.
+- Environment: the compiled exe honors Bun runtime variables (`BUN_INSPECT`, `BUN_OPTIONS`,
+  `BUN_CONFIG_*`) the way the Node form honors `NODE_OPTIONS`. Whoever can set them can already run
+  code through project-settings hooks, so this adds no capability.
+- Permissions: Linux directories `0700`, binaries `0755`. Windows: no ACL of its own; the probe home
+  inherits from `%USERPROFILE%\AppData\Local`, which is user-only by default (same model as
+  `install-state.json`). Claude Code runs this exe on every hook, so keep `--home` somewhere only you can write.
+- `--runtime node` installs the Node form exactly as before (`"command": "node"`, script path in
+  `args`) and removes the recorded exe directory. The chosen runtime is recorded as `runtime` in
+  `install-state.json`. Switching either way replaces only entries carrying the
+  `--sessiondeck-probe` marker; uninstall removes both forms the same way.
+- `--exe-dir <dir>` takes the three exes from `<dir>` instead of `dist/exe/<platform>` (custom builds, tests).
+- Other platforms (macOS, ARM) have no prebuilt exe: use `--runtime node`.
 
 ### Token and config
 

@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { onTestFinished } from "vitest";
 import { probeRoot } from "../helpers.ts";
 
 export const cliPath = join(probeRoot, "dist", "probe.mjs");
@@ -22,11 +23,23 @@ export interface Sandbox {
   env: Record<string, string>;
 }
 
-/** Temp CLAUDE_CONFIG_DIR and probe home (passed as --home by runCli); HOME is redirected too so nothing real is touched. */
+/**
+ * Temp CLAUDE_CONFIG_DIR and probe home (passed as --home by runCli); HOME is redirected too so nothing real is touched.
+ * The sandbox root (which this call created) is deleted when the calling test finishes.
+ */
 export function sandbox(fixture?: string, normalize = false): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "sd-install-"));
+  onTestFinished(() => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (err) {
+      process.stderr.write(`sandbox cleanup failed for ${root}: ${String(err)}
+`);
+    }
+  });
   const configDir = join(root, "claude");
-  const home = join(root, "probe-home");
+  // Under the fake profile at the CLI default spot, so the exe form's home-safety check accepts it.
+  const home = join(root, "home", "AppData", "Local", "sessiondeck");
   const fakeHome = join(root, "home");
   mkdirSync(configDir, { recursive: true });
   mkdirSync(fakeHome, { recursive: true });
@@ -51,6 +64,9 @@ export function sandbox(fixture?: string, normalize = false): Sandbox {
       CLAUDECODE: "",
       HOME: fakeHome,
       USERPROFILE: fakeHome,
+      // runCli adds --runtime <this> to `install` unless the test passes its own (the default
+      // exe form needs the built exes; most suites exercise the Node form).
+      SD_TEST_RUNTIME: "node",
     },
   };
 }
@@ -67,7 +83,12 @@ export function runCli(
   stdin?: string,
 ): Promise<CliRun> {
   const testHome = env["SD_TEST_HOME"];
-  const argv = testHome && !args.includes("--home") ? [...args, "--home", testHome] : args;
+  const withHome = testHome && !args.includes("--home") ? [...args, "--home", testHome] : args;
+  const runtime = env["SD_TEST_RUNTIME"];
+  const argv =
+    runtime && args[0] === "install" && !args.some((a) => a.startsWith("--runtime"))
+      ? [...withHome, "--runtime", runtime]
+      : withHome;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, ...argv], {
       env: { ...process.env, ...env },
