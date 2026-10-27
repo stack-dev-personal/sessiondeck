@@ -14,7 +14,7 @@
 | U2 hub FTS5 search + latency bench (+U2b perf fix) | R5.4 | sd-executor-hub | packages/hub/**, docs/HUB-BENCH.md | U1 | done (merge; R5.4 hub side pass) |
 | U3 web project view, inline phase + project edit (+U3h hub CORS) | R5.1, R5.5, R5.6 | sd-executor-web, sd-executor-hub | packages/web/**, packages/hub/** | U1 | done (merge; verifier R5.1 R5.5 R5.6 pass) |
 | U4 web session list + Ctrl+K palette | R5.4 | sd-executor-web | packages/web/** | U2, U3 | done (merge; verifier R5.4 pass) |
-| U5 close: full suite, integration checks, VERIFY-P5, PR | all | sd-verifier | docs/VERIFY-P5.md | U1-U4 | pending |
+| U5 close: full suite, integration checks, VERIFY-P5, PR | all | sd-verifier | docs/VERIFY-P5.md | U1-U4 | done (verifier 4 pass) |
 
 Concurrency allowed: 1, so units run sequentially.
 
@@ -89,3 +89,11 @@ Concurrency allowed: 1, so units run sequentially.
 - Web tests: 302.
 
 - U4 [MINOR] deferred: packages/web/src/components/CommandPalette.tsx:229: Enter after an error retries even if the query changed within the debounce window; the new query's results then do not auto-open (user presses Enter again). Fix: store errorFor and retry only when it equals q.
+
+### U5 close
+- Rebased onto origin/sprint/3-organize 18a5871 (includes main 2426e6d, PR #14): clean, no conflicts.
+- Full suite after rebase: `pnpm -r test` (contract 1090, hub 419, probe 332, scripts 324, web 302), `pnpm -r typecheck`, `pnpm -r lint` all exit 0.
+- Integration check (sprint 3): search route p95 17.6 ms overall, worst class 39.5 ms on 2,336 docs; Playwright mock 43 passed, live 6 passed; palette keyboard-only flow passes (7 mock, 1 live).
+- Verifier: R5.1, R5.4, R5.5, R5.6 pass in docs/VERIFY-P5.md. DoD "real projects named and colored with archives" needs laptop confirmation (and S9b archives).
+- docs/ATLAS.md: stale "lands with S9 web work" line replaced by UI path (b2c754d); reviewer fix-then-merge on control names, fixed in a908666 with the reviewer's exact wording.
+- Note: `pnpm install --frozen-lockfile --offline` fails in this container (ERR_PNPM_NO_OFFLINE_META, @csstools/css-color-parser); existing node_modules used. CI installs online.
