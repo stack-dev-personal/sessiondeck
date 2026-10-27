@@ -79,6 +79,7 @@ export function scrubFixture(rawDir, outDir, name, literals) {
   const st = {
     rows: 0,
     files: files.length,
+    perFile: [],
     srcBytes: 0,
     outBytes: 0,
     types: new Map(),
@@ -100,7 +101,10 @@ export function scrubFixture(rawDir, outDir, name, literals) {
     const dest = join(outDir, name, f.rel);
     mkdirSync(join(dest, ".."), { recursive: true });
     writeFileSync(dest, body, "utf8");
-    if (f.jsonl) st.rows += out.length;
+    if (f.jsonl) {
+      st.rows += out.length;
+      st.perFile.push({ rel: f.rel, rows: out.length });
+    }
     st.srcBytes += statBytes(join(rawDir, f.rel));
     st.outBytes += Buffer.byteLength(body);
     hash.update(`${f.rel}\n${body}`);

@@ -378,6 +378,9 @@ describe("fixture run", () => {
     const readme = readFileSync(join(outA, "01-demo", "README.md"), "utf8");
     expect(readme).toContain("2.1.1");
     expect(readme).toContain("- assistant: 1");
+    expect(readme).toContain("`session.jsonl` 3;");
+    expect(readme).toContain("`subagents/agent-a0123456789abcdef.jsonl`: 1");
+    expect(readme).toContain("Total 4 rows in 3 file(s)");
   });
 
   it("rejects unexpected file names in subagents", () => {

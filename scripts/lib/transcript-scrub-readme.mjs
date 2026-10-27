@@ -8,7 +8,7 @@ const lines = (m) =>
 
 /**
  * @typedef {{
- *   rows: number, files: number, srcBytes: number, outBytes: number,
+ *   rows: number, files: number, perFile: { rel: string, rows: number }[], srcBytes: number, outBytes: number,
  *   types: Map<string, number>, subtypes: Map<string, number>, attachments: Map<string, number>,
  *   blocks: Map<string, number>, versions: Set<string>,
  *   dropped: Map<string, number>, denied: Map<string, number>,
@@ -18,6 +18,8 @@ const lines = (m) =>
 /** @param {FixtureStats} s @param {string} dir @param {boolean} hasSubagents */
 export function renderReadme(s, dir, hasSubagents) {
   const dropped = [...s.dropped].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const sessionRows = s.perFile.find((f) => f.rel === "session.jsonl")?.rows ?? 0;
+  const subs = s.perFile.filter((f) => f.rel !== "session.jsonl");
   return [
     `# transcripts/${dir}`,
     "",
@@ -27,11 +29,13 @@ export function renderReadme(s, dir, hasSubagents) {
     "",
     "## Covers",
     "",
-    "- " +
-      s.rows +
-      " rows in " +
-      s.files +
-      " file(s): `session.jsonl`" +
+    `- Rows per file: \`session.jsonl\` ${sessionRows}` +
+      (subs.length > 0 ? `; ${subs.length} sub-agent file(s) listed below.` : "."),
+    ...subs.map((f) => `  - \`${f.rel}\`: ${f.rows}`),
+    `- Total ${s.rows} rows in ${s.files} file(s)` +
+      (hasSubagents ? " (the `.meta.json` files hold no rows)" : "") +
+      ".",
+    "- Files: `session.jsonl`" +
       (hasSubagents ? " and `subagents/agent-<id>.jsonl` with their `.meta.json`" : "") +
       ".",
     `- Source size ${s.srcBytes} bytes, scrubbed size ${s.outBytes} bytes.`,
@@ -39,6 +43,8 @@ export function renderReadme(s, dir, hasSubagents) {
     "- Row order and row count equal the source. Ids and parent links are kept verbatim.",
     "",
     "## Rows by type",
+    "",
+    "This and the sections below count all jsonl files of the fixture together.",
     "",
     ...lines(s.types),
     "",
