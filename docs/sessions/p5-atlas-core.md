@@ -12,7 +12,7 @@
 |------|--------------|----------|-------|------------|--------|
 | U1 hub projects, roll-up, phases, project view API | R5.1, R5.5, R5.6 | sd-executor-hub | packages/hub/**, docs/ATLAS.md | - | done (merge; verifier 3 pass hub side) |
 | U2 hub FTS5 search + latency bench (+U2b perf fix) | R5.4 | sd-executor-hub | packages/hub/**, docs/HUB-BENCH.md | U1 | done (merge; R5.4 hub side pass) |
-| U3 web project view, inline phase + project edit (+U3h hub CORS) | R5.1, R5.5, R5.6 | sd-executor-web, sd-executor-hub | packages/web/**, packages/hub/** | U1 | reviewed: merge; verifying |
+| U3 web project view, inline phase + project edit (+U3h hub CORS) | R5.1, R5.5, R5.6 | sd-executor-web, sd-executor-hub | packages/web/**, packages/hub/** | U1 | done (merge; verifier R5.1 R5.5 R5.6 pass) |
 | U4 web session list + Ctrl+K palette | R5.4 | sd-executor-web | packages/web/** | U2, U3 | pending |
 | U5 close: full suite, integration checks, VERIFY-P5, PR | all | sd-verifier | docs/VERIFY-P5.md | U1-U4 | pending |
 
