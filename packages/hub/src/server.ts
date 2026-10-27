@@ -106,6 +106,40 @@ export function buildServer(opts: {
     16,
     now,
   );
+  // CORS for the web app's REST calls when it is served from another origin. Driven by
+  // HUB_ALLOWED_ORIGINS (exact match, never "*"). Unlike the WS check, an empty list means no CORS
+  // headers at all (same-origin only), not "accept any". /ingest is never exposed to browsers.
+  // Bearer header, not cookies: no Allow-Credentials.
+  const corsOrigins = new Set(opts.config.allowedOrigins);
+  const corsOriginOf = (req: FastifyRequest): string | null => {
+    const o = req.headers.origin;
+    if (typeof o !== "string" || !corsOrigins.has(o)) return null;
+    if (req.url.split("?")[0] === "/ingest") return null;
+    return o;
+  };
+  const preflightLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 1, now);
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method !== "OPTIONS" || req.headers["access-control-request-method"] === undefined)
+      return;
+    const origin = corsOriginOf(req);
+    if (origin === null) return; // falls through to the bearer hook: 401, no CORS headers
+    if (!preflightLimiter.take("preflight", 1)) {
+      return reply.code(429).header("content-length", "0").send();
+    }
+    return reply
+      .code(204)
+      .header("access-control-allow-origin", origin)
+      .header("access-control-allow-methods", "GET, PATCH")
+      .header("access-control-allow-headers", "authorization, content-type")
+      .header("access-control-max-age", "600")
+      .send();
+  });
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("vary", "Origin");
+    const origin = corsOriginOf(req);
+    if (origin !== null) reply.header("access-control-allow-origin", origin);
+    return payload;
+  });
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;

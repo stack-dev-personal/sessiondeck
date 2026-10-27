@@ -75,6 +75,23 @@ Totals: `sessions` and `hours` come from the sessions table (end = `ended_at`, e
 Archived sessions are rows with `state = 'archived'`; branches are those of sessions that are not
 ended, exited or archived.
 
+## Web origin and CORS
+
+When the web app is served from a different origin than the hub (the compose topology: nginx on
+`:5173`, hub on `:8787`), the browser's REST calls need CORS. The hub answers it from
+`HUB_ALLOWED_ORIGINS` (comma-separated, exact match):
+
+- Request `Origin` equals an entry: the response carries `Access-Control-Allow-Origin: <that origin>`.
+  Never `*`, never `Allow-Credentials` (auth is the bearer header).
+- Preflight (`OPTIONS` with `Access-Control-Request-Method`) from an allowed origin gets 204 with
+  `Allow-Methods: GET, PATCH`, `Allow-Headers: authorization, content-type`, `Max-Age: 600`. It is
+  answered before the bearer check (browsers send no Authorization on preflight), carries no data, and
+  shares the read rate limit. The real request still needs the token (401 otherwise).
+- Any other origin gets no CORS headers (its preflight falls through to the normal 401).
+- `Vary: Origin` is on every response. `/ingest` never gets CORS headers.
+- Difference from the WebSocket check: there an empty list accepts any Origin; for CORS an empty list
+  means no CORS headers at all (same-origin or the vite proxy only).
+
 ## Fixing a mis-assignment
 
 ```sh
