@@ -31,3 +31,11 @@
 - Review: iteration 1 fix-then-merge (3 SHOULD, 4 NIT, all fixed); iteration 2 merge.
 - Verifier: R6.1 pass (289 vitest, 15 Playwright), screenshots /state/3/screens/S10/R6.1-*.png.
 - Deferred to U4: "+N more" hidden-project count (reviewer SHOULD, Layout.tsx:41); by-project cards clipped in narrow columns at 1440x900 (verifier flag, orchestrator looked at the PNG). Solo strip overflow is intended (design 5.4: strip horizontally scrollable).
+### U2 hub layouts API (R6.3 hub half): reviewed, verify with U3
+- Commits f57bebb, fixes acfbf41, 3762d82, 6d1e3f7.
+- Files: packages/hub/src/db/layouts.ts, src/routes/layouts.ts (new), src/db/migrations.ts (appended v6 layouts_slots; renumber at rebase over S9's v6), src/server.ts (registration + write-limiter closure), test/layouts.test.ts, test/migrations.test.ts.
+- Routes: GET /layouts?host=, PUT /layouts/:id, DELETE /layouts/:id; global bearer auth; route-level write limiter 2/s burst 10 per principal; spec opaque JSON, depth 16, 32 KiB; 200-row cap; builtin rows read-only and never hold hotkeys.
+- Review: sd-reviewer fix-then-merge x2, then clean; sd-security-reviewer gate pass all three rounds (MEDIUMs closed: depth stack overflow, write limiter, percent-encoded bypass). Three iterations used.
+- Decision: hotkey scope is per host pin; a pinned layout wins over an unpinned one on its host, exposed as `active_hotkey` on GET and PUT rows.
+- GET /layouts p95 1.56 ms in-process with 50 rows.
+- Deferred: pre-existing `/history` and `/ingest` raw-URL prefix checks in server.ts can be bypassed with percent-encoding (security LOW, predates this branch; S9 edits that file); hub-side spec validation looser than web's (LOW, web validates every row); Phase 7 Postgres notes (READ COMMITTED slot race, BIGINT as string) in db/layouts.ts.
