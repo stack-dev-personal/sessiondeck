@@ -103,3 +103,9 @@ Concurrency allowed: 1, so units run sequentially.
 - sd-executor-web effd3a9: effect restructured, attribute absent until results commit, retrying expect. R5.4 mock spec --repeat-each=10: 70 passed. Review: merge.
 - U4 [MINOR] deferred: CommandPalette.tsx:196 builds the option id inline instead of via optId; share a module-level helper.
 - U4 [MINOR] deferred: no unit test asserts `data-results-for` is absent before the first results commit.
+
+### Relaunch 2026-10-27 (second container restart)
+- The sprint container was stopped at 2026-10-27T20:43Z during U5; no status written at exit; no answer file.
+- State on resume: worktree clean at 637bbc2, branch pushed, PR #15 open against sprint/3-organize, 0 commits behind origin/sprint/3-organize (18a5871). CI on 637bbc2: all checks pass (ubuntu/windows node 22/24, e2e-web, e2e-web-live; runs 40580282790, 40580290603).
+- Remaining U5 step: VERIFY-P5 was recorded at acd2556, before the CI fix effd3a9 touched R5.4 web code. Re-run sd-verifier on R5.4 at HEAD and refresh the ATLAS.md DoD row.
+- sd-verifier re-ran R5.4 at 637bbc2: web test 302 pass, typecheck, lint, lint:root exit 0; hub test:bench worst class p95 41.7 ms; bench-search worst class p95 34.2 ms, PASS; mock R5.4 7 passed keyboard-only. R5.4 pass; VERIFY-P5 updated in 7b4b044 (ATLAS.md DoD row marked resolved).
