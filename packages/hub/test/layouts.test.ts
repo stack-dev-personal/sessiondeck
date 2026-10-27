@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store.ts";
 import { migrations } from "../src/db/migrations.ts";
-import { AUTH, makeHub, type TestHub } from "./support/hub.ts";
+import { AUTH, batch, makeHub, mkEnv, type TestHub } from "./support/hub.ts";
 
 let h: TestHub;
 beforeEach(async () => {
@@ -240,9 +240,11 @@ describe("R6.3 layouts API", () => {
         method: "POST",
         url: "/ingest",
         headers: AUTH,
-        payload: { host: "h", events: [] } as object,
+        payload: batch([mkEnv()]) as object,
       });
-      expect(ing.statusCode).not.toBe(429);
+      // A valid one-envelope batch: the exact success code, so a 400/500 regression fails.
+      expect(ing.statusCode).toBe(200);
+      expect(ing.json()).toMatchObject({ accepted: 1 });
       t += 500; // 2/s refills one token
       expect((await w(11)).statusCode).toBe(200);
       expect((await w(12)).statusCode).toBe(429);

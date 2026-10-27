@@ -126,12 +126,16 @@ export function registerLayouts(
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/layouts/:id", { onRequest: writeGuard }, async (req, reply) => {
-    const id = Id.safeParse(req.params.id);
-    if (!id.success) return reply.code(404).header("content-length", "0").send();
-    const r = deleteLayout(store, id.data);
-    if (r === "missing") return reply.code(404).header("content-length", "0").send();
-    if (r === "builtin") return reply.code(403).send({ error: "builtin_readonly" });
-    return reply.code(204).send();
-  });
+  app.delete<{ Params: { id: string } }>(
+    "/layouts/:id",
+    { onRequest: writeGuard },
+    async (req, reply) => {
+      const id = Id.safeParse(req.params.id);
+      if (!id.success) return reply.code(404).header("content-length", "0").send();
+      const r = deleteLayout(store, id.data);
+      if (r === "missing") return reply.code(404).header("content-length", "0").send();
+      if (r === "builtin") return reply.code(403).send({ error: "builtin_readonly" });
+      return reply.code(204).send();
+    },
+  );
 }
