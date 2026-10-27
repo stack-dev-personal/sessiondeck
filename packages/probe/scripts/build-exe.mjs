@@ -12,9 +12,10 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { resolveHostBun } from "./bun-resolve.mjs";
+import { AUTOLOAD_OFF_FLAGS } from "./exe-flags.mjs";
 import { selectTargets } from "./exe-targets.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..").replaceAll("\\", "/");
@@ -26,40 +27,13 @@ function fail(message) {
   process.exit(1);
 }
 
-function pinned(fromBun, pkg, label) {
-  let p;
-  try {
-    p = dirname(fromBun.resolve(pkg + "/package.json"));
-  } catch (err) {
-    return fail(`cannot resolve pinned ${label} (${pkg}): ${err.message}. Run pnpm install.`);
-  }
-  return p;
-}
-
-// bun npm package: bin/bun.exe on every OS (postinstall swaps in the native binary); accept bin/bun too.
+// The compiler and the Linux exe base come from lockfile-verified bytes only (scripts/bun-resolve.mjs).
 function resolveBun(needLinuxBase) {
-  const fromProbe = createRequire(join(root, "package.json"));
-  let bunDir;
   try {
-    bunDir = dirname(fromProbe.resolve("bun/package.json"));
+    return resolveHostBun(root, { needLinuxBase });
   } catch (err) {
-    return fail(`cannot resolve the pinned bun package: ${err.message}. Run pnpm install.`);
+    return fail(err.message);
   }
-  const candidates = ["bun.exe", "bun"].map((n) => join(bunDir, "bin", n).replaceAll("\\", "/"));
-  const host = candidates.find((c) => existsSync(c));
-  if (!host) return fail(`bun binary not found (${candidates.join(", ")}); run pnpm install`);
-  let linuxBase = null;
-  if (needLinuxBase) {
-    const dir = pinned(
-      createRequire(join(bunDir, "package.json")),
-      "@oven/bun-linux-x64",
-      "linux x64 base",
-    );
-    linuxBase = join(dir, "bin", "bun").replaceAll("\\", "/");
-    if (!existsSync(linuxBase))
-      return fail(`linux x64 base not found at ${linuxBase}; run pnpm install`);
-  }
-  return { host, linuxBase };
 }
 
 let selection;
@@ -107,8 +81,7 @@ for (const t of targets) {
       "--compile",
       "--minify",
       ...(useBytecode ? ["--bytecode"] : []),
-      "--no-compile-autoload-dotenv",
-      "--no-compile-autoload-bunfig",
+      ...AUTOLOAD_OFF_FLAGS,
       ...t.args,
       entry,
       `--outfile=${outfile}`,

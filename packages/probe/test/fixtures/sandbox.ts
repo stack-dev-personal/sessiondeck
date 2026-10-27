@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { onTestFinished } from "vitest";
 import { probeRoot } from "../helpers.ts";
 
 export const cliPath = join(probeRoot, "dist", "probe.mjs");
@@ -22,9 +23,20 @@ export interface Sandbox {
   env: Record<string, string>;
 }
 
-/** Temp CLAUDE_CONFIG_DIR and probe home (passed as --home by runCli); HOME is redirected too so nothing real is touched. */
+/**
+ * Temp CLAUDE_CONFIG_DIR and probe home (passed as --home by runCli); HOME is redirected too so nothing real is touched.
+ * The sandbox root (which this call created) is deleted when the calling test finishes.
+ */
 export function sandbox(fixture?: string, normalize = false): Sandbox {
   const root = mkdtempSync(join(tmpdir(), "sd-install-"));
+  onTestFinished(() => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch (err) {
+      process.stderr.write(`sandbox cleanup failed for ${root}: ${String(err)}
+`);
+    }
+  });
   const configDir = join(root, "claude");
   // Under the fake profile at the CLI default spot, so the exe form's home-safety check accepts it.
   const home = join(root, "home", "AppData", "Local", "sessiondeck");

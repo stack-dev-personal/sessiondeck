@@ -99,4 +99,27 @@ for (const [name, input] of [
     JSON.stringify(b.stdout),
   );
 }
+for (const [name, input] of [
+  ["valid", fx("subagentStatusLine/01-rows-2.json")],
+  ["empty", Buffer.alloc(0)],
+  ["malformed", Buffer.from("{nope")],
+]) {
+  const a = run("subagents", "node", input),
+    b = run("subagents", "exe", input);
+  check(
+    `subagents ${name}: exit 0, no stdout`,
+    b.status === 0 && b.stdout.length === 0,
+    `exe status=${b.status} stdoutBytes=${b.stdout.length}`,
+  );
+  check(
+    `subagents ${name}: spool lines node=${a.lines.length} exe=${b.lines.length}`,
+    a.lines.length === b.lines.length,
+  );
+  if (a.lines[0] && b.lines[0]) {
+    check(
+      `subagents ${name}: same fields`,
+      strip(JSON.parse(a.lines[0])) === strip(JSON.parse(b.lines[0])),
+    );
+  }
+}
 process.exit(failed ? 1 : 0);

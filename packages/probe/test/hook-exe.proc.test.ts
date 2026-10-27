@@ -1,17 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { MAX_LINE_BYTES, parseSpoolLine } from "../src/spool.ts";
 import { BAD_INPUTS } from "./hook-cases.ts";
-import { fixturePerEvent, hookExePath, readSpoolLines, runHook } from "./helpers.ts";
+import { describeExe, fixturePerEvent, hookExePath, readSpoolLines, runHook } from "./helpers.ts";
 
-// R1.2 and R1.3 against the Bun-compiled hook. Skips with a printed reason when not built.
-const skip = hookExePath === null;
-if (skip)
-  console.warn(
-    "[hook-exe] skipped: dist/exe hook not built (pnpm -F @sessiondeck/probe build:exe)",
-  );
+// R1.2 and R1.3 against the Bun-compiled hook. Skips with a printed reason when not built
+// (fails instead when SD_REQUIRE_EXE=1).
 const exe = hookExePath ?? "";
 
 let home: string;
@@ -20,7 +16,7 @@ beforeAll(() => {
 });
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-describe.skipIf(skip)("R1.2 [exe] hook never fails and never prints", () => {
+describeExe("R1.2 [exe] hook never fails and never prints", hookExePath, () => {
   for (const [name, input] of BAD_INPUTS) {
     it(`exit 0, empty stdout, empty stderr: ${name}`, async () => {
       const r = await runHook(input, { home }, exe);
@@ -56,7 +52,7 @@ describe.skipIf(skip)("R1.2 [exe] hook never fails and never prints", () => {
   });
 });
 
-describe.skipIf(skip)("R1.3 [exe] spool under 50 parallel hooks", () => {
+describeExe("R1.3 [exe] spool under 50 parallel hooks", hookExePath, () => {
   for (let round = 1; round <= 3; round++) {
     it(`round ${round}: exact count, every line parses, unique ids, 0 corrupted`, async () => {
       const h = mkdtempSync(join(tmpdir(), "sd-exe-stress-"));
