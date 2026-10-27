@@ -22,3 +22,14 @@
 ## Units
 
 ## Deferred findings
+
+### U1 transcript inventory (R0.7)
+- Executor sd-executor-contract, commit 1e0ccdd: scripts/transcript-inventory.mjs, scripts/lib/transcript-inventory-core.mjs, scripts/test/transcript-inventory.test.ts (11 tests, synthetic input, asserts no values leak into output), docs/research/2026-10-27-transcript-inventory.md. Scripts suite 336 pass, typecheck, lint, prettier clean.
+- 21 candidates inventoried (1 skipped as modified in the last 30 minutes, the live conductor session excluded), 48056 rows, 217 subagent files. Versions 2.1.295 to 2.1.311.
+- Chosen by exhaustive 5-subset search (must include subagents and a compaction, most structural features, ties to smaller size): 01-subagents (2.16 MB, 4 subagents), 02-subagents-compaction (4.48 MB, 1), 03-compaction (5.98 MB), 04-compaction (7.11 MB), 05-subagents (11.85 MB, 12; only source of hook_non_blocking_error and read_truncation_notice). Raw copies in packages/contract/fixtures/raw/transcripts/ (gitignored, 0 tracked).
+- Gaps: no candidate holds /clear, /compact or /resume, or a resume marker; no image, document or redacted_thinking blocks. The scrub still handles images and documents by rule, tested on synthetic input.
+- 282 key names not in fixture-keys.mjs (shallow walk); includes userEmail, organizationUuid, systemPrompt and request-body keys, which the scrub must classify before allowing.
+- Review: per the handoff, sd-reviewer and sd-security-reviewer review the whole tooling diff at step 5 (U5).
+
+Decision (orchestrator): fixture ids (uuid, parentUuid, sessionId, message.id, tool_use ids, agentId) are kept verbatim, not remapped as in S0b. They are random identifiers, not personal data, and S7 needs every cross-file link intact; remapping risks breaking a link held in an unlisted field. Account, org, user and request identifiers become placeholders.
+Decision (orchestrator): the scrubbed transcripts are committed only after the security gate passes (as S0b did). U2 commits tooling only; the fixture files stay untracked until U5.
