@@ -52,6 +52,7 @@ Out:
 
 ## Requirements
 - R1.1 Hook p95 wall time < 80 ms (A15 fallback if not).
+  - 2026-10-27: on native Windows R1.1 is judged at p95 < 100 ms (user decision, option B); see the A15 note in 00-open-decisions.md.
 - R1.2 Hook never exits non-zero and never writes stdout, under any input including empty or malformed stdin.
 - R1.3 Spool lines are complete JSON under concurrent hooks (stress test: 50 parallel hook processes, 0 corrupted lines).
 - R1.4 Daemon cursor survives restart; zero duplicate `id`s and zero gaps in `seq` across a kill/restart during load.
@@ -62,6 +63,7 @@ Out:
 - R1.9 statusLine command prints a usable one-liner (state, context %, 5h %) and never throws.
 - R1.10 Config and token live outside `settings.json` with user-only permissions.
 - R1.11 WSL2: the Linux build (hook, statusline, daemon) installs inside a WSL2 distro without touching existing hooks there, and its envelopes reach the hub on Windows through a loopback bridge (WSL2 bridge harness: all envelopes accepted). Native Windows behavior unchanged.
+  - 2026-10-27: the WSL2-distro install and bridge are not applicable to the current setup (user); see the A2 note in 00-open-decisions.md. The linux-x64 build stays.
 
 ## Definition of done
 - [ ] All R1.x pass; bench numbers recorded.
