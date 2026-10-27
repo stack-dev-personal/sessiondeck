@@ -208,7 +208,7 @@ export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
       parseSearch(
         await call(
           "GET",
-          `/search?q=${enc(q.slice(0, MAX_QUERY_CHARS))}&limit=${o?.limit ?? 20}`,
+          `/search?q=${enc(cutQuery(q))}&limit=${o?.limit ?? 20}`,
           undefined,
           o?.signal,
         ),
@@ -218,6 +218,14 @@ export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
 
 /** The hub rejects /search `q` longer than this (MAX_QUERY_CHARS in the hub's search route). */
 export const MAX_QUERY_CHARS = 200;
+/** Cuts to the hub's limit (UTF-16 units, as zod .max counts) without leaving half a surrogate pair. */
+export function cutQuery(q: string): string {
+  if (q.length <= MAX_QUERY_CHARS) return q;
+  let end = MAX_QUERY_CHARS;
+  const last = q.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return q.slice(0, end);
+}
 /** The hub's MAX_LIMIT for /sessions: exactly this many rows back means the list may be cut off. */
 export const SESSION_LIST_LIMIT = 1000;
 

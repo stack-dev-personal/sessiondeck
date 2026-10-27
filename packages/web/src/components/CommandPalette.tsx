@@ -93,6 +93,8 @@ function PaletteDialog() {
   const optId = (i: number) => `${uid}-opt-${i}`;
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
+  /** Bumped by Enter after a failed search: runs the same query again. */
+  const [retry, setRetry] = useState(0);
   const [shown, setShown] = useState<Shown>({
     status: "loading",
     forQuery: null,
@@ -152,6 +154,7 @@ function PaletteDialog() {
         },
         (e: unknown) => {
           if (!alive || isAbort(e)) return;
+          pendingEnter.current = false;
           setShown((s) => ({
             ...s,
             status: "error",
@@ -166,7 +169,7 @@ function PaletteDialog() {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [q]);
+  }, [q, retry]);
 
   // Request dispatch to results committed. Recorded as a User Timing measure so a browser test can
   // read the real number (performance.getEntriesByName("sd-palette-search")).
@@ -223,7 +226,8 @@ function PaletteDialog() {
     else if (e.key === "ArrowDown" || (ctrl && e.key.toLowerCase() === "n")) move(1);
     else if (e.key === "ArrowUp" || (ctrl && e.key.toLowerCase() === "p")) move(-1);
     else if (e.key === "Enter") {
-      if (shown.forQuery !== q) {
+      if (shown.status === "error") setRetry((n) => n + 1);
+      else if (shown.forQuery !== q) {
         // The list on screen answers an older query: wait for the current one, then open its first hit.
         pendingEnter.current = true;
       } else {
@@ -288,7 +292,7 @@ function PaletteDialog() {
           {shown.status === "error" ? (
             <p role="alert" className="m-0 p-s-3 text-state-error">
               <span aria-hidden="true">✖ </span>
-              Search failed: {shown.error}
+              Search failed: {shown.error}. Press Enter to retry.
             </p>
           ) : null}
           {shown.status === "ready" && flat.length === 0 ? (

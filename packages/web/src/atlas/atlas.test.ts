@@ -145,6 +145,16 @@ describe("http client", () => {
     const [url] = f.mock.calls[0] as unknown as [string];
     expect(url).toBe(`/search?q=${"x".repeat(200)}&limit=5`);
   });
+  it("does not cut an emoji in half at the query limit", async () => {
+    const f = vi.fn(async () => ok({ results: [], took_ms: 1 }));
+    const api = createHttpAtlasApi({
+      config: () => ({ hubUrl: "", token: "" }),
+      fetchImpl: f as unknown as typeof fetch,
+    });
+    await api.search("a".repeat(199) + "😀", { limit: 5 });
+    const [url] = f.mock.calls[0] as unknown as [string];
+    expect(url).toBe(`/search?q=${"a".repeat(199)}&limit=5`);
+  });
   it("uses the same origin for an empty hub URL and sends null to clear", async () => {
     const f = vi.fn(async () => ok({ session_id: "s1" }));
     const api = createHttpAtlasApi({

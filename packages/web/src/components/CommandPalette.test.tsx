@@ -146,6 +146,44 @@ describe("results", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Search failed: Hub unreachable");
   });
 
+  it("held Enter then a failed search opens nothing; Enter again retries and opens the first hit", async () => {
+    vi.useFakeTimers();
+    const fresh = [hit({ kind: "session", id: "quokka-1", title: "quokka work" })];
+    let fail = true;
+    const search = vi.fn(async (q: string) => {
+      if (q === "quokka") {
+        if (fail) throw new Error("Hub unreachable");
+        return ok(fresh);
+      }
+      return ok(RESULTS);
+    });
+    setAtlasApi(fakeApi({ search }));
+    mount();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "quokka" } });
+    fireEvent.keyDown(input, { key: "Enter" }); // held while the search is pending
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 10);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Press Enter to retry");
+    expect(screen.getByTestId("where").textContent).toBe("/board");
+    fail = false;
+    fireEvent.keyDown(input, { key: "Enter" }); // retry
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 10);
+    });
+    expect(screen.getByTestId("where").textContent).toBe("/board"); // the held Enter did not survive the error
+    expect(screen.getByRole("option")).toHaveTextContent("quokka work");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("where").textContent).toBe("/sessions?open=quokka-1");
+  });
+
   it("renders a hostile title and snippet as literal text, never as markup", async () => {
     const evil = "<img src=x onerror=alert(1)>";
     setAtlasApi(
