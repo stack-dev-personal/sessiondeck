@@ -298,25 +298,43 @@ describe("startSaved wiring", () => {
 });
 
 describe("review findings, store half", () => {
-  it("finding 1: an older GET that answers after a PUT cannot overwrite the saved row", async () => {
+  /** First GET stays pending until `answer`; later GETs return `server()` (what the hub holds now). */
+  const slowFirstList = (server: () => unknown[]) => {
+    let calls = 0;
     let answer!: (v: unknown) => void;
-    useSaved.getState().setAdapter(fake({ list: () => new Promise((r) => (answer = r)) }));
+    return {
+      answer: (v: unknown) => answer(v),
+      count: () => calls,
+      list: () =>
+        ++calls === 1 ? new Promise((r) => (answer = r)) : Promise.resolve({ layouts: server() }),
+    };
+  };
+
+  it("finding 1: an older GET that answers after a PUT cannot overwrite the saved row", async () => {
+    let saved: unknown[] = [];
+    const slow = slowFirstList(() => saved);
+    useSaved.getState().setAdapter(
+      fake({
+        list: slow.list,
+        put: (id, b) => {
+          saved = [wire(id, { name: b.name, hotkey: b.hotkey })];
+          return Promise.resolve({ id, ...b, updated_at: 2 });
+        },
+      }),
+    );
     const load = useSaved.getState().load();
     expect(await useSaved.getState().save({ name: "New", hotkey: 4, host: null })).toBeNull();
     const id = useSaved.getState().rows[0]!.id;
-    answer({ layouts: [wire("old")] }); // the GET was answered from before the PUT
+    slow.answer({ layouts: [wire("old")] }); // the GET was answered from before the PUT
     await load;
+    await vi.waitFor(() => expect(useSaved.getState().status).toBe("ready"));
     expect(useSaved.getState().rows.map((r) => r.id)).toEqual([id]);
     expect(loadCachedRows().map((r) => r.id)).toEqual([id]);
-    expect(useSaved.getState().status).toBe("ready");
     useLayout.setState({ spec: buildPreset("solo") });
     expect(useSaved.getState().press(4, null)?.id).toBe(id);
   });
 
   it("finding 1: an older GET cannot bring back a deleted row", async () => {
-    useSaved.setState({ rows: loadCachedRows() });
-    const a = fake();
-    useSaved.getState().setAdapter(a);
     useSaved.setState({
       rows: [
         {
@@ -329,13 +347,51 @@ describe("review findings, store half", () => {
         },
       ],
     });
-    let answer!: (v: unknown) => void;
-    useSaved.getState().setAdapter(fake({ list: () => new Promise((r) => (answer = r)) }));
+    const slow = slowFirstList(() => []);
+    useSaved.getState().setAdapter(fake({ list: slow.list }));
     const load = useSaved.getState().load();
     expect(await useSaved.getState().remove("gone")).toBeNull();
-    answer({ layouts: [wire("gone")] });
+    slow.answer({ layouts: [wire("gone")] });
     await load;
+    await vi.waitFor(() => expect(useSaved.getState().status).toBe("ready"));
     expect(useSaved.getState().rows).toEqual([]);
+  });
+
+  it("R6.3 carry-over: a write that cancels the startup GET starts the load again", async () => {
+    // The hub already holds a row the startup GET never delivered (the GET was cancelled).
+    let server: unknown[] = [wire("other", { hotkey: 2 })];
+    const slow = slowFirstList(() => server);
+    useSaved.getState().setAdapter(
+      fake({
+        list: slow.list,
+        put: (id, b) => {
+          server = [...server, wire(id, { name: b.name, hotkey: b.hotkey })];
+          return Promise.resolve({ id, ...b, updated_at: 2 });
+        },
+      }),
+    );
+    const load = useSaved.getState().load();
+    expect(useSaved.getState().status).toBe("loading");
+    expect(await useSaved.getState().save({ name: "Mine", hotkey: 1, host: null })).toBeNull();
+    // The list is fetched again instead of being marked ready and stale.
+    expect(slow.count()).toBe(2);
+    slow.answer({ layouts: [] }); // the cancelled GET's answer is ignored
+    await load;
+    await vi.waitFor(() => expect(useSaved.getState().status).toBe("ready"));
+    expect(
+      useSaved
+        .getState()
+        .rows.map((r) => r.name)
+        .sort(),
+    ).toEqual(["Mine", "Name other"]);
+  });
+
+  it("a write while nothing is loading does not fetch again", async () => {
+    const a = fake();
+    useSaved.getState().setAdapter(a);
+    useSaved.setState({ status: "ready" });
+    await useSaved.getState().save({ name: "X", hotkey: null, host: null });
+    expect(a.calls.filter((c) => c === "list")).toEqual([]);
   });
 
   it("finding 5: save while compacted stores the snapshot, not the all-compact spec", async () => {
