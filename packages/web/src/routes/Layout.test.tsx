@@ -345,6 +345,31 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     expect(list.scrollTop).toBeGreaterThan(0);
   });
 
+  it("finding 6: after End, Tab reaches Open on row 149 and applies that layout", async () => {
+    const rows = Array.from({ length: 150 }, (_, i) => saved(`r${i}`, null, null, "solo"));
+    useSaved.setState({ rows });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("m");
+    await user.tab();
+    await user.keyboard("{End}");
+    const name = screen.getByRole("textbox", { name: "Name of Name r149" });
+    const row = name.closest("li")!;
+    let guard = 0;
+    // Tab into the rows and walk forward until focus is on the Open button of row 149.
+    while (!(
+      document.activeElement?.textContent === "Open" && row.contains(document.activeElement)
+    )) {
+      await user.tab();
+      if (++guard > 80) throw new Error("Open on r149 was not reachable by Tab");
+    }
+    expect(document.activeElement).toHaveTextContent("Open");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "solo");
+    await user.keyboard("{Enter}");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "r149");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("finding 11: toolbar buttons keep their label and width when state changes", async () => {
     const user = userEvent.setup();
     mount();
@@ -394,7 +419,7 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     await user.click(screen.getByRole("button", { name: "Confirm delete Renamed" }));
     await vi.waitFor(() => expect(useSaved.getState().rows).toHaveLength(0));
     await user.keyboard("{Escape}");
-    expect(screen.queryByTestId("manage-dialog")).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("Shift+C compacts every pane, again restores; lowercase c is not claimed by the route", async () => {
