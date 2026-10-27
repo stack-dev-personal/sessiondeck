@@ -91,8 +91,9 @@ export function toWire(r: SavedLayout) {
 
 /**
  * Which row a key opens on `host`: a layout pinned to that host beats an unpinned one holding the
- * same slot. Computed here (not read from the hub's active_hotkey) so it follows the viewer's
- * current host without a refetch; the hub rule is the same (see packages/hub/src/routes/layouts.ts).
+ * same slot. `host` is the explicit Viewer host setting (null: only unpinned layouts resolve).
+ * Computed here (not read from the hub's active_hotkey) so it needs no refetch; the hub rule is the
+ * same (see packages/hub/src/routes/layouts.ts).
  */
 export function resolveSlot(
   rows: readonly SavedLayout[],
@@ -102,19 +103,6 @@ export function resolveSlot(
   const held = rows.filter((r) => r.hotkey === slot);
   const pinned = host === null ? undefined : held.find((r) => r.host === host);
   return pinned ?? held.find((r) => r.host === null) ?? null;
-}
-
-/**
- * The host the viewer is looking at: the only host on the board, or the host of the most recently
- * active session when several report. Null when the board is empty.
- */
-export function viewerHost(
-  sessions: Readonly<Record<string, { host: string; last_event_at: number }>>,
-): string | null {
-  let best: { host: string; at: number } | null = null;
-  for (const s of Object.values(sessions))
-    if (!best || s.last_event_at > best.at) best = { host: s.host, at: s.last_event_at };
-  return best?.host ?? null;
 }
 
 /** Applies the hub's rule locally after a PUT: a slot moves within its host scope. */
@@ -148,6 +136,27 @@ export class HubError extends Error {
     readonly reason: string | null = null,
   ) {
     super(`hub ${status}${code ? ` ${code}` : ""}`);
+  }
+}
+
+/** The hub's answer was not a layout this app accepts. */
+export class InvalidResponseError extends Error {
+  constructor() {
+    super("invalid layout response");
+  }
+}
+
+/** The layout to update is not in the local list (deleted elsewhere, or the list changed hubs). */
+export class MissingRowError extends Error {
+  constructor() {
+    super("layout not in the local list");
+  }
+}
+
+/** No usable hub address: nothing was sent. Reported like a network failure. */
+export class NoHubError extends Error {
+  constructor(why: string) {
+    super(why);
   }
 }
 
@@ -255,5 +264,17 @@ export function describeError(e: unknown, what: string): string {
     if (e.status === 400) return `The hub refused the layout${e.reason ? ` (${e.reason})` : ""}.`;
     return `The hub answered ${e.status} while ${what}.`;
   }
-  return `Cannot reach the hub while ${what}. Showing saved layouts from this browser.`;
+  if (e instanceof InvalidResponseError)
+    return `The hub sent a layout this app cannot read while ${what}.`;
+  if (e instanceof MissingRowError)
+    return `That layout is no longer in the list while ${what}. Close and reopen Saved layouts.`;
+  const network =
+    e instanceof TypeError ||
+    e instanceof NoHubError ||
+    (typeof DOMException !== "undefined" &&
+      e instanceof DOMException &&
+      (e.name === "TimeoutError" || e.name === "AbortError"));
+  if (network)
+    return `Cannot reach the hub while ${what}. Showing saved layouts from this browser.`;
+  return `Unexpected error while ${what}.`;
 }

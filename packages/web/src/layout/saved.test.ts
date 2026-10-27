@@ -8,7 +8,9 @@ import {
   parseRow,
   parseRows,
   resolveSlot,
-  viewerHost,
+  InvalidResponseError,
+  MissingRowError,
+  NoHubError,
   withPut,
   type SavedLayout,
 } from "./saved";
@@ -201,15 +203,6 @@ describe("withPut moves a slot within its host scope only", () => {
   });
 });
 
-describe("viewerHost", () => {
-  it("is the host of the most recently active session, null when empty", () => {
-    expect(viewerHost({})).toBeNull();
-    expect(
-      viewerHost({ a: { host: "x", last_event_at: 1 }, b: { host: "y", last_event_at: 9 } }),
-    ).toBe("y");
-  });
-});
-
 describe("hub adapter and errors", () => {
   const res = (status: number, body?: unknown) =>
     new Response(body === undefined ? null : JSON.stringify(body), { status });
@@ -249,6 +242,16 @@ describe("hub adapter and errors", () => {
   });
   it("a network failure says the hub is unreachable", () => {
     expect(describeError(new TypeError("fetch failed"), "loading")).toMatch(/Cannot reach the hub/);
+  });
+  it("finding 9: invalid responses, missing rows and unknown errors are not reported as unreachable", () => {
+    expect(describeError(new InvalidResponseError(), "saving")).toMatch(/cannot read/);
+    expect(describeError(new InvalidResponseError(), "saving")).not.toMatch(/Cannot reach/);
+    expect(describeError(new MissingRowError(), "updating")).toMatch(/no longer in the list/);
+    expect(describeError(new Error("boom"), "saving")).toBe("Unexpected error while saving.");
+    expect(describeError(new NoHubError("x"), "saving")).toMatch(/Cannot reach the hub/);
+    expect(describeError(new DOMException("t", "TimeoutError"), "saving")).toMatch(
+      /Cannot reach the hub/,
+    );
   });
   it("httpBase maps ws to http and rejects other schemes", () => {
     expect(httpBase("")).toBe("");
