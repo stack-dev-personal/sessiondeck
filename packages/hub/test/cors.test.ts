@@ -62,8 +62,19 @@ describe("R6.3 CORS, allowlist set", () => {
     for (const r of cases) {
       expect(r.statusCode).toBe(403);
       expect(r.headers["access-control-allow-origin"]).toBeUndefined();
+      expect(r.headers["vary"]).toBe("Origin");
       expect(r.body).toBe("");
     }
+  });
+
+  it("parses Access-Control-Request-Headers case-insensitively with or without spaces", async () => {
+    h = await makeHub(ENV);
+    expect((await pre("/layouts/x", "PUT", ORIGIN, "Authorization,Content-Type")).statusCode).toBe(
+      204,
+    );
+    expect(
+      (await pre("/layouts/x", "PUT", ORIGIN, " Authorization , Content-Type ")).statusCode,
+    ).toBe(204);
   });
 
   it("decorates real GET/PUT/DELETE for an allowed origin only", async () => {
@@ -106,6 +117,8 @@ describe("R6.3 CORS, allowlist set", () => {
     const u = await h.app.inject({ method: "GET", url: "/layouts", headers: { origin: ORIGIN } });
     expect(u.statusCode).toBe(401);
     expect(u.body).toBe("");
+    expect(u.headers["access-control-allow-origin"]).toBe(ORIGIN);
+    expect(u.headers["vary"]).toBe("Origin");
   });
 
   it("treats percent-encoded paths like the plain path", async () => {
@@ -136,10 +149,15 @@ describe("R6.3 CORS, allowlist set", () => {
       });
       expect(r.statusCode).toBe(200);
     }
-    expect(
-      (await h.app.inject({ method: "PUT", url: "/layouts/x", headers: AUTH, payload: body }))
-        .statusCode,
-    ).toBe(429);
+    const limited = await h.app.inject({
+      method: "PUT",
+      url: "/layouts/x",
+      headers: { ...AUTH, origin: ORIGIN },
+      payload: body,
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.headers["access-control-allow-origin"]).toBe(ORIGIN);
+    expect(limited.headers["vary"]).toBe("Origin");
   });
 });
 

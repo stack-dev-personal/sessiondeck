@@ -4,7 +4,7 @@
 // not registered at all, so no CORS header is ever sent and OPTIONS behaves as it always did
 // (cross-origin browser calls stay blocked; same-origin and non-browser clients are unaffected).
 //
-// Only an exact Origin match is echoed (never "*"), with Vary: Origin. No credentials header: auth is
+// Only an exact Origin match is echoed (never "*"), with Vary: Origin (sent on every in-scope response and preflight reply, allowed or not). No credentials header: auth is
 // the bearer header, there are no cookies. Scope is the REST read routes and /layouts; /ingest
 // (probe-only) and /stream (WS upgrades are not subject to CORS) are never CORS-enabled.
 //
@@ -60,7 +60,7 @@ export function registerCors(app: FastifyInstance, allowedOrigins: string[]): vo
         path !== null &&
         methodAllowed(acrm, path) &&
         wanted.every((h) => PREFLIGHT_HEADERS.has(h));
-      if (!ok) return reply.code(403).header("content-length", "0").send();
+      if (!ok) return reply.code(403).header("vary", "Origin").header("content-length", "0").send();
       return reply
         .code(204)
         .header("access-control-allow-origin", origin)
@@ -71,8 +71,9 @@ export function registerCors(app: FastifyInstance, allowedOrigins: string[]): vo
         .send();
     }
 
-    if (originOk && inScope) {
-      reply.header("access-control-allow-origin", origin).header("vary", "Origin");
+    if (inScope) {
+      reply.header("vary", "Origin");
+      if (originOk) reply.header("access-control-allow-origin", origin);
     }
   });
 }

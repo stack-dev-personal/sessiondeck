@@ -172,14 +172,33 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     historyRate: posInt(env, "HUB_HISTORY_RATE", 1),
     historyBurst: posInt(env, "HUB_HISTORY_BURST", 2),
     maxWsClients: posInt(env, "HUB_MAX_WS_CLIENTS", 64),
-    allowedOrigins: (env["HUB_ALLOWED_ORIGINS"] ?? "")
-      .split(",")
-      .map((o) => o.trim())
-      .filter((o) => o !== ""),
+    allowedOrigins: parseOrigins(env["HUB_ALLOWED_ORIGINS"]),
     maxHosts: posInt(env, "HUB_MAX_HOSTS", 32),
     maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
     dbPath: env["HUB_DB_PATH"] ?? path.join(".", "data", "hub.sqlite"),
     port,
     bind: env["HUB_BIND"] ?? "127.0.0.1",
   };
+}
+
+/** HUB_ALLOWED_ORIGINS: comma-separated http(s) origins (scheme://host[:port], no path); "null" and "*" are refused. */
+export function parseOrigins(raw: string | undefined): string[] {
+  const out: string[] = [];
+  for (const o of (raw ?? "").split(",").map((x) => x.trim())) {
+    if (o === "") continue;
+    let ok = false;
+    try {
+      const u = new URL(o);
+      ok = (u.protocol === "http:" || u.protocol === "https:") && u.origin === o && o !== "null";
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      throw new Error(
+        `HUB_ALLOWED_ORIGINS entry "${o}" is not an origin: use scheme://host[:port] with http or https and no path or trailing slash ("null" and "*" are not allowed)`,
+      );
+    }
+    out.push(o);
+  }
+  return out;
 }
