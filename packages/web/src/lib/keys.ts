@@ -46,13 +46,24 @@ export function useShortcuts(map: Record<string, () => void>): void {
 }
 
 /**
- * Layout keys (Phase 6). Every layout action has a key; the mouse is optional.
- *   l                      open the layout menu (on /layout)
+ * Layout keys (Phase 6), all on /layout. None fire while typing, with Ctrl/Meta/Alt held, or while a
+ * layout dialog is open.
+ *   l                      open the layout menu
  *   Up / Down, Home / End  move in the menu; Enter applies the preset; Esc closes
+ *   1 - 9                  switch to the saved layout in that slot (a layout pinned to the current
+ *                          host beats an unpinned one); the status line names it
+ *   s                      save the current layout (name, slot, pin); Enter saves, Esc cancels
+ *   m                      manage saved layouts: rename, reassign slot, delete, open
+ *   Shift+C                compact every pane; again restores the previous layout exactly
+ *                          (lowercase c stays the global board compact toggle)
  *   Tab                    reaches each pane's Compact/Expand button; Enter or Space toggles it
  *   Tab to a divider       Left/Right or Up/Down resize the two panes next to it (react-resizable-panels)
- * Later units add Shift+C (compact all), 1-9 (saved layouts) and assignment keys here.
+ * Later units add assignment keys here.
  */
 export const LAYOUT_KEYS = {
   menu: "l",
+  save: "s",
+  manage: "m",
+  compactAll: "C",
+  slots: ["1", "2", "3", "4", "5", "6", "7", "8", "9"],
 } as const;

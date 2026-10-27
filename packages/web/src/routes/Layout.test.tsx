@@ -3,10 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
-import { buildPreset, PRESET_NAMES } from "../layout/presets";
+import { buildPreset, PRESET_NAMES, type PresetName } from "../layout/presets";
 import { panesOf } from "../layout/spec";
 import { useBoard } from "../store/board";
+import { HubError, memoryAdapter } from "../layout/saved";
 import { useLayout } from "../store/layout";
+import { useSaved } from "../store/saved";
 import { Layout } from "./Layout";
 
 class RO {
@@ -168,5 +170,145 @@ describe("Layout route (R6.1)", () => {
       useLayout.getState().spec.root.kind === "split" && JSON.stringify(useLayout.getState().spec),
     ).toContain('"compact":true');
     await act(async () => {});
+  });
+});
+
+describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
+  const saved = (
+    id: string,
+    hotkey: number | null,
+    host: string | null,
+    preset = "quad" as const,
+  ) => ({
+    id,
+    name: `Name ${id}`,
+    hotkey,
+    host,
+    spec: { ...buildPreset(preset), id },
+    updatedAt: 1,
+  });
+  beforeEach(() => {
+    useSaved.setState({ rows: [], status: "ready", notice: null });
+    useSaved.getState().setAdapter(memoryAdapter());
+    useLayout.setState({ snapshot: null });
+  });
+
+  it("digits 1-9 switch to the slot's layout and the status line names it", async () => {
+    useSaved.setState({ rows: [saved("a", 1, null), saved("b", 2, null, "pair")] });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "a");
+    expect(screen.getAllByTestId("pane")).toHaveLength(4);
+    expect(screen.getByTestId("layout-notice")).toHaveTextContent("Layout 1: Name a");
+    await user.keyboard("2");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "b");
+    expect(screen.getAllByTestId("pane")).toHaveLength(2);
+    await user.keyboard("5");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "b");
+    expect(screen.getByTestId("layout-notice")).toHaveTextContent("No layout in slot 5.");
+  });
+
+  it("uses the pin rule with the host of the board's most recent session", async () => {
+    useSaved.setState({ rows: [saved("all", 1, null), saved("pin", 1, "h", "pair")] });
+    put(sess("s", "/w/x"));
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "pin");
+  });
+
+  it("does not fire while typing, with a modifier, or while a dialog is open", async () => {
+    useSaved.setState({ rows: [saved("a", 1, null)] });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    const name = screen.getByRole("textbox", { name: "Name" });
+    expect(name).toHaveFocus();
+    await user.keyboard("12");
+    expect(name).toHaveValue("12");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "solo");
+    // Focus on a button inside the dialog: still no layout keys.
+    await user.click(screen.getByRole("button", { name: /Cancel/ }));
+    expect(screen.queryByTestId("save-dialog")).toBeNull();
+    await user.keyboard("{Control>}1{/Control}");
+    await user.keyboard("{Alt>}1{/Alt}");
+    await user.keyboard("{Meta>}1{/Meta}");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "solo");
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "a");
+  });
+
+  it("s opens the save dialog, Enter saves with name, slot and pin, Esc closes", async () => {
+    put(sess("s", "/w/x"));
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    expect(screen.getByRole("dialog", { name: "Save layout" })).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Evening");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Hotkey slot" }), "3");
+    await user.click(screen.getByRole("checkbox", { name: /Pin to host h/ }));
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(screen.queryByTestId("save-dialog")).toBeNull());
+    const row = useSaved.getState().rows[0]!;
+    expect(row).toMatchObject({ name: "Evening", hotkey: 3, host: "h" });
+    await user.keyboard("s{Escape}");
+    expect(screen.queryByTestId("save-dialog")).toBeNull();
+  });
+
+  it("a hub error keeps the dialog open and shows the reason", async () => {
+    useSaved.getState().setAdapter({
+      list: () => Promise.resolve({ layouts: [] }),
+      put: () => Promise.reject(new HubError(429)),
+      remove: () => Promise.resolve(),
+    });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "X{Enter}");
+    expect(await screen.findByTestId("save-error")).toHaveTextContent(/Too many layout changes/);
+    expect(screen.getByTestId("save-dialog")).toBeInTheDocument();
+  });
+
+  it("m lists saved layouts; rename, reassign and delete work from the keyboard", async () => {
+    useSaved.getState().setAdapter(memoryAdapter({ layouts: [] }));
+    await useSaved.getState().save({ name: "First", hotkey: null, host: null });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("m");
+    const input = screen.getByRole("textbox", { name: "Name of First" });
+    await user.clear(input);
+    await user.type(input, "Renamed{Enter}");
+    await vi.waitFor(() => expect(useSaved.getState().rows[0]!.name).toBe("Renamed"));
+    await user.selectOptions(screen.getByRole("combobox", { name: /Slot of/ }), "Slot 6");
+    await vi.waitFor(() => expect(useSaved.getState().rows[0]!.hotkey).toBe(6));
+    await user.click(screen.getByRole("button", { name: "Delete Renamed" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete Renamed" }));
+    await vi.waitFor(() => expect(useSaved.getState().rows).toHaveLength(0));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("manage-dialog")).toBeNull();
+  });
+
+  it("Shift+C compacts every pane, again restores; lowercase c is not claimed by the route", async () => {
+    useLayout.setState({ spec: buildPreset("quad") });
+    const before = structuredClone(useLayout.getState().spec);
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("{Shift>}C{/Shift}");
+    expect(
+      screen.getAllByTestId("pane").every((p) => p.getAttribute("data-compact") === "true"),
+    ).toBe(true);
+    expect(screen.getByTestId("compact-all")).toHaveAttribute("aria-pressed", "true");
+    await user.keyboard("{Shift>}C{/Shift}");
+    expect(useLayout.getState().spec).toEqual(before);
+    expect(screen.getAllByTestId("pane").some((p) => p.hasAttribute("data-compact"))).toBe(false);
+    await user.keyboard("c");
+    expect(useLayout.getState().spec).toEqual(before);
+  });
+
+  it("the layout notice keeps its box when empty", () => {
+    mount();
+    expect(screen.getByTestId("layout-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("layout-notice")).toHaveTextContent("");
   });
 });

@@ -30,7 +30,10 @@ export function useProjectLabel(dir: string | undefined): string | undefined {
  * Own-property lookup. A stored spec controls `sessionId`, so "constructor" or "__proto__" must not
  * reach Object.prototype members through a plain-object index.
  */
-export function ownGet<T>(rec: Readonly<Record<string, T>>, key: string | undefined): T | undefined {
+export function ownGet<T>(
+  rec: Readonly<Record<string, T>>,
+  key: string | undefined,
+): T | undefined {
   return key !== undefined && Object.hasOwn(rec, key) ? rec[key] : undefined;
 }
 
