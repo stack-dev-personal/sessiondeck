@@ -26,6 +26,14 @@ export function useProjectLabel(dir: string | undefined): string | undefined {
   });
 }
 
+/**
+ * Own-property lookup. A stored spec controls `sessionId`, so "constructor" or "__proto__" must not
+ * reach Object.prototype members through a plain-object index.
+ */
+export function ownGet<T>(rec: Readonly<Record<string, T>>, key: string | undefined): T | undefined {
+  return key !== undefined && Object.hasOwn(rec, key) ? rec[key] : undefined;
+}
+
 function useSortedSessions(): SessionSnapshot[] {
   const sessions = useBoard((s) => s.sessions);
   return useMemo(() => sortForAttention(Object.values(sessions)), [sessions]);
@@ -99,10 +107,8 @@ export function BoardPaneBody() {
  * Until then it shows the session's card, or the unassigned state.
  */
 export function SessionPaneBody({ sessionId }: { sessionId: string | undefined }) {
-  const s = useBoard((st) => (sessionId === undefined ? undefined : st.sessions[sessionId]));
-  const flag = useBoard((st) =>
-    sessionId === undefined ? null : (st.exceeds200k[sessionId] ?? null),
-  );
+  const s = useBoard((st) => ownGet(st.sessions, sessionId));
+  const flag = useBoard((st) => ownGet(st.exceeds200k, sessionId) ?? null);
   const openSession = useUi((st) => st.openSession);
   const now = useNow();
   if (sessionId === undefined)
@@ -199,7 +205,7 @@ export function CompactPaneBody({
   const text = useBoard((st) => {
     if (type === "session") {
       if (sessionId === undefined) return "Unassigned";
-      const s = st.sessions[sessionId];
+      const s = ownGet(st.sessions, sessionId);
       return s
         ? `${STATE_VOCAB[s.state].glyph} ${displayNameOf(s)}: ${STATE_VOCAB[s.state].label}`
         : `${sessionId} not on the board`;

@@ -142,3 +142,29 @@ describe("LayoutView render isolation (R6.4, R6.5 groundwork)", () => {
     expect(screen.getAllByTestId("pane")[1]!.querySelector("p")).toBe(before);
   });
 });
+
+describe("hostile sessionId in a stored spec (R6.3 security)", () => {
+  it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
+    "a pane bound to %s renders as not on the board, normal and compact",
+    (sid) => {
+      const spec: LayoutSpec = {
+        version: 1,
+        id: "hostile",
+        name: "hostile",
+        root: {
+          kind: "split",
+          dir: "row",
+          ratios: [0.5, 0.5],
+          children: [pane("p1", { sessionId: sid }), pane("p2", { sessionId: sid, compact: true })],
+        },
+      };
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      mountSpec(spec);
+      expect(screen.getAllByTestId("pane")).toHaveLength(2);
+      expect(screen.getByText(`Session ${sid} is not on the board.`)).toBeInTheDocument();
+      expect(screen.getByText(`${sid} not on the board`)).toBeInTheDocument();
+      expect(err).not.toHaveBeenCalled();
+      err.mockRestore();
+    },
+  );
+});
