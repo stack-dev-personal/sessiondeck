@@ -43,6 +43,11 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
+      - name: build probe exes (host platform only, for the R1.2 R1.3 exe tests)
+        # dist/*.mjs must exist before the exe compile; hook-exe.proc.test.ts skips if the exe is missing.
+        # About 3 s locally; builds only this runner's platform and skips the bun-floor bench exe.
+        run: pnpm -F @sessiondeck/probe build && pnpm -F @sessiondeck/probe build:exe:host
+        timeout-minutes: 2
       - name: test probe processes (R1.2 R1.3 R1.4 R1.5 R1.6 R1.7 R1.8 R1.9 R1.10, outside R0.5)
         # Spawn-heavy probe suites (hook robustness, 50-process stress, statusline, CLI install/config,
         # daemon lock race, daemon e2e, autostart incl. the windows-latest real Task Scheduler case)
