@@ -86,7 +86,7 @@ When the web app is served from a different origin than the hub (the compose top
 - Preflight (`OPTIONS` with `Access-Control-Request-Method`) from an allowed origin gets 204 with
   `Allow-Methods: GET, PATCH`, `Allow-Headers: authorization, content-type`, `Max-Age: 600`. It is
   answered before the bearer check (browsers send no Authorization on preflight), carries no data, and
-  shares the read rate limit. The real request still needs the token (401 otherwise).
+  has its own per-source rate limit (same rate and burst as reads). The real request still needs the token (401 otherwise).
 - Any other origin gets no CORS headers (its preflight falls through to the normal 401).
 - `Vary: Origin` is on every response. `/ingest` never gets CORS headers.
 - Difference from the WebSocket check: there an empty list accepts any Origin; for CORS an empty list

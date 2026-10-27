@@ -124,6 +124,33 @@ function bool(env: Record<string, string | undefined>, name: string, dflt: boole
   throw new Error(`${name} must be 0, 1, true or false`);
 }
 
+// Exact origins only: http(s)://host[:port], no path, never "*" or "null". Lowercased at load so the
+// exact-match checks (CORS and WS) compare like with like. Errors name the entry, not the env.
+function parseAllowedOrigins(raw: string | undefined): string[] {
+  const out: string[] = [];
+  for (const entry of (raw ?? "").split(",").map((o) => o.trim())) {
+    if (entry === "") continue;
+    const shown = JSON.stringify(entry.slice(0, 80));
+    const m = entry.match(/^(https?):\/\/([^/?#@\s\\]+)$/i);
+    let ok = m !== null;
+    if (ok) {
+      try {
+        const u = new URL(entry);
+        ok = u.username === "" && u.password === "" && u.hostname !== "";
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      throw new Error(
+        `HUB_ALLOWED_ORIGINS entry ${shown} is not a valid origin (want http(s)://host[:port], no path; "*" and "null" are not allowed)`,
+      );
+    }
+    out.push(entry.toLowerCase());
+  }
+  return out;
+}
+
 export function loadConfig(env: Record<string, string | undefined>): HubConfig {
   const token = env["HUB_TOKEN"];
   if (token === undefined || token.length < MIN_TOKEN_LENGTH) {
@@ -172,10 +199,7 @@ export function loadConfig(env: Record<string, string | undefined>): HubConfig {
     historyRate: posInt(env, "HUB_HISTORY_RATE", 1),
     historyBurst: posInt(env, "HUB_HISTORY_BURST", 2),
     maxWsClients: posInt(env, "HUB_MAX_WS_CLIENTS", 64),
-    allowedOrigins: (env["HUB_ALLOWED_ORIGINS"] ?? "")
-      .split(",")
-      .map((o) => o.trim())
-      .filter((o) => o !== ""),
+    allowedOrigins: parseAllowedOrigins(env["HUB_ALLOWED_ORIGINS"]),
     maxHosts: posInt(env, "HUB_MAX_HOSTS", 32),
     maxOpenSessionsPerHost: posInt(env, "HUB_MAX_OPEN_SESSIONS", 1000),
     dbPath: env["HUB_DB_PATH"] ?? path.join(".", "data", "hub.sqlite"),

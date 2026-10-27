@@ -127,4 +127,20 @@ describe("hub CORS", () => {
     for (let i = 0; i < 400; i++) codes.add((await pre(OK)).statusCode);
     expect(codes.has(429)).toBe(true);
   });
+
+  it("draining one source's preflight bucket does not 429 another", async () => {
+    await boot(OK);
+    const from = (remoteAddress: string) =>
+      app.inject({
+        method: "OPTIONS",
+        url: "/projects",
+        remoteAddress,
+        headers: { origin: OK, "access-control-request-method": "GET" },
+      });
+    const codes = new Set<number>();
+    for (let i = 0; i < 400; i++) codes.add((await from("10.0.0.1")).statusCode);
+    expect(codes.has(429)).toBe(true);
+    expect((await from("10.0.0.1")).statusCode).toBe(429);
+    expect((await from("10.0.0.2")).statusCode).toBe(204);
+  });
 });

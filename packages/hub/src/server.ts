@@ -117,13 +117,13 @@ export function buildServer(opts: {
     if (req.url.split("?")[0] === "/ingest") return null;
     return o;
   };
-  const preflightLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 1, now);
+  const preflightLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 1024, now);
   app.addHook("onRequest", async (req, reply) => {
     if (req.method !== "OPTIONS" || req.headers["access-control-request-method"] === undefined)
       return;
     const origin = corsOriginOf(req);
     if (origin === null) return; // falls through to the bearer hook: 401, no CORS headers
-    if (!preflightLimiter.take("preflight", 1)) {
+    if (!preflightLimiter.take(req.ip, 1)) {
       return reply.code(429).header("content-length", "0").send();
     }
     return reply

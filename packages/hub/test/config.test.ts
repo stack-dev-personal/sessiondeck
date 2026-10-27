@@ -62,6 +62,39 @@ describe("loadConfig bucket sizes and WS settings", () => {
   });
 });
 
+describe("HUB_ALLOWED_ORIGINS validation", () => {
+  const base = { HUB_TOKEN: "a".repeat(16) };
+  const load = (v: string) => loadConfig({ ...base, HUB_ALLOWED_ORIGINS: v });
+  it("lowercases scheme and host, keeps ports", () => {
+    expect(load("HTTP://Example.COM:8080, https://B.example").allowedOrigins).toEqual([
+      "http://example.com:8080",
+      "https://b.example",
+    ]);
+  });
+  it.each([
+    "null",
+    "*",
+    "ftp://a.example",
+    "a.example",
+    "https://a.example/",
+    "https://a.example/path",
+    "https://a.example?x=1",
+    "https://u:p@a.example",
+    "https://",
+    "file://",
+  ])("rejects %s naming the entry only", (bad) => {
+    let msg = "";
+    try {
+      load(`https://ok.example,${bad}`);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain("HUB_ALLOWED_ORIGINS entry");
+    expect(msg).toContain(JSON.stringify(bad));
+    expect(msg).not.toContain("ok.example");
+  });
+});
+
 describe("loadConfig retention", () => {
   const base = { HUB_TOKEN: "a".repeat(16) };
   it("defaults to 30 days, hourly, and parses overrides", () => {
