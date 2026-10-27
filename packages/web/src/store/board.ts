@@ -4,6 +4,7 @@ import { applyEnvelope } from "../ingest";
 import { exceeds200kOf } from "../statusline-adapter";
 import { RESERVED_IDS } from "../live/stream-client";
 import { carryAtlas } from "../atlas/types";
+import { appendRows, draftRows, type ActivityLog } from "./activity";
 import { recordEnvelope, type SessionHistory } from "./history";
 
 export type ConnectionStatus = "mock" | "connecting" | "open" | "closed" | "invalid";
@@ -17,6 +18,8 @@ export interface BoardState {
   exceeds200k: Record<string, boolean | null>;
   /** Bounded per-session history for the detail drawer; fed by the same flush as snapshots. */
   history: Record<string, SessionHistory>;
+  /** Bounded per-session activity rows (max ACTIVITY_CAP) for the session pane's live list. */
+  activity: Record<string, ActivityLog>;
   connection: ConnectionStatus;
   /** True once the first full set has arrived (hub resync or the end of the mock replay). */
   loaded: boolean;
@@ -55,6 +58,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     sessions: {},
     exceeds200k: {},
     history: {},
+    activity: {},
     connection: "closed",
     loaded: false,
     setLoaded: (loaded) => set({ loaded }),
@@ -79,6 +83,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
         ),
         exceeds200k: {},
         history: {},
+        activity: {},
         loaded: true,
       });
     },
@@ -92,6 +97,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       const next = { ...get().sessions };
       let flags = get().exceeds200k;
       const history = { ...get().history };
+      const activity = { ...get().activity };
       for (const e of batch) {
         if (e.session_id === null) continue;
         const before = next[e.session_id];
@@ -99,6 +105,11 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
         if (updated) {
           next[e.session_id] = updated;
           history[e.session_id] = recordEnvelope(history[e.session_id], before, updated, e);
+          activity[e.session_id] = appendRows(
+            activity[e.session_id],
+            e.ts,
+            draftRows(before, updated, e.hook_event_name),
+          );
         }
         if (e.kind === "statusline") {
           const f = exceeds200kOf(e.payload);
@@ -107,8 +118,11 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       }
       // Hub deltas carry project and phase fields; they pass through untouched (a delta from a hub
       // that predates them keeps the previous values).
-      for (const [id, snap] of deltas) next[id] = carryAtlas(snap, next[id]);
-      set({ sessions: next, exceeds200k: flags, history });
+      for (const [id, snap] of deltas) {
+        activity[id] = appendRows(activity[id], snap.last_event_at, draftRows(next[id], snap));
+        next[id] = carryAtlas(snap, next[id]);
+      }
+      set({ sessions: next, exceeds200k: flags, history, activity });
     },
   }));
 }
