@@ -100,3 +100,19 @@ export function assignSession(spec: LayoutSpec, paneId: string, sessionId: strin
 export function unassignPane(spec: LayoutSpec, paneId: string): LayoutSpec {
   return updatePane(spec, paneId, (p) => (p.type === "session" ? withSession(p, undefined) : p));
 }
+
+/**
+ * Enforces "a session is in at most one session pane" on any spec, whatever its source (hub row,
+ * localStorage, a hand-edited file). The first holder in reading order keeps the session; later
+ * holders become unassigned. Returns the same object when there is nothing to fix.
+ */
+export function dedupeSessions(spec: LayoutSpec): LayoutSpec {
+  const seen = new Set<string>();
+  let next = spec;
+  for (const p of panesOf(spec)) {
+    if (p.type !== "session" || p.sessionId === undefined) continue;
+    if (seen.has(p.sessionId)) next = updatePane(next, p.id, (q) => withSession(q, undefined));
+    else seen.add(p.sessionId);
+  }
+  return next;
+}

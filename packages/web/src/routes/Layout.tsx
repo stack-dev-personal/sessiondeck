@@ -94,8 +94,19 @@ export function Layout() {
   // after the preset was applied, so a column may point at a project that is gone.
   const shownDirs = new Set<string>();
   for (const p of panesOf(spec)) if (p.projectDir !== undefined) shownDirs.add(p.projectDir);
-  const hidden = projects.filter((d) => !shownDirs.has(d)).length;
-  const moreLive = spec.id === "grid6" ? autoFitMore(Object.values(sessions)) : 0;
+  // Only projects with a live session are advertised, the same set "p" would give a column.
+  const liveProjects = useMemo(
+    () =>
+      projectDirsByAttention(
+        Object.fromEntries(Object.entries(sessions).filter(([, s]) => isLive(s))),
+      ),
+    [sessions],
+  );
+  const hidden = liveProjects.filter((d) => !shownDirs.has(d)).length;
+  // Only when the six panes were filled (by Arrange); a grid6 picked from the menu says nothing.
+  const sessionPanes = panesOf(spec).filter((p) => p.type === "session");
+  const filled = spec.id === "grid6" && sessionPanes.every((p) => p.sessionId !== undefined);
+  const moreLive = filled ? autoFitMore(Object.values(sessions)) : 0;
   const pick = (name: PresetName) => applyPreset(name, projects);
 
   return (

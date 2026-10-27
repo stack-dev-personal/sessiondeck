@@ -207,9 +207,14 @@ export function stats(ms: number[]): { n: number; max: number; p95: number; mean
   };
 }
 
-export function writeTiming(name: string, samples: Switch[]): void {
+/** `extra` is recorded, never asserted (for example first_after_reload_ms). */
+export function writeTiming(
+  name: string,
+  samples: Switch[],
+  extra: Record<string, number> = {},
+): void {
   writeFileSync(
     shot(name),
-    JSON.stringify({ ...stats(samples.map((s) => s.ms)), samples }, null, 2),
+    JSON.stringify({ ...stats(samples.map((s) => s.ms)), ...extra, samples }, null, 2),
   );
 }

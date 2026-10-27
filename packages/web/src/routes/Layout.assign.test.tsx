@@ -254,6 +254,104 @@ describe("drag assignment (R6.6)", () => {
   });
 });
 
+describe("review fixes (R6.6, R6.2)", () => {
+  it("the picker highlight follows the session when the list re-sorts under it", async () => {
+    const user = userEvent.setup();
+    mount();
+    pane("p1").focus();
+    await user.keyboard("g{ArrowDown}"); // W, [A]
+    expect(screen.getByRole("option", { selected: true })).toHaveAttribute("data-session-id", "A");
+    act(() =>
+      put(
+        sess("A", 30),
+        sess("B", 20),
+        sess("C", 50, "waiting_input"),
+        sess("W", 1, "waiting_input"),
+      ),
+    );
+    expect(screen.getAllByRole("option").map((r) => r.getAttribute("data-session-id"))).toEqual([
+      "C",
+      "W",
+      "A",
+      "B",
+    ]);
+    expect(screen.getByRole("option", { selected: true })).toHaveAttribute("data-session-id", "A");
+    await user.keyboard("{Enter}");
+    expect(held()).toEqual([null, "A"]);
+  });
+  it("each session pane has its own accessible name with its number and session", () => {
+    useLayout.getState().assign("p1", "B");
+    mount();
+    expect(screen.getByRole("region", { name: "Session pane 1: unassigned" })).toBe(pane("p0"));
+    expect(screen.getByRole("region", { name: "Session pane 2: name-B" })).toBe(pane("p1"));
+  });
+  it("a dropped id that is not on the board is ignored", () => {
+    mount();
+    fireEvent.drop(pane("p0"), { dataTransfer: transfer("not-a-session") });
+    fireEvent.drop(pane("p0"), { dataTransfer: transfer("__proto__") });
+    fireEvent.drop(pane("p0"), { dataTransfer: transfer("toString") });
+    expect(held()).toEqual([null, null]);
+    expect(window.localStorage.getItem("sd.layout") ?? "").not.toContain("not-a-session");
+    fireEvent.drop(pane("p0"), { dataTransfer: transfer("A") });
+    expect(held()).toEqual(["A", null]);
+  });
+  it("g opens the picker with Caps Lock on", async () => {
+    const user = userEvent.setup();
+    mount();
+    pane("p0").focus();
+    fireEvent.keyDown(pane("p0"), { key: "G", shiftKey: false });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+  });
+  it("+N more projects counts only projects with a live session", async () => {
+    put(
+      ...Array.from({ length: 3 }, (_, i) => sess(`s${i}`, 100 - i)),
+      sess("e1", 1, "ended"),
+      sess("e2", 2, "exited"),
+    );
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("p");
+    expect(panesOf(useLayout.getState().spec)).toHaveLength(3);
+    expect(screen.queryByTestId("projects-more")).toBeNull();
+  });
+  it("+N more live sessions shows after Arrange, not for a grid6 picked from the menu", async () => {
+    put(...Array.from({ length: 9 }, (_, i) => sess(`s${i}`, 100 - i)));
+    useLayout.setState({ spec: buildPreset("grid6") });
+    const user = userEvent.setup();
+    mount();
+    expect(screen.queryByTestId("sessions-more")).toBeNull();
+    await user.keyboard("a");
+    expect(screen.getByTestId("sessions-more")).toBeInTheDocument();
+  });
+  it("by-project columns past the visible width say how many are off to the right", () => {
+    put(...Array.from({ length: 8 }, (_, i) => sess(`s${i}`, 100 - i)));
+    useLayout.setState({ spec: buildPreset("by-project", panesOfDirs(8)) });
+    const proto = HTMLElement.prototype;
+    const dims = { scrollWidth: 2400, clientWidth: 900, scrollLeft: 0 };
+    const orig = Object.fromEntries(
+      Object.keys(dims).map((k) => [k, Object.getOwnPropertyDescriptor(proto, k)]),
+    );
+    for (const k of Object.keys(dims))
+      Object.defineProperty(proto, k, {
+        configurable: true,
+        get: () => dims[k as keyof typeof dims],
+      });
+    try {
+      mount();
+      expect(screen.getByTestId("columns-more")).toHaveTextContent("Scroll for 5 more columns");
+      dims.scrollLeft = 1500;
+      fireEvent.scroll(screen.getByTestId("split-scroll"));
+      expect(screen.queryByTestId("columns-more")).toBeNull();
+    } finally {
+      for (const [k, d] of Object.entries(orig)) {
+        if (d) Object.defineProperty(proto, k, d);
+        else delete (proto as unknown as Record<string, unknown>)[k];
+      }
+    }
+  });
+});
+
 describe("by-project columns are not clipped (R6.1)", () => {
   it("many columns scroll the whole row at a minimum column width", () => {
     put(...Array.from({ length: 8 }, (_, i) => sess(`s${i}`, 100 - i)));

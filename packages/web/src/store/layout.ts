@@ -3,6 +3,7 @@ import { readStored, removeStored, STORAGE_KEYS, writeStored } from "../lib/stor
 import {
   assignSession,
   compactAll,
+  dedupeSessions,
   setPaneCompact,
   setRatiosAt,
   unassignPane,
@@ -17,7 +18,7 @@ export function loadLayout(): LayoutSpec {
   const raw = readStored(STORAGE_KEYS.layout);
   if (raw !== null) {
     const r = parse(raw);
-    if (r.ok) return r.spec;
+    if (r.ok) return dedupeSessions(r.spec);
   }
   return buildPreset(DEFAULT_PRESET);
 }
@@ -27,7 +28,7 @@ function loadSnapshot(current: LayoutSpec): LayoutSpec | null {
   const raw = readStored(STORAGE_KEYS.layoutSnapshot);
   if (raw === null) return null;
   const r = parse(raw);
-  return r.ok && r.spec.id === current.id ? r.spec : null;
+  return r.ok && r.spec.id === current.id ? dedupeSessions(r.spec) : null;
 }
 
 export interface LayoutState {
@@ -75,7 +76,11 @@ export const useLayout = create<LayoutState>()((set, get) => {
     else removeStored(STORAGE_KEYS.layoutSnapshot);
   };
   /** Never persist or show a spec that parse() would reject on the next load. */
-  const commit = (spec: LayoutSpec, snapshot: LayoutSpec | null = get().snapshot) => {
+  const commit = (rawSpec: LayoutSpec, rawSnapshot: LayoutSpec | null = get().snapshot) => {
+    // The one choke point: every spec (saved layout, press, restore, edit) and the stored snapshot
+    // pass through here, so no source can put one session in two panes (R6.6).
+    const spec = dedupeSessions(rawSpec);
+    const snapshot = rawSnapshot && dedupeSessions(rawSnapshot);
     if (spec === get().spec && snapshot === get().snapshot) return;
     if (!validate(spec).ok) return;
     persist(spec, snapshot);

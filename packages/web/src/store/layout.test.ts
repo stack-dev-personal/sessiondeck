@@ -182,3 +182,84 @@ describe("Shift+C compact all (R6.5)", () => {
     expect(useLayout.getState().spec).toEqual(before);
   });
 });
+
+describe("one session in at most one pane, whatever the source (R6.6)", () => {
+  const dupQuad = (): LayoutSpec => {
+    const s = structuredClone(buildPreset("quad"));
+    for (const p of panesOf(s)) p.sessionId = "A";
+    return s;
+  };
+  const held = (s: LayoutSpec) => panesOf(s).map((p) => p.sessionId ?? null);
+  const invariant = (s: LayoutSpec) => {
+    const ids = panesOf(s)
+      .filter((p) => p.type === "session" && p.sessionId !== undefined)
+      .map((p) => p.sessionId);
+    expect(new Set(ids).size).toBe(ids.length);
+  };
+
+  it("setSpec (a hub row, a pressed slot) keeps only the first holder, and stores the clean spec", () => {
+    useLayout.getState().setSpec(dupQuad());
+    expect(held(useLayout.getState().spec)).toEqual(["A", null, null, null]);
+    expect(loadLayout()).toEqual(useLayout.getState().spec);
+  });
+  it("loadLayout cleans a duplicated localStorage layout", () => {
+    window.localStorage.setItem(STORAGE_KEYS.layout, serialize(dupQuad()));
+    expect(held(loadLayout())).toEqual(["A", null, null, null]);
+  });
+  it("a duplicated stored snapshot is cleaned on load and on compact-all restore", async () => {
+    const q = dupQuad();
+    window.localStorage.setItem(STORAGE_KEYS.layout, serialize(buildPreset("quad")));
+    window.localStorage.setItem(STORAGE_KEYS.layoutSnapshot, serialize(q));
+    vi.resetModules();
+    const fresh = (await import("./layout")).useLayout;
+    expect(held(fresh.getState().snapshot!)).toEqual(["A", null, null, null]);
+    fresh.getState().toggleCompactAll(); // snapshot -> spec
+    expect(held(fresh.getState().spec)).toEqual(["A", null, null, null]);
+  });
+  it("compact-all keeps the snapshot clean when a duplicate was written while compacted", () => {
+    useLayout.getState().applyPreset("quad");
+    useLayout.getState().toggleCompactAll();
+    useLayout.setState({ snapshot: dupQuad() }); // as if loaded dirty
+    useLayout.getState().assign("p3", "Z"); // goes through commit on both spec and snapshot
+    invariant(useLayout.getState().snapshot!);
+    useLayout.getState().toggleCompactAll();
+    invariant(useLayout.getState().spec);
+  });
+  it("applyAutoFit also passes through the choke point", () => {
+    useLayout.getState().applyAutoFit(dupQuad());
+    expect(held(useLayout.getState().spec)).toEqual(["A", null, null, null]);
+  });
+  it("property: random setSpec (with duplicates), toggle, arrange and assign keep the invariant", async () => {
+    const { autoFit } = await import("../layout/autofit");
+    const { createSnapshot } = await import("@sessiondeck/contract");
+    const { PRESET_NAMES } = await import("../layout/presets");
+    let seed = 99;
+    const rnd = (n: number) => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed % n;
+    };
+    const ids = ["A", "B", "C", "D", "E"];
+    const sessions = ids.map((id) =>
+      createSnapshot({ session_id: id, host: "h", cwd: `/w/${id}`, ts: 1 }),
+    );
+    for (let step = 0; step < 400; step++) {
+      const st = useLayout.getState();
+      const op = rnd(5);
+      if (op === 0) {
+        const s = structuredClone(
+          buildPreset(PRESET_NAMES[rnd(PRESET_NAMES.length)]!, ["/a", "/b"]),
+        );
+        for (const p of panesOf(s)) if (p.type === "session" && rnd(2)) p.sessionId = ids[rnd(3)]!;
+        st.setSpec(s);
+      } else if (op === 1) st.toggleCompactAll();
+      else if (op === 2)
+        st.applyAutoFit(autoFit(sessions.slice(0, rnd(6)), rnd(2) ? "count" : "project"));
+      else {
+        const panes = panesOf(st.spec);
+        st.assign(panes[rnd(panes.length)]!.id, ids[rnd(ids.length)]!);
+      }
+      invariant(useLayout.getState().spec);
+      if (useLayout.getState().snapshot) invariant(useLayout.getState().snapshot!);
+    }
+  });
+});

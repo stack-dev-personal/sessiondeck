@@ -1,8 +1,10 @@
 import { useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
-import type { Pane } from "../../layout/spec";
-import { LAYOUT_KEYS } from "../../lib/keys";
+import { panesOf, type Pane } from "../../layout/spec";
+import { displayNameOf } from "../../lib/attention";
+import { LAYOUT_KEYS, keyName } from "../../lib/keys";
+import { useBoard } from "../../store/board";
 import { useLayout } from "../../store/layout";
-import { hasSessionDrag, sessionDragProps, sessionFromDrop } from "./dnd";
+import { hasSessionDrag, isKnownSession, sessionDragProps, sessionFromDrop } from "./dnd";
 import { useProjectLabel } from "./PaneBodies";
 import { SessionPicker } from "./SessionPicker";
 
@@ -30,12 +32,21 @@ export function PaneChrome({ pane, children }: { pane: Pane; children: ReactNode
   const [picking, setPicking] = useState(false);
   const [over, setOver] = useState(false);
   const isSession = pane.type === "session";
+  // Which session pane this is (1-based, reading order) and what it holds, for its accessible name.
+  const ordinal = useLayout((s) => {
+    const ids = panesOf(s.spec).filter((p) => p.type === "session");
+    return ids.findIndex((p) => p.id === pane.id) + 1;
+  });
+  const held = useBoard((s) =>
+    pane.sessionId !== undefined ? s.sessions[pane.sessionId] : undefined,
+  );
+  const heldName = held ? displayNameOf(held) : (pane.sessionId ?? "unassigned");
   const detail =
     pane.type === "project" ? projectLabel : pane.type === "session" ? pane.sessionId : undefined;
 
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     if (!isSession || e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (LAYOUT_KEYS.pick.includes(e.key)) {
+    if (LAYOUT_KEYS.pick.includes(keyName(e))) {
       if (e.repeat) return;
       e.preventDefault();
       setPicking(true);
@@ -63,6 +74,7 @@ export function PaneChrome({ pane, children }: { pane: Pane; children: ReactNode
           setOver(false);
           if (id === null) return;
           e.preventDefault();
+          if (!isKnownSession(id)) return;
           assign(pane.id, id);
         },
       }
@@ -70,7 +82,9 @@ export function PaneChrome({ pane, children }: { pane: Pane; children: ReactNode
   return (
     <section
       className={`flex h-full min-h-0 min-w-0 flex-col bg-surface-1 outline-offset-[-2px] ${over ? "outline outline-2 outline-accent" : ""}`}
-      aria-label={`${TYPE_LABEL[pane.type]} pane`}
+      aria-label={
+        isSession ? `Session pane ${ordinal}: ${heldName}` : `${TYPE_LABEL[pane.type]} pane`
+      }
       data-testid="pane"
       data-pane-id={pane.id}
       data-pane-type={pane.type}

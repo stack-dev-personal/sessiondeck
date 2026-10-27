@@ -88,6 +88,11 @@ for (const [w, h] of SIZES) {
           }),
         );
         expect(clipped).toEqual([]);
+        // Columns off to the right are announced at the edge, and the hint goes at the end.
+        await expect(page.getByTestId("columns-more")).toContainText(/Scroll for \d+ more column/);
+        await sc.evaluate((e) => (e.scrollLeft = e.scrollWidth));
+        await expect(page.getByTestId("columns-more")).toHaveCount(0);
+        await sc.evaluate((e) => (e.scrollLeft = 0));
         for (const b of boxes) expect(b.w, `${b.id} readable width`).toBeGreaterThanOrEqual(440);
       }
       // Fixed pane header geometry: 28 px on every pane.
