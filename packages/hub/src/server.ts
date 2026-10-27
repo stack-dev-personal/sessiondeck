@@ -123,13 +123,6 @@ export function buildServer(opts: {
       return reply.code(429).header("content-length", "0").send();
     }
     if (
-      (req.method === "PUT" || req.method === "DELETE") &&
-      req.url.split("?")[0]?.startsWith("/layouts/") === true &&
-      !writeLimiter.take(principal, 1)
-    ) {
-      return reply.code(429).header("content-length", "0").send();
-    }
-    if (
       (req.method === "GET" || req.method === "HEAD") &&
       req.url.split("?")[0]?.startsWith("/history/") === true
     ) {
@@ -168,7 +161,10 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
-  registerLayouts(app, opts.store, now);
+  registerLayouts(app, opts.store, now, (authorization) => {
+    const p = principalOf(authorization);
+    return p !== null && writeLimiter.take(p, 1);
+  });
   registerCost(
     app,
     opts.store,
