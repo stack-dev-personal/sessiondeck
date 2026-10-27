@@ -213,6 +213,33 @@ describe("session list", () => {
     expect(selected()?.dataset["sessionId"]).toBe("a3");
   });
 
+  it("?open=<id> survives a failed hub request: no not-found note, param kept", async () => {
+    setAtlasApi(fakeApi({ listSessions: async () => Promise.reject(new Error("Hub error 500")) }));
+    render(
+      <MemoryRouter initialEntries={["/sessions?open=old1"]}>
+        <SessionList />
+        <Where />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("sessions-count")).toHaveTextContent("Hub error 500"),
+    );
+    expect(screen.getByTestId("sessions-count")).not.toHaveTextContent("not found");
+    expect(screen.getByTestId("where").textContent).toBe("/sessions?open=old1");
+  });
+
+  it("notes when the hub returned exactly the 1000-row cap", async () => {
+    const many = Array.from({ length: 1000 }, (_, i) =>
+      session(`c${String(i).padStart(4, "0")}`, { last_event_at: NOW - i }),
+    );
+    mount("/sessions", many);
+    await waitFor(() =>
+      expect(screen.getByTestId("sessions-count")).toHaveTextContent(
+        "showing newest 1000 stored sessions",
+      ),
+    );
+  });
+
   it("virtualizes above 100 rows and still scrolls the selection into the window", async () => {
     const many = Array.from({ length: 300 }, (_, i) =>
       session(`m${String(i).padStart(3, "0")}`, { last_event_at: NOW - i * 1000 }),

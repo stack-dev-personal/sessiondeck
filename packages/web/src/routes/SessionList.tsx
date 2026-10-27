@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { SESSION_STATES } from "@sessiondeck/contract";
-import { atlasApi } from "../atlas/api";
+import { atlasApi, SESSION_LIST_LIMIT } from "../atlas/api";
 import { atlasOf, type AtlasSession } from "../atlas/types";
 import { useLoad } from "../atlas/useProjects";
 import { FixedList } from "../components/FixedList";
@@ -183,6 +183,8 @@ export function SessionList() {
   useEffect(() => {
     if (openParam === null || (hub.loading && hub.data === null)) return;
     const row = all.find((r) => r.session_id === openParam);
+    // A failed hub request proves nothing about the session: keep the link so Refresh can recover it.
+    if (!row && hub.error !== null) return;
     if (row) {
       setSelId(openParam);
       openSession(openParam, useBoard.getState().sessions[openParam] ? undefined : row);
@@ -191,7 +193,7 @@ export function SessionList() {
       setNote(`Session ${openParam} not found`);
     }
     setParams((cur) => listQueryParams(parseListQuery(cur)), { replace: true });
-  }, [openParam, hub.loading, hub.data, all, openSession, setParams]);
+  }, [openParam, hub.loading, hub.error, hub.data, all, openSession, setParams]);
 
   // Keyboard: j/k, Enter, Escape, /. shouldIgnoreKey covers typing, modifiers, the drawer and the palette.
   const rowsRef = useRef(rows);
@@ -396,6 +398,9 @@ export function SessionList() {
           countText
         )}
         {note ? ` · ${note}` : ""}
+        {!hub.error && (hub.data?.length ?? 0) >= SESSION_LIST_LIMIT
+          ? ` · showing newest ${SESSION_LIST_LIMIT} stored sessions`
+          : ""}
       </p>
       <div className="rounded-lg border border-border bg-surface-1">
         <div

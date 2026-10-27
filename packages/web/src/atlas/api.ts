@@ -203,13 +203,23 @@ export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
     setSessionPhase: async (sid, phase) =>
       (await call("PATCH", `/sessions/${enc(sid)}/phase`, { phase })) as AtlasSession,
     listSessions: async (o) =>
-      sessionList(await call("GET", "/sessions?limit=1000", undefined, o?.signal)),
+      sessionList(await call("GET", `/sessions?limit=${SESSION_LIST_LIMIT}`, undefined, o?.signal)),
     search: async (q, o) =>
       parseSearch(
-        await call("GET", `/search?q=${enc(q)}&limit=${o?.limit ?? 20}`, undefined, o?.signal),
+        await call(
+          "GET",
+          `/search?q=${enc(q.slice(0, MAX_QUERY_CHARS))}&limit=${o?.limit ?? 20}`,
+          undefined,
+          o?.signal,
+        ),
       ),
   };
 }
+
+/** The hub rejects /search `q` longer than this (MAX_QUERY_CHARS in the hub's search route). */
+export const MAX_QUERY_CHARS = 200;
+/** The hub's MAX_LIMIT for /sessions: exactly this many rows back means the list may be cut off. */
+export const SESSION_LIST_LIMIT = 1000;
 
 let impl: AtlasApi | null = null;
 let ready: Promise<unknown> = Promise.resolve();

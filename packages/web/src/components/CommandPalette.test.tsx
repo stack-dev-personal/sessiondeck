@@ -268,6 +268,33 @@ describe("request handling", () => {
     expect(search).toHaveBeenLastCalledWith("alp", expect.anything());
   });
 
+  it("Enter before the new query's results arrive opens that query's first hit, not the stale one", async () => {
+    vi.useFakeTimers();
+    const fresh = [hit({ kind: "session", id: "quokka-1", title: "quokka work" })];
+    const search = vi.fn(async (q: string) => ok(q === "quokka" ? fresh : RESULTS));
+    setAtlasApi(fakeApi({ search }));
+    mount();
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const input = screen.getByRole("combobox");
+    fireEvent.change(input, { target: { value: "quokka" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("where").textContent).toBe("/board"); // nothing opened from the stale list
+    expect(useUi.getState().selectedSessionId).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 10);
+    });
+    expect(screen.getByTestId("where").textContent).toBe("/sessions?open=quokka-1");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("aborts the previous request, and a slow first response never overwrites the second", async () => {
     const pending: Array<{
       q: string;

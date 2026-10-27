@@ -28,6 +28,8 @@ interface Sample {
   q: string;
   tookMs: number;
   roundTripMs: number;
+  /** Keydown of the last character to results committed, debounce included. */
+  typedToResultsMs: number;
   results: number;
 }
 const samples: Sample[] = [];
@@ -39,6 +41,14 @@ async function openPalette(page: Page): Promise<void> {
 }
 
 async function search(page: Page, q: string): Promise<Sample> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __sdKeys?: number[] };
+    w.__sdKeys = [];
+    if (!(w as { __sdKeyHook?: boolean }).__sdKeyHook) {
+      (w as { __sdKeyHook?: boolean }).__sdKeyHook = true;
+      window.addEventListener("keydown", () => (w.__sdKeys ??= []).push(performance.now()), true);
+    }
+  });
   await page.keyboard.type(q);
   await expect(palette(page)).toHaveAttribute("data-results-for", q, { timeout: 10_000 });
   await expect(palette(page)).toHaveAttribute("data-status", "ready");
@@ -58,8 +68,12 @@ async function search(page: Page, q: string): Promise<Sample> {
       .getEntriesByName("sd-palette-search")
       .filter((m) => (m as PerformanceMeasure).detail?.q === query);
     const m = hits[hits.length - 1] as PerformanceMeasure;
+    const w = window as unknown as { __sdKeys?: number[] };
+    const keys = w.__sdKeys ?? [];
+    const lastKey = keys[keys.length - 1] ?? m.startTime;
     return {
       q: query,
+      typedToResultsMs: m.startTime + m.duration - lastKey,
       tookMs: m.detail.tookMs as number,
       roundTripMs: m.duration,
       results: m.detail.results as number,
@@ -166,14 +180,17 @@ test("R5.4 live: palette search through the real hub, keyboard only", async ({ p
   const warm = samples.slice(3);
   const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
   const summary = {
-    note: "tookMs is the hub's own time; roundTripMs is request dispatch to results committed in the browser (excludes the 80 ms debounce)",
+    note: "tookMs is the hub's own time; roundTripMs is request dispatch to results committed in the browser (excludes the debounce); typedToResultsMs is the keydown of the last character to results committed (includes the debounce)",
     samples,
     hubTookMsMax: Math.max(...samples.map((s) => s.tookMs)),
     warmRoundTripMsMedian: median(warm.map((s) => s.roundTripMs)),
+    warmTypedToResultsMsMedian: median(warm.map((s) => s.typedToResultsMs)),
+    warmTypedToResultsMsMax: Math.max(...warm.map((s) => s.typedToResultsMs)),
     warmRoundTripMsMax: Math.max(...warm.map((s) => s.roundTripMs)),
   };
   console.log(`R5.4 live latency: ${JSON.stringify(summary)}`);
   writeFileSync(shot("R5.4-live-latency.json"), JSON.stringify(summary, null, 2));
   expect(summary.hubTookMsMax).toBeLessThan(100);
   expect(summary.warmRoundTripMsMedian).toBeLessThan(100);
+  expect(summary.warmTypedToResultsMsMedian).toBeLessThan(200);
 });

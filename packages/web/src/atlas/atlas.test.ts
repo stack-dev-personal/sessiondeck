@@ -135,6 +135,16 @@ describe("http client", () => {
     expect(init.body).toBe('{"phase":"Hardening"}');
     expect(url).not.toContain("tok");
   });
+  it("cuts the search query to the hub's 200 character limit", async () => {
+    const f = vi.fn(async () => ok({ results: [], took_ms: 1 }));
+    const api = createHttpAtlasApi({
+      config: () => ({ hubUrl: "", token: "" }),
+      fetchImpl: f as unknown as typeof fetch,
+    });
+    await api.search("x".repeat(300), { limit: 5 });
+    const [url] = f.mock.calls[0] as unknown as [string];
+    expect(url).toBe(`/search?q=${"x".repeat(200)}&limit=5`);
+  });
   it("uses the same origin for an empty hub URL and sends null to clear", async () => {
     const f = vi.fn(async () => ok({ session_id: "s1" }));
     const api = createHttpAtlasApi({

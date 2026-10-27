@@ -17,7 +17,7 @@ import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
 /** Quiet period after the last keystroke before a search request goes out. */
-export const SEARCH_DEBOUNCE_MS = 80;
+export const SEARCH_DEBOUNCE_MS = 40;
 const LIMIT = 20;
 /** Text longer than this is cut before it is rendered; transcript text can be huge. */
 const MAX_TEXT = 240;
@@ -104,6 +104,9 @@ function PaletteDialog() {
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const dispatchedAt = useRef(0);
+  /** Enter pressed while the results on screen answer an older query: open the first hit on arrival. */
+  const pendingEnter = useRef(false);
+  const jumpRef = useRef<(r: SearchResult) => void>(() => {});
 
   // Everything behind the dialog is inert while it is open; focus returns to where it came from.
   useEffect(() => {
@@ -124,6 +127,7 @@ function PaletteDialog() {
   useEffect(() => {
     const ctrl = new AbortController();
     let alive = true;
+    pendingEnter.current = false;
     const run = () => {
       dispatchedAt.current = performance.now();
       setShown((s) => ({ ...s, status: "loading" }));
@@ -140,6 +144,11 @@ function PaletteDialog() {
             roundTripMs: rt,
           });
           setActive(0);
+          if (pendingEnter.current) {
+            pendingEnter.current = false;
+            const first = groupResults(r.results)[0]?.items[0];
+            if (first) jumpRef.current(first);
+          }
         },
         (e: unknown) => {
           if (!alive || isAbort(e)) return;
@@ -202,6 +211,8 @@ function PaletteDialog() {
     [navigate],
   );
 
+  jumpRef.current = jump;
+
   const move = (d: 1 | -1) =>
     setActive(flat.length === 0 ? 0 : (activeIdx + d + flat.length) % flat.length);
 
@@ -212,8 +223,13 @@ function PaletteDialog() {
     else if (e.key === "ArrowDown" || (ctrl && e.key.toLowerCase() === "n")) move(1);
     else if (e.key === "ArrowUp" || (ctrl && e.key.toLowerCase() === "p")) move(-1);
     else if (e.key === "Enter") {
-      const r = flat[activeIdx];
-      if (r) jump(r);
+      if (shown.forQuery !== q) {
+        // The list on screen answers an older query: wait for the current one, then open its first hit.
+        pendingEnter.current = true;
+      } else {
+        const r = flat[activeIdx];
+        if (r) jump(r);
+      }
     } else if (e.key === "Tab")
       inputRef.current?.focus(); // one tab stop: the input
     else handled = false;
