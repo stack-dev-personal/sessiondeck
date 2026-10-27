@@ -5,7 +5,7 @@
 - Branch: p0/transcript-fixtures from main at 2426e6d (contract commit 2426e6d089fb0ae9339e8e3fc5001eccc5cb191e; main has not moved)
 - Requirement: R0.7 (fixtures scrubbed, security gate), transcript extension
 - Repo is public: every committed byte is published. User decision 2026-10-27: only sessiondeck's own development transcripts, scrubbed by script, user reviews the PR before merge.
-- Headless, local run; state directory C:/Users/stack/projects/sessiondeck/.sprint/1/
+- Headless, local run; state directory <HOME>/projects/sessiondeck/.sprint/1/
 
 ## Task list
 
@@ -52,3 +52,10 @@ Decision (orchestrator): the scrubbed transcripts are committed only after the s
 ### U4 fixtures README Transcripts section (R0.7)
 - Executor sd-executor-contract, commit b7089c2: "## Transcripts" in packages/contract/fixtures/README.md (sources by session id, selection reasons, gaps, scrub rules, row-type coverage table counted over the scrubbed output, regenerate commands); per-fixture README generator now lists rows per file plus total (scripts/lib/transcript-scrub-{readme,run}.mjs, 3 new assertions).
 - Results: scripts 409 pass, 2 skipped; contract 1091 pass; typecheck, lint, prettier clean. Regenerated twice, tree hash de4e0b10b9760ed3 both times (only READMEs changed). Leak check 0 findings, exit 0.
+
+### U5 security gate round 1 (R0.7)
+- sd-security-reviewer on 2426e6d..b85e3b9 plus the untracked transcripts: Gate fail. 3 HIGH (private config file contents kept as 120-char prefixes, including a health term from the user's global instructions; an identity word list from an earlier review session's grep survived; MCP instruction blocks kept as free text, exposing the university and private infrastructure), 4 MEDIUM (private repo names, hook additional context not dropped, leak checker passable since free text was only length-checked, an absolute path in this log), 3 LOW (secret shapes, id pattern, custom agent names).
+- Orchestrator fixed the absolute path in this log (line 8).
+- Fix round 1, sd-executor-contract, commit 2e95669: contents next to paths outside the project dropped to `<BLOB n>` (and outputs of tool uses that touched them); local gitignored deny-list packages/contract/fixtures/raw/deny-words.txt read by scrub and leak check; handle substrings of 5+ chars swept; addedBlocks, addedLines, skill_listing, hook_additional_context and hook stdout dropped; MCP and private repo names mapped; new secret shapes; id pattern narrowed; custom agent names mapped; this log and the inventory research note added to the text checks. Scripts 444 pass, 2 skipped; contract 1091; typecheck, lint, prettier clean; tree hash a698496f2d443787 twice; leak check 0 findings with 10 deny words.
+
+Decision (orchestrator): no salted hashes of deny words are committed (the reviewer's suggestion). Short dictionary words with a public salt can be confirmed by guessing, which is a leak in a public repo. CI relies on structural checks that need no secrets; the deny-list check runs locally whenever raw/ exists, as the S0b literal check does.
