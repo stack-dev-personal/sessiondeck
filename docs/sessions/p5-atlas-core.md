@@ -33,3 +33,9 @@ Concurrency allowed: 1, so units run sequentially.
 - Review: iteration 1 fix-then-merge (MAJOR: WS deltas unannotated); iteration 2 fix-then-merge (MAJOR: PATCH pushed archived sessions to live board); iteration 3 merge.
 - Security review (not gated by handoff; run because the unit adds write endpoints and ingest changes): Gate pass both rounds; MEDIUMs (48-bit id collision stalls ingest, unbounded PATCH, per-read full project scan) fixed in 7d25f17.
 - Hub tests: 339 passed.
+
+### U2 hub FTS5 search + latency bench (R5.4 hub side)
+- Executor: sd-executor-hub. Commits 95b2ea3 (U1 minors), 53fb380 (search), 55b2029 (atlas harness), 7facd61 (fix 1).
+- Review: iteration 1 fix-then-merge (MAJOR: 1-char prefix ~100 ms on realistic corpus, bench blind to it; MAJOR: stale phase docs); iteration 2 merge.
+- Security: Gate pass. Carry-over to U4: palette must render title/snippet as text nodes only.
+- Verifier: R5.4 hub side pass (route p95 20 ms overall, worst class 26.6 ms). R2.4 A/B: head ingest p95 73-84 ms vs base 40-53 ms, regression. Fix unit U2b opened.
