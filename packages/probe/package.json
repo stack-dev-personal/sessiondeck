@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:exe": "node scripts/build-exe.mjs",
     "test": "vitest run",
     "test:proc": "vitest run -c vitest.proc.config.ts",
     "typecheck": "tsc --noEmit",
