@@ -13,6 +13,7 @@ import { RateLimiter } from "./ingest/rate-limit.ts";
 import { registerAtlas } from "./routes/atlas.ts";
 import { registerSearch } from "./routes/search.ts";
 import { registerCost } from "./routes/cost.ts";
+import { registerLayouts } from "./routes/layouts.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
 import { IngestActivity } from "./ingest/activity.ts";
@@ -203,6 +204,7 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
+  registerLayouts(app, opts.store, now);
   const pricing = opts.pricing ?? new PricingProvider(bundledTable());
   const usage = registerCost(app, opts.store, pricing, opts.config.timezone);
   // Same global bearer hook as every other route: PATCH needs the ingest token.

@@ -13,7 +13,7 @@ describe("migrations", () => {
   it("creates all tables and indexes, is idempotent, records versions 1 to 4", () => {
     const t = tempStore({ file: true });
     cleanup = t.cleanup;
-    expect(t.store.migrate()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(t.store.migrate()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const names = (type: string) =>
       (
         t.store.db
@@ -43,7 +43,7 @@ describe("migrations", () => {
       expect(names("index")).not.toContain(old);
     }
     expect(t.store.migrate()).toEqual([]);
-    expect(t.store.schemaVersion()).toBe(8);
+    expect(t.store.schemaVersion()).toBe(9);
   });
 
   it("sets WAL and foreign keys", () => {
