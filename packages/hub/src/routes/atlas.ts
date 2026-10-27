@@ -3,7 +3,8 @@
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { inferPhase } from "../atlas/infer.ts";
+import { cleanLabel, inferPhase } from "../atlas/infer.ts";
+import type { HubEmitter } from "../ingest/ingestor.ts";
 import type { Store } from "../db/store.ts";
 import type { PricingProvider } from "../pricing/loader.ts";
 import { LIVE_GRACE_MS, MAX_LIMIT, readSnapshot } from "../snapshots.ts";
@@ -32,7 +33,9 @@ export function effectivePhase(
 /** Additive REST fields; the contract snapshot type (and the WS payload) is unchanged. */
 export function annotateSessions(store: Store, snaps: SessionSnapshot[]): AnnotatedSnapshot[] {
   const atlas = store.getSessionAtlas(snaps.map((s) => s.session_id));
-  const projects = new Map(store.listProjectSummaries(100_000).map((p) => [p.id, p]));
+  const projects = store.getProjectLabels([
+    ...new Set([...atlas.values()].flatMap((a) => (a.project_id === null ? [] : [a.project_id]))),
+  ]);
   return snaps.map((s) => {
     const a = atlas.get(s.session_id);
     const p = a?.project_id != null ? projects.get(a.project_id) : undefined;
@@ -48,20 +51,45 @@ export function annotateSessions(store: Store, snaps: SessionSnapshot[]): Annota
   });
 }
 
-const color = z.union([
-  z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), // design token name
-]);
+/** Design-system palette names (docs/planning/03-design-system.md section 2); anything else must be #rrggbb. */
+export const COLOR_TOKENS = [
+  "accent",
+  "accent-attention",
+  "state-starting",
+  "state-working",
+  "state-waiting",
+  "state-idle",
+  "state-error",
+  "state-ended",
+  "state-exited",
+  "meter-ok",
+  "meter-warn",
+  "meter-high",
+] as const;
+const color = z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.enum(COLOR_TOKENS)]);
+/** Control and bidi characters are stripped before the length checks; what is left must be non-empty. */
+const label = (max: number) =>
+  z
+    .string()
+    .max(max * 4)
+    .transform(cleanLabel)
+    .pipe(z.string().min(1).max(max));
 const PatchProject = z
   .object({
-    name: z.string().trim().min(1).max(80).optional(),
+    name: label(80).optional(),
     color: color.optional(),
-    vault_collection: z.string().trim().min(1).max(200).nullable().optional(),
+    // Never a path: the laptop must not use it to build file paths (docs/ATLAS.md).
+    vault_collection: z
+      .string()
+      .regex(/^[A-Za-z0-9._-]{1,100}$/)
+      .refine((v) => !v.includes(".."), "no ..")
+      .nullable()
+      .optional(),
   })
   .strict()
   .refine((o) => Object.keys(o).length > 0, "empty patch");
 const PatchSessionProject = z.object({ project_id: z.string().min(1).max(64).nullable() }).strict();
-const PatchPhase = z.object({ phase: z.string().trim().min(1).max(60).nullable() }).strict();
+const PatchPhase = z.object({ phase: label(60).nullable() }).strict();
 
 function bad(reply: FastifyReply, err: z.ZodError) {
   return reply
@@ -77,7 +105,17 @@ export function registerAtlas(
   usage: UsageService,
   pricing: PricingProvider,
   defaultTz: string | undefined,
+  events: HubEmitter,
 ): void {
+  /** Pushes annotated `session` deltas to WS clients after a PATCH changed what they render. */
+  const pushSessions = (ids: string[]): void => {
+    const t = now();
+    const snaps = ids.flatMap((id) => {
+      const row = store.getSession(id);
+      return row === undefined ? [] : [readSnapshot(row, t)];
+    });
+    if (snaps.length > 0) events.emit("atlas", snaps);
+  };
   // Superset of the legacy shape (project_dir, name, color, vault_collection) plus id and counts.
   app.get("/projects", async () => ({ projects: store.listProjectSummaries(MAX_LIMIT) }));
 
@@ -128,6 +166,12 @@ export function registerAtlas(
     if (body.data.vault_collection !== undefined)
       patch.vault_collection = body.data.vault_collection;
     if (!store.patchProject(req.params.id, patch)) return notFound(reply);
+    // A name or color change reaches clients as annotated deltas for the project's live sessions.
+    pushSessions(
+      store
+        .listProjectLive(req.params.id, now() - LIVE_GRACE_MS, MAX_LIMIT)
+        .map((r) => r.session_id),
+    );
     return { project: store.getProject(req.params.id) };
   });
 
@@ -157,6 +201,7 @@ export function registerAtlas(
     const body = PatchSessionProject.safeParse(req.body);
     if (!body.success) return bad(reply, body.error);
     if (!store.setSessionProject(req.params.id, body.data.project_id)) return notFound(reply);
+    pushSessions([req.params.id]);
     return view(req.params.id);
   });
 
@@ -164,6 +209,7 @@ export function registerAtlas(
     const body = PatchPhase.safeParse(req.body);
     if (!body.success) return bad(reply, body.error);
     if (!store.setSessionPhase(req.params.id, body.data.phase)) return notFound(reply);
+    pushSessions([req.params.id]);
     return view(req.params.id);
   });
 }

@@ -35,9 +35,18 @@ export function defaultColor(key: string): string {
   return PALETTE[h.readUInt16BE(0) % PALETTE.length]!;
 }
 
-/** Stable short id for a project key. */
+/** Stable id for a project key: 128 bits of SHA-256 (the store still disambiguates a conflict). */
 export function projectIdOf(key: string): string {
-  return `p_${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
+  return `p_${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
+}
+
+/** C0, DEL, C1 controls and bidi formatting characters (U+202A-202E, U+2066-2069). */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+
+/** Strips control and bidi characters and trims. Applied to every user-visible label. */
+export function cleanLabel(s: string): string {
+  return s.replace(UNSAFE_CHARS, "").trim();
 }
 
 /** Separators to '/', WSL /mnt/<drive> to <drive>:, no duplicate or trailing slash, drive letter lower-cased. */
@@ -57,7 +66,7 @@ const isWindows = (s: string): boolean => /^[a-z]:/.test(s);
 
 /** Directory names under which a worktree lives inside the repo: <repo>/<marker...>/<name>. */
 const INNER_MARKERS: string[][] = [[".claude", "worktrees"], [".worktrees"], [".git", "worktrees"]];
-/** Sibling container suffixes: <parent>/<repo>-wt/<name> belongs to <parent>/<repo>. */
+/** Sibling container suffixes: <parent>/<repo>-wt/<name> belongs to <parent>/<repo> (name is the last segment). */
 const SIBLING_SUFFIXES = ["-wt", "-worktrees"];
 
 /** Rolls a (separator-normalized) path up to its repo root. Returns the input when it is not a worktree. */
@@ -72,8 +81,9 @@ export function repoRootOf(norm: string): { root: string; rolledUp: boolean } {
         if (root !== "" && !/^[a-z]:$/.test(root)) return { root, rolledUp: true };
       }
     }
-    // The container must be followed by the worktree name.
-    if (i + 1 < segs.length && i >= 1) {
+    // Sibling rule: only the parent of the FINAL segment (the worktree root itself), so a repo
+    // that happens to be called foo-wt, or an early -wt segment, never rolls up.
+    if (i === segs.length - 2) {
       const seg = segs[i]!;
       for (const suf of SIBLING_SUFFIXES) {
         if (seg.length > suf.length && lower[i]!.endsWith(suf)) {
@@ -102,24 +112,27 @@ export function inferProject(
   }
   const { root, rolledUp } = repoRootOf(normalizeSeparators(src));
   const key = isWindows(root) ? root.toLowerCase() : root;
-  const name =
+  const base =
     root === "/"
       ? "/"
       : (root
           .split("/")
           .filter((s) => s !== "")
           .at(-1) ?? root);
+  const name = cleanLabel(base).slice(0, 80).trim() || "project";
   return { key, name, color: defaultColor(key), rolledUp };
 }
 
-const PHASE_NAME = /\bP(?:hase)?\s*(\d+)\b/i;
-const PHASE_BRANCH = /^p(\d+)\//i;
+// "P5 ..." at the start of the name, or the word "phase" spelled out; "fix p95 latency" is not a phase.
+const PHASE_NAME = /^P(\d{1,4})\b|\bphase\s*(\d{1,4})\b/i;
+const PHASE_BRANCH = /^p(\d{1,4})\//i;
 
 /** Default phase label: from the session name ("P5", "Phase 5"), else a p<n>/ branch prefix. */
 export function inferPhase(
   sessionName: string | null | undefined,
   branch: string | null | undefined,
 ): string | null {
-  const m = (sessionName ?? "").match(PHASE_NAME) ?? (branch ?? "").match(PHASE_BRANCH);
-  return m ? `P${Number(m[1])}` : null;
+  const n = (sessionName ?? "").match(PHASE_NAME);
+  const digits = n ? (n[1] ?? n[2]) : (branch ?? "").match(PHASE_BRANCH)?.[1];
+  return digits !== undefined ? `P${Number(digits)}` : null;
 }

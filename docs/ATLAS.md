@@ -18,14 +18,20 @@ worktree is recognized by its path shape only. Rules, applied after normalizatio
 | `<repo>/.claude/worktrees/<name>[/...]` | `<repo>` |
 | `<repo>/.worktrees/<name>[/...]` | `<repo>` |
 | `<repo>/.git/worktrees/<name>[/...]` | `<repo>` |
-| `<parent>/<repo>-wt/<name>[/...]` or `<repo>-worktrees/<name>` | `<parent>/<repo>` |
+| `<parent>/<repo>-wt/<name>` or `<repo>-worktrees/<name>` (the worktree root is the LAST segment) | `<parent>/<repo>` |
 
 Normalization: backslashes to `/`, duplicate and trailing slashes removed, `/mnt/c/...` to `c:/...`,
 drive letter lower-cased; a Windows path (drive letter) is lower-cased entirely for the key (the
 display name keeps its case). Posix paths are case-sensitive.
 
+The sibling rule applies only when the container is the parent of the final path segment, so a repo
+that is itself called `foo-wt` (cwd `/home/u/foo-wt/packages`) or an early `-wt` segment is never
+rolled up. A cwd deeper than the worktree root under a sibling container therefore does not roll up;
+the statusLine `project_dir` (the worktree root) does. The project key ignores the host on purpose:
+the same repo path on two machines is one project.
+
 The project is created on first sight (`projects` row): name = basename of the repo root, color = a
-deterministic hex from a fixed palette (hash of the key). The id is `p_` plus 12 hex of the key hash.
+deterministic hex from a fixed palette (hash of the key). The id is `p_` plus 32 hex (128 bits of SHA-256 of the key); if an id is ever already held by another project, a `_<n>` suffix is appended instead of failing the ingest batch. Inferred names are capped at 80 characters with control and bidi characters removed; the same cleaning applies to names, phases on PATCH.
 The project is re-derived only for a new session or when its `project_dir` changes.
 
 Sibling directories that are not named `<repo>-wt` are NOT rolled up (the payload carries no main
@@ -36,7 +42,7 @@ repo path; `worktree.original_cwd` is not stored in the snapshot). Fix those by 
 A phase is a label on a session. The effective phase is:
 
 1. the manual label, if set; else
-2. inferred: `\bP(?:hase)?\s*(\d+)\b` in `session_name` (case-insensitive), else a `p<n>/` branch prefix; shown as `P<n>`; else
+2. inferred: `^P(\d+)\b` (name starts with `P<n>`) or `\bphase\s*(\d+)\b` in `session_name` (case-insensitive; "fix p95 latency" is not a phase), else a `p<n>/` branch prefix; shown as `P<n>`; else
 3. none.
 
 Manual labels (and manual project assignments) live in `session_overrides`, outside `sessions`, so
@@ -48,13 +54,21 @@ Manual labels (and manual project assignments) live in `session_overrides`, outs
 |------|---------|
 | `GET /projects` | projects with `id`, `project_dir`, `name`, `color`, `vault_collection`, `sessions`, `live` |
 | `GET /projects/:id` | `{project, live[], archived[<=20], totals{sessions,hours,cost_usd}, branches[{branch,sessions}]}` |
-| `PATCH /projects/:id` | `{name?<=80, color? "#rrggbb" or token name, vault_collection? string\|null}` |
+| `PATCH /projects/:id` | `{name?<=80, color? "#rrggbb" or a design-system token (accent, accent-attention, state-*, meter-*), vault_collection? string\|null}` |
 | `GET /projects/:id/phases` | `{phases:[{phase,sessions}]}` effective phases of the project |
 | `PATCH /sessions/:id/project` | `{project_id: string\|null}` manual reassignment; `null` clears it and re-infers |
 | `PATCH /sessions/:id/phase` | `{phase: string(1..60)\|null}`; `null` restores the inferred default |
 
 `GET /sessions`, `/sessions/:id` and the WS initial message carry the additive fields `project_id`,
 `project_name`, `project_color`, `phase`, `phase_source` (`manual`, `inferred` or null).
+
+`vault_collection` is a label, never a path: the laptop must not use it to build file paths.
+
+PATCH requests are charged to the same per-token read bucket as GET.
+
+WS: `session` deltas carry the same additive fields as `initial`. After a successful PATCH of a
+session's project or phase, the hub pushes an annotated `session` delta for that session; after a
+PATCH of a project's name or color, one for each of the project's live sessions. No new message type.
 
 Totals: `sessions` and `hours` come from the sessions table (end = `ended_at`, else `last_event_at`);
 `cost_usd` is the ccusage-equivalent history cost of the project's sessions (not statusLine).

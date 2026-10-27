@@ -117,7 +117,11 @@ export function buildServer(opts: {
     if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
       reply.raw.once("close", activity.begin());
     }
-    if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
+    // PATCH (atlas edits) shares the read bucket: no separate write bucket for a handful of routes.
+    if (
+      (req.method === "GET" || req.method === "HEAD" || req.method === "PATCH") &&
+      !readLimiter.take(principal, 1)
+    ) {
       return reply.code(429).header("content-length", "0").send();
     }
     if (
@@ -162,7 +166,7 @@ export function buildServer(opts: {
   const pricing = opts.pricing ?? new PricingProvider(bundledTable());
   const usage = registerCost(app, opts.store, pricing, opts.config.timezone);
   // Same global bearer hook as every other route: PATCH needs the ingest token.
-  registerAtlas(app, opts.store, now, usage, pricing, opts.config.timezone);
+  registerAtlas(app, opts.store, now, usage, pricing, opts.config.timezone, ingestor.events);
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,

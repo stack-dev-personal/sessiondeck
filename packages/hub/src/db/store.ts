@@ -164,7 +164,8 @@ export class Store {
       applied.push(m.version);
     }
     // Path inference is code, not SQL: assign projects to rows that predate migration 6.
-    if (this.schemaVersion() >= 6 && applied.length > 0) this.backfillAtlas();
+    // Runs on every open at version >= 6 (cheap when nothing is NULL), so a crash between migration 6 and the backfill heals.
+    if (this.schemaVersion() >= 6) this.backfillAtlas();
     return applied;
   }
 
@@ -195,22 +196,39 @@ export class Store {
     for (const r of rows) {
       this.stmt(
         "UPDATE projects SET id = ?, created_at = COALESCE(created_at, ?) WHERE project_dir = ?",
-      ).run(projectIdOf(r.project_dir), Date.now(), r.project_dir);
+      ).run(this.freeProjectId(r.project_dir), Date.now(), r.project_dir);
+    }
+  }
+
+  /** Test hook: derives a project id from a key (forces collisions in tests). */
+  projectIdFn: (key: string) => string = projectIdOf;
+
+  /** The derived id, or the derived id plus a numeric suffix when another project already holds it. */
+  private freeProjectId(key: string): string {
+    const base = this.projectIdFn(key);
+    for (let n = 0; ; n++) {
+      const id = n === 0 ? base : `${base}_${n}`;
+      if (this.stmt("SELECT 1 FROM projects WHERE id = ?").get(id) === undefined) return id;
     }
   }
 
   /** Inserts the project when absent (default name and color) and returns its id. */
   ensureProject(key: string, name: string, color: string): string {
-    const id = projectIdOf(key);
+    // A key collision on id (never expected at 128 bits) must not throw inside an ingest
+    // transaction: the id is checked for a holder first and gets a suffix when taken.
     this.stmt(
       `INSERT INTO projects (project_dir, name, color, id, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(project_dir) DO UPDATE SET
-         id = COALESCE(projects.id, excluded.id),
          name = COALESCE(projects.name, excluded.name),
          color = COALESCE(projects.color, excluded.color)`,
-    ).run(key, name, color, id, Date.now());
-    return (this.stmt("SELECT id FROM projects WHERE project_dir = ?").get(key) as { id: string })
-      .id;
+    ).run(key, name, color, this.freeProjectId(key), Date.now());
+    const row = this.stmt("SELECT id FROM projects WHERE project_dir = ?").get(key) as {
+      id: string | null;
+    };
+    if (row.id !== null) return row.id;
+    const id = this.freeProjectId(key);
+    this.stmt("UPDATE projects SET id = ? WHERE project_dir = ?").run(id, key);
+    return id;
   }
 
   /** Manual override if any (and its project still exists), else the inferred project (created on demand). */
@@ -463,8 +481,23 @@ export class Store {
   }
 
   getProject(id: string): ProjectSummary | undefined {
-    this.fillProjectIds();
-    return this.listProjectSummaries(100_000).find((p) => p.id === id);
+    return this.stmt(
+      `SELECT p.id AS id, p.project_dir AS project_dir, COALESCE(p.name, '') AS name, COALESCE(p.color, '') AS color,
+              p.vault_collection AS vault_collection,
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS sessions,
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id
+                 AND (s.state IS NULL OR s.state NOT IN ('ended', 'exited', 'archived'))) AS live
+       FROM projects p WHERE p.id = ?`,
+    ).get(id) as ProjectSummary | undefined;
+  }
+
+  /** Name and color of the given projects, without counts (annotation hot path). */
+  getProjectLabels(ids: string[]): Map<string, { name: string; color: string }> {
+    const rows = this.stmt(
+      `SELECT id, COALESCE(name, '') AS name, COALESCE(color, '') AS color FROM projects
+       WHERE id IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(ids)) as { id: string; name: string; color: string }[];
+    return new Map(rows.map((r) => [r.id, { name: r.name, color: r.color }]));
   }
 
   /** Edits only the keys present; a null vault_collection clears it. Returns false for an unknown id. */

@@ -6,6 +6,7 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import type { Store } from "./db/store.ts";
 import type { HubEmitter } from "./ingest/ingestor.ts";
+import { annotateSessions } from "./routes/atlas.ts";
 import { liveSnapshots } from "./routes/read.ts";
 import { MAX_LIMIT } from "./snapshots.ts";
 import { applyRateLimitStaleness } from "./ingest/reduce.ts";
@@ -140,18 +141,25 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
 
   // Only `session` deltas are broadcast. {type:'transcript'} is typed NormalizedEntry[] in the
   // contract and needs the normalizer (S7), so committed transcript lines are not pushed yet.
-  const onBatch = (b: { sessions: Parameters<typeof applyRateLimitStaleness>[0][] }): void => {
-    if (clients.size === 0) return;
+  // Deltas carry the same additive project and phase fields as `initial` (a client replaces the
+  // whole snapshot on a delta). A PATCH of a session's project or phase, or of a project's name or
+  // color, arrives as an `atlas` event and goes out as annotated deltas for the affected sessions.
+  const broadcast = (snaps: Parameters<typeof applyRateLimitStaleness>[0][]): void => {
+    if (clients.size === 0 || snaps.length === 0) return;
     const t = deps.now();
-    for (const snap of b.sessions) {
-      const text = JSON.stringify({
-        type: "session",
-        data: applyRateLimitStaleness(snap, t),
-      } satisfies StreamMessage);
+    const annotated = annotateSessions(
+      deps.store,
+      snaps.map((s) => applyRateLimitStaleness(s, t)),
+    );
+    for (const data of annotated) {
+      const text = JSON.stringify({ type: "session", data } satisfies StreamMessage);
       for (const ws of clients.keys()) send(ws, text);
     }
   };
+  const onBatch = (b: { sessions: Parameters<typeof applyRateLimitStaleness>[0][] }): void =>
+    broadcast(b.sessions);
   deps.events.on("batch", onBatch);
+  deps.events.on("atlas", broadcast);
 
   const timer = setInterval(() => {
     for (const [ws, c] of clients) {
@@ -175,6 +183,7 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
   app.addHook("preClose", async () => {
     clearInterval(timer);
     deps.events.off("batch", onBatch);
+    deps.events.off("atlas", broadcast);
     app.server.off("upgrade", onUpgrade);
     for (const ws of clients.keys()) ws.terminate();
     clients.clear();

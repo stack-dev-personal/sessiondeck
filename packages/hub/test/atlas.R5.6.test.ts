@@ -173,7 +173,7 @@ describe("R5.1/R5.6 PATCH validation and auth", () => {
     expect(ok.json()).toMatchObject({
       project: { name: "Renamed", color: "#A1b2C3", vault_collection: "vault-x" },
     });
-    expect((await patch(`/projects/${id}`, { color: "accent-blue" })).statusCode).toBe(200);
+    expect((await patch(`/projects/${id}`, { color: "state-working" })).statusCode).toBe(200);
     expect((await patch(`/projects/${id}`, { vault_collection: null })).json()).toMatchObject({
       project: { vault_collection: null },
     });

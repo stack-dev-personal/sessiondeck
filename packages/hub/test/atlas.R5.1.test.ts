@@ -15,11 +15,11 @@ describe("R5.1 worktree roll-up (path table)", () => {
     ["/home/u/code/app/.worktrees/fix", "/home/u/code/app", "app"],
     ["/home/u/code/app-wt/feat", "/home/u/code/app", "app"],
     ["/home/u/code/app/.git/worktrees/x", "/home/u/code/app", "app"],
-    ["C:\\Users\\stack\\code\\App", "c:/users/stack/code/app", "App"],
-    ["c:/Users/stack/code/App/", "c:/users/stack/code/app", "App"],
-    ["C:\\Users\\stack\\code\\App\\.claude\\worktrees\\feat", "c:/users/stack/code/app", "App"],
-    ["c:\\Users\\Stack\\code\\App-wt\\feat", "c:/users/stack/code/app", "App"],
-    ["/mnt/c/Users/stack/code/App/.worktrees/a", "c:/users/stack/code/app", "App"],
+    ["C:\\Users\\user\\code\\App", "c:/users/user/code/app", "App"],
+    ["c:/Users/user/code/App/", "c:/users/user/code/app", "App"],
+    ["C:\\Users\\user\\code\\App\\.claude\\worktrees\\feat", "c:/users/user/code/app", "App"],
+    ["c:\\Users\\User\\code\\App-wt\\feat", "c:/users/user/code/app", "App"],
+    ["/mnt/c/Users/user/code/App/.worktrees/a", "c:/users/user/code/app", "App"],
   ];
   it.each(cases)("%s -> %s", (input, key, name) => {
     const p = inferProject(input, null);
@@ -36,6 +36,20 @@ describe("R5.1 worktree roll-up (path table)", () => {
   it("a repo directory that merely contains 'worktrees' is not rolled up", () => {
     expect(inferProject("/x/worktrees/app", null).key).toBe("/x/worktrees/app");
     expect(inferProject("/x/app-wt", null).key).toBe("/x/app-wt"); // no <name> below the container
+  });
+
+  it("sibling -wt rule applies only to the parent of the final segment", () => {
+    // a repo that is itself called foo-wt, with a deeper cwd, stays itself
+    expect(inferProject("/home/u/foo-wt/packages/x", null).key).toBe("/home/u/foo-wt/packages/x");
+    expect(inferProject(null, "/home/u/foo-wt/packages/x").rolledUp).toBe(false);
+    // early -wt segment does not roll up the whole tail
+    expect(inferProject("/a-wt/b/c/d", null).rolledUp).toBe(false);
+  });
+
+  it("inferred names are capped, control and bidi characters stripped", () => {
+    const p = inferProject(`/x/${"a".repeat(500)}`, null);
+    expect(p.name).toHaveLength(80);
+    expect(inferProject("/x/ev\u202eil\u0007\u009f", null).name).toBe("evil");
   });
 
   it("default color is deterministic #rrggbb", () => {
