@@ -40,21 +40,22 @@ export function windowOf(
   return { start: Math.min(end, Math.max(0, first - overscan)), end };
 }
 
+/**
+ * One row, two text nodes: time and kind label (fixed-width, preformatted), then the text. Few DOM
+ * nodes per row keep paint cheap when six live lists repaint on every update. The kind label is the
+ * non-color cue; the state glyph, where there is one, is in the text itself.
+ */
 const Row = memo(function Row({ row, h }: { row: ActivityRow; h: number }) {
   const t = new Date(row.ts);
   const clock = Number.isFinite(t.getTime()) ? t.toTimeString().slice(0, 8) : "n/a";
   return (
     <li
-      className="flex items-center gap-s-2 px-s-2 text-xs [contain:layout_paint_style]"
+      className="flex items-center gap-s-2 whitespace-pre px-s-2 text-xs [contain:layout_paint_style]"
       style={{ height: h }}
       data-row={row.n}
       data-kind={row.kind}
     >
-      <span className="num w-[8ch] shrink-0 text-fg-faint">{clock}</span>
-      <span aria-hidden="true" className="num w-[1.5ch] shrink-0 text-fg-muted">
-        {row.glyph}
-      </span>
-      <span className="num w-[7ch] shrink-0 text-fg-muted">{KIND_LABEL[row.kind]}</span>
+      <span className="num shrink-0 text-fg-muted">{`${clock}  ${KIND_LABEL[row.kind].padEnd(6)}`}</span>
       <span className="min-w-0 flex-1 truncate text-fg">{row.text}</span>
     </li>
   );
@@ -132,7 +133,7 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
   const visible = rows.slice(start, end);
   return (
     <div
-      className="relative h-full [contain:layout_paint_style]"
+      className="relative h-full [contain:layout_paint_style] [will-change:transform]"
       data-testid="activity-list"
       data-pinned={pinned}
     >

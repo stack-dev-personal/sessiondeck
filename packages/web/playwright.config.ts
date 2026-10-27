@@ -16,8 +16,8 @@ const vite = "node ./node_modules/vite/bin/vite.js";
  */
 const live = (process.env["SD_E2E_HUB_URL"] ?? "") !== "";
 const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.3.spec.ts", "**/R3.6.spec.ts", "**/R3.9.spec.ts"];
-// R6.3 runs in both modes: a fake hub in the mock build, the real hub in live mode (its describes skip themselves).
-const BOTH_SPECS = ["**/R6.3.spec.ts"];
+// R6.3 and R6.4 run in both modes: a fake hub in the mock build, the real hub in live mode (its describes skip themselves).
+const BOTH_SPECS = ["**/R6.3.spec.ts", "**/R6.4.spec.ts"];
 const port = live ? 5174 : 5173;
 
 /**
