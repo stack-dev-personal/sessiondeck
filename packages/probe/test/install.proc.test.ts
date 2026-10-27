@@ -444,11 +444,15 @@ describe("R1.8 R1.10 review round 3", () => {
     const dist = join(sb.root, "Jos\u00e9", "dist");
     mkdirSync(dist, { recursive: true });
     copyFileSync(join(probeRoot, "dist", "probe.mjs"), join(dist, "probe.mjs"));
-    const r = spawnSync(process.execPath, [join(dist, "probe.mjs"), "install", "--home", sb.home], {
-      env: { ...process.env, ...sb.env },
-      encoding: "utf8",
-      windowsHide: true,
-    });
+    const r = spawnSync(
+      process.execPath,
+      [join(dist, "probe.mjs"), "install", "--runtime", "node", "--home", sb.home],
+      {
+        env: { ...process.env, ...sb.env },
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
     expect(r.status, r.stderr).toBe(0);
     const doc = readJson(sb.settings);
     expect(Object.keys(doc.hooks)).toHaveLength(17);
@@ -561,7 +565,7 @@ describe("R1.8 R1.10 review round 2 (U2) and windows CI", () => {
     copyFileSync(join(probeRoot, "dist", "probe.mjs"), join(dist, "probe.mjs"));
     return spawnSync(
       process.execPath,
-      [join(dist, "probe.mjs"), "install", "--home", sb.home, ...extra],
+      [join(dist, "probe.mjs"), "install", "--runtime", "node", "--home", sb.home, ...extra],
       { env: { ...process.env, ...sb.env }, encoding: "utf8", windowsHide: true },
     );
   }

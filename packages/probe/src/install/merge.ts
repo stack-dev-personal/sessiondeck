@@ -21,11 +21,21 @@ export interface InstallEntry {
   createdFile: boolean;
   /** Settings backup taken when a previous status value was captured (verifies the restore). */
   backups?: Partial<Record<StatusKey, string>>;
+  /** Which form the install wrote (absent in records from before the exe form: node). */
+  runtime?: Runtime;
+  /** Exe directory this install copied (exe form only); the only directory prune may remove. */
+  exeDir?: string;
 }
 
+export type Runtime = "exe" | "node";
+
 export interface Ctx {
-  /** Absolute, forward-slash path of dist/hook.mjs. */
+  /** Absolute, forward-slash path of dist/hook.mjs (Node form). */
   hookPath: string;
+  /** Exe form: absolute forward-slash path of the installed hook exe; replaces node + hookPath. */
+  hookExe?: string;
+  /** Exe form: the directory the exes were copied to (recorded in the install state). */
+  exeDir?: string;
   /** Resolved probe home (forward slashes), passed as `--home`. */
   home: string;
   /** Host name, passed as `--host`. */
@@ -76,8 +86,12 @@ function buildGroup(ctx: Ctx): Json {
     hooks: [
       {
         type: "command",
-        command: "node",
-        args: [ctx.hookPath, "--home", ctx.home, "--host", ctx.host, MARKER],
+        ...(ctx.hookExe === undefined
+          ? {
+              command: "node",
+              args: [ctx.hookPath, "--home", ctx.home, "--host", ctx.host, MARKER],
+            }
+          : { command: ctx.hookExe, args: ["--home", ctx.home, "--host", ctx.host, MARKER] }),
         timeout: HOOK_TIMEOUT_SECONDS,
       },
     ],
@@ -186,6 +200,8 @@ export function applyInstall(
       createdEvents: [...created],
       createdHooksKey: prior?.createdHooksKey ?? settings["hooks"] === undefined,
       createdFile: prior?.createdFile ?? !fileExisted,
+      runtime: ctx.hookExe === undefined ? "node" : "exe",
+      ...(ctx.exeDir === undefined ? {} : { exeDir: ctx.exeDir }),
     },
   };
 }

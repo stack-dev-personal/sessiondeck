@@ -22,8 +22,10 @@ import {
 import { resolveHostName } from "../host.ts";
 import { ensurePrivateDir } from "./atomic.ts";
 import { HOOK_EVENTS, MARKER } from "./events.ts";
+import { type ExePlan, ExeError, installExe, planExe, pruneExeDir } from "./exe.ts";
 import {
   type Ctx,
+  type Runtime,
   SettingsShapeError,
   isRecord,
   type StatusKey,
@@ -59,11 +61,16 @@ const HELP = `probe: sessiondeck laptop probe
 usage:
   probe install [--hub <url>] [--token-file <path> | --token-stdin] [--host-name <name>]
                 [--settings <path>] [--statusline=replace] [--home <dir>] [--allow-inside-claude]
+                [--runtime exe|node] [--exe-dir <dir>]
   probe uninstall [--purge] [--settings <path>] [--home <dir>]
   probe config show [--home <dir>]
   probe daemon run | install | uninstall [--home <dir>]
   probe --help
 
+--runtime exe (default) copies the built exes to <home>/bin/<hash>/ and registers them; build them
+with: pnpm -F @sessiondeck/probe build:exe
+--runtime node registers node + dist/*.mjs instead.
+--exe-dir <dir> takes the exes from <dir> instead of dist/exe/<platform>.
 The token is never accepted as an argument (argv is visible to other processes).
 Settings default to $CLAUDE_CONFIG_DIR/settings.json, else the default Claude Code user directory.
 `;
@@ -81,6 +88,8 @@ const VALUE_FLAGS = [
   "--settings",
   "--statusline",
   "--home",
+  "--runtime",
+  "--exe-dir",
 ];
 const BOOL_FLAGS = ["--token-stdin", "--purge", "--allow-inside-claude", "--help", "-h"];
 
@@ -151,22 +160,35 @@ function gitWorkTreeAbove(dir: string): string | undefined {
   }
 }
 
-function shellCommand(script: string, home: string, host: string): string | undefined {
-  const words = ["node", script, "--home", home, "--host", host, MARKER].map(shellWord);
+function shellCommand(program: string[], home: string, host: string): string | undefined {
+  const words = [...program, "--home", home, "--host", host, MARKER].map(shellWord);
   return words.every((w) => w !== undefined) ? words.join(" ") : undefined;
 }
 
-export function buildCtx(distDir: string, homeDir: string, host: string): Ctx {
+export function buildCtx(distDir: string, homeDir: string, host: string, exe?: ExePlan): Ctx {
   const dir = realSlash(distDir);
   const home = realSlash(homeDir);
   const ctx: Ctx = { hookPath: `${dir}/hook.mjs`, home, host };
-  const statusline = shellCommand(`${dir}/statusline.mjs`, home, host);
-  const subagents = shellCommand(`${dir}/subagents.mjs`, home, host);
+  // An exe is the command word itself. A space would need quoting, and a quoted command word does
+  // not run in PowerShell without `&`, so such a path skips the status commands like any unsafe one.
+  const exeUnsafe = exe !== undefined && Object.values(exe.paths).some((p) => p.includes(" "));
+  const statusline = exeUnsafe
+    ? undefined
+    : shellCommand(exe ? [exe.paths.statusline] : ["node", `${dir}/statusline.mjs`], home, host);
+  const subagents = exeUnsafe
+    ? undefined
+    : shellCommand(exe ? [exe.paths.subagents] : ["node", `${dir}/subagents.mjs`], home, host);
+  if (exe) {
+    ctx.hookExe = exe.paths.hook;
+    ctx.exeDir = realSlash(exe.dir);
+  }
   if (statusline !== undefined) ctx.statuslineCommand = statusline;
   if (subagents !== undefined) ctx.subagentsCommand = subagents;
   if (statusline === undefined || subagents === undefined) {
     // Hooks are argv and never reach a shell; only the shell-run status commands need safe paths.
-    const bad = [dir, home].filter((p) => !isShellSafe(p));
+    const bad = [exe ? realSlash(exe.dir) : dir, home].filter(
+      (p) => !isShellSafe(p) || (exe !== undefined && p.includes(" ")),
+    );
     ctx.statusSkipReason = `the path ${bad.map((p) => JSON.stringify(p)).join(", ") || JSON.stringify(dir)} has characters that are unsafe in a statusLine command (allowed: letters, digits, space and _ . / : = + ~ -, no ~ at the start); hooks were installed, statusLine and subagentStatusLine were skipped. Install from or into a path without them to enable them`;
   }
   return ctx;
@@ -196,7 +218,15 @@ function refuseInsideClaude(args: Args, e: PathEnv, verb: string): void {
   }
 }
 
+function runtimeOf(args: Args): Runtime {
+  const v = str(args.flags, "--runtime") ?? "exe";
+  if (v !== "exe" && v !== "node")
+    throw new UsageError(`--runtime accepts "exe" or "node", got ${v}`);
+  return v;
+}
+
 async function install(args: Args, io: RunIo): Promise<number> {
+  const runtime = runtimeOf(args);
   const replaceStatus = ((): boolean => {
     const v = str(args.flags, "--statusline");
     if (v === undefined) return false;
@@ -234,7 +264,10 @@ async function install(args: Args, io: RunIo): Promise<number> {
       resolveHostName(),
     ...(existing?.allowInsecureHub === true ? { allowInsecureHub: true } : {}),
   };
-  const ctx = buildCtx(io.distDir, home, validateHostName(cfg.host));
+  // Exe form: hash the source exes now (read-only; refuses before anything is written).
+  const exePlan =
+    runtime === "exe" ? await planExe(io.distDir, home, str(args.flags, "--exe-dir")) : undefined;
+  const ctx = buildCtx(io.distDir, home, validateHostName(cfg.host), exePlan);
 
   // Settings first, read-only: a malformed file aborts before anything is written.
   const loaded = await loadSettings(settingsPath);
@@ -242,6 +275,10 @@ async function install(args: Args, io: RunIo): Promise<number> {
   const stateFile = installStatePath(e, homeFlag);
   const prior = await getEntry(stateFile, loaded.path);
   const result = applyInstall(loaded.settings, ctx, prior, loaded.existed, { replaceStatus });
+  if (exePlan) {
+    await installExe(exePlan, home);
+    io.out(`exes: ${exePlan.dir}`);
+  }
 
   const sameCfg =
     existing !== undefined &&
@@ -269,6 +306,11 @@ async function install(args: Args, io: RunIo): Promise<number> {
     if (b) backups[key] = b;
   }
   await putEntry(stateFile, loaded.path, { ...result.entry, backups });
+  // The settings now point away from the previous exe directory; remove it (ours, recorded only).
+  if (prior?.exeDir && prior.exeDir !== result.entry.exeDir) {
+    const note = await pruneExeDir(prior.exeDir, home);
+    if (note) io.out(`notice: ${note}`);
+  }
   io.out(
     `${changed ? "installed into" : "already installed in"} ${loaded.path} (${HOOK_EVENTS.length} hook events)`,
   );
@@ -380,6 +422,10 @@ async function uninstall(args: Args, io: RunIo): Promise<number> {
   } else {
     io.out(`no settings file at ${loaded.path}; nothing to remove`);
   }
+  if (entry?.exeDir) {
+    const note = await pruneExeDir(entry.exeDir, home);
+    if (note) io.out(`notice: ${note}`);
+  }
   if (entry || !inferred) await putEntry(stateFile, loaded.path, undefined);
   if (args.flags.has("--purge") && inferred && !entry) {
     io.err(
@@ -430,6 +476,7 @@ export async function run(argv: string[], io: RunIo): Promise<number> {
     if (
       e instanceof SettingsReadError ||
       e instanceof SettingsShapeError ||
+      e instanceof ExeError ||
       e instanceof ConfigError
     ) {
       io.err(`probe: ${e.message}`);

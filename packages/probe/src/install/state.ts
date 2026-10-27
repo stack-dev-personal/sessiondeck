@@ -55,7 +55,18 @@ export function parseEntry(raw: unknown, home?: string): InstallEntry | undefine
     const b = rawBackups[key];
     if (typeof b === "string" && (home === undefined || isInHome(b, home))) backups[key] = b;
   }
-  return { previous, createdEvents, createdHooksKey, createdFile, backups };
+  const runtime =
+    raw["runtime"] === "exe" || raw["runtime"] === "node" ? raw["runtime"] : undefined;
+  const exeDir = typeof raw["exeDir"] === "string" ? raw["exeDir"] : undefined;
+  return {
+    previous,
+    createdEvents,
+    createdHooksKey,
+    createdFile,
+    backups,
+    ...(runtime ? { runtime } : {}),
+    ...(exeDir ? { exeDir } : {}),
+  };
 }
 
 async function load(path: string): Promise<StateFile> {

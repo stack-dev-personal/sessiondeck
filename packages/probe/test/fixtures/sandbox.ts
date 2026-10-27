@@ -51,6 +51,9 @@ export function sandbox(fixture?: string, normalize = false): Sandbox {
       CLAUDECODE: "",
       HOME: fakeHome,
       USERPROFILE: fakeHome,
+      // runCli adds --runtime <this> to `install` unless the test passes its own (the default
+      // exe form needs the built exes; most suites exercise the Node form).
+      SD_TEST_RUNTIME: "node",
     },
   };
 }
@@ -67,7 +70,12 @@ export function runCli(
   stdin?: string,
 ): Promise<CliRun> {
   const testHome = env["SD_TEST_HOME"];
-  const argv = testHome && !args.includes("--home") ? [...args, "--home", testHome] : args;
+  const withHome = testHome && !args.includes("--home") ? [...args, "--home", testHome] : args;
+  const runtime = env["SD_TEST_RUNTIME"];
+  const argv =
+    runtime && args[0] === "install" && !args.some((a) => a.startsWith("--runtime"))
+      ? [...withHome, "--runtime", runtime]
+      : withHome;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, ...argv], {
       env: { ...process.env, ...env },
