@@ -127,6 +127,17 @@ describe("Layout route (R6.1)", () => {
     expect(screen.getByTestId("projects-more")).toHaveTextContent("+3 more projects");
   });
 
+  it("+N more counts projects without a column even after the session set changed", () => {
+    put(sess("a", "/w/a", 3), sess("b", "/w/b", 2));
+    useBoard.setState({ loaded: true });
+    mount("/layout?preset=by-project");
+    expect(panesOf(useLayout.getState().spec).map((p) => p.projectDir)).toEqual(["/w/a", "/w/b"]);
+    expect(screen.queryByTestId("projects-more")).toBeNull();
+    // /w/a is gone, two new projects appear: columns {a, b}, projects {b, c, d}. Totals differ by 1.
+    act(() => put(sess("b", "/w/b", 2), sess("c", "/w/c", 5), sess("d", "/w/d", 4)));
+    expect(screen.getByTestId("projects-more")).toHaveTextContent("+2 more projects");
+  });
+
   it("sessions without any project dir share one (no project) column", () => {
     put({ ...sess("a", null), cwd: "" }, { ...sess("b", null), cwd: "" });
     useBoard.setState({ loaded: true });

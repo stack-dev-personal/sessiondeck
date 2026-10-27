@@ -38,8 +38,11 @@ export function Layout() {
 
   const keys = useMemo(() => ({ [LAYOUT_KEYS.menu]: () => setOpen((o) => !o) }), []);
   useShortcuts(keys);
-  const shown = new Set(panesOf(spec).map((p) => p.projectDir)).size;
-  const hidden = Math.max(0, projects.length - shown);
+  // Count the projects that have no column, not a difference of totals: the session set can change
+  // after the preset was applied, so a column may point at a project that is gone.
+  const shownDirs = new Set<string>();
+  for (const p of panesOf(spec)) if (p.projectDir !== undefined) shownDirs.add(p.projectDir);
+  const hidden = projects.filter((d) => !shownDirs.has(d)).length;
   const pick = (name: PresetName) => applyPreset(name, projects);
 
   return (
