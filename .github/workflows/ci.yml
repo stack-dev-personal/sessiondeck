@@ -16,8 +16,8 @@ jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
     # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
-    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe exe build 2 + probe processes 5 = 33;
-    # 40 (raised from 35 for the scripts processes step) leaves a margin of 7 for a cold cache on a slow Windows
+    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe processes 5 + probe exe build 2 + probe hook exe 2 = 35;
+    # 40 (raised from 35 for the scripts processes step) leaves a margin of 5 for a cold cache on a slow Windows
     # runner. The job limit must stay above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
     timeout-minutes: 40
     runs-on: ${{ matrix.os }}
@@ -43,22 +43,27 @@ jobs:
       - name: test (R0.5 budget 60 s)
         run: pnpm -r test
         timeout-minutes: 1
-      - name: build probe exes (host platform only, for the R1.2 R1.3 exe tests)
-        # dist/*.mjs must exist before the exe compile; hook-exe.proc.test.ts skips if the exe is missing.
-        # About 3 s locally; builds only this runner's platform and skips the bun-floor bench exe.
-        run: pnpm -F @sessiondeck/probe build && pnpm -F @sessiondeck/probe build:exe:host
-        timeout-minutes: 2
       - name: test probe processes (R1.2 R1.3 R1.4 R1.5 R1.6 R1.7 R1.8 R1.9 R1.10, outside R0.5)
         # Spawn-heavy probe suites (hook robustness, 50-process stress, statusline, CLI install/config,
         # daemon lock race, daemon e2e, autostart incl. the windows-latest real Task Scheduler case)
         # split from `pnpm -r test` after they timed out the R0.5 step on windows-latest. Budget: 9.4 s
         # wall locally; 4x for a Windows runner is about 38 s; vitest start-up and the esbuild build
         # in globalSetup add about 30 s, so about 70 s; 5 min (300 s) leaves generous headroom.
-        # SD_REQUIRE_EXE is test-only (packages/probe/test/helpers.ts): the exe suites fail, not skip, when the exe is missing.
-        env:
-          SD_REQUIRE_EXE: "1"
         run: pnpm -F @sessiondeck/probe test:proc
         timeout-minutes: 5
+      - name: build probe exes (host platform only, for the R1.2 R1.3 hook exe test)
+        # dist/*.mjs must exist before the exe compile; the hook exe suite fails (SD_REQUIRE_EXE) if the exe is missing.
+        # About 3 s locally; builds only this runner's platform and skips the bun-floor bench exe.
+        run: pnpm -F @sessiondeck/probe build && pnpm -F @sessiondeck/probe build:exe:host
+        timeout-minutes: 2
+      - name: test probe hook exe (R1.2 R1.3)
+        # Only the hook exe suite runs here to keep exe cost under a minute per OS; the other exe suites
+        # (statusline, subagents, autoload, install) run locally and are recorded in docs/VERIFY-P1.md.
+        # SD_REQUIRE_EXE is test-only (packages/probe/test/helpers.ts): the suite fails, not skips, when the exe is missing.
+        env:
+          SD_REQUIRE_EXE: "1"
+        run: pnpm -F @sessiondeck/probe test:proc:exe hook-exe
+        timeout-minutes: 2
       - name: test scripts processes (R0.5 split, outside the budget)
         # Scripts suites that start real node processes (guard-rules, capture-*, fixture-tools,
         # fixture-leak, fixture-scrub-keys, install-*; about 66 spawns; list PROC_TESTS in
