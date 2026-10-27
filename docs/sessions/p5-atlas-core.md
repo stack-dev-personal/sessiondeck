@@ -97,3 +97,9 @@ Concurrency allowed: 1, so units run sequentially.
 - Verifier: R5.1, R5.4, R5.5, R5.6 pass in docs/VERIFY-P5.md. DoD "real projects named and colored with archives" needs laptop confirmation (and S9b archives).
 - docs/ATLAS.md: stale "lands with S9 web work" line replaced by UI path (b2c754d); reviewer fix-then-merge on control names, fixed in a908666 with the reviewer's exact wording.
 - Note: `pnpm install --frozen-lockfile --offline` fails in this container (ERR_PNPM_NO_OFFLINE_META, @csstools/css-color-parser); existing node_modules used. CI installs online.
+
+### U4 CI fix (after PR #15 opened)
+- CI failed: root `pnpm lint:root` lacks the react-hooks plugin (disable comment in CommandPalette.tsx); R5.4.spec.ts:67 flaky because `data-results-for=""` rendered before results committed.
+- sd-executor-web effd3a9: effect restructured, attribute absent until results commit, retrying expect. R5.4 mock spec --repeat-each=10: 70 passed. Review: merge.
+- U4 [MINOR] deferred: CommandPalette.tsx:196 builds the option id inline instead of via optId; share a module-level helper.
+- U4 [MINOR] deferred: no unit test asserts `data-results-for` is absent before the first results commit.
