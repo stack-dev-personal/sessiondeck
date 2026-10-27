@@ -54,5 +54,10 @@
 - Benches are recorded by sd-verifier (owner of docs/*-BENCH.md), not the executor.
 - Branch not pushed while blocked (keeps Actions minutes; the worktree is local to the conductor's laptop).
 
+## Decisions made (resume, 2026-10-27)
+- 2026-10-27, user answer to .sprint/1/questions/A15.md (via the conductor, .sprint/1/answers/A15.md): **option B**. R1.1 on native Windows is judged at hook p95 < 100 ms (the phase doc's SessionEnd ceiling). Recorded as a dated note under A15 in 00-open-decisions.md (original text untouched) and a dated note under the R1.1 line in phase-1-probe.md (line itself untouched). VERIFY-P1 judges the exe against < 100 ms. Session continues as option A: U3, U4, U5, reviews, VERIFY rows, PR. The conductor still runs a quiet-laptop bench with the user before the real install.
+- 2026-10-27, user on R1.11/WSL2: "they run on windows with subagents being connected to wsl2 containers for development and testing." Conductor's reading: every Claude Code session runs natively on Windows; WSL2 is only Docker Desktop's backend. Keep the linux-x64 exe build; in VERIFY-P1 mark the WSL2-distro install and bridge part of R1.11 "not applicable to the current setup (user, 2026-10-27)"; add a dated note under A2 / open question 2 in 00-open-decisions.md; delete no R1.11 code or tests.
+
 ## Blocked
 - 2026-10-27: R1.1 exe p95 at the 80 ms line under load. Question: .sprint/1/questions/A15.md (default A). Resume at U3.
+- 2026-10-27: resumed with answer B (see Decisions made, resume).
