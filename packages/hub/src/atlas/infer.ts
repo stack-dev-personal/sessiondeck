@@ -131,7 +131,7 @@ export function inferProject(
 // "P5 ..." at the start of the name, or the word "phase" spelled out; "fix p95 latency" is not a phase.
 // After "P<n>" a separator is required; a bare space is accepted unless a metric word follows.
 const PHASE_NAME =
-  /^P(\d{1,4})(?:\s*[:/.\-_]|$|\s+(?!(?:latency|ms|percentile|response|cpu|load|perf|performance|regression|slow|timeout|throughput|tail)\b))|\bphase\s*(\d{1,4})\b/i;
+  /^P(\d{1,4})(?:\s*[:/.\-_]|$|\s+(?!\s*(?:latency|ms|percentile|response|cpu|load|perf|performance|regression|slow|timeout|throughput|tail)\b))|\bphase\s*(\d{1,4})\b/i;
 const PHASE_BRANCH = /^p(\d{1,4})\//i;
 
 /** Default phase label: from the session name ("P5", "Phase 5"), else a p<n>/ branch prefix. */

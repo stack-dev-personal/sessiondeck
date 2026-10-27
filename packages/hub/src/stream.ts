@@ -159,7 +159,19 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
   const onBatch = (b: { sessions: Parameters<typeof applyRateLimitStaleness>[0][] }): void =>
     broadcast(b.sessions);
   deps.events.on("batch", onBatch);
-  deps.events.on("atlas", broadcast);
+  // Listeners on the hub emitter must not throw: emit() runs them in order, so one that throws
+  // would stop every later listener. This one contains its own errors (the PATCH already succeeded).
+  const onAtlas = (snaps: Parameters<typeof broadcast>[0]): void => {
+    try {
+      broadcast(snaps);
+    } catch (err) {
+      app.log.warn(
+        { err: err instanceof Error ? err.message : "listener error" },
+        "atlas broadcast failed",
+      );
+    }
+  };
+  deps.events.on("atlas", onAtlas);
 
   const timer = setInterval(() => {
     for (const [ws, c] of clients) {
@@ -183,7 +195,7 @@ export function registerStream(app: FastifyInstance, deps: StreamDeps): void {
   app.addHook("preClose", async () => {
     clearInterval(timer);
     deps.events.off("batch", onBatch);
-    deps.events.off("atlas", broadcast);
+    deps.events.off("atlas", onAtlas);
     app.server.off("upgrade", onUpgrade);
     for (const ws of clients.keys()) ws.terminate();
     clients.clear();

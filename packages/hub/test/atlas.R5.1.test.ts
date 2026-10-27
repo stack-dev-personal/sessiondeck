@@ -135,7 +135,7 @@ describe("R5.1 every session has exactly one project", () => {
     ins.run("o3", snap("C:\\z\\Other"), null);
     s.db.prepare("INSERT INTO projects (project_dir, name) VALUES ('/legacy', 'Legacy')").run();
     s.migrateCeiling = Number.MAX_SAFE_INTEGER;
-    expect(s.migrate()).toEqual([6]);
+    expect(s.migrate()).toEqual([6, 7]);
     const pid = (id: string) => s.getSession(id)!.project_id;
     expect(pid("o1")).toBeTruthy();
     expect(pid("o2")).toBe(pid("o1"));
@@ -145,6 +145,9 @@ describe("R5.1 every session has exactly one project", () => {
     expect(list.every((p) => p.id.startsWith("p_"))).toBe(true);
     expect(list.find((p) => p.project_dir === "/legacy")!.name).toBe("Legacy");
     expect(s.backfillAtlas()).toBe(0); // idempotent
+    // R5.4: migration 7 indexes what was already there (sessions by cwd basename, legacy project by name).
+    expect(s.search("legacy", 5).map((h) => h.kind)).toEqual(["project"]);
+    expect(s.search("app", 5).some((h) => h.kind === "session" || h.kind === "project")).toBe(true);
     s.close();
   });
 });
@@ -159,6 +162,9 @@ describe("R5.5 phase inference", () => {
     ["Python 3", null, null],
     ["p95 latency fix", null, null],
     ["P95 latency", "p95/x", "P95"], // branch prefix still applies when the name is a metric
+    ["P95  latency", null, null], // two spaces: no backtracking bypass
+    ["P95 \tms", null, null],
+    ["P95 \t latency", "p95/x", "P95"],
     ["P5: atlas", null, "P5"],
     ["P5-atlas", null, "P5"],
     ["P5/atlas", null, "P5"],
