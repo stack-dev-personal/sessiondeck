@@ -213,6 +213,20 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     expect(screen.getByTestId("layout-notice")).toHaveTextContent("No layout in slot 5.");
   });
 
+  it("the toolbar shows the saved layout's name, not its id, and follows a rename (R6.3)", async () => {
+    useSaved.setState({ rows: [saved("u-3192444aff7d1", 1, null)] });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("1");
+    const btn = screen.getByTestId("layout-menu-button");
+    expect(btn).toHaveTextContent("Layout: Name u-3192444aff7d1");
+    expect(btn.textContent).not.toMatch(/Layout: u-3192/);
+    act(() =>
+      useSaved.setState({ rows: [{ ...saved("u-3192444aff7d1", 1, null), name: "Review wall" }] }),
+    );
+    expect(btn).toHaveTextContent("Layout: Review wall");
+  });
+
   it("finding 2: the pin rule follows the Viewer host setting, never board activity", async () => {
     useSaved.setState({ rows: [saved("all", 1, null), saved("pin", 1, "h", "pair")] });
     put(sess("s", "/w/x"));
