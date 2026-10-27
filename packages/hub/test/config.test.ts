@@ -130,4 +130,25 @@ describe("loadConfig retention", () => {
       /HUB_RETENTION_INTERVAL_MS/,
     );
   });
+
+  it("validates HUB_ALLOWED_ORIGINS entries as bare http(s) origins", () => {
+    const t = "a".repeat(16);
+    const o = (v: string) => loadConfig({ HUB_TOKEN: t, HUB_ALLOWED_ORIGINS: v }).allowedOrigins;
+    expect(o(" http://localhost:5173 , https://deck.example.com,")).toEqual([
+      "http://localhost:5173",
+      "https://deck.example.com",
+    ]);
+    expect(o("")).toEqual([]);
+    for (const bad of [
+      "null",
+      "*",
+      "http://localhost:5173/",
+      "http://a.example/path",
+      "ftp://a.example",
+      "localhost:5173",
+      "http://localhost:5173,null",
+    ]) {
+      expect(() => o(bad), bad).toThrow(/HUB_ALLOWED_ORIGINS/);
+    }
+  });
 });
