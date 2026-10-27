@@ -20,4 +20,5 @@ export const STORAGE_KEYS = {
   compact: "sd.compact",
   settings: "sd.settings",
   filters: "sd.filters",
+  layout: "sd.layout",
 } as const;
