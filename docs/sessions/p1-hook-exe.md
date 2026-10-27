@@ -36,3 +36,23 @@
 - `bun` 1.4.4 exact devDependency of @sessiondeck/probe (added by hand: `pnpm add bun` under pnpm 12 is read as a package-manager selection, ERR_PNPM_PACKAGE_MANAGER_IN_SELECTION).
 - pnpm-workspace.yaml: `allowBuilds: bun: true`; `supportedArchitectures` os [current, linux], cpu [current, x64], libc [current, glibc] so the lockfile-pinned `@oven/bun-linux-x64` installs on Windows for the WSL2 cross-compile. Side effect: Linux variants of esbuild, rollup, lzma, and both bun linux variants (musl too, host libc reads "unknown") install on Windows; lockfile only gained bun and @oven entries. About 107 MB extra on disk.
 - Proof: `pnpm -F @sessiondeck/probe exec bun --version` = 1.4.4; `pnpm install --frozen-lockfile` up to date; probe build ok; probe test 301 passed, 11 skipped.
+
+### U2 build-exe and bench (sd-executor-probe), done, 289751f
+- `scripts/build-exe.mjs` (`build:exe`) compiles the esbuild outputs dist/{hook,statusline,subagents}.mjs unchanged with `--minify --bytecode --no-compile-autoload-dotenv --no-compile-autoload-bunfig` into dist/exe/windows-x64/*.exe and dist/exe/linux-x64/* (cross-compiled with `--compile-executable-path` at the pinned Linux base). Also a `bun-floor` hello-world exe.
+- Benches gained `--target node|exe|bun-floor` (scripts/bench-target.mjs); temp home, never the real spool or config.
+- `scripts/parity-exe.mjs`: 11/11 pass (hook.exe exit 0, 0 stdout bytes on valid, empty, malformed; same spool fields as Node; statusline.exe stdout byte-identical to Node).
+- First laptop run (14 containers up incl. sprint-3, CPU 17% before, 57% after): hook node p95 170.1; hook exe p95 81.7 (p50 70.4); bun-floor p95 63.4; statusline node p95 459.9; statusline exe p95 134.3. `--bytecode` compared once: 81.7 vs 95.5 without, kept.
+- Exe size about 110 MB each. Linux ELF built, not run (no WSL2 distro besides docker-desktop).
+- probe test 301 passed, 11 skipped; typecheck, lint clean.
+
+### R1.1 laptop bench (sd-verifier), FAIL by threshold
+- docs/PROBE-BENCH.md new section: hook.exe p95 80.5 / 79.6 / 79.9 ms (3 rounds, 200 runs, 0 bad, 15 containers, CPU 34-68%); bun-floor p95 61.9 / 61.8 / 61.3; node hook p95 136.8; statusline exe 121.0, node 143.6.
+- Rule from the handoff: exe misses 80 ms p95, so no tuning; floor recorded; blocked with options in .sprint/1/questions/A15.md.
+
+## Decisions made
+- U1 crossed boundary by one line: sd-executor-contract added the `bun` devDependency to packages/probe/package.json, because the lockfile and allowBuilds are root config it owns.
+- Benches are recorded by sd-verifier (owner of docs/*-BENCH.md), not the executor.
+- Branch not pushed while blocked (keeps Actions minutes; the worktree is local to the conductor's laptop).
+
+## Blocked
+- 2026-10-27: R1.1 exe p95 at the 80 ms line under load. Question: .sprint/1/questions/A15.md (default A). Resume at U3.
