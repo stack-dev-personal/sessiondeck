@@ -58,6 +58,7 @@ function readNode(v: unknown, depth: number, seen: Set<string>): Node {
   if (v["kind"] === "pane") {
     const { id, type, sessionId, projectDir, compact } = v;
     if (!str(id) || id === "") return fail("pane id must be a non-empty string");
+    if (id.includes(":")) return fail("pane id must not contain ':' (reserved for splits)");
     if (seen.has(id)) return fail(`duplicate pane id ${id}`);
     seen.add(id);
     if (typeof type !== "string" || !(PANE_TYPES as readonly string[]).includes(type))

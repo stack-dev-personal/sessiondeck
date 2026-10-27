@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Pane } from "../../layout/spec";
 import { useLayout } from "../../store/layout";
+import { useProjectLabel } from "./PaneBodies";
 
 const TYPE_LABEL: Record<Pane["type"], string> = {
   board: "Board",
@@ -16,12 +17,9 @@ const TYPE_LABEL: Record<Pane["type"], string> = {
 export function PaneChrome({ pane, children }: { pane: Pane; children: ReactNode }) {
   const setCompact = useLayout((s) => s.setPaneCompact);
   const compact = pane.compact === true;
+  const projectLabel = useProjectLabel(pane.type === "project" ? pane.projectDir : undefined);
   const detail =
-    pane.type === "project"
-      ? pane.projectDir
-      : pane.type === "session"
-        ? pane.sessionId
-        : undefined;
+    pane.type === "project" ? projectLabel : pane.type === "session" ? pane.sessionId : undefined;
   return (
     <section
       className="flex h-full min-h-0 min-w-0 flex-col bg-surface-1"

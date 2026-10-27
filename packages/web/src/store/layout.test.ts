@@ -57,4 +57,27 @@ describe("layout store persistence (R6.1)", () => {
     expect(loadLayout()).toEqual(useLayout.getState().spec);
     expect(JSON.stringify(loadLayout())).toContain('"compact":true');
   });
+
+  it("never persists or applies an invalid spec", () => {
+    const before = useLayout.getState().spec;
+    const dup = buildPreset("pair");
+    if (dup.root.kind !== "split") throw new Error("pair is a split");
+    const bad = {
+      ...dup,
+      root: { ...dup.root, children: [dup.root.children[0]!, dup.root.children[0]!] },
+    };
+    window.localStorage.clear();
+    useLayout.getState().setSpec(bad);
+    useLayout.getState().setRatios([], [0, 1]);
+    expect(useLayout.getState().spec).toBe(before);
+    expect(window.localStorage.getItem(STORAGE_KEYS.layout)).toBeNull();
+  });
+
+  it("rescales drag ratios that drift from an exact sum so they still reload", () => {
+    useLayout.getState().applyPreset("pair");
+    useLayout.getState().setRatios([], [30.004, 70.004]);
+    expect(loadLayout()).toEqual(useLayout.getState().spec);
+    const root = useLayout.getState().spec.root;
+    expect(root.kind === "split" ? root.ratios[0] : -1).toBeCloseTo(0.3, 3);
+  });
 });

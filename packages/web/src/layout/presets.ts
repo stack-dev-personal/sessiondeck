@@ -58,9 +58,13 @@ const split = (dir: Split["dir"], children: Node[], ratios = even(children.lengt
   children,
 });
 
-/** Projects beyond this many are not given a column; the cap keeps panes under MAX_PANES. */
+/** Projects beyond this many are not given a column (the route shows "+N more"); keeps panes under MAX_PANES. */
 export const MAX_PROJECT_COLUMNS = MAX_PANES - 4;
 
+/**
+ * `projects` are full project dirs in the order the caller wants them (by-project keeps the first
+ * MAX_PROJECT_COLUMNS; the route passes attention order). Other presets ignore it.
+ */
 export function buildPreset(name: PresetName, projects: readonly string[] = []): LayoutSpec {
   const pane = ids();
   const make = (root: Node): LayoutSpec => ({
@@ -99,7 +103,7 @@ export function buildPreset(name: PresetName, projects: readonly string[] = []):
         ]),
       );
     case "by-project": {
-      const list = [...new Set(projects)].sort().slice(0, MAX_PROJECT_COLUMNS);
+      const list = [...new Set(projects)].slice(0, MAX_PROJECT_COLUMNS);
       if (list.length === 0) return make(pane("project"));
       if (list.length === 1) return make(pane("project", { projectDir: list[0]! }));
       return make(
