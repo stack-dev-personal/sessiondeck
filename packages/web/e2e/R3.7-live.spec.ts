@@ -230,7 +230,7 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
   expect(cardStops.length).toBe(8);
   // Visual order: header controls left to right, toolbar left to right, cards by row then column.
   const nonCards = stops.filter((s) => !s.card);
-  expect(nonCards.length).toBeGreaterThanOrEqual(6); // 2 links, 2 header buttons, 2 selects
+  expect(nonCards.length).toBeGreaterThanOrEqual(7); // 3 links, 2 header buttons, 2 selects
   expect(stops.findIndex((s) => s.card)).toBe(nonCards.length); // controls precede the grid
   const rowOf = (s: { y: number }) => Math.round(s.y / 20);
   for (let i = 1; i < cardStops.length; i++) {
@@ -240,9 +240,9 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
     expect(sameRow ? b.x > a.x : b.y > a.y, `card ${i} follows card ${i - 1} visually`).toBe(true);
     void rowOf;
   }
-  const header = nonCards.slice(0, 4);
+  const header = nonCards.slice(0, 5); // 3 nav links (Board, Layout, Settings) + 2 buttons
   for (let i = 1; i < header.length; i++) expect(header[i]!.x).toBeGreaterThan(header[i - 1]!.x);
-  const tools = nonCards.slice(4);
+  const tools = nonCards.slice(5);
   for (let i = 1; i < tools.length; i++) expect(tools[i]!.x).toBeGreaterThan(tools[i - 1]!.x);
   // The DOM order of cards equals the visual order (cards are tab stops; compared to the list).
   const domIds = await page
