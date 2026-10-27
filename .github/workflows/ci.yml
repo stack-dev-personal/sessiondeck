@@ -16,8 +16,8 @@ jobs:
   check:
     name: check (${{ matrix.os }}, node ${{ matrix.node }})
     # Job budget (minutes): setup, checkout, pnpm install and cache 5 + typecheck, lint, lint:root,
-    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe processes 5 = 31;
-    # 40 (raised from 35 for the scripts processes step) leaves a margin of 9 for a cold cache on a slow Windows
+    # format:check and the fixture gate 5 + test 1 + scripts processes 5 + guard timing 7 + sprint tooling 3 + probe exe build 2 + probe processes 5 = 33;
+    # 40 (raised from 35 for the scripts processes step) leaves a margin of 7 for a cold cache on a slow Windows
     # runner. The job limit must stay above the sum of the step limits, or a slow step is cancelled by the job and not by itself.
     timeout-minutes: 40
     runs-on: ${{ matrix.os }}
@@ -54,6 +54,9 @@ jobs:
         # split from `pnpm -r test` after they timed out the R0.5 step on windows-latest. Budget: 9.4 s
         # wall locally; 4x for a Windows runner is about 38 s; vitest start-up and the esbuild build
         # in globalSetup add about 30 s, so about 70 s; 5 min (300 s) leaves generous headroom.
+        # SD_REQUIRE_EXE is test-only (packages/probe/test/helpers.ts): the exe suites fail, not skip, when the exe is missing.
+        env:
+          SD_REQUIRE_EXE: "1"
         run: pnpm -F @sessiondeck/probe test:proc
         timeout-minutes: 5
       - name: test scripts processes (R0.5 split, outside the budget)
