@@ -178,7 +178,7 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     id: string,
     hotkey: number | null,
     host: string | null,
-    preset = "quad" as const,
+    preset: PresetName = "quad",
   ) => ({
     id,
     name: `Name ${id}`,
