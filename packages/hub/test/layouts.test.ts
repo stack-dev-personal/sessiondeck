@@ -5,7 +5,9 @@ import { AUTH, makeHub, type TestHub } from "./support/hub.ts";
 
 let h: TestHub;
 beforeEach(async () => {
-  h = await makeHub({}, () => 1_800_000_000_000);
+  // Auto-advancing clock (1 s per read) so the layout write limiter refills between requests.
+  let clock = 1_800_000_000_000;
+  h = await makeHub({}, () => (clock += 1000));
 });
 afterEach(async () => {
   await h.cleanup();
@@ -142,6 +144,11 @@ describe("R6.3 layouts API", () => {
       ["long host", "a", body({ host: "h".repeat(129) })],
       ["oversized", "a", body({ spec: spec({ pad: "x".repeat(33 * 1024) }) })],
       ["deep", "a", body({ spec: { version: 1, root: deep } })],
+      [
+        "30k-deep array",
+        "a",
+        `{"name":"L","hotkey":null,"host":null,"spec":{"version":1,"root":{},"x":${"[".repeat(30000)}${"]".repeat(30000)}}}`,
+      ],
       ["array spec", "a", body({ spec: [1] })],
       ["string spec", "a", body({ spec: "x" })],
       ["no version", "a", body({ spec: { root: {} } })],
@@ -150,7 +157,17 @@ describe("R6.3 layouts API", () => {
       ["builtin flag", "a", body({ builtin: 1 })],
     ];
     for (const [label, id, b] of cases) {
-      expect((await put(id, b)).statusCode, label).toBe(400);
+      const r =
+        typeof b === "string"
+          ? await h.app.inject({
+              method: "PUT",
+              url: `/layouts/${id}`,
+              headers: { ...AUTH, "content-type": "application/json" },
+              payload: b,
+            })
+          : await put(id, b);
+      expect(r.statusCode, label).toBe(400);
+      if (typeof b === "string") expect(r.json()).toMatchObject({ error: "invalid_body" });
     }
     expect(await list()).toEqual([]);
   });
@@ -199,5 +216,109 @@ describe("R6.3 layouts API", () => {
     const p95 = ms[47]!;
     console.log(`GET /layouts x50 (50 layouts): p50=${p50.toFixed(2)}ms p95=${p95.toFixed(2)}ms`);
     expect(p95).toBeLessThan(50);
+  });
+
+  it("rate limits layout writes per principal with 429 and leaves ingest and reads alone", async () => {
+    const fixed = await makeHub({}, () => 1_800_000_000_000);
+    try {
+      const w = (i: number) =>
+        fixed.app.inject({
+          method: "PUT",
+          url: `/layouts/r${i}`,
+          headers: AUTH,
+          payload: body() as object,
+        });
+      for (let i = 0; i < 10; i++) expect((await w(i)).statusCode).toBe(200);
+      expect((await w(10)).statusCode).toBe(429);
+      const d = await fixed.app.inject({ method: "DELETE", url: "/layouts/r0", headers: AUTH });
+      expect(d.statusCode).toBe(429);
+      expect(d.body).toBe("");
+      const g = await fixed.app.inject({ method: "GET", url: "/layouts", headers: AUTH });
+      expect(g.statusCode).toBe(200);
+    } finally {
+      await fixed.cleanup();
+    }
+  });
+
+  it("active_hotkey: the pinned layout wins for its host", async () => {
+    await put("u1", body({ hotkey: 1 }));
+    await put("u2", body({ hotkey: 2 }));
+    await put("p1", body({ hotkey: 1, host: "h1" }));
+    await put("p3", body({ hotkey: 3, host: "h2" }));
+    await put("none", body());
+    const act = async (q: string) =>
+      Object.fromEntries(
+        (
+          (await h.app.inject({ method: "GET", url: `/layouts${q}`, headers: AUTH })).json() as {
+            layouts: { id: string; active_hotkey: boolean }[];
+          }
+        ).layouts.map((l) => [l.id, l.active_hotkey]),
+      );
+    expect(await act("?host=h1")).toEqual({ u1: false, u2: true, p1: true, none: false });
+    expect(await act("?host=h3")).toEqual({ u1: true, u2: true, none: false });
+    expect(await act("")).toEqual({ u1: true, u2: true, p1: false, p3: false, none: false });
+  });
+
+  it("moving a slot: occupant cleared, old slot freed, across pin changes", async () => {
+    await put("a", body({ hotkey: 2, host: "h1" }));
+    await put("c", body({ hotkey: 1, host: "h1" }));
+    expect((await put("a", body({ hotkey: 1, host: "h1" }))).statusCode).toBe(200);
+    let m = new Map((await list()).map((l) => [l.id, l.hotkey]));
+    expect(m.get("a")).toBe(1);
+    expect(m.get("c")).toBeNull();
+    // slot 2 is free again
+    expect((await put("d", body({ hotkey: 2, host: "h1" }))).statusCode).toBe(200);
+    expect(new Map((await list()).map((l) => [l.id, l.hotkey])).get("d")).toBe(2);
+    // a pinned row moving to no pin onto a taken slot
+    await put("u", body({ hotkey: 5 }));
+    await put("pp", body({ hotkey: 6, host: "h1" }));
+    expect((await put("pp", body({ hotkey: 5, host: null }))).statusCode).toBe(200);
+    m = new Map((await list()).map((l) => [l.id, l.hotkey]));
+    expect(m.get("pp")).toBe(5);
+    expect(m.get("u")).toBeNull();
+  });
+
+  it("a failed PUT rolls back and leaves prior rows unchanged", async () => {
+    await put("keep", body({ hotkey: 4 }));
+    for (let i = 0; i < 199; i++) {
+      h.store.db
+        .prepare("INSERT INTO layouts (id, name, spec, builtin) VALUES (?, 'n', '{}', 0)")
+        .run(`s${i}`);
+    }
+    const before = JSON.stringify(h.store.db.prepare("SELECT * FROM layouts ORDER BY id").all());
+    expect((await put("new", body({ hotkey: 4 }))).statusCode).toBe(409);
+    expect(JSON.stringify(h.store.db.prepare("SELECT * FROM layouts ORDER BY id").all())).toBe(
+      before,
+    );
+    // forced failure after the clearing UPDATE: unbindable name makes the INSERT throw
+    h.store.db.prepare("DELETE FROM layouts WHERE id = 's0'").run();
+    const mid = JSON.stringify(h.store.db.prepare("SELECT * FROM layouts ORDER BY id").all());
+    const { putLayout } = await import("../src/db/layouts.ts");
+    expect(() =>
+      putLayout(
+        h.store,
+        { id: "other", name: {} as unknown as string, hotkey: 4, host: null, spec: "{}" },
+        1,
+      ),
+    ).toThrow();
+    expect(JSON.stringify(h.store.db.prepare("SELECT * FROM layouts ORDER BY id").all())).toBe(mid);
+  });
+
+  it("builtin rows never hold hotkeys: a seeded one is untouched by a user PUT to its slot", async () => {
+    h.store.db
+      .prepare(
+        "INSERT INTO layouts (id, name, spec, builtin, hotkey) VALUES ('core', 'Core', '{}', 1, 7)",
+      )
+      .run();
+    const r = await put("mine", body({ hotkey: 7 }));
+    expect(r.statusCode).toBe(409);
+    expect(r.json()).toEqual({ error: "slot_reserved" });
+    expect(
+      h.store.db.prepare("SELECT hotkey, updated_at FROM layouts WHERE id = 'core'").get(),
+    ).toEqual({
+      hotkey: 7,
+      updated_at: 0,
+    });
+    expect(await list()).toEqual([]);
   });
 });

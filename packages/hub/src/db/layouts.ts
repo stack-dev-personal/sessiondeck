@@ -1,5 +1,9 @@
 import type { Store } from "./store.ts";
 
+// Phase 7 (Postgres): (1) concurrent PUTs to the same slot under READ COMMITTED can both pass the
+// clearing UPDATE and then one hits the unique index; retry on 23505 or take an advisory lock.
+// (2) pg returns BIGINT (updated_at) as a string; parse it when mapping rows.
+
 export const MAX_LAYOUTS = 200;
 
 export interface LayoutRow {
@@ -11,7 +15,8 @@ export interface LayoutRow {
   updated_at: number;
 }
 
-export type PutResult = { ok: true; row: LayoutRow } | { ok: false; reason: "builtin" | "full" };
+export type PutResult =
+  { ok: true; row: LayoutRow } | { ok: false; reason: "builtin" | "full" | "slot_reserved" };
 
 /** Saved (non-builtin) layouts, optionally the ones pinned to `host` plus the unpinned ones. */
 export function listLayouts(store: Store, host?: string): LayoutRow[] {
@@ -45,9 +50,16 @@ export function putLayout(
       if (n.n >= MAX_LAYOUTS) return { ok: false, reason: "full" };
     }
     if (v.hotkey !== null) {
+      // Builtin rows never hold hotkeys; if one does (seeded data), the slot is reserved, not moved.
+      const reserved = store.db
+        .prepare(
+          "SELECT 1 FROM layouts WHERE builtin = 1 AND hotkey = ? AND COALESCE(host, '') = ?",
+        )
+        .get(v.hotkey, v.host ?? "");
+      if (reserved !== undefined) return { ok: false, reason: "slot_reserved" };
       store.db
         .prepare(
-          "UPDATE layouts SET hotkey = NULL, updated_at = ? WHERE hotkey = ? AND COALESCE(host, '') = ? AND id <> ?",
+          "UPDATE layouts SET hotkey = NULL, updated_at = ? WHERE hotkey = ? AND COALESCE(host, '') = ? AND id <> ? AND builtin = 0",
         )
         .run(nowMs, v.hotkey, v.host ?? "", v.id);
     }
