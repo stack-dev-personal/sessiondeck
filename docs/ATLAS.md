@@ -94,6 +94,20 @@ When the web app is served from a different origin than the hub (the compose top
 
 ## Fixing a mis-assignment
 
+### In the UI
+
+- Session drawer (open any session): the atlas strip shows the project as a link to its project view, the
+  phase as an inline editor, and a "Move to project" select. Pick a project to reassign the session; the
+  choice is a manual override that wins over every later ingest. Choose "Re-infer" to undo it.
+  Edit the phase in place (`Enter` saves, `Escape` cancels); an empty value brings the inferred label back.
+- Project view at `/projects/<id>`: click the project name or the color swatch to rename or recolor inline.
+- Sessions list at `/sessions`: filter by text, host, project, phase, and state; `j`/`k` move the selection,
+  `Enter` opens the drawer, `Escape` clears the selection, `/` focuses the filter box.
+- Command palette: `Ctrl+K` (`Cmd+K` on macOS) from anywhere searches sessions, projects, and phases
+  (`GET /search`); arrow keys or `Ctrl+N`/`Ctrl+P` move, `Enter` opens, `Escape` closes.
+
+### With curl (fallback)
+
 ```sh
 # find the target project id
 curl -s -H "Authorization: Bearer $HUB_TOKEN" http://localhost:8787/projects
@@ -108,8 +122,7 @@ curl -s -X PATCH ... -d '{"name":"quant-edge","color":"#3e63dd"}' .../projects/<
 curl -s -X PATCH ... -d '{"phase":"Hardening"}' .../sessions/<session_id>/phase
 ```
 
-UI: the project and phase controls land with the S9 web work (inline edit on the session row and
-the project header); they call the same endpoints.
+The UI controls call these same endpoints.
 
 ## Search (R5.4)
 
