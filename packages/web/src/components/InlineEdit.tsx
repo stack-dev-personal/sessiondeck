@@ -95,7 +95,7 @@ export function InlineEdit({
     } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      close();
+      if (!busy) close();
     }
   };
 

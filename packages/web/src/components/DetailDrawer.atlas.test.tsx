@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -71,6 +71,7 @@ describe("card and drawer show the project", () => {
     await waitFor(() => expect(api.setSessionProject).toHaveBeenCalledWith("s1", "p_b"));
     // The board follows the hub's WebSocket delta only; the PATCH response is not written into it
     // (it could be older than a delta that already arrived).
+    await act(async () => {});
     expect(useBoard.getState().sessions["s1"]).not.toMatchObject({ project_id: "p_b" });
   });
 

@@ -35,4 +35,21 @@ describe("InlineEdit focus while saving", () => {
     expect(input).toHaveValue("ab");
     await waitFor(() => expect(input).toHaveFocus());
   });
+
+  it("ignores Escape while a save is pending so a later failure is still shown", async () => {
+    const d = deferred();
+    const user = userEvent.setup();
+    render(
+      <InlineEdit value="a" label="Name" hint="h" maxLength={20} onSave={() => d.promise}>
+        a
+      </InlineEdit>,
+    );
+    await user.click(screen.getByRole("button", { name: "Name" }));
+    const input = screen.getByRole("textbox", { name: "Name" });
+    await user.type(input, "b{Enter}");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: "Name" })).toBe(input);
+    d.reject(new Error("nope"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("nope");
+  });
 });

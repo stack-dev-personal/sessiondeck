@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { access, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 
@@ -100,13 +100,13 @@ export async function waitConnected(page: Page): Promise<void> {
 export const card = (page: Page, id: string) =>
   page.locator(`[data-testid="session-card"][data-session-id="${id}"]`);
 
-/** Directory shared with scripts/e2e-live.sh (the host side polls it); the Docker socket is NOT mounted. */
+/** Directory inside this container that scripts/e2e-live.sh checks with `docker exec`; no shared mount, no Docker socket. */
 export const HUB_RESTART_DIR = process.env["SD_E2E_RESTART_DIR"] ?? "";
 
 /**
  * Restarts the hub process (container restart, same data volume). The Playwright container has no
- * Docker access: this writes a request file into HUB_RESTART_DIR and waits for the ack the host-side
- * poller in scripts/e2e-live.sh writes after `docker restart` of the hub container, then waits for
+ * Docker access: this creates restart.req in HUB_RESTART_DIR and waits for restart.ack, which the host-side
+ * poller in scripts/e2e-live.sh creates (via docker exec) after `docker restart` of the hub container, then waits for
  * /health.
  */
 export async function restartHub(): Promise<void> {
@@ -118,7 +118,8 @@ export async function restartHub(): Promise<void> {
   const ackDeadline = Date.now() + 60_000;
   for (;;) {
     try {
-      if ((await readFile(ack, "utf8")).trim() === id) break;
+      await access(ack);
+      break;
     } catch {
       /* not yet */
     }
