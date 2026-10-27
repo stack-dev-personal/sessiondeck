@@ -15,10 +15,22 @@ export function writeStored(key: string, value: string): void {
   }
 }
 
+export function removeStored(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export const STORAGE_KEYS = {
   theme: "sd.theme",
   compact: "sd.compact",
   settings: "sd.settings",
   filters: "sd.filters",
   layout: "sd.layout",
+  /** The spec as it was before Shift+C compacted everything (R6.5). */
+  layoutSnapshot: "sd.layout.snapshot",
+  /** Last saved-layouts list received from the hub (R6.3), so a switch never waits on the network. */
+  savedLayouts: "sd.layouts.saved",
 } as const;
