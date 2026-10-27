@@ -82,4 +82,22 @@ DROP INDEX events_signature_ts;
 DROP INDEX events_session_ts;
 `,
   },
+  {
+    version: 6,
+    name: "atlas_projects_phases",
+    // R5.1, R5.5. Each session carries exactly one project_id (inferred on ingest, or the manual
+    // override). Manual choices live in session_overrides, outside sessions, so `hub replay`
+    // (which deletes and rebuilds sessions) cannot lose them; upsertSession re-applies them.
+    // sessions.phase_label is the materialized manual phase. projects gains a stable short id.
+    // Existing rows are backfilled by Store.migrate (path inference is code, not SQL).
+    sql: `
+ALTER TABLE projects ADD COLUMN id TEXT;
+ALTER TABLE projects ADD COLUMN created_at BIGINT;
+CREATE UNIQUE INDEX projects_id ON projects(id);
+ALTER TABLE sessions ADD COLUMN project_id TEXT;
+ALTER TABLE sessions ADD COLUMN phase_label TEXT;
+CREATE INDEX sessions_project ON sessions(project_id, state);
+CREATE TABLE session_overrides (session_id TEXT PRIMARY KEY, project_id TEXT, phase TEXT, updated_at BIGINT NOT NULL);
+`,
+  },
 ];

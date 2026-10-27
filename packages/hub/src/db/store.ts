@@ -2,6 +2,7 @@ import type { SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { inferProject, projectIdOf } from "../atlas/infer.ts";
 import { migrations } from "./migrations.ts";
 
 export interface HostRow {
@@ -20,6 +21,10 @@ export interface SessionRow {
   started_at: number | null;
   last_event_at: number | null;
   ended_at: number | null;
+  /** Set by the store on upsert (inference or manual override); callers building rows omit it. */
+  project_id?: string | null;
+  /** Manual phase label (materialized from session_overrides). */
+  phase_label?: string | null;
 }
 
 export interface ProjectRow {
@@ -27,6 +32,17 @@ export interface ProjectRow {
   name: string | null;
   color: string | null;
   vault_collection: string | null;
+  id?: string | null;
+}
+
+export interface ProjectSummary {
+  id: string;
+  project_dir: string;
+  name: string;
+  color: string;
+  vault_collection: string | null;
+  sessions: number;
+  live: number;
 }
 
 export interface EventRow {
@@ -129,11 +145,14 @@ export class Store {
     ).v;
   }
 
+  /** Test hook: migrations above this version are not applied (to seed pre-migration data). */
+  migrateCeiling = Number.MAX_SAFE_INTEGER;
+
   /** Applies pending migrations in order, each in its own transaction. Returns versions applied. */
   migrate(): number[] {
     const applied: number[] = [];
     for (const m of migrations) {
-      if (m.version <= this.schemaVersion()) continue;
+      if (m.version <= this.schemaVersion() || m.version > this.migrateCeiling) continue;
       this.transaction(() => {
         this.db.exec(m.sql);
         this.stmt("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)").run(
@@ -144,7 +163,69 @@ export class Store {
       });
       applied.push(m.version);
     }
+    // Path inference is code, not SQL: assign projects to rows that predate migration 6.
+    if (this.schemaVersion() >= 6 && applied.length > 0) this.backfillAtlas();
     return applied;
+  }
+
+  /** R5.1. Gives every session without a project one (inference, or its override) and every project an id. Idempotent. */
+  backfillAtlas(): number {
+    return this.transaction(() => {
+      this.fillProjectIds();
+      const rows = this.stmt(
+        "SELECT session_id, project_dir, snapshot FROM sessions WHERE project_id IS NULL",
+      ).all() as { session_id: string; project_dir: string | null; snapshot: string }[];
+      for (const r of rows) {
+        const pid = this.resolveProjectId(r.session_id, r.project_dir, () => cwdOf(r.snapshot));
+        const ov = this.stmt("SELECT phase FROM session_overrides WHERE session_id = ?").get(
+          r.session_id,
+        ) as { phase: string | null } | undefined;
+        this.stmt(
+          "UPDATE sessions SET project_id = ?, phase_label = COALESCE(?, phase_label) WHERE session_id = ?",
+        ).run(pid, ov?.phase ?? null, r.session_id);
+      }
+      return rows.length;
+    });
+  }
+
+  private fillProjectIds(): void {
+    const rows = this.stmt("SELECT project_dir FROM projects WHERE id IS NULL").all() as {
+      project_dir: string;
+    }[];
+    for (const r of rows) {
+      this.stmt(
+        "UPDATE projects SET id = ?, created_at = COALESCE(created_at, ?) WHERE project_dir = ?",
+      ).run(projectIdOf(r.project_dir), Date.now(), r.project_dir);
+    }
+  }
+
+  /** Inserts the project when absent (default name and color) and returns its id. */
+  ensureProject(key: string, name: string, color: string): string {
+    const id = projectIdOf(key);
+    this.stmt(
+      `INSERT INTO projects (project_dir, name, color, id, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(project_dir) DO UPDATE SET
+         id = COALESCE(projects.id, excluded.id),
+         name = COALESCE(projects.name, excluded.name),
+         color = COALESCE(projects.color, excluded.color)`,
+    ).run(key, name, color, id, Date.now());
+    return (this.stmt("SELECT id FROM projects WHERE project_dir = ?").get(key) as { id: string })
+      .id;
+  }
+
+  /** Manual override if any (and its project still exists), else the inferred project (created on demand). */
+  private resolveProjectId(
+    sessionId: string,
+    projectDir: string | null,
+    cwd: () => string | null,
+  ): string {
+    const ov = this.stmt(
+      `SELECT o.project_id FROM session_overrides o JOIN projects p ON p.id = o.project_id
+       WHERE o.session_id = ?`,
+    ).get(sessionId) as { project_id: string } | undefined;
+    if (ov !== undefined) return ov.project_id;
+    const inf = inferProject(projectDir, cwd());
+    return this.ensureProject(inf.key, inf.name, inf.color);
   }
 
   transaction<T>(fn: () => T): T {
@@ -173,17 +254,43 @@ export class Store {
   projectScans = 0;
 
   upsertSession(row: SessionRow): void {
-    const prev = this.stmt("SELECT project_dir FROM sessions WHERE session_id = ?").get(
+    const prev = this.stmt("SELECT project_dir, project_id FROM sessions WHERE session_id = ?").get(
       row.session_id,
-    ) as { project_dir: string | null } | undefined;
+    ) as { project_dir: string | null; project_id: string | null } | undefined;
     if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
+    // The project is re-derived only for a new row or when project_dir changed (cwd never does):
+    // the hot path of an unchanged session adds no parse and no write.
+    let projectId = prev?.project_id ?? null;
+    let phaseLabel: string | null = null;
+    if (prev === undefined || projectId === null || prev.project_dir !== row.project_dir) {
+      projectId = this.resolveProjectId(row.session_id, row.project_dir, () => cwdOf(row.snapshot));
+    }
+    if (prev === undefined) {
+      phaseLabel =
+        (
+          this.stmt("SELECT phase FROM session_overrides WHERE session_id = ?").get(
+            row.session_id,
+          ) as { phase: string | null } | undefined
+        )?.phase ?? null;
+    }
     this.stmt(
-      `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at)
-       VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at)
+      `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at, project_id, phase_label)
+       VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at, @project_id, @phase_label)
        ON CONFLICT(session_id) DO UPDATE SET host = excluded.host, snapshot = excluded.snapshot, state = excluded.state,
          project_dir = excluded.project_dir, started_at = excluded.started_at,
-         last_event_at = excluded.last_event_at, ended_at = excluded.ended_at`,
-    ).run(row);
+         last_event_at = excluded.last_event_at, ended_at = excluded.ended_at, project_id = excluded.project_id`,
+    ).run({
+      session_id: row.session_id,
+      host: row.host,
+      snapshot: row.snapshot,
+      state: row.state,
+      project_dir: row.project_dir,
+      started_at: row.started_at,
+      last_event_at: row.last_event_at,
+      ended_at: row.ended_at,
+      project_id: projectId,
+      phase_label: phaseLabel,
+    });
   }
 
   /**
@@ -277,8 +384,8 @@ export class Store {
   listLiveSessions(cutoffMs: number, limit: number): SessionRow[] {
     return this.stmt(
       `SELECT * FROM sessions
-       WHERE state IS NULL OR state NOT IN ('ended', 'exited')
-          OR COALESCE(ended_at, last_event_at, 0) >= ?
+       WHERE state IS NULL OR (state <> 'archived' AND (state NOT IN ('ended', 'exited')
+          OR COALESCE(ended_at, last_event_at, 0) >= ?))
        ORDER BY COALESCE(started_at, last_event_at, 0) DESC, session_id LIMIT ?`,
     ).all(cutoffMs, limit) as SessionRow[];
   }
@@ -329,16 +436,154 @@ export class Store {
     ).all() as { session_id: string; project_dir: string }[];
   }
 
-  /** Configured projects plus every project_dir seen on a session. */
+  /** Configured projects plus every project_dir seen on a session (legacy shape, kept for GET /projects). */
   listProjects(limit: number): ProjectRow[] {
+    this.fillProjectIds();
     return this.stmt(
-      `SELECT project_dir, name, color, vault_collection FROM projects
+      `SELECT project_dir, name, color, vault_collection, id FROM projects
        UNION
-       SELECT DISTINCT s.project_dir, NULL, NULL, NULL FROM sessions s
+       SELECT DISTINCT s.project_dir, NULL, NULL, NULL, NULL FROM sessions s
          WHERE s.project_dir IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.project_dir = s.project_dir)
        ORDER BY 1 LIMIT ?`,
     ).all(limit) as ProjectRow[];
+  }
+
+  /** R5.1. Projects with session counts (live = not ended, exited or archived). */
+  listProjectSummaries(limit: number): ProjectSummary[] {
+    this.fillProjectIds();
+    return this.stmt(
+      `SELECT p.id AS id, p.project_dir AS project_dir, COALESCE(p.name, '') AS name, COALESCE(p.color, '') AS color,
+              p.vault_collection AS vault_collection,
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS sessions,
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id
+                 AND (s.state IS NULL OR s.state NOT IN ('ended', 'exited', 'archived'))) AS live
+       FROM projects p ORDER BY p.project_dir LIMIT ?`,
+    ).all(limit) as ProjectSummary[];
+  }
+
+  getProject(id: string): ProjectSummary | undefined {
+    this.fillProjectIds();
+    return this.listProjectSummaries(100_000).find((p) => p.id === id);
+  }
+
+  /** Edits only the keys present; a null vault_collection clears it. Returns false for an unknown id. */
+  patchProject(
+    id: string,
+    patch: { name?: string; color?: string; vault_collection?: string | null },
+  ): boolean {
+    return this.transaction(() => {
+      if (this.getProject(id) === undefined) return false;
+      if (patch.name !== undefined)
+        this.stmt("UPDATE projects SET name = ? WHERE id = ?").run(patch.name, id);
+      if (patch.color !== undefined)
+        this.stmt("UPDATE projects SET color = ? WHERE id = ?").run(patch.color, id);
+      if (patch.vault_collection !== undefined) {
+        this.stmt("UPDATE projects SET vault_collection = ? WHERE id = ?").run(
+          patch.vault_collection,
+          id,
+        );
+      }
+      return true;
+    });
+  }
+
+  /**
+   * Manual reassignment (wins over inference on every later ingest and survives replay). A null
+   * projectId clears the override and re-infers. Returns false for an unknown session or project.
+   */
+  setSessionProject(sessionId: string, projectId: string | null): boolean {
+    return this.transaction(() => {
+      const row = this.getSession(sessionId);
+      if (row === undefined) return false;
+      if (projectId !== null && this.getProject(projectId) === undefined) return false;
+      this.stmt(
+        `INSERT INTO session_overrides (session_id, project_id, phase, updated_at) VALUES (?, ?, NULL, ?)
+         ON CONFLICT(session_id) DO UPDATE SET project_id = excluded.project_id, updated_at = excluded.updated_at`,
+      ).run(sessionId, projectId, Date.now());
+      const pid = this.resolveProjectId(sessionId, row.project_dir, () => cwdOf(row.snapshot));
+      this.stmt("UPDATE sessions SET project_id = ? WHERE session_id = ?").run(pid, sessionId);
+      return true;
+    });
+  }
+
+  /** Manual phase label; null clears it (the inferred default shows again). False for an unknown session. */
+  setSessionPhase(sessionId: string, phase: string | null): boolean {
+    return this.transaction(() => {
+      if (this.getSession(sessionId) === undefined) return false;
+      this.stmt(
+        `INSERT INTO session_overrides (session_id, project_id, phase, updated_at) VALUES (?, NULL, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET phase = excluded.phase, updated_at = excluded.updated_at`,
+      ).run(sessionId, phase, Date.now());
+      this.stmt("UPDATE sessions SET phase_label = ? WHERE session_id = ?").run(phase, sessionId);
+      return true;
+    });
+  }
+
+  /** project_id and manual phase for a set of sessions (list/detail annotation). */
+  getSessionAtlas(
+    ids: string[],
+  ): Map<string, { project_id: string | null; phase_label: string | null }> {
+    const out = new Map<string, { project_id: string | null; phase_label: string | null }>();
+    // json_each keeps the statement a constant literal (no interpolated IN list).
+    const rows = this.stmt(
+      `SELECT session_id, project_id, phase_label FROM sessions
+       WHERE session_id IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(ids)) as {
+      session_id: string;
+      project_id: string | null;
+      phase_label: string | null;
+    }[];
+    for (const r of rows) out.set(r.session_id, r);
+    return out;
+  }
+
+  /** Live (not archived; ended/exited only within the grace window), archived and totals for the project view. */
+  listProjectLive(projectId: string, cutoffMs: number, limit: number): SessionRow[] {
+    return this.stmt(
+      `SELECT * FROM sessions WHERE project_id = ?
+         AND (state IS NULL OR (state <> 'archived' AND (state NOT IN ('ended', 'exited')
+              OR COALESCE(ended_at, last_event_at, 0) >= ?)))
+       ORDER BY COALESCE(started_at, last_event_at, 0) DESC, session_id LIMIT ?`,
+    ).all(projectId, cutoffMs, limit) as SessionRow[];
+  }
+
+  listProjectArchived(projectId: string, limit: number): SessionRow[] {
+    return this.stmt(
+      `SELECT * FROM sessions WHERE project_id = ? AND state = 'archived'
+       ORDER BY COALESCE(ended_at, last_event_at, started_at, 0) DESC, session_id LIMIT ?`,
+    ).all(projectId, limit) as SessionRow[];
+  }
+
+  /** Every session of a project: (id, snapshot, manual phase) for phase and branch roll-ups. */
+  listProjectSessionSnapshots(
+    projectId: string,
+    limit: number,
+  ): { session_id: string; snapshot: string; state: string | null; phase_label: string | null }[] {
+    return this.stmt(
+      `SELECT session_id, snapshot, state, phase_label FROM sessions WHERE project_id = ?
+       ORDER BY COALESCE(started_at, last_event_at, 0) DESC, session_id LIMIT ?`,
+    ).all(projectId, limit) as {
+      session_id: string;
+      snapshot: string;
+      state: string | null;
+      phase_label: string | null;
+    }[];
+  }
+
+  projectTotals(projectId: string): { sessions: number; hours: number; ids: string[] } {
+    const t = this.stmt(
+      `SELECT COUNT(*) AS n,
+              COALESCE(SUM(CASE WHEN started_at IS NOT NULL AND COALESCE(ended_at, last_event_at) > started_at
+                           THEN COALESCE(ended_at, last_event_at) - started_at ELSE 0 END), 0) AS ms
+       FROM sessions WHERE project_id = ?`,
+    ).get(projectId) as { n: number; ms: number };
+    const ids = (
+      this.stmt("SELECT session_id FROM sessions WHERE project_id = ?").all(projectId) as {
+        session_id: string;
+      }[]
+    ).map((r) => r.session_id);
+    return { sessions: t.n, hours: t.ms / 3_600_000, ids };
   }
 
   listHosts(limit: number): HostRow[] {
@@ -462,5 +707,14 @@ export class Store {
 
   close(): void {
     this.db.close();
+  }
+}
+
+function cwdOf(snapshot: string): string | null {
+  try {
+    const c = (JSON.parse(snapshot) as { cwd?: unknown }).cwd;
+    return typeof c === "string" ? c : null;
+  } catch {
+    return null;
   }
 }

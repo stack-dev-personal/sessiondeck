@@ -229,7 +229,7 @@ describe("REST reads", () => {
       .run("/proj/b", "B");
     expect(await h.post(batch([mkEnv()]))).toMatchObject({ statusCode: 200 });
     const p = (await get("/projects")).json() as { projects: { project_dir: string }[] };
-    expect(p.projects.map((x) => x.project_dir)).toEqual(["/proj/a", "/proj/b"]);
+    expect(p.projects.map((x) => x.project_dir)).toEqual(["/proj/a", "/proj/b", "/w"]); // /w: the ingested session's cwd (R5.1);
     const hs = (await get("/hosts")).json() as { hosts: Record<string, unknown>[] };
     expect(hs.hosts).toHaveLength(1);
     expect(Object.keys(hs.hosts[0]!).sort()).toEqual(["host", "last_seen", "last_seq", "os"]);

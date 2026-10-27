@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Store } from "../db/store.ts";
+import { annotateSessions } from "./atlas.ts";
 import { LIVE_GRACE_MS, MAX_LIMIT, readSnapshot } from "../snapshots.ts";
 
 const uint = z
@@ -42,7 +43,11 @@ export function liveSnapshots(
   if (truncated && limit === MAX_LIMIT) {
     log?.warn({ count: limit, limit }, "live session set truncated");
   }
-  return rows.slice(0, limit).map((r) => readSnapshot(r, nowMs));
+  // R5.1: additive project and phase fields (REST and the WS initial message stay identical).
+  return annotateSessions(
+    store,
+    rows.slice(0, limit).map((r) => readSnapshot(r, nowMs)),
+  );
 }
 
 export function registerRead(app: FastifyInstance, store: Store, now: () => number): void {
@@ -53,13 +58,16 @@ export function registerRead(app: FastifyInstance, store: Store, now: () => numb
     const t = now();
     return q.data.live === "1"
       ? liveSnapshots(store, t, q.data.limit ?? MAX_LIMIT, app.log)
-      : store.listSessions(q.data.limit ?? DEFAULT_LIST_LIMIT).map((r) => readSnapshot(r, t));
+      : annotateSessions(
+          store,
+          store.listSessions(q.data.limit ?? DEFAULT_LIST_LIMIT).map((r) => readSnapshot(r, t)),
+        );
   });
 
   app.get<{ Params: { id: string } }>("/sessions/:id", async (req, reply) => {
     const row = store.getSession(req.params.id);
     if (row === undefined) return reply.code(404).header("content-length", "0").send();
-    return readSnapshot(row, now());
+    return annotateSessions(store, [readSnapshot(row, now())])[0];
   });
 
   // D-S3-11: an authenticated audit view of the raw stored envelopes. The R2.7 staleness rule
@@ -109,8 +117,6 @@ export function registerRead(app: FastifyInstance, store: Store, now: () => numb
       lines: rows.map((l) => ({ agent_id: l.agent_id, line_no: l.line_no, ts: l.ts, raw: l.raw })),
     };
   });
-
-  app.get("/projects", async () => ({ projects: store.listProjects(MAX_LIMIT) }));
 
   // hosts rows hold no secrets (host, os, last_seen, last_seq).
   app.get("/hosts", async () => ({ hosts: store.listHosts(MAX_LIMIT) }));
