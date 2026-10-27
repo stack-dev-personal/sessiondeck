@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PINNED_BUN_VERSION,
+  PINNED_LINUX_X64_SHA256,
   PINNED_WIN32_X64_SHA256,
   bunPackageFor,
   pickBunBinary,
@@ -71,10 +72,27 @@ describe("pickBunBinary (compiler comes from lockfile-verified bytes only)", () 
   it("win32 with nothing installed fails and names pnpm install", () => {
     expect(() => pick("win32", {})).toThrow(/pnpm install/);
   });
-  it("linux uses the platform package only, never node_modules/bun/bin", () => {
-    const r = pick("linux", { "/store/@oven/bun-linux-x64/bin/bun": "x" });
+  it("linux prefers the platform package binary", () => {
+    const r = pick("linux", {
+      "/store/@oven/bun-linux-x64/bin/bun": "x",
+      [`${bunDir}/bin/bun.exe`]: "bad",
+    });
     expect(r).toEqual({ path: "/store/@oven/bun-linux-x64/bin/bun", source: "platform-package" });
-    expect(() => pick("linux", { [`${bunDir}/bin/bun`]: "x" })).toThrow(/no verified bun binary/);
+  });
+  it("linux accepts the moved bin/bun.exe only when its SHA-256 is the linux pin", () => {
+    const ok = pick("linux", { [`${bunDir}/bin/bun.exe`]: PINNED_LINUX_X64_SHA256 });
+    expect(ok).toEqual({ path: `${bunDir}/bin/bun.exe`, source: "pinned-hash" });
+    expect(() => pick("linux", { [`${bunDir}/bin/bun.exe`]: "f".repeat(64) })).toThrow(
+      /baseline or musl/,
+    );
+    expect(() => pick("linux", { [`${bunDir}/bin/bun.exe`]: PINNED_WIN32_X64_SHA256 })).toThrow();
+    expect(() => pick("win32", { [`${bunDir}/bin/bun.exe`]: PINNED_LINUX_X64_SHA256 })).toThrow();
+  });
+  it("linux never uses an unhashed bin/bun or an empty install", () => {
+    expect(() => pick("linux", { [`${bunDir}/bin/bun`]: PINNED_LINUX_X64_SHA256 })).toThrow(
+      /no verified bun binary/,
+    );
+    expect(() => pick("linux", {})).toThrow(/pnpm install/);
   });
   it("rejects unsupported platforms and arches", () => {
     expect(() => bunPackageFor("darwin", "arm64")).toThrow();

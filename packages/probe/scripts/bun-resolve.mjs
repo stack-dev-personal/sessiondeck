@@ -2,11 +2,13 @@
 // postinstall left, and that postinstall can fetch an unchecked binary when the platform package
 // is missing or fails `--version`, so it is never trusted by location.
 //   1. @oven/bun-<platform>/bin/<bun>: pnpm checked the tarball integrity against the lockfile.
-//   2. Windows only: bun's postinstall RENAMES that binary into node_modules/bun/bin/bun.exe (the
-//      package bin dir is then empty). That file is accepted only if its SHA-256 equals the pin
-//      below, which was taken from the file whose sha512 matched pnpm's store index entry for
-//      @oven/bun-windows-x64@1.4.4. Bump the pin with the bun version (test/exe-targets.test.ts
-//      fails when they drift apart).
+//   2. Windows and Linux: bun's postinstall RENAMES that binary into node_modules/bun/bin/bun.exe
+//      (optimizeBun, same code on both; the package bin dir is then empty). That file is accepted
+//      only if its SHA-256 equals the pin below for the host platform. Each pin was taken from the
+//      file whose sha512 matched pnpm's store index entry for @oven/bun-<platform>@1.4.4. Bump the
+//      pins with the bun version (test/exe-targets.test.ts fails when they drift apart).
+//      Linux postinstall picks the variant by CPU and libc (baseline when no AVX2, musl on Alpine);
+//      only the plain glibc x64 build is pinned, so a baseline or musl copy is refused by hash.
 // Pure helpers here (unit tested); build-exe.mjs supplies the filesystem.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -16,6 +18,10 @@ import { dirname, join } from "node:path";
 export const PINNED_BUN_VERSION = "1.4.4";
 export const PINNED_WIN32_X64_SHA256 =
   "cb1d8e6564e655e49d30cead359750a1cbbd12f42651caa4b62244d7bd93c244";
+
+export const PINNED_LINUX_X64_SHA256 =
+  "10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235";
+const MOVED_PINS = { win32: PINNED_WIN32_X64_SHA256, linux: PINNED_LINUX_X64_SHA256 };
 
 const PACKAGES = {
   win32: { pkg: "@oven/bun-windows-x64", bin: "bun.exe" },
@@ -40,18 +46,18 @@ export function bunBinaryIn(pkgDir, platform, arch = "x64") {
  * Throws an Error with a user-facing message when no verified binary is available.
  */
 export function pickBunBinary({ platform, arch = "x64", pkgDir, bunDir, exists, sha256 }) {
-  const { pkg, bin } = bunPackageFor(platform, arch);
+  const { pkg } = bunPackageFor(platform, arch);
   const fromPkg = bunBinaryIn(pkgDir, platform, arch);
   if (exists(fromPkg)) return { path: fromPkg, source: "platform-package" };
-  if (platform === "win32") {
-    const moved = join(bunDir, "bin", bin).replaceAll("\\", "/");
-    if (exists(moved) && sha256(moved) === PINNED_WIN32_X64_SHA256) {
-      return { path: moved, source: "pinned-hash" };
-    }
+  // postinstall always names the moved copy bun.exe, on Linux too
+  const moved = join(bunDir, "bin", "bun.exe").replaceAll("\\", "/");
+  if (exists(moved) && sha256(moved) === MOVED_PINS[platform]) {
+    return { path: moved, source: "pinned-hash" };
   }
   throw new Error(
     `no verified bun binary for ${platform}-${arch}: ${fromPkg} is missing` +
-      (platform === "win32" ? " and the postinstall copy does not match the pinned SHA-256" : "") +
+      " and the postinstall copy (bin/bun.exe) is absent or does not match the pinned SHA-256" +
+      (platform === "linux" ? " (only the glibc x64 build is pinned, not baseline or musl)" : "") +
       `. Run pnpm install (the lockfile-pinned ${pkg} must be installed); build-exe does not use an unverified bun.`,
   );
 }
