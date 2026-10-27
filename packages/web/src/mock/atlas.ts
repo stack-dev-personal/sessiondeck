@@ -10,6 +10,7 @@ import {
   type PhaseCount,
   type ProjectDetail,
   type ProjectSummary,
+  type SearchResult,
 } from "../atlas/types";
 import { basename } from "../lib/format";
 import type { BoardState } from "../store/board";
@@ -231,7 +232,105 @@ export function createMockAtlas(store: UseBoundStore<StoreApi<BoardState>>): Moc
     return p;
   };
 
+  const allSessions = (): AtlasSession[] => [
+    ...live().map((s) => annotate(s)),
+    ...archived.map((a) => annotate(a.snap, a.key)),
+  ];
+
+  /** In-memory stand-in for the hub's FTS search: every token must prefix a word of title or body. */
+  const search = (q: string, limit: number): SearchResult[] => {
+    const tokens = (q.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, 8);
+    const words = (t: string) => t.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const sessions = allSessions();
+    const out: SearchResult[] = [];
+    const snippetOf = (body: string[]): string => {
+      const hit = body.find((b) => tokens.some((t) => b.toLowerCase().includes(t)));
+      const text = (hit ?? body.find((b) => b !== "") ?? "").replace(/\s+/g, " ");
+      const at = hit
+        ? Math.max(
+            0,
+            text.toLowerCase().indexOf(tokens.find((t) => text.toLowerCase().includes(t))!) - 30,
+          )
+        : 0;
+      return text.slice(at, at + 120);
+    };
+    const consider = (r: Omit<SearchResult, "score">, body: string[], boost: number) => {
+      if (tokens.length === 0) {
+        out.push({ ...r, snippet: snippetOf(body), score: boost });
+        return;
+      }
+      const tw = words(r.title);
+      const bw = body.flatMap(words);
+      const ok = tokens.every((t, i) => {
+        const isLast = i === tokens.length - 1 && t.length >= 2;
+        const m = (w: string) => (isLast ? w.startsWith(t) : w === t);
+        return tw.some(m) || bw.some(m);
+      });
+      if (!ok) return;
+      const inTitle = tokens.every((t) => tw.some((w) => w.startsWith(t)));
+      out.push({ ...r, snippet: snippetOf(body), score: (inTitle ? 8 : 1) * boost });
+    };
+    for (const s of sessions) {
+      const a = atlasOf(s);
+      consider(
+        {
+          kind: "session",
+          id: s.session_id,
+          project_id: a.project_id ?? "",
+          title: s.session_name ?? a.project_name ?? s.session_id,
+          snippet: "",
+          state: s.state,
+        },
+        [
+          s.last_prompt ?? "",
+          s.last_assistant_message ?? "",
+          a.phase ?? "",
+          s.git.branch ?? "",
+          s.session_id,
+        ],
+        isLive(s) ? 1.5 : 1,
+      );
+    }
+    for (const p of allProjects()) {
+      consider(
+        { kind: "project", id: p.id, project_id: p.id, title: p.name, snippet: "" },
+        [basename(p.project_dir) ?? "", p.vault_collection ?? ""],
+        1,
+      );
+    }
+    const seen = new Set<string>();
+    for (const s of sessions) {
+      const a = atlasOf(s);
+      const label = a.phase;
+      if (!label || a.project_id === null || seen.has(`${a.project_id}\u0000${label}`)) continue;
+      seen.add(`${a.project_id}\u0000${label}`);
+      consider(
+        { kind: "phase", id: label, project_id: a.project_id, title: label, snippet: "" },
+        [a.project_name ?? ""],
+        1,
+      );
+    }
+    if (tokens.length === 0) {
+      const recent = sessions
+        .sort((a, b) => b.last_event_at - a.last_event_at)
+        .slice(0, Math.max(0, limit - 5))
+        .map((s) => out.find((o) => o.kind === "session" && o.id === s.session_id)!);
+      return [...recent, ...out.filter((o) => o.kind === "project").slice(0, 5)].slice(0, limit);
+    }
+    return out.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title)).slice(0, limit);
+  };
+
   const api: AtlasApi = {
+    listSessions: async () =>
+      allSessions().sort(
+        (a, b) => b.started_at - a.started_at || a.session_id.localeCompare(b.session_id),
+      ),
+    search: async (q, o) => {
+      const t0 = performance.now();
+      if (o?.signal?.aborted) throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+      const results = search(q, o?.limit ?? 20);
+      return { results, took_ms: Math.round((performance.now() - t0) * 100) / 100 };
+    },
     listProjects: async () =>
       allProjects().sort((a, b) => a.project_dir.localeCompare(b.project_dir)),
     getProject: async (id): Promise<ProjectDetail> => {

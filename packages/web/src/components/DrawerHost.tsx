@@ -4,9 +4,12 @@ import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 import { DetailDrawer } from "./DetailDrawer";
 
+/** Elements the drawer hands focus back to: board cards and rows of the session list. */
+const ANCHORS = '[data-testid="session-card"], [data-testid="session-list-row"]';
+
 /** Focuses the card for a session, found by id (the node may have been re-created meanwhile). */
 export function focusCard(id: string): boolean {
-  const cards = document.querySelectorAll<HTMLElement>('[data-testid="session-card"]');
+  const cards = document.querySelectorAll<HTMLElement>(ANCHORS);
   for (const c of cards) {
     if (c.dataset["sessionId"] === id) {
       c.focus();
@@ -18,7 +21,7 @@ export function focusCard(id: string): boolean {
 
 /** Id of the card after the given one in DOM order, else the one before it, else null. */
 function neighbourOf(id: string): string | null {
-  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="session-card"]'));
+  const cards = Array.from(document.querySelectorAll<HTMLElement>(ANCHORS));
   const i = cards.findIndex((c) => c.dataset["sessionId"] === id);
   if (i === -1) return null;
   return (cards[i + 1] ?? cards[i - 1])?.dataset["sessionId"] ?? null;
@@ -27,7 +30,7 @@ function neighbourOf(id: string): string | null {
 /** The card is gone: keep the keyboard user near it (its recorded neighbour), else the main region. */
 function focusNearest(neighbour: string | null): void {
   if (neighbour !== null && focusCard(neighbour)) return;
-  const first = document.querySelector<HTMLElement>('[data-testid="session-card"]');
+  const first = document.querySelector<HTMLElement>(ANCHORS);
   if (first) {
     first.focus();
     return;
@@ -46,7 +49,9 @@ function focusNearest(neighbour: string | null): void {
 export function DrawerHost() {
   const id = useUi((s) => s.selectedSessionId);
   const closeSession = useUi((s) => s.closeSession);
-  const session = useBoard((s) => (id === null ? undefined : s.sessions[id]));
+  const fallback = useUi((s) => s.fallbackSession);
+  const boardSession = useBoard((s) => (id === null ? undefined : s.sessions[id]));
+  const session = boardSession ?? (fallback?.session_id === id ? fallback : undefined);
   const history = useBoard((s) => (id === null ? undefined : s.history[id]));
   const now = useNow(1000 * 30);
   const open = id !== null && session !== undefined;

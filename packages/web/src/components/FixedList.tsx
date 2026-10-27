@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 export const VIRTUAL_THRESHOLD = 100;
 
@@ -15,6 +15,7 @@ export function FixedList<T>({
   label,
   testId,
   threshold = VIRTUAL_THRESHOLD,
+  scrollToIndex = null,
 }: {
   items: readonly T[];
   rowHeight: number;
@@ -24,8 +25,20 @@ export function FixedList<T>({
   label: string;
   testId?: string;
   threshold?: number;
+  /** Keeps this row inside the scroll box when virtualized (below the threshold the page scrolls). */
+  scrollToIndex?: number | null;
 }) {
   const [top, setTop] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const box = boxRef.current;
+    if (box === null || scrollToIndex === null) return;
+    const y = scrollToIndex * rowHeight;
+    if (y < box.scrollTop) box.scrollTop = y;
+    else if (y + rowHeight > box.scrollTop + box.clientHeight)
+      box.scrollTop = y + rowHeight - box.clientHeight;
+    setTop(box.scrollTop);
+  }, [scrollToIndex, rowHeight]);
   if (items.length <= threshold) {
     return (
       <ul aria-label={label} data-testid={testId} className="m-0 list-none p-0">
@@ -42,6 +55,7 @@ export function FixedList<T>({
   const last = Math.min(items.length, Math.ceil((top + maxHeight) / rowHeight) + over);
   return (
     <div
+      ref={boxRef}
       style={{ maxHeight, overflowY: "auto" }}
       tabIndex={0}
       aria-label={`${label} (scrollable)`}

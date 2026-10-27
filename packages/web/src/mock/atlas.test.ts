@@ -91,3 +91,40 @@ describe("mock atlas", () => {
     await expect(m.api.getProject("nope")).rejects.toMatchObject({ status: 404 });
   });
 });
+
+describe("mock search and session list", () => {
+  it("lists live and archived sessions, newest start first", async () => {
+    const { m } = settled();
+    const rows = await m.api.listSessions();
+    expect(rows.length).toBeGreaterThan(30);
+    expect(rows.some((r) => r.session_id.startsWith("mock-archived-"))).toBe(true);
+    expect(rows.every((r, i) => i === 0 || rows[i - 1]!.started_at >= r.started_at)).toBe(true);
+  });
+
+  it("matches word prefixes over title and body, grouped by kind score", async () => {
+    const { m } = settled();
+    const r = await m.api.search("bb2d");
+    expect(r.results.some((x) => x.kind === "project" && x.title === "bb2dash")).toBe(true);
+    expect(r.results.some((x) => x.kind === "session")).toBe(true);
+    expect(r.took_ms).toBeGreaterThanOrEqual(0);
+    expect((await m.api.search("zzzzqq")).results).toEqual([]);
+  });
+
+  it("an empty query returns recent sessions and up to 5 projects; phases are searchable", async () => {
+    const { m } = settled();
+    const r = await m.api.search("", { limit: 20 });
+    expect(r.results.filter((x) => x.kind === "project").length).toBeLessThanOrEqual(5);
+    expect(r.results.filter((x) => x.kind === "session").length).toBeGreaterThan(0);
+    const ph = await m.api.search("Hardening");
+    expect(ph.results.some((x) => x.kind === "phase" && x.id === "Hardening")).toBe(true);
+  });
+
+  it("rejects with an AbortError when the signal is already aborted", async () => {
+    const { m } = settled();
+    const c = new AbortController();
+    c.abort();
+    await expect(m.api.search("a", { signal: c.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
+});

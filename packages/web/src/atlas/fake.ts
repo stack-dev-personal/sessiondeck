@@ -85,6 +85,8 @@ export function fakeApi(over: Partial<AtlasApi> = {}): FakeApi {
     setSessionPhase: vi.fn(async (id: string, phase: string | null) =>
       session(id, { phase, phase_source: phase ? "manual" : null }),
     ),
+    listSessions: vi.fn(async () => [] as AtlasSession[]),
+    search: vi.fn(async () => ({ results: [], took_ms: 0 })),
     ...over,
   };
   return Object.fromEntries(

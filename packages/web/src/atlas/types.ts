@@ -84,3 +84,22 @@ export interface ProjectDetail {
   totals: Totals;
   branches: BranchCount[];
 }
+
+export type SearchKind = "session" | "project" | "phase";
+
+/** One GET /search hit (docs/ATLAS.md). `title` and `snippet` are raw transcript text: render as text only. */
+export interface SearchResult {
+  kind: SearchKind;
+  /** Session id, project id, or for a phase the phase label. */
+  id: string;
+  project_id: string;
+  title: string;
+  snippet: string;
+  state?: string;
+  score: number;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  took_ms: number;
+}

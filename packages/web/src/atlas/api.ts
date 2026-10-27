@@ -5,6 +5,9 @@ import type {
   PhaseCount,
   ProjectDetail,
   ProjectSummary,
+  SearchKind,
+  SearchResponse,
+  SearchResult,
   Totals,
 } from "./types";
 
@@ -18,6 +21,40 @@ export interface AtlasApi {
   setSessionProject(sessionId: string, projectId: string | null): Promise<AtlasSession>;
   /** `null` restores the inferred phase. Resolves with the annotated session. */
   setSessionPhase(sessionId: string, phase: string | null): Promise<AtlasSession>;
+  /** GET /sessions: every session the hub keeps, ended and archived included (newest start first). */
+  listSessions(opts?: { signal?: AbortSignal }): Promise<AtlasSession[]>;
+  /** GET /search. An empty `q` returns recent items. Rejects with an AbortError when `signal` aborts. */
+  search(q: string, opts?: { limit?: number; signal?: AbortSignal }): Promise<SearchResponse>;
+}
+
+/** True for the rejection a cancelled request produces; callers drop those silently. */
+export const isAbort = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { name?: unknown }).name === "AbortError";
+
+const KINDS: readonly SearchKind[] = ["session", "project", "phase"];
+
+/** Defensive parse of the /search body: unknown kinds and malformed rows are dropped. */
+export function parseSearch(v: unknown): SearchResponse {
+  if (typeof v !== "object" || v === null) throw new AtlasError(0, "Bad response");
+  const o = v as Record<string, unknown>;
+  const rows = Array.isArray(o["results"]) ? o["results"] : [];
+  const results: SearchResult[] = [];
+  for (const r of rows) {
+    if (typeof r !== "object" || r === null) continue;
+    const x = r as Record<string, unknown>;
+    const kind = x["kind"];
+    if (!KINDS.includes(kind as SearchKind) || typeof x["id"] !== "string") continue;
+    results.push({
+      kind: kind as SearchKind,
+      id: x["id"],
+      project_id: typeof x["project_id"] === "string" ? x["project_id"] : "",
+      title: typeof x["title"] === "string" ? x["title"] : "",
+      snippet: typeof x["snippet"] === "string" ? x["snippet"] : "",
+      ...(typeof x["state"] === "string" ? { state: x["state"] } : {}),
+      score: typeof x["score"] === "number" ? x["score"] : 0,
+    });
+  }
+  return { results, took_ms: typeof o["took_ms"] === "number" ? o["took_ms"] : 0 };
 }
 
 export class AtlasError extends Error {
@@ -93,6 +130,8 @@ export function restBase(hubUrl: string): string {
   }
 }
 
+const abortError = (): Error => Object.assign(new Error("Aborted"), { name: "AbortError" });
+
 export interface HttpOptions {
   config: () => { hubUrl: string; token: string };
   fetchImpl?: typeof fetch;
@@ -100,7 +139,12 @@ export interface HttpOptions {
 
 /** Same bearer token as the WebSocket (Settings); never put in a URL. */
 export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
-  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+  const call = async (
+    method: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> => {
     const { hubUrl, token } = opts.config();
     const headers: Record<string, string> = { accept: "application/json" };
     if (token !== "") headers["authorization"] = `Bearer ${token}`;
@@ -111,9 +155,11 @@ export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
       res = await f(`${restBase(hubUrl)}${path}`, {
         method,
         headers,
+        ...(signal ? { signal } : {}),
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
-    } catch {
+    } catch (e) {
+      if (isAbort(e) || signal?.aborted) throw e instanceof Error ? e : abortError();
       throw new AtlasError(0, "Hub unreachable");
     }
     if (!res.ok) {
@@ -156,6 +202,12 @@ export function createHttpAtlasApi(opts: HttpOptions): AtlasApi {
       })) as AtlasSession,
     setSessionPhase: async (sid, phase) =>
       (await call("PATCH", `/sessions/${enc(sid)}/phase`, { phase })) as AtlasSession,
+    listSessions: async (o) =>
+      sessionList(await call("GET", "/sessions?limit=1000", undefined, o?.signal)),
+    search: async (q, o) =>
+      parseSearch(
+        await call("GET", `/search?q=${enc(q)}&limit=${o?.limit ?? 20}`, undefined, o?.signal),
+      ),
   };
 }
 
@@ -192,4 +244,6 @@ export const atlasApi: AtlasApi = {
   listPhases: async (id) => (await cur()).listPhases(id),
   setSessionProject: async (s, p) => (await cur()).setSessionProject(s, p),
   setSessionPhase: async (s, p) => (await cur()).setSessionPhase(s, p),
+  listSessions: async (o) => (await cur()).listSessions(o),
+  search: async (q, o) => (await cur()).search(q, o),
 };
