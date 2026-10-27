@@ -190,3 +190,24 @@ Machine: Linux a931702caf2a 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYN
 | 3 | 2.33 | 14.03 | 22.01 | 1.23 | 16.69 | 24.76 |
 
 Slowest class is the 3-letter prefix (p50 about 20 ms, p95 about 35 ms at the route): it matches many documents and builds a snippet from each candidate. Everything else is under 25 ms at p95. Verdict: R5.4 latency PASS with about 5x headroom against the 100 ms limit. Index cost on ingest: a session's index entry is written only when its indexed text changed.
+
+## R2.4 A/B (S9)
+
+2026-10-27. Question: does the Phase 5 hub work (head 7facd61, atlas + FTS5 indexing) regress R2.4 ingest load against the base `origin/sprint/3-organize` (cde5b02)?
+
+Machine: Linux 6.18.33.2-microsoft-standard-WSL2, AMD Ryzen AI 9 465 w/ Radeon 880M, 20 logical CPUs, node v22.23.3. Shared host; nothing else started by this session during the runs.
+
+Method: throwaway detached worktree of the base, alternated base, head, base, head, base, head, 60 s each, `node scripts/load-ingest.mjs --rate 1000 --duration 60 --batch 100 --p95-limit 20` run from `packages/hub` of each tree (this is what `pnpm -F @sessiondeck/hub load` runs). Deviations: `pnpm install --frozen-lockfile --offline` failed in the base (binary-extensions@2.3.0 not in the offline store), and pnpm refuses to run in a tree whose node_modules is a symlink. The base therefore used symlinked node_modules from the head checkout (pnpm-lock.yaml and all package.json dependencies are identical between base and head except a hub package.json edit of 3 lines) and was invoked via `node` directly. The script builds from its own root, so each side ran its own hub source. A first attempt of 6 runs (head only valid, base refused to start) was discarded.
+
+| Run | Tree | p50 ms | p95 ms | p99 ms | max ms | envelopes/s | loadavg (1/5/15) before |
+|---|---|---|---|---|---|---|---|
+| 1 | base | 17.00 | 45.81 | 62.24 | 72.83 | 1001 | 1.81 2.52 2.34 |
+| 2 | head | 24.82 | 73.39 | 106.66 | 192.49 | 1001 | 1.74 2.32 2.28 |
+| 3 | base | 16.96 | 39.94 | 64.18 | 158.15 | 1001 | 2.98 2.58 2.37 |
+| 4 | head | 32.55 | 80.36 | 130.19 | 304.93 | 1001 | 2.58 2.52 2.37 |
+| 5 | base | 21.03 | 53.26 | 71.17 | 146.81 | 1001 | 3.68 2.89 2.51 |
+| 6 | head | 25.14 | 83.61 | 145.65 | 397.79 | 1001 | 2.99 2.83 2.52 |
+
+Summary: base p95 39.94 to 53.26 (mean 46.3); head p95 73.39 to 83.61 (mean 79.1). Distributions do not overlap; head is about 1.7x base at p95, with the same ordering at p50 and p99. Every run on both sides FAILS the 20 ms limit, so the host is contended (as in FIX-5), but the head is consistently worse than the base under the same conditions.
+
+Conclusion: regression. The head is consistently worse than the base beyond run-to-run noise, most likely the per-ingest atlas/search indexing added in packages/hub/src/ingest/ingestor.ts. Absolute R2.4 pass still needs a quiet-host or laptop run. Caveat: n=3 per side, load average rose during the sequence for both sides.
