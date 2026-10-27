@@ -5,6 +5,8 @@
 // discovered at run time from the raw data and git config; nothing here names a real person.
 import { FREE_MAX } from "./transcript-scrub-rules.mjs";
 import { BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
+import { DENY_PLACEHOLDER } from "./transcript-deny-list.mjs";
+import { mapMcpPhrase } from "./transcript-scrub-private.mjs";
 
 const RUN = String.raw`[^\s"'\`<>|*?(){}\[\],;]*`;
 const SEP = String.raw`(?:[\\/]|%5[Cc]|%2[Ff])`;
@@ -28,6 +30,9 @@ const PATH_TAIL = /(?::\d+){1,2}$|[.:!]+$/;
 const TOKENS = [
   /\b(?:sk|ghp|gho|ghs|ghu)[-_][^\s'"`]+/g,
   /\b(?:npm|sbp|glpat|hf)_[A-Za-z0-9_-]{8,}/g,
+  /\bsb_(?:secret|publishable)_[A-Za-z0-9_-]{8,}/g,
+  /\bcf(?:ut|at|k)_[A-Za-z0-9]{20,}/g,
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/'"`]+:[^\s@/'"`]+@/gi,
   /\bgithub_pat_[A-Za-z0-9_]{8,}/g,
   /\b(?:AKIA|ASIA)[A-Z0-9]{12,}/g,
   /\bxox[a-z]-[A-Za-z0-9-]{8,}/g,
@@ -38,8 +43,12 @@ const TOKENS = [
 ];
 const RUN_32 = /(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_=-]{32,}(?![A-Za-z0-9+/_=-])/g;
 const MCP_TOOL = /\bmcp__([A-Za-z0-9][A-Za-z0-9_.-]*?)__([A-Za-z0-9_-]+)/g;
+// A name ending in a secret word, with or without a prefix (access_token, client_secret, X_API_KEY).
 const SECRET_PAIR =
-  /\b((?:api[_-]?key|secret|token|password|passwd|authorization)["']?\s*[:=]\s*["']?)([^\s"',;<]{6,})/gi;
+  /(?<![A-Za-z0-9])((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret|token|password|passwd|authorization|credentials?|private[_-]?key)s?["']?\s*[:=]\s*["']?)([^\s"',;<]{6,})/gi;
+// Any assignment whose value is a long letters-and-digits run (24+) is a key, whatever the name.
+const ASSIGNED_RUN =
+  /(?<![A-Za-z0-9])([A-Za-z_][A-Za-z0-9_]*\s*[=:]\s*["']?)([A-Za-z0-9]{24,})(?![A-Za-z0-9])/g;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 const GIT_OWNER =
   /\b((?:github\.com|gitlab\.com|bitbucket\.org)[:/]+|api\.github\.com\/(?:repos|users|orgs)\/)([A-Za-z0-9_.-]+)/gi;
@@ -47,12 +56,20 @@ const GIT_OWNER =
 /** @param {string} s */
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** A long run is a token only when it mixes upper case, lower case and digits (not a path or a kebab name). */
-const looksLikeSecret = (/** @type {string} */ run) =>
-  /[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run);
+/** @param {string} s */
+const mcpKey = (s) => s.toLowerCase().replace(/[\s_.:-]+/g, "_");
 
 /**
- * @typedef {{ users?: string[], emails?: string[], accounts?: string[], fragments?: string[], folders?: string[] }} Literals
+ * A long run is a token when it mixes upper case, lower case and digits, or when it is one
+ * unbroken lowercase-and-digits word (a path or a kebab name has separators and is not).
+ */
+const looksLikeSecret = (/** @type {string} */ run) =>
+  (/[A-Z]/.test(run) && /[a-z]/.test(run) && /\d/.test(run)) ||
+  (/^[a-z0-9]+$/.test(run) && /[a-z]/.test(run) && /\d/.test(run));
+const hasLetterAndDigit = (/** @type {string} */ run) => /[A-Za-z]/.test(run) && /\d/.test(run);
+
+/**
+ * @typedef {{ users?: string[], emails?: string[], accounts?: string[], fragments?: string[], folders?: string[], mcpServers?: string[], denyWords?: string[] }} Literals
  */
 
 export class TextScrubber {
@@ -77,6 +94,27 @@ export class TextScrubber {
     // Pieces of the account names (fix A): substrings, any case, inside longer words too.
     this.fragmentRe = sweep(long(literals.fragments), false);
     this.folderRe = sweep(long(literals.folders), true);
+    // Local deny-list (raw/deny-words.txt): case-insensitive substrings, replaced by <DENY>.
+    const deny = [...new Set((literals.denyWords ?? []).map((w) => w.toLowerCase()))]
+      .filter((w) => w.length >= 3)
+      .sort((a, b) => b.length - a.length);
+    this.denyRe = sweep(deny, false);
+    /** MCP server names by normalized key: "claude.ai Linear" and "claude_ai_Linear" are one server. */
+    this.mcpKeys = new Map(
+      (literals.mcpServers ?? []).filter((n) => n.length >= 3).map((n) => [mcpKey(n), n]),
+    );
+    const mcpAlt = [...this.mcpKeys.values()]
+      .sort((a, b) => b.length - a.length)
+      .map((n) =>
+        n
+          .split(/[\s_.:-]+/)
+          .map(escapeRe)
+          .join("[\\s_.:-]"),
+      );
+    this.mcpRe =
+      mcpAlt.length === 0
+        ? null
+        : new RegExp(`(?<![A-Za-z0-9])(?:${mcpAlt.join("|")})(?![A-Za-z0-9])`, "gi");
     /** Number of fragment replacements made so far (reported by the run as a number only). */
     this.fragmentHits = 0;
   }
@@ -111,6 +149,13 @@ export class TextScrubber {
     for (const re of TOKENS) s = s.replace(re, "<REDACTED>");
     s = s.replace(RUN_32, (run) => (looksLikeSecret(run) ? "<REDACTED>" : run));
     s = s.replace(SECRET_PAIR, "$1<REDACTED>");
+    s = s.replace(ASSIGNED_RUN, (m, lead, run) =>
+      hasLetterAndDigit(run) ? `${lead}<REDACTED>` : m,
+    );
+    s = mapMcpPhrase(s, (name) => this.mapper.mapMcp(this.mcpKeys.get(mcpKey(name)) ?? name));
+    if (this.mcpRe) {
+      s = s.replace(this.mcpRe, (m) => this.mapper.mapMcp(this.mcpKeys.get(mcpKey(m)) ?? m));
+    }
     s = s.replace(GIT_OWNER, (m, host, owner) => (owner.startsWith("<") ? m : `${host}<ACCOUNT>`));
     if (this.emailRe) s = s.replace(this.emailRe, "<EMAIL>");
     s = s.replace(EMAIL, "<EMAIL>");
@@ -123,7 +168,15 @@ export class TextScrubber {
         return "<ACCOUNT>";
       });
     }
+    if (this.denyRe) s = s.replace(this.denyRe, DENY_PLACEHOLDER);
     return s;
+  }
+
+  /** Whether a value contains a deny-list word (rejects enum-shaped values). @param {string} v */
+  hasDenyWord(v) {
+    if (!this.denyRe) return false;
+    this.denyRe.lastIndex = 0;
+    return this.denyRe.test(v);
   }
 
   /**

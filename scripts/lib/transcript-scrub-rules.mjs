@@ -31,6 +31,8 @@ export const DROP_KEYS = {
   tail: "api-request tail: hash list of the request body (wire payload)",
   schema: "tool schema in a tool listing (configuration in bulk)",
   base64: "base64 payload",
+  addedBlocks: "MCP server instructions (configuration in bulk, names the user's servers)",
+  addedLines: "agent and tool listings (configuration: names and descriptions of user agents)",
 };
 
 /** Keys whose value is the base64 payload of an image or document source (dropped when type is base64). */
@@ -59,6 +61,9 @@ export const FREE_ROOTS = new Set([
 
 const ENUM = /^[A-Za-z][A-Za-z0-9_.:-]{0,59}$/;
 const ID = /^[A-Za-z0-9_-]{4,64}$/;
+/** Key "id" is also a tool-input and tool-result field, so it only keeps known id shapes. */
+const KNOWN_ID =
+  /^(?:[a-z]{2,12}_[A-Za-z0-9]{6,64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const MODEL = /^(?:<[a-z]{3,20}>|[A-Za-z0-9._[\]-]{1,60})$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z)?$/;
 const VERSION = /^\d+\.\d+\.\d+(?:[-+.][A-Za-z0-9.]+)?$/;
@@ -94,7 +99,6 @@ add(
     "permissionMode",
     "promptSource",
     "turnOrigin",
-    "querySource",
     "userType",
     "entrypoint",
     "status",
@@ -140,10 +144,6 @@ add(
     "upgradePaths[]",
     "path[]",
     "betas[]",
-    "addedTypes[]",
-    "removedTypes[]",
-    "builtInTypes[]",
-    "builtInPluginTypes[]",
     "causes[]",
     "stop_sequence",
     "recipient_kind",
@@ -170,7 +170,6 @@ add(
     "agentId",
     "taskId",
     "backgroundTaskId",
-    "id",
     "commandUuid",
     "source_uuid",
     "msg_id",
@@ -190,6 +189,11 @@ add(
   ],
   idRule("identifier or link between rows (random, no personal data)"),
 );
+add(["id"], {
+  kind: "pattern",
+  re: KNOWN_ID,
+  why: "message, tool-use or row id (prefixed random id or uuid only)",
+});
 add(["requestId", "deliveryId", "delivery_id"], {
   kind: "const",
   re: ID,
@@ -228,9 +232,25 @@ add(["organizationUuid", "accountUuid", "organizationName", "orgName", "owner"],
 });
 add(["prRepository"], { kind: "prRepository", why: "owner/repo of a pull request" });
 add(["prUrl"], { kind: "prUrl", why: "pull request URL" });
-add(["agentType", "subagent_type", "attributionAgent", "agentSetting"], {
-  kind: "agent",
-  why: "agent type (custom names numbered)",
+add(
+  [
+    "agentType",
+    "subagent_type",
+    "attributionAgent",
+    "agentSetting",
+    "addedTypes[]",
+    "removedTypes[]",
+    "builtInTypes[]",
+    "builtInPluginTypes[]",
+  ],
+  {
+    kind: "agent",
+    why: "agent type (custom names numbered)",
+  },
+);
+add(["querySource"], {
+  kind: "querySource",
+  why: "query source: fixed words, or agent:<kind>:<name> with the name numbered",
 });
 add(["skill", "attributionSkill", "recipient", "to", "session_name"], {
   kind: "name",

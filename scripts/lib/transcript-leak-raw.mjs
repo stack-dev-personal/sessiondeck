@@ -35,10 +35,18 @@ function readRows(file) {
 /**
  * @param {string | null} rawDir raw/transcripts, or null (CI)
  * @param {string} [vocabulary] lower-cased public text; defaults to the repository's tracked files
- * @returns {{ present: boolean, users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[] }}
+ * @returns {{ present: boolean, users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[] }}
  */
 export function deriveRawSets(rawDir, vocabulary) {
-  const none = { present: false, users: [], emails: [], accounts: [], fragments: [], folders: [] };
+  const none = {
+    present: false,
+    users: [],
+    emails: [],
+    accounts: [],
+    fragments: [],
+    folders: [],
+    mcpServers: [],
+  };
   if (rawDir === null || !existsSync(rawDir)) return none;
   const lit = discoverLiterals(listJson(rawDir).flatMap(readRows), vocabulary);
   return { present: true, ...lit };

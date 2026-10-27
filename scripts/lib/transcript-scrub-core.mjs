@@ -12,10 +12,19 @@ import {
   DROP_KEYS,
   FREE_ROOTS,
   LEAF,
+  ENUM_RE,
   MODEL_KEYED,
   SPECIAL,
   USER_KEYED,
 } from "./transcript-scrub-rules.mjs";
+import {
+  attachmentDropKeys,
+  hasContent,
+  isOutsideProject,
+  isPrivateToolUse,
+  PRIVATE_CONTENT_KEYS,
+  siblingPath,
+} from "./transcript-scrub-private.mjs";
 import { TextScrubber } from "./transcript-scrub-text.mjs";
 
 const SAFE_KEY = /^-?[A-Za-z_][A-Za-z0-9_-]{0,40}$/;
@@ -41,11 +50,70 @@ export class TranscriptScrubber {
     this.unknownKeys = new Map();
     /** @type {Map<string, string>} */
     this.names = new Map();
+    /** tool_use ids whose tool touched something outside this project (their output is dropped) */
+    this.privateToolIds = new Set();
+    /** whether the row being scrubbed answers one of those tool uses */
+    this.rowPrivate = false;
+  }
+
+  /**
+   * Registers the tool uses of a whole fixture before any row is scrubbed, so a result is dropped
+   * even when its tool_use is in another file of the same fixture.
+   * @param {Iterable<unknown>} rows
+   */
+  prime(rows) {
+    /** @param {unknown} v */
+    const walk = (v) => {
+      if (Array.isArray(v)) {
+        for (const el of v) walk(el);
+      } else if (v !== null && typeof v === "object") {
+        const o = /** @type {Record<string, unknown>} */ (v);
+        if (o.type === "tool_use" && typeof o.id === "string" && typeof o.name === "string") {
+          if (isPrivateToolUse(o.name, this.#scrubbedInput(o.input))) this.privateToolIds.add(o.id);
+        }
+        for (const c of Object.values(o)) walk(c);
+      }
+    };
+    for (const r of rows) walk(r);
+  }
+
+  /** Tool input with the strings the privacy rules read mapped to placeholders. @param {unknown} input */
+  #scrubbedInput(input) {
+    if (input === null || typeof input !== "object") return input;
+    const inp = /** @type {Record<string, unknown>} */ (input);
+    /** @type {Record<string, unknown>} */
+    const out = {};
+    for (const k of ["file_path", "path", "notebook_path"]) {
+      const v = inp[k];
+      if (typeof v === "string")
+        out[k] = v.startsWith("~") ? v : (this.mapper.mapPath(v, "auto") ?? v);
+    }
+    if (typeof inp.command === "string") out.command = this.text.scrub(inp.command);
+    return out;
+  }
+
+  /** Whether the object's own path field points outside this project. @param {Record<string, unknown>} obj */
+  #outsideSibling(obj) {
+    const raw = siblingPath(obj);
+    if (raw === undefined) return false;
+    if (raw.startsWith("~")) return true;
+    const mapped = this.mapper.mapPath(raw, "auto");
+    return mapped !== null && isOutsideProject(mapped);
   }
 
   /** Scrubs one parsed row (or meta object). @param {unknown} row @returns {unknown} */
   row(row) {
+    this.rowPrivate = this.#answersPrivateUse(row);
     return this.value(row, "");
+  }
+
+  /** @param {unknown} row */
+  #answersPrivateUse(row) {
+    const content = /** @type {any} */ (row)?.message?.content;
+    if (!Array.isArray(content) || this.privateToolIds.size === 0) return false;
+    return content.some(
+      (b) => b?.type === "tool_result" && this.privateToolIds.has(String(b.tool_use_id)),
+    );
   }
 
   /** @param {unknown} value @param {string} path @returns {unknown} */
@@ -91,7 +159,9 @@ export class TranscriptScrubber {
   #byRule(rule, v, path) {
     switch (rule.kind) {
       case "pattern":
-        return rule.re?.test(v) === true && !TOKEN_SHAPE.test(v) ? v : this.#deny(v, path);
+        return rule.re?.test(v) === true && !TOKEN_SHAPE.test(v) && !this.text.hasDenyWord(v)
+          ? v
+          : this.#deny(v, path);
       case "const":
         return rule.value ?? "";
       case "prRepository":
@@ -102,6 +172,8 @@ export class TranscriptScrubber {
       }
       case "agent":
         return this.mapper.mapAgent(v, BUILTIN_AGENTS);
+      case "querySource":
+        return this.#querySource(v, path);
       case "name":
         return this.#named(v);
       case "hookName":
@@ -117,6 +189,15 @@ export class TranscriptScrubber {
     }
   }
 
+  /** Fixed words stay; agent:<kind>:<name> keeps the kind and numbers a custom name. @param {string} v @param {string} path */
+  #querySource(v, path) {
+    const m = /^(agent:[a-z]+:)(.+)$/.exec(v);
+    if (m) return `${m[1]}${this.mapper.mapAgent(m[2] ?? "", BUILTIN_AGENTS)}`;
+    return ENUM_RE.test(v) && !TOKEN_SHAPE.test(v) && !this.text.hasDenyWord(v)
+      ? v
+      : this.#deny(v, path);
+  }
+
   /** @param {string} key @param {unknown} v @param {string} path */
   #drops(key, v, path) {
     if (!Object.hasOwn(DROP_KEYS, key) || (key === "shape" && path !== "")) return false;
@@ -129,6 +210,8 @@ export class TranscriptScrubber {
     const userKeyed = USER_KEYED.has(last);
     const modelKeyed = MODEL_KEYED.has(last);
     const type = obj.type;
+    const attachmentDrops = path === "attachment" ? attachmentDropKeys(obj) : null;
+    const privateSibling = this.#outsideSibling(obj);
     /** @type {Record<string, unknown>} */
     const out = {};
     const used = new Set();
@@ -152,9 +235,32 @@ export class TranscriptScrubber {
       used.add(outKey);
       const child = obj[key];
       const childPath = path === "" ? seg : `${path}.${seg}`;
+      if (this.#forcedBlob(key, child, obj, path, privateSibling, attachmentDrops)) {
+        out[outKey] = `<BLOB ${JSON.stringify(child).length}>`;
+        this.dropped.set(`private:${key}`, (this.dropped.get(`private:${key}`) ?? 0) + 1);
+        continue;
+      }
       out[outKey] = this.#child(key, child, childPath, path, type);
     }
     return out;
+  }
+
+  /**
+   * Private-content rules (transcript-scrub-private.mjs): contents next to a path outside this
+   * project, output of a tool use that touched one, hook output and skill listings.
+   * @param {string} key @param {unknown} v @param {Record<string, unknown>} obj @param {string} path
+   * @param {boolean} privateSibling @param {ReadonlySet<string> | null} attachmentDrops
+   */
+  #forcedBlob(key, v, obj, path, privateSibling, attachmentDrops) {
+    if (!hasContent(v)) return false;
+    if (privateSibling && PRIVATE_CONTENT_KEYS.has(key)) return true;
+    if (attachmentDrops?.has(key)) return true;
+    if (this.rowPrivate && path === "" && key === "toolUseResult") return true;
+    return (
+      key === "content" &&
+      obj.type === "tool_result" &&
+      this.privateToolIds.has(String(obj.tool_use_id))
+    );
   }
 
   /** @param {string} key @param {unknown} v @param {string} childPath @param {string} path @param {unknown} type */

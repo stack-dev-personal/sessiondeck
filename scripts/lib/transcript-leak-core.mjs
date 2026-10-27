@@ -11,7 +11,12 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { KNOWN_KEYS, TRANSCRIPT_KEYS } from "./fixture-keys.mjs";
 import { EMAIL, HOME_SHAPES, TOKEN_IN_TEXT, tokenRuns } from "./fixture-leak-patterns.mjs";
-import { checkTranscriptStructure } from "./transcript-leak-structure.mjs";
+import {
+  checkTranscriptStructure,
+  newContext,
+  primeContext,
+} from "./transcript-leak-structure.mjs";
+import { countDenyHits } from "./transcript-deny-list.mjs";
 import { deriveRawSets } from "./transcript-leak-raw.mjs";
 import { searchGroups } from "./transcript-leak-search.mjs";
 
@@ -70,6 +75,7 @@ function buildGroups(hook, raw) {
       needles: [...raw.accounts.filter((a) => a.length < 5), ...raw.emails],
     },
     { category: "transcript-folder-name", mode: "word", needles: raw.folders.filter(notPublic) },
+    { category: "transcript-mcp-name", mode: "word", needles: raw.mcpServers },
   ];
   return groups.filter((g) => g.needles.length > 0);
 }
@@ -86,11 +92,12 @@ function parseDocs(file, text) {
 
 /**
  * @param {string} dir the fixtures transcripts/ directory
- * @param {{ hook?: { users: string[], projects: string[], segments: string[], names: string[] } | null, rawTranscripts?: string | null, vocabulary?: string }} [opts]
- * @returns {{ files: number, rows: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { accounts: number, fragments: number, folders: number, hook: number, rawPresent: boolean } }}
+ * @param {{ hook?: { users: string[], projects: string[], segments: string[], names: string[] } | null, rawTranscripts?: string | null, vocabulary?: string, denyWords?: string[] }} [opts] denyWords: the local deny-list (raw/deny-words.txt), checked as case-insensitive substrings in every file
+ * @returns {{ files: number, rows: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { accounts: number, fragments: number, folders: number, hook: number, deny: number, rawPresent: boolean } }}
  */
 export function transcriptLeakCheck(dir, opts = {}) {
   const hook = opts.hook ?? { users: [], projects: [], segments: [], names: [] };
+  const deny = opts.denyWords ?? [];
   const raw = deriveRawSets(opts.rawTranscripts ?? null, opts.vocabulary);
   const groups = buildGroups(hook, raw);
   /** @type {Record<string, number>} */
@@ -119,11 +126,15 @@ export function transcriptLeakCheck(dir, opts = {}) {
     if (runs > 0) hit("transcript-token-run", runs);
     if (!isJson && !file.endsWith(".md")) hit("transcript-unscanned-file");
     for (const [category, n] of searchGroups(haystack, groups)) hit(category, n);
+    const denyHits = countDenyHits(text, deny);
+    if (denyHits > 0) hit("transcript-deny-word", denyHits);
     if (isJson) {
       try {
         const docs = parseDocs(file, text);
         rows += docs.length;
-        for (const d of docs) checkTranscriptStructure(d, hit);
+        const ctx = newContext();
+        primeContext(docs, ctx);
+        for (const d of docs) checkTranscriptStructure(d, hit, ctx);
       } catch {
         hit("transcript-unparseable-json");
       }
@@ -143,6 +154,7 @@ export function transcriptLeakCheck(dir, opts = {}) {
       fragments: raw.fragments.length,
       folders: raw.folders.length,
       hook: hook.users.length + hook.projects.length + hook.segments.length + hook.names.length,
+      deny: deny.length,
       rawPresent: raw.present,
     },
   };

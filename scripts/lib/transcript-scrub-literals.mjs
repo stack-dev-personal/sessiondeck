@@ -3,7 +3,8 @@
 import { execFileSync } from "node:child_process";
 import { hostname } from "node:os";
 import { deriveFragments } from "./transcript-scrub-fragments.mjs";
-import { deriveFolders } from "./transcript-scrub-folders.mjs";
+import { deriveFolders, repoVocabulary } from "./transcript-scrub-folders.mjs";
+import { deriveMcpServers, deriveRepos } from "./transcript-scrub-names.mjs";
 
 const HOME_USER = /(?:^|[\\/])(?:Users|home)[\\/]+([^\\/\s"']+)|[A-Za-z]--Users-([A-Za-z0-9._]+)/g;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
@@ -47,7 +48,7 @@ function ownersIn(url) {
  * Collects literals from parsed raw rows.
  * @param {Iterable<unknown>} rows
  * @param {string} [vocabulary] lower-cased public text that exempts folder names (default: tracked repo files)
- * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[] }}
+ * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[] }}
  */
 export function discoverLiterals(rows, vocabulary) {
   const users = new Set();
@@ -100,13 +101,19 @@ export function discoverLiterals(rows, vocabulary) {
   const keep = (/** @type {Set<string>} */ s) => [...s].filter((x) => x.length >= 3).sort();
   const accountList = keep(accounts).filter((x) => x.length >= MIN_LITERAL);
   const userList = keep(users);
+  const vocab = vocabulary ?? repoVocabulary();
+  const known = [...userList, ...accountList];
+  const folders = deriveFolders(all, known, vocab);
+  const repos = deriveRepos(all, vocab, known);
   return {
     users: userList,
     emails: keep(emails),
     accounts: accountList,
     // Pieces of every name above (fix A): swept from free text as substrings.
     fragments: deriveFragments([...userList, ...accountList]),
-    // Folder names from raw paths that also show up in prose and are not public vocabulary.
-    folders: deriveFolders(all, [...userList, ...accountList], vocabulary),
+    // Folder names from raw paths that also show up in prose and are not public vocabulary, plus
+    // repository names from URLs, API paths and gh loops that are not public vocabulary.
+    folders: [...new Set([...folders, ...repos])].sort(),
+    mcpServers: deriveMcpServers(all),
   };
 }

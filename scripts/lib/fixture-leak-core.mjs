@@ -24,10 +24,16 @@ import {
   tokenRuns,
 } from "./fixture-leak-patterns.mjs";
 import { transcriptLeakCheck } from "./transcript-leak-core.mjs";
+import { countDenyHits, loadDenyWords } from "./transcript-deny-list.mjs";
 
 export { deriveLiterals };
 
 const MIN_NAME = 3;
+/** A relative path to a repository file in prose ("docs/sessions/some-note.md"). */
+const REPO_FILE =
+  /(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+\.(?:md|mjs|ts|tsx|json|jsonl|ya?ml|txt)\b/g;
+/** A commit named by its full hash in prose ("commit 2426..."); a bare 40-hex run still counts as a token. */
+const COMMIT_HASH = /\b(commit|sha|rev|revision)\s+[0-9a-f]{40}\b/gi;
 /** raw/ is the unscrubbed input and is never scanned; transcripts/ has its own checks (transcript-leak-core.mjs). */
 const EXCLUDED_TOP = new Set(["raw", "transcripts"]);
 /** Scanned with the text checks only: hand-written installer inputs are not payloads. */
@@ -74,10 +80,11 @@ function parseDocs(file, text) {
 /**
  * @param {string} fixturesRoot
  * @param {{ rawRoot?: string | null, textFiles?: { path: string, label: string, allow?: string[] }[] }} [opts] rawRoot: raw capture dir to derive literals from, omit on CI; textFiles: extra hand-written files (outside the fixtures dir) that get the text checks only, reported under their label; allow: raw-derived words that are public in that file (the project's own name, ordinary English that is also a folder name in the capture)
- * @returns {{ files: number, transcripts: ReturnType<typeof transcriptLeakCheck> | null, total: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { users: number, projects: number, segments: number, names: number, skipped: number } }}
+ * @returns {{ files: number, transcripts: ReturnType<typeof transcriptLeakCheck> | null, total: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { users: number, projects: number, segments: number, names: number, skipped: number, deny: number } }}
  */
 export function leakCheck(fixturesRoot, opts = {}) {
   const lit = deriveLiterals(opts.rawRoot ?? null);
+  const denyWords = loadDenyWords(opts.rawRoot);
   const projects = lit.projects.filter((n) => n.length >= MIN_NAME);
   const skipped = lit.projects.length - projects.length;
   // A literal that is also a schema key word ("workspace", "text") would match every payload's key
@@ -138,9 +145,14 @@ export function leakCheck(fixturesRoot, opts = {}) {
     for (const x of segPathRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
     if (!isPayload(file, rel))
       for (const x of segBareRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
+    const denyHits = countDenyHits(text, denyWords);
+    if (denyHits > 0) hit("deny-word", denyHits);
     if (EMAIL.test(text.replace(/<EMAIL>/g, ""))) hit("email");
     if (TOKEN_IN_TEXT.test(text)) hit("token-prefix");
-    const runs = tokenRuns(text);
+    // Hand-written notes may cite a commit by its full 40-hex hash and name repository files by path.
+    const runs = extra
+      ? tokenRuns(text.replace(COMMIT_HASH, "$1 <SHA>").replace(REPO_FILE, "<FILE>"), true)
+      : tokenRuns(text);
     if (runs > 0) hit("token-run", runs);
     if (file.endsWith(".json") || file.endsWith(".jsonl")) {
       try {
@@ -164,6 +176,7 @@ export function leakCheck(fixturesRoot, opts = {}) {
     transcripts = transcriptLeakCheck(tDir, {
       hook: lit,
       rawTranscripts: rawT !== null && existsSync(rawT) ? rawT : null,
+      denyWords,
     });
     for (const f of transcripts.perFile) {
       perFile.push({ file: "transcripts/" + f.file, category: f.category, count: f.count });
@@ -183,6 +196,7 @@ export function leakCheck(fixturesRoot, opts = {}) {
       segments: lit.segments.length,
       names: lit.names.length,
       skipped,
+      deny: denyWords.length,
     },
   };
 }

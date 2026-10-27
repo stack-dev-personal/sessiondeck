@@ -210,27 +210,46 @@ differences.
 - Absolute paths become `<HOME>/...` or `<ROOT>/...`, with `<PROJECT_x>`, `<DIR_n>` and `<FILE_n>`
   as in the table above. The encoded project folder form used under `.claude/projects/` maps to the same letter.
 - Tokens (`sk-`, `ghp_`, `AKIA`, `xox`, `Bearer`, JWTs, private keys, 32+ character hex, mixed-case
-  base64 runs, `key=value` secrets) become `<REDACTED>`. Emails become `<EMAIL>`.
+  base64 runs, long lowercase-and-digit runs, `key=value` secrets such as `access_token=`, Supabase and
+  Cloudflare token shapes, credentials inside URLs) become `<REDACTED>`. Emails become `<EMAIL>`.
 - Account, organization and git owner names become `<ACCOUNT>`. Names are discovered from the raw
-  data at run time and held in memory only. Pieces of those names of 5 or more characters are swept
-  as case-insensitive substrings, inside longer words too (ordinary words are exempt).
+  data at run time and held in memory only. Pieces of those names of 5 or more characters, and every
+  substring of 5 or more characters of each handle, are swept as case-insensitive substrings, inside
+  longer words too (ordinary words and schema words are exempt).
+- Local deny-list: `raw/deny-words.txt` (gitignored with `raw/`; one word per line, `#` comments)
+  holds words that must never survive (private repo names, health and school terms). The scrub
+  replaces each, case-insensitively and inside words, with `<DENY>`; the leak check fails on any
+  survivor. Without the file (CI) both run without it. Hashes of the words are deliberately not
+  committed: short words with a public salt can be guessed, which would itself be a leak.
+- Private content: an object whose path field (`path`, `filename`, `file_path`, `filePath`,
+  `displayPath`) points outside the session's own project (the user-level `.claude` folder, another
+  repo, a temp folder) has its `content`, `snippet`, diffs, `pattern` and similar fields dropped to
+  `<BLOB n>`. The same goes for the output (result block and `toolUseResult`) of a tool use that read,
+  searched or wrote such a path, or ran a shell command naming one (or `gh api`, `gh repo`).
+- MCP server names (from tool names and server lists in the raw data, and after the words "MCP
+  server" in prose) become `<MCP_n>` in free text, with the same numbering as in tool names.
+- Repository names found in GitHub URLs, `repos/<owner>/<repo>` API paths, `--repo` flags and `gh`
+  loops, unless already public words in this repository, are swept like folder names.
 - Folder names from the raw paths that also occur in prose, and that are not already public words in
   this repository's tracked files, become `<DIR>`.
 - `requestId` and `deliveryId` become `<REQUEST_ID>`; content digests become `<REDACTED>`;
   `userEmail` becomes `<EMAIL>`; `organizationUuid`, `accountUuid`, `organizationName` and `owner`
   become `<ACCOUNT>`. Git branches survive only if they match this repository's public shapes.
 - `hookName` survives as `<HookEvent>` or `<HookEvent>:<built-in tool>`; anything else is
-  `<NAME_n>`. Custom agent, skill and recipient names are numbered, MCP tools become
+  `<NAME_n>`. Custom agent names (also in `addedTypes` and `querySource`), skill and recipient names are numbered, MCP tools become
   `mcp__<MCP_n>__<TOOL_m>`.
 - Dropped to `<BLOB n>` (n is the JSON length of the subtree), whole subtree, by key:
   `wireToolInputs`, `wireIngestContext`, `shape`, `toolInputCopies` (bulk duplicates);
   `serverClassifierRequest`, `serverClassifierContext` (request bodies, git state, paths);
-  `systemPrompt`, `input_schema`, `definition`, `entries`, `surfacedDefinitions`, `schema`
-  (configuration in bulk); `hookAdditionalContext` (hook-injected context); `rawContent` (raw file
+  `systemPrompt`, `input_schema`, `definition`, `entries`, `surfacedDefinitions`, `schema`,
+  `addedBlocks` (MCP instructions), `addedLines` (agent and tool listings) (configuration in bulk);
+  `hookAdditionalContext` (hook-injected context); in attachments, `stdout`, `stderr` and `content`
+  of hook rows (`hook_*` or any `hookEvent`) and `content` of `skill_listing`; `rawContent` (raw file
   contents); `diagnostics`; `trackedFileBackups`, `backup` (file-history records with user file
   paths); `tail` (request hash list); `base64`.
 - Ids are kept verbatim, not remapped as in the hook payloads: `uuid`, `parentUuid`, `sessionId`,
-  `message.id`, `tool_use_id`, `agentId` and the like are random identifiers with no personal data,
+  `message.id`, `tool_use_id`, `agentId` and the like are random identifiers with no personal data
+  (key `id` only keeps a prefixed random id or a uuid),
   and the normalizer needs every cross-file link intact, including links in fields the scrub does
   not list. Account, organization and request ids are placeholders.
 - Row order and row count equal the source. The scrub is deterministic: the same `raw/` gives
@@ -247,8 +266,11 @@ node scripts/fixture-leak-check.mjs              # exit 0 and "transcript findin
 ```
 
 `raw/` (including `raw/transcripts/`) is gitignored, never read by tests and never committed. The
-leak check's raw-derived literal search runs only where `raw/` exists; CI runs the pattern and
-structure checks.
+leak check's raw-derived literal search and the deny-list check run only where `raw/` exists; CI runs
+the pattern and structure checks, which include: no live content next to a path outside the project,
+no live `addedBlocks`, `addedLines`, skill listing, hook output or private tool output, and no MCP
+server name after "MCP server" in free text. The leak check also scans this session's notes
+(`docs/sessions/p0-transcript-fixtures.md`, `docs/research/2026-10-27-transcript-inventory.md`).
 
 ### Row-type coverage
 

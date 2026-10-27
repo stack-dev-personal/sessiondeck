@@ -10,7 +10,17 @@ import { TEXT_KEY, TRANSCRIPT_KEYS } from "./fixture-keys.mjs";
 import { STRUCT } from "./fixture-scrub-paths.mjs";
 import { isStructuralHookName } from "./transcript-scrub-hookname.mjs";
 import {
+  attachmentDropKeys,
+  countMcpNames,
+  hasContent,
+  isOutsideProject,
+  isPrivateToolUse,
+  PRIVATE_CONTENT_KEYS,
+  siblingPath,
+} from "./transcript-scrub-private.mjs";
+import {
   DROP_KEYS,
+  ENUM_RE,
   FREE_MAX,
   FREE_ROOTS,
   LEAF,
@@ -24,7 +34,8 @@ const BLOB = /^<BLOB \d+>$/;
 const TRUNCATED = /<TRUNCATED \d+>$/;
 const MODEL_KEY = /^claude-[a-z0-9.-]{1,40}$/;
 const UNKNOWN_SEGMENT = "<unknown>";
-const GENERIC_PLACEHOLDER = /^<(?:TEXT \d+|REDACTED|EMAIL|ACCOUNT|NAME_\d+)>$/;
+const GENERIC_PLACEHOLDER = /^<(?:TEXT \d+|REDACTED|EMAIL|ACCOUNT|DENY|NAME_\d+)>$/;
+const QUERY_AGENT = /^agent:[a-z]+:(.+)$/;
 const TOOL_OK = /^(?:mcp__<MCP_\d+>__<TOOL_\d+>|<TOOL_\d+>)$/;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const escape = (/** @type {string} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -66,6 +77,13 @@ function ruleFinding(rule, v) {
       return v === "<ACCOUNT>/<REPO>" || placeholder ? null : bad;
     case "prUrl":
       return PR_URL.test(v) || placeholder ? null : bad;
+    case "querySource": {
+      const name = QUERY_AGENT.exec(v)?.[1];
+      if (name !== undefined) {
+        return BUILTIN_AGENTS.has(name) || /^<AGENT_\d+>$/.test(name) ? null : bad;
+      }
+      return placeholder || (ENUM_RE.test(v) && !TOKEN_SHAPE.test(v)) ? null : bad;
+    }
     case "agent":
       return BUILTIN_AGENTS.has(v) || /^<AGENT_\d+>$/.test(v) || placeholder ? null : bad;
     case "name":
@@ -86,7 +104,8 @@ function ruleFinding(rule, v) {
 /** Free text: at most FREE_MAX characters, plus an optional marker when it was cut. @param {string} v */
 function freeFinding(v) {
   const body = v.replace(TRUNCATED, "");
-  return body.length > FREE_MAX ? "transcript-free-text-over-120" : null;
+  if (body.length > FREE_MAX) return "transcript-free-text-over-120";
+  return countMcpNames(body) > 0 ? "transcript-mcp-name-in-text" : null;
 }
 
 /** @param {string} key @param {boolean} userKeyed @param {boolean} modelKeyed */
@@ -120,24 +139,90 @@ function redactionFinding(key, v, type) {
  * @param {unknown} doc
  * @param {(category: string) => void} hit
  */
-export function checkTranscriptStructure(doc, hit) {
-  visit(doc, "", hit);
+export function checkTranscriptStructure(doc, hit, ctx = newContext()) {
+  ctx.rowPrivate = answersPrivateUse(doc, ctx);
+  visit(doc, "", hit, ctx);
 }
 
-/** @param {unknown} v @param {string} path @param {(c: string) => void} hit */
-function visit(v, path, hit) {
+/**
+ * Per-file state of the structure check: tool_use ids whose tool touched something outside this
+ * project (read from the scrubbed rows themselves).
+ * @typedef {{ privateToolIds: Set<string>, rowPrivate: boolean }} Context
+ * @returns {Context}
+ */
+export function newContext() {
+  return { privateToolIds: new Set(), rowPrivate: false };
+}
+
+/** Registers the private tool uses of already scrubbed docs. @param {Iterable<unknown>} docs @param {Context} ctx */
+export function primeContext(docs, ctx) {
+  /** @param {unknown} v */
+  const walk = (v) => {
+    if (Array.isArray(v)) {
+      for (const el of v) walk(el);
+    } else if (v !== null && typeof v === "object") {
+      const o = /** @type {Record<string, unknown>} */ (v);
+      if (o.type === "tool_use" && typeof o.id === "string" && typeof o.name === "string") {
+        if (isPrivateToolUse(o.name, o.input)) ctx.privateToolIds.add(o.id);
+      }
+      for (const c of Object.values(o)) walk(c);
+    }
+  };
+  for (const d of docs) walk(d);
+}
+
+/** @param {unknown} doc @param {Context} ctx */
+function answersPrivateUse(doc, ctx) {
+  const content = /** @type {any} */ (doc)?.message?.content;
+  if (!Array.isArray(content) || ctx.privateToolIds.size === 0) return false;
+  return content.some(
+    (b) => b?.type === "tool_result" && ctx.privateToolIds.has(String(b.tool_use_id)),
+  );
+}
+
+/** Whether a dropped value is acceptable: empty, a plain number or boolean, or a BLOB marker. @param {unknown} v */
+const isDroppedOk = (v) => !hasContent(v) || (typeof v === "string" && BLOB.test(v));
+
+/**
+ * Category when this key must be a BLOB here under the private-content rules, else null.
+ * @param {string} key @param {Record<string, unknown>} obj @param {string} path @param {Context} ctx
+ * @param {boolean} privateSibling @param {ReadonlySet<string> | null} attachmentDrops
+ */
+function mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops) {
+  if (privateSibling && PRIVATE_CONTENT_KEYS.has(key)) return "transcript-private-content-not-blob";
+  if (attachmentDrops?.has(key)) return "transcript-dropped-key-not-blob";
+  if (ctx.rowPrivate && path === "" && key === "toolUseResult") {
+    return "transcript-private-content-not-blob";
+  }
+  const answersPrivate =
+    key === "content" &&
+    obj.type === "tool_result" &&
+    ctx.privateToolIds.has(String(obj.tool_use_id));
+  return answersPrivate ? "transcript-private-content-not-blob" : null;
+}
+
+/** Whether the object's own path field points outside this project. @param {Record<string, unknown>} obj */
+function outsideSibling(obj) {
+  const p = siblingPath(obj);
+  return p !== undefined && isOutsideProject(p);
+}
+
+/** @param {unknown} v @param {string} path @param {(c: string) => void} hit @param {Context} ctx */
+function visit(v, path, hit, ctx) {
   if (typeof v === "string") {
     const category = transcriptStringFinding(v, path);
     if (category !== null) hit(category);
   } else if (Array.isArray(v)) {
-    for (const el of v) visit(el, `${path}[]`, hit);
+    for (const el of v) visit(el, `${path}[]`, hit, ctx);
   } else if (v !== null && typeof v === "object") {
-    visitObject(/** @type {Record<string, unknown>} */ (v), path, hit);
+    visitObject(/** @type {Record<string, unknown>} */ (v), path, hit, ctx);
   }
 }
 
-/** @param {Record<string, unknown>} obj @param {string} path @param {(c: string) => void} hit */
-function visitObject(obj, path, hit) {
+/** @param {Record<string, unknown>} obj @param {string} path @param {(c: string) => void} hit @param {Context} ctx */
+function visitObject(obj, path, hit, ctx) {
+  const attachmentDrops = path === "attachment" ? attachmentDropKeys(obj) : null;
+  const privateSibling = outsideSibling(obj);
   const last = leafOf(path).replace(/\[\]$/, "");
   const userKeyed = USER_KEYED.has(last);
   const modelKeyed = MODEL_KEYED.has(last);
@@ -148,6 +233,11 @@ function visitObject(obj, path, hit) {
     const seg =
       bad !== null && !userKeyed && !modelKeyed ? UNKNOWN_SEGMENT : placeholderKey ? "<key>" : key;
     const childPath = path === "" ? seg : `${path}.${seg}`;
+    const forced = mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops);
+    if (forced !== null) {
+      if (!isDroppedOk(child)) hit(forced);
+      continue;
+    }
     if (typeof child === "string") {
       const special = redactionFinding(key, child, obj.type);
       if (special !== undefined) {
@@ -162,6 +252,6 @@ function visitObject(obj, path, hit) {
       }
       continue;
     }
-    visit(child, childPath, hit);
+    visit(child, childPath, hit, ctx);
   }
 }

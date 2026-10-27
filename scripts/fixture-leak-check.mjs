@@ -34,6 +34,15 @@ const DOCS_FILES = [
     label: "docs/CONTRACT.md",
     allow: ["sessiondeck", "workspace", "thread"],
   },
+  // This session's own notes and inventory: hand-written, so they get the text checks as well.
+  ...[
+    "docs/sessions/p0-transcript-fixtures.md",
+    "docs/research/2026-10-27-transcript-inventory.md",
+  ].map((rel) => ({
+    path: join(FIXTURES_ROOT, "..", "..", "..", ...rel.split("/")),
+    label: rel,
+    allow: ["sessiondeck", "workspace", "thread"],
+  })),
 ];
 const textFiles = positional[0] === undefined ? DOCS_FILES : [];
 
@@ -45,7 +54,7 @@ const r = leakCheck(root, { rawRoot: rawPresent ? raw : null, textFiles });
 console.log(`mode: ${rawPresent ? "raw-derived literals + patterns" : "patterns only (no raw/)"}`);
 console.log(`files scanned: ${r.files}`);
 console.log(
-  `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped})`,
+  `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped}); deny words checked=${r.literals.deny}`,
 );
 if (r.transcripts) {
   const t = r.transcripts;

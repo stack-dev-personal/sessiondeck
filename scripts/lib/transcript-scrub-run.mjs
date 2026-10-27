@@ -7,6 +7,7 @@ import { Mapper } from "./fixture-scrub-paths.mjs";
 import { TranscriptScrubber } from "./transcript-scrub-core.mjs";
 import { discoverLiterals } from "./transcript-scrub-literals.mjs";
 import { renderReadme } from "./transcript-scrub-readme.mjs";
+import { loadDenyWords } from "./transcript-deny-list.mjs";
 
 const AGENT_FILE = /^agent-[A-Za-z0-9_-]{4,64}\.(?:jsonl|meta\.json)$/;
 const FIXTURE_DIR = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -75,6 +76,7 @@ export function scrubFixture(rawDir, outDir, name, literals) {
   const mapper = new Mapper();
   mapper.seedProjects(cwds.sort());
   const scrubber = new TranscriptScrubber({ mapper, literals });
+  scrubber.prime([...parsed.values()].flat());
   /** @type {import("./transcript-scrub-readme.mjs").FixtureStats} */
   const st = {
     rows: 0,
@@ -133,9 +135,10 @@ export function runTranscripts(raw, out) {
       const p = join(root, n, f.rel);
       all.push(...(f.jsonl ? readRows(p) : [JSON.parse(readFileSync(p, "utf8"))]));
     }
-  const literals = discoverLiterals(all);
+  const denyWords = loadDenyWords(raw);
+  const literals = { ...discoverLiterals(all), denyWords };
   console.log(
-    `literals: users ${literals.users.length}, emails ${literals.emails.length}, accounts ${literals.accounts.length}, fragments ${literals.fragments.length}`,
+    `literals: users ${literals.users.length}, emails ${literals.emails.length}, accounts ${literals.accounts.length}, fragments ${literals.fragments.length}, folders ${literals.folders.length}, mcp servers ${literals.mcpServers.length}, deny words ${denyWords.length}`,
   );
   let unknown = 0;
   let fragmentHits = 0;
