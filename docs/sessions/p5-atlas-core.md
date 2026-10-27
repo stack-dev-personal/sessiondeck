@@ -73,3 +73,8 @@ Concurrency allowed: 1, so units run sequentially.
 - Security: Gate pass all three rounds. MEDIUMs fixed: Docker socket in Playwright container; symlink-following restart poller; script overwrite during run; shared unauthenticated preflight bucket.
 - Tests: web 260, hub 419. Playwright mock R5.1/R5.5/R5.6 8 passed; live suite 4 passed incl. R5.5-live (hub restart, label survives) through real CORS.
 - Screenshots: /state/3/screens/S9/R5.1.png, R5.5.png, R5.5-live.png, R5.6.png, R5.6-projects.png.
+
+### Relaunch 2026-10-27T19:51:12Z
+- The sprint container was stopped at 2026-10-27T19:18Z mid-U4. No status was written at exit; no answer file for this relaunch.
+- Worktree held uncommitted U4 changes (web: CommandPalette, SessionList route, highlight, sessionList lib, R5.4 e2e specs, modified store/keys/App/atlas api, refreshed R3 baselines). Resumed U4 by having sd-executor-web inspect and finish the diff.
+- main moved to 2426e6d (PR #14, probe Bun hook exe); origin/sprint/3-organize includes it; final rebase picks it up.
