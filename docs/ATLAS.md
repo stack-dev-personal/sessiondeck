@@ -27,7 +27,7 @@ display name keeps its case). Posix paths are case-sensitive.
 The sibling rule applies only when the container is the parent of the final path segment, so a repo
 that is itself called `foo-wt` (cwd `/home/u/foo-wt/packages`) or an early `-wt` segment is never
 rolled up. A cwd deeper than the worktree root under a sibling container therefore does not roll up;
-the statusLine `project_dir` (the worktree root) does. The project key ignores the host on purpose:
+the statusLine `project_dir` (the worktree root) does. For example a cwd fallback (no `project_dir`) of `/x/repo-wt/feat/packages/hub` yields the project `hub`, not `repo`; such a session needs a manual project override (`PATCH /sessions/:id/project`). The project key ignores the host on purpose:
 the same repo path on two machines is one project.
 
 The project is created on first sight (`projects` row): name = basename of the repo root, color = a
@@ -42,7 +42,7 @@ repo path; `worktree.original_cwd` is not stored in the snapshot). Fix those by 
 A phase is a label on a session. The effective phase is:
 
 1. the manual label, if set; else
-2. inferred: `^P(\d+)\b` (name starts with `P<n>`) or `\bphase\s*(\d+)\b` in `session_name` (case-insensitive; "fix p95 latency" is not a phase), else a `p<n>/` branch prefix; shown as `P<n>`; else
+2. inferred: the name starts with `P<n>` followed by a separator (`:`, `-`, `/`, `.`, `_`), the end, or a space not followed by a metric word (latency, ms, cpu, ...), or `\bphase\s*(\d+)\b` in `session_name` (case-insensitive; "fix p95 latency" is not a phase), else a `p<n>/` branch prefix; shown as `P<n>`; else
 3. none.
 
 Manual labels (and manual project assignments) live in `session_overrides`, outside `sessions`, so

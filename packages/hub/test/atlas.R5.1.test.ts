@@ -38,6 +38,18 @@ describe("R5.1 worktree roll-up (path table)", () => {
     expect(inferProject("/x/app-wt", null).key).toBe("/x/app-wt"); // no <name> below the container
   });
 
+  it("documented limit: a cwd fallback below a sibling worktree root does not roll up", () => {
+    expect(inferProject(null, "/x/repo-wt/feat/packages/hub").name).toBe("hub");
+    expect(inferProject("/x/repo-wt/feat", "/x/repo-wt/feat/packages/hub").name).toBe("repo");
+  });
+
+  it("strips zero-width, directional-mark and line-separator characters; slices by code point", () => {
+    expect(inferProject("/x/a\u200Bb\u200E\u200F\u061C\uFEFF\u2028\u2029c", null).name).toBe("abc");
+    const name = inferProject(`/x/${"\u{1F600}".repeat(100)}`, null).name;
+    expect(Array.from(name)).toHaveLength(80);
+    expect(name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
   it("sibling -wt rule applies only to the parent of the final segment", () => {
     // a repo that is itself called foo-wt, with a deeper cwd, stays itself
     expect(inferProject("/home/u/foo-wt/packages/x", null).key).toBe("/home/u/foo-wt/packages/x");
@@ -145,6 +157,12 @@ describe("R5.5 phase inference", () => {
     ["nothing", "p7/atlas-core", "P7"],
     ["nothing", "feature/p7", null],
     ["Python 3", null, null],
+    ["p95 latency fix", null, null],
+    ["P95 latency", "p95/x", "P95"], // branch prefix still applies when the name is a metric
+    ["P5: atlas", null, "P5"],
+    ["P5-atlas", null, "P5"],
+    ["P5/atlas", null, "P5"],
+    ["P5", null, "P5"],
   ])("%s / %s -> %s", (name, branch, want) => {
     expect(inferPhase(name, branch)).toBe(want);
   });

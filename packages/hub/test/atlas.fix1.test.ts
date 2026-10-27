@@ -147,3 +147,53 @@ describe("backfill reruns", () => {
     s.close();
   });
 });
+
+describe("fix round 2", () => {
+  it("PATCH on an archived or long-ended session pushes no WS delta; a live one does", async () => {
+    const msgs = await connect();
+    seedSession(h.store, "arch", { state: "idle", project_dir: "/r/app" });
+    h.store.db.prepare("UPDATE sessions SET state = 'archived' WHERE session_id = 'arch'").run();
+    seedSession(h.store, "old", { state: "ended", project_dir: "/r/app" });
+    h.store.db
+      .prepare("UPDATE sessions SET ended_at = ? WHERE session_id = 'old'")
+      .run(NOW - 3_600_000_000);
+    seedSession(h.store, "live", { state: "idle", project_dir: "/r/app" });
+    const before = deltas(msgs).length;
+    expect((await patch("/sessions/arch/phase", { phase: "X" })).statusCode).toBe(200);
+    expect((await patch("/sessions/old/phase", { phase: "X" })).statusCode).toBe(200);
+    await sleep(100);
+    expect(deltas(msgs).length).toBe(before);
+    expect((await patch("/sessions/live/phase", { phase: "X" })).statusCode).toBe(200);
+    await waitFor(() => deltas(msgs).length === before + 1);
+    expect(deltas(msgs).at(-1)!.session_id).toBe("live");
+  });
+
+  it("PATCH project with only vault_collection pushes nothing", async () => {
+    const msgs = await connect();
+    seedSession(h.store, "live", { state: "idle", project_dir: "/r/app" });
+    const id = h.store.getSession("live")!.project_id!;
+    const before = deltas(msgs).length;
+    expect((await patch(`/projects/${id}`, { vault_collection: "ok" })).statusCode).toBe(200);
+    await sleep(100);
+    expect(deltas(msgs).length).toBe(before);
+  });
+
+  it("a throwing atlas listener does not turn a committed PATCH into a 500", async () => {
+    seedSession(h.store, "live", { state: "idle", project_dir: "/r/app" });
+    h.app.hub.events.on("atlas", () => {
+      throw new Error("boom");
+    });
+    expect((await patch("/sessions/live/phase", { phase: "X" })).statusCode).toBe(200);
+  });
+
+  it("vault_collection rejects dots-only and Windows reserved names", async () => {
+    seedSession(h.store, "s1", { project_dir: "/r/app" });
+    const id = h.store.getSession("s1")!.project_id!;
+    for (const v of [".", "...", "CON", "nul", "Com1", "lpt9", "aux.txt", "prn.x.y"]) {
+      expect((await patch(`/projects/${id}`, { vault_collection: v })).statusCode).toBe(400);
+    }
+    for (const v of ["console", "com10", "con-x"]) {
+      expect((await patch(`/projects/${id}`, { vault_collection: v })).statusCode).toBe(200);
+    }
+  });
+});

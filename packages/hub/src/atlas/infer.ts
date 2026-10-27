@@ -40,9 +40,13 @@ export function projectIdOf(key: string): string {
   return `p_${createHash("sha256").update(key).digest("hex").slice(0, 32)}`;
 }
 
-/** C0, DEL, C1 controls and bidi formatting characters (U+202A-202E, U+2066-2069). */
-// eslint-disable-next-line no-control-regex
-const UNSAFE_CHARS = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+/**
+ * C0, DEL, C1 controls, bidi formatting characters (U+200E, U+200F, U+061C, U+202A-202E,
+ * U+2066-2069), zero-width characters (U+200B-U+200D, U+FEFF) and line/paragraph separators.
+ */
+const UNSAFE_CHARS =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
 /** Strips control and bidi characters and trims. Applied to every user-visible label. */
 export function cleanLabel(s: string): string {
@@ -119,12 +123,15 @@ export function inferProject(
           .split("/")
           .filter((s) => s !== "")
           .at(-1) ?? root);
-  const name = cleanLabel(base).slice(0, 80).trim() || "project";
+  // Slice by code point so a surrogate pair is never split.
+  const name = Array.from(cleanLabel(base)).slice(0, 80).join("").trim() || "project";
   return { key, name, color: defaultColor(key), rolledUp };
 }
 
 // "P5 ..." at the start of the name, or the word "phase" spelled out; "fix p95 latency" is not a phase.
-const PHASE_NAME = /^P(\d{1,4})\b|\bphase\s*(\d{1,4})\b/i;
+// After "P<n>" a separator is required; a bare space is accepted unless a metric word follows.
+const PHASE_NAME =
+  /^P(\d{1,4})(?:\s*[:/.\-_]|$|\s+(?!(?:latency|ms|percentile|response|cpu|load|perf|performance|regression|slow|timeout|throughput|tail)\b))|\bphase\s*(\d{1,4})\b/i;
 const PHASE_BRANCH = /^p(\d{1,4})\//i;
 
 /** Default phase label: from the session name ("P5", "Phase 5"), else a p<n>/ branch prefix. */

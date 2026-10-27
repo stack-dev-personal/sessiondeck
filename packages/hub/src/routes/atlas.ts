@@ -5,7 +5,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { cleanLabel, inferPhase } from "../atlas/infer.ts";
 import type { HubEmitter } from "../ingest/ingestor.ts";
-import type { Store } from "../db/store.ts";
+import type { SessionRow, Store } from "../db/store.ts";
 import type { PricingProvider } from "../pricing/loader.ts";
 import { LIVE_GRACE_MS, MAX_LIMIT, readSnapshot } from "../snapshots.ts";
 import type { UsageService } from "../usage/service.ts";
@@ -74,6 +74,8 @@ const label = (max: number) =>
     .max(max * 4)
     .transform(cleanLabel)
     .pipe(z.string().min(1).max(max));
+/** Windows device names, with or without an extension. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 const PatchProject = z
   .object({
     name: label(80).optional(),
@@ -83,6 +85,8 @@ const PatchProject = z
       .string()
       .regex(/^[A-Za-z0-9._-]{1,100}$/)
       .refine((v) => !v.includes(".."), "no ..")
+      .refine((v) => !/^\.+$/.test(v), "no dots-only name")
+      .refine((v) => !WINDOWS_RESERVED.test(v), "reserved name")
       .nullable()
       .optional(),
   })
@@ -98,6 +102,14 @@ function bad(reply: FastifyReply, err: z.ZodError) {
 }
 const notFound = (reply: FastifyReply) => reply.code(404).header("content-length", "0").send();
 
+/** Mirrors Store.listLiveSessions: not archived; ended/exited only within the grace period. */
+function isLive(r: SessionRow, nowMs: number): boolean {
+  if (r.state === null) return true;
+  if (r.state === "archived") return false;
+  if (r.state !== "ended" && r.state !== "exited") return true;
+  return (r.ended_at ?? r.last_event_at ?? 0) >= nowMs - LIVE_GRACE_MS;
+}
+
 export function registerAtlas(
   app: FastifyInstance,
   store: Store,
@@ -106,15 +118,25 @@ export function registerAtlas(
   pricing: PricingProvider,
   defaultTz: string | undefined,
   events: HubEmitter,
+  log: { warn: (obj: object, msg: string) => void } = { warn: () => {} },
 ): void {
   /** Pushes annotated `session` deltas to WS clients after a PATCH changed what they render. */
   const pushSessions = (ids: string[]): void => {
     const t = now();
+    // Same rule as listLiveSessions: no archived rows, no ended/exited rows past the grace period.
     const snaps = ids.flatMap((id) => {
       const row = store.getSession(id);
-      return row === undefined ? [] : [readSnapshot(row, t)];
+      return row === undefined || !isLive(row, t) ? [] : [readSnapshot(row, t)];
     });
-    if (snaps.length > 0) events.emit("atlas", snaps);
+    if (snaps.length === 0) return;
+    try {
+      events.emit("atlas", snaps);
+    } catch (err) {
+      log.warn(
+        { err: err instanceof Error ? err.message : "listener error" },
+        "atlas listener threw",
+      );
+    }
   };
   // Superset of the legacy shape (project_dir, name, color, vault_collection) plus id and counts.
   app.get("/projects", async () => ({ projects: store.listProjectSummaries(MAX_LIMIT) }));
@@ -165,13 +187,18 @@ export function registerAtlas(
     if (body.data.color !== undefined) patch.color = body.data.color;
     if (body.data.vault_collection !== undefined)
       patch.vault_collection = body.data.vault_collection;
+    const before = store.getProject(req.params.id);
     if (!store.patchProject(req.params.id, patch)) return notFound(reply);
-    // A name or color change reaches clients as annotated deltas for the project's live sessions.
-    pushSessions(
-      store
-        .listProjectLive(req.params.id, now() - LIVE_GRACE_MS, MAX_LIMIT)
-        .map((r) => r.session_id),
-    );
+    const after = store.getProject(req.params.id);
+    // A name or color change reaches clients as annotated deltas for the project's live sessions;
+    // nothing is pushed when neither changed (a vault_collection edit, or a no-op).
+    if (before?.name !== after?.name || before?.color !== after?.color) {
+      pushSessions(
+        store
+          .listProjectLive(req.params.id, now() - LIVE_GRACE_MS, MAX_LIMIT)
+          .map((r) => r.session_id),
+      );
+    }
     return { project: store.getProject(req.params.id) };
   });
 

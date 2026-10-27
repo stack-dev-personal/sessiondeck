@@ -166,7 +166,16 @@ export function buildServer(opts: {
   const pricing = opts.pricing ?? new PricingProvider(bundledTable());
   const usage = registerCost(app, opts.store, pricing, opts.config.timezone);
   // Same global bearer hook as every other route: PATCH needs the ingest token.
-  registerAtlas(app, opts.store, now, usage, pricing, opts.config.timezone, ingestor.events);
+  registerAtlas(
+    app,
+    opts.store,
+    now,
+    usage,
+    pricing,
+    opts.config.timezone,
+    ingestor.events,
+    app.log,
+  );
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,
