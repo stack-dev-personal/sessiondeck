@@ -48,3 +48,7 @@ Decision (orchestrator): the scrubbed transcripts are committed only after the s
 - Results: scripts 409 pass, 2 skipped (pre-existing); fixture-gate 34/34; contract 1091 pass; typecheck, lint, prettier clean. Scrub run twice, tree sha256 prefix 001fcf9426c83e46 both times. Leak check (rerun by orchestrator): 257 files, 44 transcript files, 14545 rows, 0 findings, exit 0.
 - Fixtures still untracked until the U5 security gate.
 - Residual risks for U5: the kept 120-char prefixes may hold names or code no rule recognizes (security reviewer to sample); raw-derived literal checks run only locally (CI has no raw/), same design as S0b; executor's "rows" count is summed across all files of a fixture (05 session.jsonl alone is 387 rows), to reconcile in the per-fixture READMEs in U4.
+
+### U4 fixtures README Transcripts section (R0.7)
+- Executor sd-executor-contract, commit b7089c2: "## Transcripts" in packages/contract/fixtures/README.md (sources by session id, selection reasons, gaps, scrub rules, row-type coverage table counted over the scrubbed output, regenerate commands); per-fixture README generator now lists rows per file plus total (scripts/lib/transcript-scrub-{readme,run}.mjs, 3 new assertions).
+- Results: scripts 409 pass, 2 skipped; contract 1091 pass; typecheck, lint, prettier clean. Regenerated twice, tree hash de4e0b10b9760ed3 both times (only READMEs changed). Leak check 0 findings, exit 0.
