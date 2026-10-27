@@ -11,6 +11,12 @@ export interface Settings {
   sounds: { waiting_permission: boolean; waiting_input: boolean };
   /** One global mute that silences every tone without losing the per-state choices. */
   muted: boolean;
+  /**
+   * The host this browser is "on", for saved-layout hotkeys and pinning. null (default): only
+   * layouts not pinned to a host resolve. Never inferred from activity, so a key always does the
+   * same thing.
+   */
+  viewerHost: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -19,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: false,
   sounds: { waiting_permission: false, waiting_input: false },
   muted: false,
+  viewerHost: null,
 };
 
 export function loadSettings(): Settings {
@@ -38,6 +45,10 @@ export function loadSettings(): Settings {
         waiting_input: snd.waiting_input === true,
       },
       muted: p.muted === true,
+      viewerHost:
+        typeof p.viewerHost === "string" && p.viewerHost.length > 0 && p.viewerHost.length <= 128
+          ? p.viewerHost
+          : null,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -54,6 +65,9 @@ export interface UiState {
   settings: Settings;
   /** Session whose detail drawer is open; null when closed. Not persisted. */
   selectedSessionId: string | null;
+  /** True while a modal dialog (save, manage) is mounted; global shortcuts stay quiet. Not persisted. */
+  modalOpen: boolean;
+  setModalOpen: (open: boolean) => void;
   openSession: (id: string) => void;
   closeSession: () => void;
   toggleTheme: () => void;
@@ -66,6 +80,8 @@ export const useUi = create<UiState>()((set, get) => ({
   compact: readStored(STORAGE_KEYS.compact) === "1",
   settings: loadSettings(),
   selectedSessionId: null,
+  modalOpen: false,
+  setModalOpen: (modalOpen) => set({ modalOpen }),
   openSession: (id) => set({ selectedSessionId: id }),
   closeSession: () => set({ selectedSessionId: null }),
   toggleTheme: () => {
