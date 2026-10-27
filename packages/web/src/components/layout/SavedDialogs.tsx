@@ -9,9 +9,12 @@ import {
   type ReactNode,
 } from "react";
 import { MAX_NAME, type SavedLayout } from "../../layout/saved";
+import { useLayout } from "../../store/layout";
 import { useSaved } from "../../store/saved";
+import { useUi } from "../../store/ui";
 
-const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([disabled])";
+const FOCUSABLE =
+  "button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex='0']";
 
 /** Modal frame: focus moves in, Tab wraps inside, Esc closes, focus returns to where it was. */
 function Modal({
@@ -30,7 +33,12 @@ function Modal({
   useLayoutEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
     box.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus();
-    return () => prev?.focus?.();
+    // Global shortcuts (t, c, layout keys) stay quiet while any dialog is mounted.
+    useUi.getState().setModalOpen(true);
+    return () => {
+      useUi.getState().setModalOpen(false);
+      prev?.focus?.();
+    };
   }, []);
   // Esc works wherever focus is, including after a deleted row took the focused element with it.
   useEffect(() => {
@@ -79,8 +87,20 @@ function Modal({
 const control =
   "rounded border border-border-control bg-surface-2 px-s-2 py-s-1 text-sm text-fg hover:bg-surface-3";
 
-/** `s` on the layout route: name, slot 1-9 or none, pin to the current host or all hosts. */
-export function SaveDialog({ host, onClose }: { host: string | null; onClose: () => void }) {
+/**
+ * `s` on the layout route: name, slot 1-9 or none, pin to the Viewer host (Settings) or all hosts.
+ * The host is frozen when the dialog opens, so the one shown is the one saved. While compact-all
+ * is on, the layout saved is the one from before it, and the dialog says so.
+ */
+export function SaveDialog({
+  host: liveHost,
+  onClose,
+}: {
+  host: string | null;
+  onClose: () => void;
+}) {
+  const [host] = useState(liveHost);
+  const compacted = useLayout((s) => s.snapshot !== null);
   const save = useSaved((s) => s.save);
   const taken = useSaved((s) => s.rows);
   const [name, setName] = useState("");
@@ -145,8 +165,16 @@ export function SaveDialog({ host, onClose }: { host: string | null; onClose: ()
             disabled={host === null}
             onChange={(e) => setPin(e.target.checked)}
           />
-          {host === null ? "Pin to this host (no host on the board yet)" : `Pin to host ${host}`}
+          {host === null
+            ? "Pin to the Viewer host (none set; choose one in Settings)"
+            : `Pin to Viewer host ${host}`}
         </label>
+        {compacted ? (
+          <p className="m-0 text-xs text-fg-muted" data-testid="save-compact-note">
+            <span aria-hidden="true">ℹ </span>
+            Compact all is on. This saves your layout from before it, not the compacted panes.
+          </p>
+        ) : null}
         <p className="num m-0 min-h-[2.5em] text-xs text-fg-muted" role="status">
           {holder
             ? `Slot ${slot} currently opens "${holder.name}"; saving moves it to this layout.`
@@ -269,6 +297,27 @@ export function ManageDialog({ onClose }: { onClose: () => void }) {
       dlg.querySelector<HTMLElement>("[data-autofocus], button, input, select")?.focus();
   }, [rows.length]);
   const virtual = rows.length > VIRTUAL_OVER;
+  // Past the window, rows that are not rendered cannot take focus. The scroll area itself is a Tab
+  // stop and scrolls on the arrow keys, so every row is reachable without a pointer.
+  const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget || !virtual) return;
+    const page = Math.max(rowH, viewH - rowH);
+    const max = Math.max(0, rows.length * rowH - viewH);
+    const delta: Record<string, number> = {
+      ArrowDown: rowH,
+      ArrowUp: -rowH,
+      PageDown: page,
+      PageUp: -page,
+      Home: -Infinity,
+      End: Infinity,
+    };
+    const d = delta[e.key];
+    if (d === undefined) return;
+    e.preventDefault();
+    const next = Math.min(max, Math.max(0, e.currentTarget.scrollTop + d));
+    e.currentTarget.scrollTop = next;
+    setScroll(next);
+  };
   const per = Math.max(10, Math.ceil(viewH / rowH) + 6);
   const start = virtual ? Math.max(0, Math.floor(scroll / rowH) - 3) : 0;
   const shown = virtual ? rows.slice(start, start + per) : rows;
@@ -283,6 +332,14 @@ export function ManageDialog({ onClose }: { onClose: () => void }) {
           ref={listRef}
           className="min-h-0 overflow-auto"
           style={{ maxHeight: "50vh" }}
+          tabIndex={virtual ? 0 : undefined}
+          role={virtual ? "region" : undefined}
+          aria-label={
+            virtual
+              ? `Saved layouts, ${rows.length} rows. Arrow keys, Page Up, Page Down, Home and End scroll.`
+              : undefined
+          }
+          onKeyDown={onListKey}
           onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
         >
           <ul

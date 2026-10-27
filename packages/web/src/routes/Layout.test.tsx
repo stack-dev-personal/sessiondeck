@@ -9,6 +9,7 @@ import { useBoard } from "../store/board";
 import { HubError, memoryAdapter } from "../layout/saved";
 import { useLayout } from "../store/layout";
 import { useSaved } from "../store/saved";
+import { DEFAULT_SETTINGS, useUi } from "../store/ui";
 import { Layout } from "./Layout";
 
 class RO {
@@ -191,7 +192,10 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     useSaved.setState({ rows: [], status: "ready", notice: null });
     useSaved.getState().setAdapter(memoryAdapter());
     useLayout.setState({ snapshot: null });
+    useUi.setState({ settings: DEFAULT_SETTINGS, modalOpen: false });
   });
+  const viewer = (host: string | null) =>
+    act(() => useUi.setState({ settings: { ...DEFAULT_SETTINGS, viewerHost: host } }));
 
   it("digits 1-9 switch to the slot's layout and the status line names it", async () => {
     useSaved.setState({ rows: [saved("a", 1, null), saved("b", 2, null, "pair")] });
@@ -209,13 +213,27 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
     expect(screen.getByTestId("layout-notice")).toHaveTextContent("No layout in slot 5.");
   });
 
-  it("uses the pin rule with the host of the board's most recent session", async () => {
+  it("finding 2: the pin rule follows the Viewer host setting, never board activity", async () => {
     useSaved.setState({ rows: [saved("all", 1, null), saved("pin", 1, "h", "pair")] });
     put(sess("s", "/w/x"));
     const user = userEvent.setup();
     mount();
+    // No Viewer host: only the unpinned layout resolves, even with a session from host "h" active.
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "all");
+    await viewer("h");
     await user.keyboard("1");
     expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "pin");
+    // Another host becomes the most recently active: the key does not change meaning.
+    act(() =>
+      put(sess("s", "/w/x", 1), { ...sess("t", "/w/y", 99), host: "other" } as SessionSnapshot),
+    );
+    await user.keyboard("2");
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "pin");
+    await viewer("other");
+    await user.keyboard("1");
+    expect(screen.getByTestId("layout")).toHaveAttribute("data-layout-id", "all");
   });
 
   it("does not fire while typing, with a modifier, or while a dialog is open", async () => {
@@ -240,20 +258,110 @@ describe("saved layouts and Shift+C on the route (R6.3, R6.5)", () => {
   });
 
   it("s opens the save dialog, Enter saves with name, slot and pin, Esc closes", async () => {
-    put(sess("s", "/w/x"));
+    viewer("h");
     const user = userEvent.setup();
     mount();
     await user.keyboard("s");
     expect(screen.getByRole("dialog", { name: "Save layout" })).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Evening");
     await user.selectOptions(screen.getByRole("combobox", { name: "Hotkey slot" }), "3");
-    await user.click(screen.getByRole("checkbox", { name: /Pin to host h/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Pin to Viewer host h/ }));
     await user.keyboard("{Enter}");
     await vi.waitFor(() => expect(screen.queryByTestId("save-dialog")).toBeNull());
     const row = useSaved.getState().rows[0]!;
     expect(row).toMatchObject({ name: "Evening", hotkey: 3, host: "h" });
     await user.keyboard("s{Escape}");
     expect(screen.queryByTestId("save-dialog")).toBeNull();
+  });
+
+  it("finding 2: with no Viewer host the pin box is disabled and says where to set it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    const box = screen.getByRole("checkbox", { name: /Pin to the Viewer host \(none set/ });
+    expect(box).toBeDisabled();
+    expect(box).not.toBeChecked();
+  });
+
+  it("finding 3: the host shown in the save dialog is the host saved, even if it changes meanwhile", async () => {
+    viewer("h");
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Frozen");
+    await user.click(screen.getByRole("checkbox", { name: /Pin to Viewer host h/ }));
+    await viewer("other");
+    expect(screen.getByRole("checkbox", { name: /Pin to Viewer host h/ })).toBeChecked();
+    await user.keyboard("{Enter}");
+    await vi.waitFor(() => expect(screen.queryByTestId("save-dialog")).toBeNull());
+    expect(useSaved.getState().rows[0]).toMatchObject({ name: "Frozen", host: "h" });
+  });
+
+  it("finding 5: saving while compacted stores the real layout and the dialog says so", async () => {
+    useLayout.setState({ spec: buildPreset("quad") });
+    const before = structuredClone(useLayout.getState().spec);
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("{Shift>}C{/Shift}");
+    await user.keyboard("s");
+    expect(screen.getByTestId("save-compact-note")).toHaveTextContent(/from before it/);
+    await user.type(screen.getByRole("textbox", { name: "Name" }), "Real{Enter}");
+    await vi.waitFor(() => expect(screen.queryByTestId("save-dialog")).toBeNull());
+    const stored = useSaved.getState().rows[0]!.spec;
+    expect(JSON.stringify(stored)).not.toContain('"compact":true');
+    expect(stored.root).toEqual(before.root);
+  });
+
+  it("finding 7: a dialog sets modalOpen, so t and c stay quiet behind it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("s");
+    expect(useUi.getState().modalOpen).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(useUi.getState().modalOpen).toBe(false);
+    await user.keyboard("m");
+    expect(useUi.getState().modalOpen).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(useUi.getState().modalOpen).toBe(false);
+  });
+
+  it("finding 6: past 100 rows every row is reachable from the keyboard alone", async () => {
+    const rows = Array.from({ length: 150 }, (_, i) => saved(`r${i}`, null, null, "solo"));
+    useSaved.setState({ rows });
+    const user = userEvent.setup();
+    mount();
+    await user.keyboard("m");
+    const list = screen.getByRole("region", { name: /Saved layouts, 150 rows/ });
+    expect(screen.queryByRole("textbox", { name: "Name of Name r149" })).toBeNull();
+    // Tab reaches the scroll area before the rows.
+    await user.tab();
+    expect(list).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("textbox", { name: "Name of Name r149" })).toBeInTheDocument();
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("textbox", { name: "Name of Name r0" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Name of Name r149" })).toBeNull();
+    await user.keyboard("{PageDown}");
+    expect(list.scrollTop).toBeGreaterThan(0);
+  });
+
+  it("finding 11: toolbar buttons keep their label and width when state changes", async () => {
+    const user = userEvent.setup();
+    mount();
+    const btn = screen.getByTestId("compact-all");
+    const label = () => btn.textContent!.replace(/[◻◼]/g, "").trim();
+    const w = btn.className;
+    expect(label()).toBe("Compact all (Shift+C)");
+    await user.keyboard("{Shift>}C{/Shift}");
+    expect(label()).toBe("Compact all (Shift+C)");
+    expect(btn.className).toBe(w);
+    expect(btn).toHaveAttribute("aria-pressed", "true");
+    expect(btn.textContent).toContain("◼");
+    expect(btn.className).toMatch(/w-\[14rem\]/);
+    act(() => useSaved.setState({ status: "offline" }));
+    expect(screen.getByRole("button", { name: /Saved: 0 \(cached\)/ }).className).toMatch(
+      /w-\[13rem\]/,
+    );
   });
 
   it("a hub error keeps the dialog open and shows the reason", async () => {

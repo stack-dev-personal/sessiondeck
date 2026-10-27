@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { browserEnv, playTone, primeAudio } from "../alerts/deliver";
 import { streamUrl } from "../live/stream-client";
+import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -42,6 +43,16 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [perm, setPerm] = useState<Perm>(currentPermission);
   const warning = insecureHubWarning(draft.hubUrl);
+  // Hosts seen on the board (a stable string, so the select does not re-render on every event),
+  // plus the saved choice even when its host is not reporting right now.
+  const seen = useBoard((b) =>
+    [...new Set(Object.values(b.sessions).map((x) => x.host))].sort().join("\n"),
+  );
+  const hosts = useMemo(() => {
+    const list = seen === "" ? [] : seen.split("\n");
+    if (draft.viewerHost !== null && !list.includes(draft.viewerHost)) list.push(draft.viewerHost);
+    return list;
+  }, [seen, draft.viewerHost]);
   /** The change handler is a user gesture, which is what requestPermission needs. */
   const toggleNotifications = (on: boolean) => {
     setDraft({ ...draft, notifications: on });
@@ -107,6 +118,31 @@ export function Settings() {
           }}
         />
       </label>
+      <div className="flex flex-col gap-s-1">
+        <label htmlFor="viewer-host">Viewer host</label>
+        <select
+          id="viewer-host"
+          className={input}
+          value={draft.viewerHost ?? ""}
+          data-testid="viewer-host"
+          aria-describedby="viewer-host-help"
+          onChange={(e) => {
+            setDraft({ ...draft, viewerHost: e.target.value === "" ? null : e.target.value });
+            setSaved(false);
+          }}
+        >
+          <option value="">None (only layouts for all hosts)</option>
+          {hosts.map((h) => (
+            <option key={h} value={h}>
+              {h}
+            </option>
+          ))}
+        </select>
+        <span id="viewer-host-help" className="min-h-[2.5em] text-sm text-fg-muted">
+          The machine this browser runs on. Keys 1-9 on the Layout page prefer layouts pinned to it.
+          With none, only layouts not pinned to a host open.
+        </span>
+      </div>
       <fieldset className="flex flex-col gap-s-2 border-0 p-0">
         <legend className="mb-s-1">Alerts</legend>
         <label className="flex items-center gap-s-2">

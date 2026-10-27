@@ -8,9 +8,9 @@ import { panesOf } from "../layout/spec";
 import { LAYOUT_KEYS, useShortcuts } from "../lib/keys";
 import { projectDirsByAttention } from "../lib/attention";
 import { useBoard } from "../store/board";
-import { viewerHost } from "../layout/saved";
 import { useLayout } from "../store/layout";
 import { useSaved } from "../store/saved";
+import { useUi } from "../store/ui";
 
 /**
  * Layout mode. `?preset=<name>` applies a builtin once and is then removed from the URL, so a
@@ -40,13 +40,14 @@ export function Layout() {
   }, [wanted, waiting, projects, applyPreset, setParams]);
 
   const [dialog, setDialog] = useState<"save" | "manage" | null>(null);
-  const host = useMemo(() => viewerHost(sessions), [sessions]);
+  // The explicit Viewer host setting (Settings); null means only unpinned layouts resolve.
+  const host = useUi((s) => s.settings.viewerHost);
   const toggleCompactAll = useLayout((s) => s.toggleCompactAll);
   const compacted = useLayout((s) => s.snapshot !== null);
   const press = useSaved((s) => s.press);
   const savedCount = useSaved((s) => s.rows.length);
   const savedStatus = useSaved((s) => s.status);
-  // The host is read at key time so a hotkey never closes over a stale board.
+  // The host is read at key time so a hotkey never closes over a stale setting.
   const hostRef = useRef(host);
   hostRef.current = host;
   const keys = useMemo(() => {
@@ -78,28 +79,32 @@ export function Layout() {
       <h1 className="sr-only">Layout</h1>
       <div className="flex shrink-0 items-center gap-s-3 border-b border-border px-s-4 py-s-2">
         <LayoutMenu current={spec.id} open={open} onOpenChange={setOpen} onPick={pick} />
-        <span className="num text-sm text-fg-muted" data-testid="pane-count">
+        <span className="num w-[5rem] shrink-0 text-sm text-fg-muted" data-testid="pane-count">
           {panesOf(spec).length} {panesOf(spec).length === 1 ? "pane" : "panes"}
         </span>
         <button
           type="button"
-          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          className="num w-[14rem] shrink-0 whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-left text-sm text-fg hover:bg-surface-3"
           aria-pressed={compacted}
           onClick={toggleCompactAll}
+          title={compacted ? "Compact all is on: press to restore the panes" : undefined}
           data-testid="compact-all"
         >
-          {compacted ? "Restore panes (Shift+C)" : "Compact all (Shift+C)"}
+          <span aria-hidden="true" className="inline-block w-[1.5em]">
+            {compacted ? "◼" : "◻"}
+          </span>
+          Compact all (Shift+C)
         </button>
         <button
           type="button"
-          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          className="num shrink-0 whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
           onClick={() => setDialog("save")}
         >
           Save (s)
         </button>
         <button
           type="button"
-          className="num rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3"
+          className="num w-[13rem] shrink-0 overflow-hidden whitespace-nowrap rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-left text-sm text-fg hover:bg-surface-3"
           onClick={() => setDialog("manage")}
         >
           Saved: {savedCount}
