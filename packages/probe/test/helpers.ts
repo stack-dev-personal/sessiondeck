@@ -1,11 +1,23 @@
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const probeRoot = join(here, "..");
 export const hookPath = join(probeRoot, "dist", "hook.mjs");
+/** Bun-compiled hook for this platform (build with `pnpm build:exe`); null when not built. */
+export const hookExePath: string | null = (() => {
+  const dir = join(
+    probeRoot,
+    "dist",
+    "exe",
+    process.platform === "win32" ? "windows-x64" : "linux-x64",
+  );
+  const file = join(dir, process.platform === "win32" ? "hook.exe" : "hook");
+  return existsSync(file) ? file : null;
+})();
+
 export const fixturesDir = join(probeRoot, "..", "contract", "fixtures");
 
 export interface HookRun {
@@ -37,11 +49,16 @@ export function runHook(
   script: string = hookPath,
 ): Promise<HookRun> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...hookArgs(opts)], {
-      env: { ...process.env, ...opts.env },
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const direct = !script.endsWith(".mjs");
+    const child = spawn(
+      direct ? script : process.execPath,
+      [...(direct ? [] : [script]), ...hookArgs(opts)],
+      {
+        env: { ...process.env, ...opts.env },
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => out.push(c));
