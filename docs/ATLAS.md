@@ -98,10 +98,10 @@ When the web app is served from a different origin than the hub (the compose top
 
 - Session drawer (open any session): the atlas strip shows the project as a link to its project view, the
   phase as an inline editor, and a "Move to project" select. Pick a project to reassign the session; the
-  choice is a manual override that wins over every later ingest. Choose "Re-infer" to undo it.
+  choice is a manual override that wins over every later ingest. Choose "Clear manual assignment (re-infer)" to undo it.
   Edit the phase in place (`Enter` saves, `Escape` cancels); an empty value brings the inferred label back.
-- Project view at `/projects/<id>`: click the project name or the color swatch to rename or recolor inline.
-- Sessions list at `/sessions`: filter by text, host, project, phase, and state; `j`/`k` move the selection,
+- Project view at `/projects/<id>`: click the project name to rename it inline (`Enter` saves, `Escape` cancels); pick a color from the Color select or type `#rrggbb` and press `Enter` or Set color.
+- Sessions list at `/sessions`: filter by text, host, project, phase, state, and date; sort; `j`/`k` move the selection,
   `Enter` opens the drawer, `Escape` clears the selection, `/` focuses the filter box.
 - Command palette: `Ctrl+K` (`Cmd+K` on macOS) from anywhere searches sessions, projects, and phases
   (`GET /search`); arrow keys or `Ctrl+N`/`Ctrl+P` move, `Enter` opens, `Escape` closes.
