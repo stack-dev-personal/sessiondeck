@@ -1,17 +1,17 @@
 # Verify P6 (layouts)
 
-Branch p6/layouts, HEAD 29fe34e. Verified 2026-10-27 by sd-verifier.
+Branch p6/layouts, HEAD b21e533 (R6.1 rows verified at 29fe34e; R6.2, R6.3, R6.5, R6.6 rows at b21e533). Verified 2026-10-27 by sd-verifier.
 
 | Requirement | Command | Output excerpt | Result | Evidence |
 |-------------|---------|----------------|--------|----------|
 | R6.1 "All seven builtin presets render correctly at both test resolutions and survive reload." (unit part: spec golden round-trip, presets, store persistence) | `pnpm -F @sessiondeck/web test` | `Test Files 25 passed (25)`, `Tests 289 passed (289)`; includes layout/spec.test.ts 41, store/layout.test.ts 8, layout/ops.test.ts 3, LayoutView.test.tsx 4, routes/Layout.test.tsx 16 | pass | terminal output, 2026-10-27 16:26 UTC |
 | R6.1 (browser part: 7 presets x 1440x900 and 2560x1440, plus keyboard menu and reload persistence) | `docker run --name sd-3-S10-verify-* --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.1'` (container removed afterward; mock build, VITE_MOCK=1, via playwright.config.ts webServer) | `Running 15 tests using 1 worker`, 14 preset/size tests plus `R6.1 menu is reachable by keyboard and a chosen preset survives reload`, `15 passed (41.0s)` | pass | /state/3/screens/S10/R6.1-<preset>-<w>x<h>.png (14 files, regenerated 16:27 UTC) |
 | R6.1 visual review of the 14 PNGs | read each image | No zero-size panes, no overlapping chrome, every pane has its 28 px header. Flags below. | pass, with flags | same PNGs |
-| R6.2 | - | - | pending | - |
-| R6.3 | - | - | pending | - |
+| R6.2 "Auto-fit picks the expected preset for 1-6 live sessions (table-driven test)." | `pnpm -F @sessiondeck/web test` (layout/autofit.test.ts it.each table; routes/Layout.assign.test.tsx arrange keys); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.2'` | Web unit: `Test Files 30 passed (30)`, `Tests 447 passed (447)`. e2e: R6.2 spec, 1-8 live cases (6, 7, 8 live -> grid6), by-project, reload persistence, all passed | pass | /state/3/screens/S10/R6.2-autofit-{0..8}.png, R6.2-by-project-mock.png; reviewed, no broken renders |
+| R6.3 "Saved layouts persist in the hub, switch in < 100 ms, hotkeys 1-9 work." | `pnpm -F @sessiondeck/hub test` (layouts.test.ts, cors.test.ts); `pnpm -F @sessiondeck/web test`; mock e2e `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.3'` run 3 times; live: `SD_E2E_PREFIX=sd-3-S10-verify SD_E2E_WORK_VOLUME=sprint-3-work SD_E2E_SCREENS_OUT=<dir> SD_E2E_ARGS=R6.3 packages/web/scripts/e2e-live.sh` (perf not skipped; it was not needed) | Hub: `Test Files 23 passed (23)`, `Tests 309 passed (309)`. Mock e2e x3, each `4 passed, 1 skipped` (the live describe self-skips): run1 max=23 ms first_after_reload=14 ms; run2 max=23 first_after_reload=26; run3 max=33 first_after_reload=12 (n=15 switches each, threshold 100 ms). Live against the real hub image: `1 passed` (4 mock describes skipped), max=24 p95=24 mean=10.6 first_after_reload=21.3 ms | pass | /state/3/screens/S10/R6.3-timing-run{1,2,3}.json, R6.3-timing-live.json, R6.3-timing-hub-down.json, R6.3-saved-{1,2,3}.png, R6.3-saved-{1,2,3}-live.png, R6.3-save-dialog.png, R6.3-manage-dialog.png, R6.3-viewer-host.png |
 | R6.4 | - | - | pending | - |
-| R6.5 | - | - | pending | - |
-| R6.6 | - | - | pending | - |
+| R6.5 "`Shift+C` compacts all panes; `Shift+C` again restores the previous layout exactly." | `pnpm -F @sessiondeck/web test` (store/layout.test.ts, routes/Layout.test.tsx Shift+C); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.5'` (run with R6.2 and R6.6, 16 passed) | e2e: `R6.5 Shift+C compacts all panes, Shift+C restores the layout exactly`, `restore is exact across a reload`, `manual expand keeps the restore; switching layout discards it` all passed; `16 passed (28.1s)` | pass | /state/3/screens/S10/R6.5-compacted.png, R6.5-restored.png, R6.5-restored-after-reload.png |
+| R6.6 "Drag-assign and keyboard-assign both work; a session can appear in at most one content pane." | `pnpm -F @sessiondeck/web test` (layout/ops.test.ts property test, store/layout.test.ts property test, routes/Layout.assign.test.tsx 29 tests); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.6'` | e2e: `drag a card onto pane 2, then the same session onto pane 3` and `keyboard only: Tab to a pane, Enter, filter, Enter` passed; `16 passed (28.1s)` | pass | /state/3/screens/S10/R6.6-drag.png, R6.6-keyboard.png, R6.6-invariant.png |
 
 ## Visual flags for R6.1 (not covered by the spec's assertions)
 
@@ -19,3 +19,12 @@ Branch p6/layouts, HEAD 29fe34e. Verified 2026-10-27 by sd-verifier.
 - solo (both sizes): the Board pane is a single short row of cards that overflows horizontally, so only 3 of 8 sessions are visible at 1440 and 5 at 2560. Intended behaviour for "1 content + strip" is not stated in the phase doc.
 
 Screenshots: solo, pair, quad, focus, grid6, by-project, strip, each at 1440x900 and 2560x1440.
+
+## Flags for R6.2, R6.3, R6.5, R6.6 (not covered by the specs' assertions)
+
+- `pnpm -F @sessiondeck/web typecheck` and `lint` exit 0.
+- R6.5 screenshots: all four panes are Unassigned, so the shots prove the toggle label (Compact all / Expand) and layout restore but do not show a populated pane collapsing; session content compaction is covered only by the unit tests.
+- R6.3 live screenshots show the restored layout named `u-3192444aff7d1` in the toolbar (the saved name appears only in the info line `Layout 2: Layout 2 Quad`); panes are unassigned.
+- R6.2 focus at 3 live sessions: the right-hand cards touch the pane edge and the cost line reaches the border; a 4th pane is left Unassigned by design.
+- R6.2 by-project: the third column is faded and the "Scroll for 3 more columns" chip is shown at 1440 wide; consistent with the R6.1 clipped-column flag being addressed.
+- R6.3 timing across the 3 mock runs: max 23, 23, 33 ms (limit 100); no flakiness seen. Test containers sd-3-S10-verify-* removed.
