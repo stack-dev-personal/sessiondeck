@@ -1,0 +1,15 @@
+# VERIFY P5 (Atlas), unit U1 (hub side)
+
+Branch p5/atlas-core, head b3cb45b (includes e7d23b4). Verified 2026-10-27T16:21:05Z. Node v22.23.3, Linux 6.18.33.2-microsoft-standard-WSL2.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R5.1 Every live session belongs to exactly one project; worktree sessions roll up to the repo project. | `pnpm -F @sessiondeck/hub test` (atlas.R5.1.test.ts, atlas.fix1.test.ts); harness `/tmp/s9-harness/harness.mjs` against real hub process | Full suite: 25 files, 339 tests passed. R5.1: 35 passed, fix1: 10 passed. Harness: sess-main (cwd /home/u/code/demoapp) and sess-wt (cwd .../demoapp/.claude/worktrees/feat-x) both got project_id p_89853d87...; "same: true"; unrelated cwd got its own project | pass (hub side) | 2026-10-27T16:21:05Z |
+| R5.5 Phase labels are editable inline and survive hub restart. | `pnpm -F @sessiondeck/hub test` (atlas.R5.5.test.ts); harness (PATCH /sessions/:id/phase, kill hub, restart same SQLite file) | R5.5: 4 passed. Harness: PATCH 200 -> "Phase 5 - Atlas"; after restart GET /sessions/sess-wt phase = "Phase 5 - Atlas" | pass (hub side; web part pending U3) | 2026-10-27T16:21:05Z |
+| R5.6 Project view shows: live sessions, last 20 archived, totals (sessions, hours, cost from history), active branches. | `pnpm -F @sessiondeck/hub test` (atlas.R5.6.test.ts); harness GET /projects/:id after restart | R5.6: 8 passed. Harness response keys project,live,archived,totals,branches; live = sess-wt + sess-main (worktree rolled up, other project excluded); totals {"sessions":2,"hours":5.6e-6,"cost_usd":0}; archived 0; branches [] (fixture snapshots carry no git branch) | pass (hub side; web part pending U3) | 2026-10-27T16:21:05Z |
+
+## Notes
+
+- Harness: bundled src/main.ts to a throwaway dist file (removed afterwards), launched the real process twice via node with HUB_TOKEN random per run, HUB_DB_PATH in a temp dir (deleted afterwards), port 18787. Ingested SessionStart and UserPromptSubmit fixture payloads (contract/fixtures) for three sessions, one with a worktree cwd. No Docker used.
+- Harness gaps, stated plainly: the 20-row archived cap, nonzero cost, and non-empty active branches are proven only by the vitest suites, not by the harness (fixture payloads had no archived sessions, usage, or git branch).
+- Not verified here: web inline editing UI (R5.5) and project view UI (R5.6), pending U3.
