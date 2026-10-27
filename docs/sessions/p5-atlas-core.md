@@ -23,3 +23,13 @@ Concurrency allowed: 1, so units run sequentially.
 ## Decisions made
 
 ## Deferred findings
+
+- U1 [MINOR] packages/hub/src/atlas/infer.ts:134: "P95  latency" (two spaces) bypasses the metric-word exclusion via \s+ backtracking. Folded into U2.
+- U1 [MINOR] packages/hub/src/routes/atlas.ts:131-139: an earlier-registered throwing "atlas" listener would stop later listeners; only stream.ts listens today. Folded into U2 (stream.ts listener catches its own errors).
+
+### U1 hub projects, roll-up, phases, project view API (R5.1, R5.5, R5.6 hub side)
+- Executor: sd-executor-hub. Commits 732b780 (feature), 7d25f17 (fix 1), e7d23b4 (fix 2).
+- Files: packages/hub/src/atlas/infer.ts, src/routes/atlas.ts, src/db/{migrations,store}.ts, src/stream.ts, src/server.ts, src/ingest/ingestor.ts, test/atlas.*.test.ts, docs/ATLAS.md.
+- Review: iteration 1 fix-then-merge (MAJOR: WS deltas unannotated); iteration 2 fix-then-merge (MAJOR: PATCH pushed archived sessions to live board); iteration 3 merge.
+- Security review (not gated by handoff; run because the unit adds write endpoints and ingest changes): Gate pass both rounds; MEDIUMs (48-bit id collision stalls ingest, unbounded PATCH, per-read full project scan) fixed in 7d25f17.
+- Hub tests: 339 passed.
