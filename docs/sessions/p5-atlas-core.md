@@ -10,7 +10,7 @@
 
 | Unit | Requirements | Executor | Paths | Blocked by | Status |
 |------|--------------|----------|-------|------------|--------|
-| U1 hub projects, roll-up, phases, project view API | R5.1, R5.5, R5.6 | sd-executor-hub | packages/hub/**, docs/ATLAS.md | - | pending |
+| U1 hub projects, roll-up, phases, project view API | R5.1, R5.5, R5.6 | sd-executor-hub | packages/hub/**, docs/ATLAS.md | - | done (merge; verifier 3 pass hub side) |
 | U2 hub FTS5 search + latency bench | R5.4 | sd-executor-hub | packages/hub/**, docs/HUB-BENCH.md | U1 | pending |
 | U3 web project view, inline phase + project edit | R5.1, R5.5, R5.6 | sd-executor-web | packages/web/** | U1 | pending |
 | U4 web session list + Ctrl+K palette | R5.4 | sd-executor-web | packages/web/** | U2, U3 | pending |
