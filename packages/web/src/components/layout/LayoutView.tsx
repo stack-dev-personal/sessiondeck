@@ -116,7 +116,7 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
 
 /**
  * Sideways scroller for a row of project columns. When columns are off to the right it overlays a
- * narrow edge fade and a "N more columns" chip at the right edge (absolute, so no geometry
+ * narrow edge fade (below the pane header row) and a "N more columns" chip at the right edge (absolute, so no geometry
  * changes). The fade is only a few rem wide and the chip sits at the bottom, so a column that is
  * fully on screen, header buttons included, stays fully readable.
  */
@@ -165,7 +165,7 @@ function ColumnScroller({ count, children }: { count: number; children: ReactNod
       {more > 0 ? (
         <div className="pointer-events-none absolute inset-0" data-testid="columns-more">
           <div
-            className="absolute inset-y-0 right-0 w-[2.5rem] bg-gradient-to-l from-surface-1 to-transparent"
+            className="absolute bottom-0 right-0 top-[var(--pane-head-h)] w-[2.5rem] bg-gradient-to-l from-surface-1 to-transparent"
             data-testid="columns-fade"
             aria-hidden="true"
           />

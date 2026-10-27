@@ -68,6 +68,9 @@ async function switchesAfterReload(page: Page, rows: HubRow[], tag: string): Pro
     samples.push({ key: String(n), ms });
     await expect(page.getByTestId("layout")).toHaveAttribute("data-layout-id", row.id);
     await expect(page.getByTestId("layout-notice")).toContainText(`Layout ${n}: ${row.name}`);
+    // The toolbar names the saved layout, never its id.
+    await expect(page.getByTestId("layout-menu-button")).toHaveText(`Layout: ${row.name} (l)`);
+    await expect(page.getByTestId("layout-menu-button")).not.toContainText(row.id);
     if (shots < 3) await page.screenshot({ path: shot(`R6.3-saved-${++shots}${tag}.png`) });
   }
   writeTiming(`R6.3-timing${tag}.json`, samples, { first_after_reload_ms: firstAfterReload });

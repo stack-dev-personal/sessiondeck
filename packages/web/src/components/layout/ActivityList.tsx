@@ -3,9 +3,12 @@
  * so the window is arithmetic. Only the rows in view plus OVERSCAN above and below are in the DOM,
  * however many (up to ACTIVITY_CAP) the log holds.
  *
- * Pinned to the bottom by default: new rows scroll into view. Scrolling up unpins (the view stays
- * on what the reader is looking at, also when the ring buffer drops its oldest rows); scrolling
- * back to the bottom, End, or the "Jump to latest" button pins again.
+ * The scroller is a column-reverse flex box: scrollTop 0 is the bottom and scrolling up goes
+ * negative. So "pinned to the bottom" is the browser's own resting state: new rows need no script
+ * scroll write, no scroll event and no forced layout (those cost about 20 percent of a frame for
+ * six live lists in the first version). Scrolling up unpins; the view then stays on the rows the
+ * reader is looking at (the scroll distance grows by the rows appended). Scrolling back to the
+ * bottom, End, or the "Jump to latest" button pins again.
  */
 import {
   memo,
@@ -37,13 +40,13 @@ export function windowOf(
   return { start: Math.min(end, Math.max(0, first - overscan)), end };
 }
 
-const Row = memo(function Row({ row, index, h }: { row: ActivityRow; index: number; h: number }) {
+const Row = memo(function Row({ row, h }: { row: ActivityRow; h: number }) {
   const t = new Date(row.ts);
   const clock = Number.isFinite(t.getTime()) ? t.toTimeString().slice(0, 8) : "n/a";
   return (
     <li
-      className="absolute inset-x-0 flex items-center gap-s-2 px-s-2 text-xs"
-      style={{ top: index * h, height: h }}
+      className="flex items-center gap-s-2 px-s-2 text-xs [contain:layout_paint_style]"
+      style={{ height: h }}
       data-row={row.n}
       data-kind={row.kind}
     >
@@ -61,10 +64,10 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
   const box = useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = useState(ROW_H_FALLBACK);
   const [viewH, setViewH] = useState(VIEW_H_FALLBACK);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [pinned, setPinned] = useState(true);
+  /** Pixels between the bottom of the list and the bottom of the view; 0 means pinned. */
+  const [dist, setDist] = useState(0);
   const pinnedRef = useRef(true);
-  const firstN = useRef(rows[0]?.n ?? 0);
+  const lastN = useRef(rows[rows.length - 1]?.n ?? 0);
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -82,42 +85,37 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
   }, []);
 
   const total = rows.length * rowH;
-  const bottomTop = Math.max(0, total - viewH);
-  // While pinned the window follows the bottom even before the scroll event catches up.
-  const top = pinned ? bottomTop : scrollTop;
+  const pinned = dist <= rowH * 1.5;
+  const top = Math.max(0, total - viewH - (pinned ? 0 : dist));
 
-  // After every commit: pinned follows the bottom; unpinned keeps the rows in view when the ring
-  // buffer dropped its oldest rows (everything shifted up by that many rows).
-  const lastN = rows[rows.length - 1]?.n ?? 0;
+  // Unpinned: every appended row grows the list below the reader, so move the view up by as much
+  // (also when the ring buffer drops its oldest rows at the same time).
+  const newest = rows[rows.length - 1]?.n ?? 0;
   useLayoutEffect(() => {
+    const appended = newest - lastN.current;
+    lastN.current = newest;
     const el = box.current;
-    if (!el) return;
-    const dropped = (rows[0]?.n ?? 0) - firstN.current;
-    firstN.current = rows[0]?.n ?? 0;
-    if (pinnedRef.current) el.scrollTop = bottomTop;
-    else if (dropped > 0) {
-      el.scrollTop = Math.max(0, el.scrollTop - dropped * rowH);
-      setScrollTop(el.scrollTop);
-    }
-  }, [lastN, rows, bottomTop, rowH]);
+    if (!el || pinnedRef.current || appended <= 0) return;
+    const next = Math.min(Math.max(0, total - viewH), -el.scrollTop + appended * rowH);
+    el.scrollTop = -next;
+    setDist(next);
+  }, [newest, total, viewH, rowH]);
 
   const onScroll = (e: UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= rowH * 1.5;
-    const was = pinnedRef.current;
-    pinnedRef.current = atBottom;
+    const d = Math.max(0, -e.currentTarget.scrollTop);
+    const nowPinned = d <= rowH * 1.5;
+    pinnedRef.current = nowPinned;
     // Still pinned: the window already follows the bottom, so no state change, no extra render.
-    if (atBottom && was) return;
-    setPinned(atBottom);
-    setScrollTop(el.scrollTop);
+    if (nowPinned && pinned) return;
+    setDist(nowPinned ? 0 : d);
   };
   const jump = useCallback(() => {
     const el = box.current;
     if (!el) return;
     pinnedRef.current = true;
-    setPinned(true);
-    el.scrollTop = Math.max(0, rows.length * rowH - el.clientHeight);
-  }, [rows.length, rowH]);
+    setDist(0);
+    el.scrollTop = 0;
+  }, []);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === "End") {
@@ -125,30 +123,41 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
       jump();
     } else if (e.key === "Home") {
       e.preventDefault();
-      box.current!.scrollTop = 0;
+      const el = box.current!;
+      el.scrollTop = -Math.max(0, el.scrollHeight - el.clientHeight);
     }
   };
 
   const { start, end } = windowOf(rows.length, rowH, top, viewH);
   const visible = rows.slice(start, end);
   return (
-    <div className="relative h-full" data-testid="activity-list" data-pinned={pinned}>
+    <div
+      className="relative h-full [contain:layout_paint_style]"
+      data-testid="activity-list"
+      data-pinned={pinned}
+    >
       <div
         ref={box}
         role="log"
         aria-label="Session activity"
         aria-live="off"
         tabIndex={0}
-        className="h-full overflow-y-auto overflow-x-hidden outline-offset-[-2px]"
+        className="flex h-full flex-col-reverse overflow-y-auto overflow-x-hidden outline-offset-[-2px]"
         onScroll={onScroll}
         onKeyDown={onKeyDown}
         data-total={rows.length}
       >
-        <ul className="relative m-0 list-none p-0" style={{ height: total }}>
-          {visible.map((r, i) => (
-            <Row key={r.n} row={r} index={start + i} h={rowH} />
-          ))}
-        </ul>
+        <div className="relative mb-auto shrink-0" style={{ height: total }}>
+          <ul
+            className="absolute inset-x-0 m-0 list-none p-0"
+            style={{ top: start * rowH }}
+            data-window={`${start}-${end}`}
+          >
+            {visible.map((r) => (
+              <Row key={r.n} row={r} h={rowH} />
+            ))}
+          </ul>
+        </div>
       </div>
       {pinned ? null : (
         <button

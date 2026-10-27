@@ -163,3 +163,26 @@ export function longTaskDetails(events: TraceEvent[], minMs = 50) {
     return { durMs: r2((t.dur ?? 0) / 1000), children };
   });
 }
+
+/**
+ * Script time on the busiest renderer main thread, in ms per second of the window: the union of
+ * script entry events (nested ones count once) clipped to [t0, t0 + windowUs], t0 = first task.
+ */
+export function scriptMsPerSecond(events: TraceEvent[], windowUs: number): number {
+  const mains = mainThreadKeys(events);
+  const tasks = events.filter((e) => e.ph === "X" && TASK_NAMES.has(e.name) && mains.has(key(e)));
+  const t0 = tasks.reduce((m, e) => Math.min(m, e.ts), Infinity);
+  const t1 = t0 + windowUs;
+  const perThread = new Map<string, [number, number][]>();
+  for (const e of events) {
+    if (e.ph !== "X" || !SCRIPT.has(e.name) || !mains.has(key(e))) continue;
+    const a = Math.max(e.ts, t0);
+    const b = Math.min(e.ts + (e.dur ?? 0), t1);
+    if (b <= a) continue;
+    const list = perThread.get(key(e)) ?? [];
+    list.push([a, b]);
+    perThread.set(key(e), list);
+  }
+  const busiest = Math.max(0, ...[...perThread.values()].map((iv) => unionLength(iv)));
+  return r2(busiest / 1000 / (windowUs / 1e6));
+}

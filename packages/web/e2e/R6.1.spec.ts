@@ -90,6 +90,27 @@ for (const [w, h] of SIZES) {
         expect(clipped).toEqual([]);
         // Columns off to the right are announced at the edge, and the hint goes at the end.
         await expect(page.getByTestId("columns-more")).toContainText(/Scroll for \d+ more column/);
+        // The edge fade is narrow and starts below the pane header row, and the chip sits low: no
+        // header button of a column that is fully on screen is washed out or covered (the last
+        // visible column's Compact button).
+        const fade = (await page.getByTestId("columns-fade").boundingBox())!;
+        expect(fade.width).toBeLessThanOrEqual(48);
+        const chip = (await page.getByTestId("columns-more").locator("span").boundingBox())!;
+        const area2 = (await sc.boundingBox())!;
+        const heads = await page
+          .locator('[data-pane-type="project"] header button')
+          .evaluateAll((els) =>
+            els.map((e) => {
+              const r = e.getBoundingClientRect();
+              return { x: r.x, y: r.y, w: r.width, h: r.height };
+            }),
+          );
+        const visible = heads.filter((b) => b.x + b.w <= area2.x + area2.width);
+        expect(visible.length).toBeGreaterThan(2);
+        for (const b of visible) {
+          expect(b.y + b.h, "header button above the fade").toBeLessThanOrEqual(fade.y + 1);
+          expect(b.y + b.h, "header button above the chip").toBeLessThanOrEqual(chip.y);
+        }
         await sc.evaluate((e) => (e.scrollLeft = e.scrollWidth));
         await expect(page.getByTestId("columns-more")).toHaveCount(0);
         await sc.evaluate((e) => (e.scrollLeft = 0));
