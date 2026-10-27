@@ -211,3 +211,35 @@ Method: throwaway detached worktree of the base, alternated base, head, base, he
 Summary: base p95 39.94 to 53.26 (mean 46.3); head p95 73.39 to 83.61 (mean 79.1). Distributions do not overlap; head is about 1.7x base at p95, with the same ordering at p50 and p99. Every run on both sides FAILS the 20 ms limit, so the host is contended (as in FIX-5), but the head is consistently worse than the base under the same conditions.
 
 Conclusion: regression. The head is consistently worse than the base beyond run-to-run noise, most likely the per-ingest atlas/search indexing added in packages/hub/src/ingest/ingestor.ts. Absolute R2.4 pass still needs a quiet-host or laptop run. Caveat: n=3 per side, load average rose during the sequence for both sides.
+
+## R2.4 A/B after U2b (S9)
+
+2026-10-27. Fix for the regression above. Same machine and method as "R2.4 A/B (S9)" (throwaway detached worktree of `origin/sprint/3-organize` with symlinked node_modules, `node scripts/load-ingest.mjs --rate 1000 --duration 60 --batch 100 --p95-limit 20` run directly in each tree's `packages/hub`, 60 s runs, alternated). The host was busier than during the first A/B (other sessions running; loadavg 1.4 to 6.4), which raises both sides.
+
+Profile (20 s run, 1000 env/s, 1973 session upserts, time spent inside `Store.upsertSession` in the ingest transaction):
+
+| | upsertSession total | of which indexSession | of which reindexProjectPhases |
+|---|---|---|---|
+| before (693cd07) | 2923 ms | 2273 ms (putDoc 363 ms) | 1682 ms in 649 calls (2.6 ms each, a re-parse of every session in the project) |
+| after | 314 ms | n/a (deferred) | n/a (once per project per flush, only on phase or project change) |
+
+The deferred work runs in 92 flushes totalling 453 ms (about 5 ms each, outside the ingest transaction). Dominant cost was the per-change project phase re-derivation, not the FTS5 writes themselves.
+
+| Run | Tree | p50 ms | p95 ms | p99 ms | max ms | loadavg (1) before |
+|---|---|---|---|---|---|---|
+| 1 | base | 41.14 | 129.85 | 310.27 | 580.97 | 3.71 |
+| 2 | head | 14.64 | 23.29 | 42.68 | 67.47 | 3.17 |
+| 3 | base | 14.91 | 22.71 | 39.19 | 76.36 | 1.41 |
+| 4 | head | 17.38 | 44.23 | 75.73 | 129.33 | 1.46 |
+| 5 | base | 15.53 | 38.00 | 47.32 | 78.84 | 2.79 |
+| 6 | head | 26.23 | 58.45 | 74.00 | 112.92 | 1.71 |
+| 7 | head | 17.17 | 41.28 | 63.86 | 111.10 | 6.42 |
+| 8 | base | 17.94 | 59.79 | 96.67 | 418.65 | 3.88 |
+| 9 | head | 39.26 | 72.49 | 127.33 | 284.47 | 6.17 |
+| 10 | base | 39.73 | 78.23 | 178.35 | 282.73 | 4.00 |
+| 11 | head | 36.34 | 136.66 | 395.98 | 655.35 | 5.06 |
+| 12 | base | 24.66 | 47.89 | 59.01 | 65.95 | 3.49 |
+
+Summary: head p95 23.29 to 136.66 (median 51.8, n=6); base p95 22.71 to 129.85 (median 53.1, n=6). The distributions overlap completely (before: head 73 to 84 vs base 40 to 53, disjoint). Every run on both sides still fails the 20 ms limit, so absolute R2.4 pass still needs a quiet host or the laptop run; this section shows only that the atlas/search work no longer costs ingest latency beyond noise.
+
+Search after the change (`node scripts/bench-search.mjs`, 2000 sessions, 50 projects, 2336 docs): route p50 5.56, p95 20.57, max 30.05 ms; worst class common-multi p95 26.63 ms (limit 100 ms).

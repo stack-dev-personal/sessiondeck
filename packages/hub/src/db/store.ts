@@ -88,6 +88,8 @@ export interface TranscriptLineRow {
   raw: string;
 }
 
+const SEARCH_FLUSH_MS = 200;
+
 export class Store {
   readonly db: Database.Database;
   private readonly cache = new Map<string, Database.Statement>();
@@ -279,14 +281,12 @@ export class Store {
   projectScans = 0;
 
   upsertSession(row: SessionRow): void {
-    const prev = this.stmt(
-      "SELECT project_dir, project_id, phase_label, snapshot FROM sessions WHERE session_id = ?",
-    ).get(row.session_id) as
+    const prev = this.stmt("SELECT project_dir, project_id FROM sessions WHERE session_id = ?").get(
+      row.session_id,
+    ) as
       | {
           project_dir: string | null;
           project_id: string | null;
-          phase_label: string | null;
-          snapshot: string;
         }
       | undefined;
     if ((prev?.project_dir ?? null) !== row.project_dir) this.projectsVersion++;
@@ -323,38 +323,33 @@ export class Store {
       project_id: projectId,
       phase_label: phaseLabel,
     });
-    // R5.4: the index follows the row. An unchanged snapshot in an unchanged project (the common
-    // case for a repeated update) costs no parse, hash or index probe; otherwise the document is
-    // rewritten only when its indexed text changed.
-    if (prev !== undefined && prev.snapshot === row.snapshot && prev.project_id === projectId)
-      return;
-    this.indexSession(
-      row.session_id,
-      row.snapshot,
-      projectId,
-      prev?.phase_label ?? phaseLabel,
-      prev === undefined ? undefined : { snapshot: prev.snapshot, projectId: prev.project_id },
-    );
+    // R5.4: the search index follows the row, but not inside the ingest transaction. The session
+    // is only marked dirty here (a Set add); flushSearchIndex() indexes it from the committed row
+    // in its own transaction, once per flush however many updates arrived. A rolled-back batch
+    // leaves a harmless dirty id (the flush reads the row as it is, or finds none).
+    this.markSearchDirty(row.session_id);
   }
 
   // ---- R5.4 search index (FTS5) ------------------------------------------------------------
 
-  /** Writes one search document unless its text is unchanged. Returns true when the index changed. */
+  /**
+   * Writes one search document unless its text is unchanged. Returns null when nothing changed,
+   * else what was there before (`existed`, and the project of the old document).
+   */
   private putDoc(
     kind: string,
     refId: string,
     projectId: string | null,
     title: string,
     body: string,
-  ): boolean {
+  ): { existed: boolean; prevProject: string | null } | null {
     const hash = createHash("sha1")
       .update(`${projectId ?? ""}\u0000${title}\u0000${body}`)
       .digest("hex");
-    const cur = this.stmt("SELECT id, hash FROM search_docs WHERE kind = ? AND ref_id = ?").get(
-      kind,
-      refId,
-    ) as { id: number; hash: string } | undefined;
-    if (cur?.hash === hash) return false;
+    const cur = this.stmt(
+      "SELECT id, hash, project_id FROM search_docs WHERE kind = ? AND ref_id = ?",
+    ).get(kind, refId) as { id: number; hash: string; project_id: string | null } | undefined;
+    if (cur?.hash === hash) return null;
     let id: number;
     if (cur === undefined) {
       id = Number(
@@ -374,7 +369,7 @@ export class Store {
     this.stmt(
       "INSERT INTO search_fts (rowid, kind, ref_id, project_id, title, body) VALUES (?, ?, ?, ?, ?, ?)",
     ).run(id, kind, refId, projectId, title, body);
-    return true;
+    return { existed: cur !== undefined, prevProject: cur?.project_id ?? null };
   }
 
   private dropDoc(kind: string, refId: string): void {
@@ -387,33 +382,96 @@ export class Store {
     this.stmt("DELETE FROM search_docs WHERE id = ?").run(cur.id);
   }
 
-  /** Indexes a session (and its phase document when the text changed). Never throws on a bad snapshot. */
+  /** Sessions whose row changed since the last flush, and the phase and project last indexed for each (a cache). */
+  private readonly dirtySearch = new Set<string>();
+  private readonly indexedAs = new Map<
+    string,
+    { phase: string | null; projectId: string | null }
+  >();
+  private flushTimer: NodeJS.Timeout | undefined;
+  /** Called with a flush failure (the timer must not throw). The server wires this to its logger. */
+  onSearchFlushError: (err: unknown) => void = (err) => {
+    process.emitWarning(
+      `search index flush failed: ${err instanceof Error ? err.message : "error"}`,
+    );
+  };
+
+  private markSearchDirty(sessionId: string): void {
+    this.dirtySearch.add(sessionId);
+    if (this.flushTimer !== undefined) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
+      try {
+        this.flushSearchIndex();
+      } catch (err) {
+        this.onSearchFlushError(err);
+      }
+    }, SEARCH_FLUSH_MS);
+    this.flushTimer.unref();
+  }
+
+  /**
+   * Indexes every session marked dirty, in one transaction, then re-derives the phase documents of
+   * the projects whose phases may have lost support (once per project, not once per change).
+   * Called by the timer, before every search read, on close, and by tests.
+   */
+  flushSearchIndex(): void {
+    if (this.flushTimer !== undefined) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+    if (this.dirtySearch.size === 0) return;
+    const ids = [...this.dirtySearch];
+    this.dirtySearch.clear();
+    try {
+      this.transaction(() => {
+        const projects = new Set<string>();
+        for (const id of ids) {
+          const r = this.stmt(
+            "SELECT snapshot, project_id, phase_label FROM sessions WHERE session_id = ?",
+          ).get(id) as
+            { snapshot: string; project_id: string | null; phase_label: string | null } | undefined;
+          if (r !== undefined)
+            this.indexSession(id, r.snapshot, r.project_id, r.phase_label, projects);
+        }
+        for (const p of projects) this.reindexProjectPhases(p);
+      });
+    } catch (err) {
+      for (const id of ids) this.dirtySearch.add(id); // retried by the next flush
+      throw err;
+    }
+  }
+
+  /**
+   * Indexes a session and its phase document. Never throws on a bad snapshot. When the session's
+   * phase or project may have changed (or is unknown after a restart) the affected projects are
+   * added to `reindex`; with no collector (PATCH, backfill) the caller re-derives phases itself.
+   */
   private indexSession(
     sessionId: string,
     snapshot: string,
     projectId: string | null,
     manualPhase: string | null,
-    prev?: { snapshot: string; projectId: string | null },
+    reindex?: Set<string>,
   ): void {
-    const parse = (text: string): Record<string, unknown> | null => {
-      try {
-        const v: unknown = JSON.parse(text);
-        return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
-      } catch {
-        return null;
-      }
-    };
-    const snap = parse(snapshot);
+    let snap: Record<string, unknown> | null = null;
+    try {
+      const v: unknown = JSON.parse(snapshot);
+      if (typeof v === "object" && v !== null) snap = v as Record<string, unknown>;
+    } catch {
+      // unreadable snapshot: not indexed
+    }
     if (snap === null) return;
     const t = indexSessionText(snap, sessionId, manualPhase);
-    if (!this.putDoc("session", sessionId, projectId, t.title, t.body)) return;
-    if (prev !== undefined) {
+    const last = this.indexedAs.get(sessionId);
+    this.indexedAs.set(sessionId, { phase: t.phase, projectId });
+    const was = this.putDoc("session", sessionId, projectId, t.title, t.body);
+    if (was === null) return;
+    if (was.existed && reindex !== undefined) {
       // A renamed phase or a moved session can leave a phase document nobody supports any more.
-      const old = parse(prev.snapshot);
-      const oldPhase = old === null ? null : indexSessionText(old, sessionId, manualPhase).phase;
-      if (oldPhase !== t.phase || prev.projectId !== projectId) {
-        this.reindexProjectPhases(prev.projectId);
-        if (projectId !== prev.projectId) this.reindexProjectPhases(projectId);
+      if (last === undefined || last.phase !== t.phase || was.prevProject !== projectId) {
+        if (projectId !== null) reindex.add(projectId);
+        if (was.prevProject !== null) reindex.add(was.prevProject);
         return;
       }
     }
@@ -517,6 +575,7 @@ export class Store {
 
   /** Ranked matches for an already-built MATCH expression (see buildMatch); live sessions rank higher. */
   searchMatch(match: string, limit: number): SearchHit[] {
+    this.flushSearchIndex();
     // Ranking runs in the inner query on rowids only; snippet() is computed in the outer query for
     // the top `limit` rows, so a broad match builds `limit` snippets, not one per matched row.
     const rows = this.stmt(
@@ -544,6 +603,7 @@ export class Store {
 
   /** Most recently active sessions, then (at most 5) most recently active projects. */
   searchRecent(limit: number): SearchHit[] {
+    this.flushSearchIndex();
     const projects = (
       this.stmt(
         `SELECT 'project' AS kind, p.id AS ref_id, p.id AS project_id, COALESCE(p.name, p.project_dir) AS title,
@@ -1003,11 +1063,16 @@ export class Store {
       "DELETE FROM search_fts WHERE rowid IN (SELECT id FROM search_docs WHERE kind <> 'project')",
     ).run();
     this.stmt("DELETE FROM search_docs WHERE kind <> 'project'").run();
+    this.indexedAs.clear();
     this.projectsVersion++;
   }
 
   close(): void {
-    this.db.close();
+    try {
+      this.flushSearchIndex();
+    } finally {
+      this.db.close();
+    }
   }
 }
 

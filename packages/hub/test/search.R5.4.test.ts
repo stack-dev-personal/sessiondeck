@@ -157,11 +157,38 @@ describe("R5.4 search", () => {
     const r = await search("t");
     expect(r.status).toBe(200);
     expect(r.body.results.length).toBeGreaterThan(0); // recent items
+    expect(r.body.results.map((x) => x.id)).toEqual(
+      h.store.searchRecent(r.body.results.length).map((x) => x.id),
+    );
     expect(r.body.results.every((x) => x.snippet.length <= 120)).toBe(true);
+  });
+
+  it("indexing is off the write path: upsert writes no document, the timer flushes within a second", async () => {
+    const snap = seedSession(h.store, "s-lazy", { last_prompt: "quokka" });
+    const count = () =>
+      (
+        h.store.db
+          .prepare(
+            "SELECT COUNT(*) AS n FROM search_docs WHERE kind = 'session' AND ref_id = 's-lazy'",
+          )
+          .get() as { n: number }
+      ).n;
+    expect(snap).toBeDefined();
+    expect(count()).toBe(0);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(count()).toBe(1);
+  });
+
+  it("coalesces: many updates of one session between flushes index it once", async () => {
+    for (let i = 0; i < 20; i++) seedSession(h.store, "s-co", { last_prompt: `quokka ${i}` });
+    h.store.flushSearchIndex();
+    expect((await search("quokka")).body.results.filter((x) => x.id === "s-co").length).toBe(1);
+    expect((await search("19")).body.results[0]).toMatchObject({ id: "s-co" });
   });
 
   it("backfills an existing database on open", async () => {
     seed();
+    h.store.flushSearchIndex();
     h.store.db.exec("DELETE FROM search_fts; DELETE FROM search_docs;");
     expect((await search("billing")).body.results).toEqual([]);
     expect(h.store.backfillSearch()).toBeGreaterThan(0);
@@ -247,9 +274,10 @@ describe("R5.4 search", () => {
 
   it("treats operators as plain words", async () => {
     seed();
-    expect(buildMatch("NEAR(a b) title:x*")).toBe('"NEAR" "a" "b" "title" "x"');
+    expect(buildMatch("NEAR(a b) title:x*")).toBe('"NEAR" "a" "b" "title"*');
     expect(buildMatch("fix te")).toBe('"fix" "te"*');
     expect(buildMatch("t")).toBeNull();
+    expect(buildMatch("fix t")).toBe('"fix"*'); // a trailing single character is dropped, not matched exactly
     expect(buildMatch("*")).toBeNull();
     expect((await search("billing NEAR")).body.results).toEqual([]); // NEAR is a required word
     expect((await search("title:billing")).body.results).toEqual([]); // "title" is a word, not a filter

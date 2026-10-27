@@ -212,6 +212,7 @@ export async function runSearchBench(opts: Partial<BenchOptions> = {}): Promise<
         store.upsertSession(row);
       }
     });
+    store.flushSearchIndex(); // indexing is deferred off the write path; the seed includes it
     const seed_ms = performance.now() - t0;
     const docs = (store.db.prepare("SELECT COUNT(*) AS n FROM search_docs").get() as { n: number })
       .n;

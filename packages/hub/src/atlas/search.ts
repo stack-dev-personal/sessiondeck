@@ -66,11 +66,13 @@ export function queryTokens(q: string): string[] {
  */
 export function buildMatch(q: string): string | null {
   const t = queryTokens(q);
-  if (t.length === 0) return null;
-  // A one-character final token is not prefix-matched (the prefix index starts at 2 characters, so
-  // "t"* would walk every term starting with t). Alone it yields no match expression at all (the
-  // caller shows recent items); after other tokens it is an exact word.
+  // A one-character final token is dropped: the prefix index starts at 2 characters ("t"* would
+  // walk every term starting with t), and as an exact word it would hide the results for one
+  // keystroke ("fix t" returning nothing). Alone it yields no expression (the caller shows recent
+  // items); after other tokens the earlier tokens still match ("fix"*).
+  if (t.length > 1 && t[t.length - 1]!.length < MIN_PREFIX) t.pop();
   if (t.length === 1 && t[0]!.length < MIN_PREFIX) return null;
+  if (t.length === 0) return null;
   return t
     .map((x, i) => `"${x}"${i === t.length - 1 && x.length >= MIN_PREFIX ? "*" : ""}`)
     .join(" ");

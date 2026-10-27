@@ -140,6 +140,11 @@ export function buildServer(opts: {
 
   app.get("/health", async () => ({ ok: true }));
 
+  opts.store.onSearchFlushError = (err) =>
+    app.log.error(
+      { err: err instanceof Error ? err.message : "error" },
+      "search index flush failed",
+    );
   const ingestor = new Ingestor(opts.store, app.log, now, {
     maxOpenSessionsPerHost: opts.config.maxOpenSessionsPerHost,
   });

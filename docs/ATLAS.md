@@ -110,9 +110,13 @@ Index: migration 7 creates `search_fts` (FTS5, `unicode61 remove_diacritics 2`, 
 | phase | the phase label | the project name |
 
 `indexSessionText` (`src/atlas/search.ts`) is the one place that decides what a session contributes; S9b
-extends it for archived captures (their `outcome` is already read). The index is rewritten only when the
-indexed text of a row changed (`upsertSession` skips a byte-identical snapshot outright, otherwise compares digests), and on project PATCH, phase PATCH and
-project reassignment. `Store.migrate` indexes anything missing on open (idempotent); `hub replay` clears
+extends it for archived captures (their `outcome` is already read). The index is maintained off the ingest
+transaction: `upsertSession` only adds the session id to a dirty set, and `Store.flushSearchIndex()` (a 200 ms coalescing
+timer, before every search read, on `close`, and callable by tests) indexes each dirty session once from its committed row in its
+own transaction, rewriting a document only when the digest of its text changed. Phase documents are re-derived once per affected
+project per flush, and only when a session's phase or project changed (an in-memory cache of the last indexed phase; a miss after
+restart takes the safe path). Project PATCH, phase PATCH and project reassignment still index synchronously. Search is therefore
+consistent with ingest within one flush interval, and exactly consistent for any search that runs after it. `Store.migrate` indexes anything missing on open (idempotent); `hub replay` clears
 session and phase documents with the sessions table and the re-inserts rebuild them.
 
 Query handling: the user string is never passed to MATCH. Letters and digits runs are the tokens (max 8, 64
