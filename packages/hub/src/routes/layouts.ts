@@ -1,3 +1,8 @@
+// Hotkey rule: a slot (1-9) is held per host scope (unpinned = all hosts, or one pinned host). On
+// a host both scopes may hold the same slot; the PINNED layout wins for that host. GET /layouts
+// reports this as `active_hotkey`: with ?host=<h>, true for the row the key opens on h (a pinned
+// row for h, or an unpinned row whose slot no pinned row for h shadows), false for a shadowed or
+// slotless row. Without ?host it reflects unpinned rows only (pinned rows are false).
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { deleteLayout, listLayouts, putLayout, type LayoutRow } from "../db/layouts.ts";
@@ -10,6 +15,7 @@ const PUT_BODY_LIMIT = 64 * 1024;
 const Id = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 
 function depthOf(v: unknown, d = 1): number {
+  if (d > MAX_DEPTH) return d;
   if (typeof v !== "object" || v === null) return d;
   let max = d;
   for (const c of Array.isArray(v) ? v : Object.values(v)) {
@@ -44,7 +50,24 @@ const PutBody = z
 
 const ListQuery = z.object({ host: z.string().min(1).max(128).optional() });
 
-const wire = (r: LayoutRow) => ({ ...r, spec: JSON.parse(r.spec) as unknown });
+const wire = (r: LayoutRow, active = false) => ({
+  ...r,
+  spec: JSON.parse(r.spec) as unknown,
+  active_hotkey: active,
+});
+
+function withActive(rows: LayoutRow[], host: string | undefined) {
+  const pinned = new Set(
+    host === undefined
+      ? []
+      : rows.filter((r) => r.host === host && r.hotkey !== null).map((r) => r.hotkey),
+  );
+  return rows.map((r) => {
+    if (r.hotkey === null) return wire(r);
+    if (r.host === null) return wire(r, !pinned.has(r.hotkey));
+    return wire(r, host !== undefined && r.host === host);
+  });
+}
 const bad = (reply: FastifyReply, reason: string) =>
   reply.code(400).send({ error: "invalid_body", reason });
 
@@ -55,7 +78,7 @@ export function registerLayouts(app: FastifyInstance, store: Store, now: () => n
     if (!q.success) {
       return reply.code(400).send({ error: "invalid_query", reason: "host" });
     }
-    return { layouts: listLayouts(store, q.data.host).map(wire) };
+    return { layouts: withActive(listLayouts(store, q.data.host), q.data.host) };
   });
 
   app.put<{ Params: { id: string } }>(
@@ -74,11 +97,16 @@ export function registerLayouts(app: FastifyInstance, store: Store, now: () => n
         now(),
       );
       if (!r.ok) {
-        return reply
-          .code(r.reason === "builtin" ? 403 : 409)
-          .send({ error: r.reason === "builtin" ? "builtin_readonly" : "layout_limit" });
+        return reply.code(r.reason === "builtin" ? 403 : 409).send({
+          error:
+            r.reason === "builtin"
+              ? "builtin_readonly"
+              : r.reason === "slot_reserved"
+                ? "slot_reserved"
+                : "layout_limit",
+        });
       }
-      return wire(r.row);
+      return wire(r.row, false);
     },
   );
 

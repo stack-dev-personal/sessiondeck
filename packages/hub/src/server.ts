@@ -105,6 +105,8 @@ export function buildServer(opts: {
     16,
     now,
   );
+  // Layout writes only (ingest is unchanged): 2/s, burst 10 per principal.
+  const writeLimiter = new RateLimiter(2, 10, 16, now);
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
@@ -118,6 +120,13 @@ export function buildServer(opts: {
       reply.raw.once("close", activity.begin());
     }
     if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
+      return reply.code(429).header("content-length", "0").send();
+    }
+    if (
+      (req.method === "PUT" || req.method === "DELETE") &&
+      req.url.split("?")[0]?.startsWith("/layouts/") === true &&
+      !writeLimiter.take(principal, 1)
+    ) {
       return reply.code(429).header("content-length", "0").send();
     }
     if (
