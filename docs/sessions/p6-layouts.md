@@ -59,3 +59,14 @@
 - Decision: dragging onto an occupied pane swaps; every spec change passes one choke point (commit) that dedupes session panes (first holder in reading order), including hub rows, localStorage, and the compact-all snapshot.
 - Review: iteration 1 fix-then-merge (1 BLOCKING duplicates on load paths, 4 SHOULD, 4 NIT, all fixed); iteration 2 merge.
 - Carry-over to U5: by-project edge fade too wide (hides the last visible column's header control); "N more columns" count assumes equal widths; PaneChrome selector should select only the name string.
+
+### U5 session content pane and six-pane trace (R6.4): in progress
+- Commits fd79685, afecdda (plus 15fc612 carrying U4's carry-overs).
+
+## Relaunch 2026-10-27
+- The sprint container stopped at 2026-10-27T19:18Z and killed the session mid-U5. No answer file; no docs/HANDOFF-*.md. Worktree held uncommitted U5 changes in e2e/R6.4.spec.ts, playwright.config.ts, ActivityList.tsx, store/activity.test.ts, store/board.ts. main moved to 2426e6d (PR #14) and origin/sprint/3-organize includes it; picked up at the final rebase.
+- Resumed: executor inspects the uncommitted diff, finishes or redoes U5, then review and verification as usual.
+
+## Relaunch 2 2026-10-27
+- The sprint container stopped again at 2026-10-27T20:43Z (second container restart, not a session fault). Worktree at 3fe6b60; the only uncommitted change was this log's U5 and relaunch-1 sections. U5 commits since relaunch 1: 934f6ce, 3fe6b60. No answer file; no docs/HANDOFF-*.md.
+- Resumed: executor confirms U5 state, then U5 review and verification as usual, then U6 close.
