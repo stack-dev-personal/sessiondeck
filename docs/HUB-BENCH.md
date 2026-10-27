@@ -240,6 +240,10 @@ The deferred work runs in 92 flushes totalling 453 ms (about 5 ms each, outside 
 | 11 | head | 36.34 | 136.66 | 395.98 | 655.35 | 5.06 |
 | 12 | base | 24.66 | 47.89 | 59.01 | 65.95 | 3.49 |
 
-Summary: head p95 23.29 to 136.66 (median 51.8, n=6); base p95 22.71 to 129.85 (median 53.1, n=6). The distributions overlap completely (before: head 73 to 84 vs base 40 to 53, disjoint). Every run on both sides still fails the 20 ms limit, so absolute R2.4 pass still needs a quiet host or the laptop run; this section shows only that the atlas/search work no longer costs ingest latency beyond noise.
+Summary: head p95 23.29 to 136.66 (median 51.34, n=6); base p95 22.71 to 129.85 (median 53.84, n=6). The distributions overlap completely (before: head 73 to 84 vs base 40 to 53, disjoint). With this spread and n=6 the A/B alone has little power; the profile above (upsertSession 2923 -> 314 ms over the same 20 s load) is the main evidence, and the A/B is only a consistency check that nothing regressed beyond noise. Every run on both sides still fails the 20 ms limit, so absolute R2.4 pass still needs a quiet host or the laptop run; this section shows only that the atlas/search work no longer costs ingest latency beyond noise.
 
 Search after the change (`node scripts/bench-search.mjs`, 2000 sessions, 50 projects, 2336 docs): route p50 5.56, p95 20.57, max 30.05 ms; worst class common-multi p95 26.63 ms (limit 100 ms).
+
+### After fix round 1 (durable dirty flag)
+
+The pending-index flag moved from memory to `sessions.search_dirty` (migration 8), set by the same UPSERT statement (no extra statement per session). Re-profiled the same way (20 s, 1000 env/s, temporary timer around `Store.upsertSession`, removed afterwards): upsertSession total 341.8 ms over 1976 calls (was 314 ms over 1973 before the flag; the difference is within run-to-run noise on this shared host, and the 2923 ms starting point is unchanged in order of magnitude). That run's batch p95 was 66 ms on the contended host (limit 20 ms, same caveat as above).

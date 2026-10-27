@@ -88,6 +88,9 @@ export interface TranscriptLineRow {
   raw: string;
 }
 
+const INDEXED_AS_MAX = 4096;
+const SEARCH_MAX_FAILURES = 3;
+const SEARCH_QUARANTINE_MS = 60_000;
 const SEARCH_FLUSH_MS = 200;
 
 export class Store {
@@ -171,6 +174,14 @@ export class Store {
     // Runs on every open at version >= 6 (cheap when nothing is NULL), so a crash between migration 6 and the backfill heals.
     if (this.schemaVersion() >= 6) this.backfillAtlas();
     if (this.schemaVersion() >= 7) this.backfillSearch();
+    if (this.schemaVersion() >= 8) {
+      // Rows left dirty by a crash are indexed on open.
+      try {
+        this.flushSearchIndex();
+      } catch (err) {
+        this.onSearchFlushError(err);
+      }
+    }
     return applied;
   }
 
@@ -306,11 +317,11 @@ export class Store {
         )?.phase ?? null;
     }
     this.stmt(
-      `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at, project_id, phase_label)
-       VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at, @project_id, @phase_label)
+      `INSERT INTO sessions (session_id, host, snapshot, state, project_dir, started_at, last_event_at, ended_at, project_id, phase_label, search_dirty)
+       VALUES (@session_id, @host, @snapshot, @state, @project_dir, @started_at, @last_event_at, @ended_at, @project_id, @phase_label, 1)
        ON CONFLICT(session_id) DO UPDATE SET host = excluded.host, snapshot = excluded.snapshot, state = excluded.state,
          project_dir = excluded.project_dir, started_at = excluded.started_at,
-         last_event_at = excluded.last_event_at, ended_at = excluded.ended_at, project_id = excluded.project_id`,
+         last_event_at = excluded.last_event_at, ended_at = excluded.ended_at, project_id = excluded.project_id, search_dirty = 1`,
     ).run({
       session_id: row.session_id,
       host: row.host,
@@ -323,11 +334,12 @@ export class Store {
       project_id: projectId,
       phase_label: phaseLabel,
     });
-    // R5.4: the search index follows the row, but not inside the ingest transaction. The session
-    // is only marked dirty here (a Set add); flushSearchIndex() indexes it from the committed row
-    // in its own transaction, once per flush however many updates arrived. A rolled-back batch
-    // leaves a harmless dirty id (the flush reads the row as it is, or finds none).
-    this.markSearchDirty(row.session_id);
+    // R5.4: the search index follows the row, but not inside the ingest transaction. The UPSERT
+    // above already set sessions.search_dirty (durable, same statement, so a crash cannot lose it);
+    // here only the flush timer is armed. flushSearchIndex() indexes every dirty row from its
+    // committed state in its own transaction, once per flush however many updates arrived. A
+    // rolled-back batch rolls the flag back with the row.
+    this.armSearchFlush();
   }
 
   // ---- R5.4 search index (FTS5) ------------------------------------------------------------
@@ -382,13 +394,20 @@ export class Store {
     this.stmt("DELETE FROM search_docs WHERE id = ?").run(cur.id);
   }
 
-  /** Sessions whose row changed since the last flush, and the phase and project last indexed for each (a cache). */
-  private readonly dirtySearch = new Set<string>();
+  /** The phase and project last indexed per session: a cache (a miss falls back to the safe path), capped. */
   private readonly indexedAs = new Map<
     string,
     { phase: string | null; projectId: string | null }
   >();
+  /** Cache updates of the flush in progress; applied only after its transaction commits. */
+  private readonly indexedPending = new Map<
+    string,
+    { phase: string | null; projectId: string | null }
+  >();
+  private readonly flushFailures = new Map<string, number>();
+  private readonly quarantined = new Map<string, number>();
   private flushTimer: NodeJS.Timeout | undefined;
+  private closed = false;
   /** Called with a flush failure (the timer must not throw). The server wires this to its logger. */
   onSearchFlushError: (err: unknown) => void = (err) => {
     process.emitWarning(
@@ -396,50 +415,109 @@ export class Store {
     );
   };
 
-  private markSearchDirty(sessionId: string): void {
-    this.dirtySearch.add(sessionId);
-    if (this.flushTimer !== undefined) return;
+  private rememberIndexed(id: string, v: { phase: string | null; projectId: string | null }): void {
+    this.indexedAs.delete(id);
+    this.indexedAs.set(id, v);
+    if (this.indexedAs.size > INDEXED_AS_MAX) {
+      const oldest = this.indexedAs.keys().next().value;
+      if (oldest !== undefined) this.indexedAs.delete(oldest);
+    }
+  }
+
+  private armSearchFlush(): void {
+    if (this.flushTimer !== undefined || this.closed) return;
     this.flushTimer = setTimeout(() => {
       this.flushTimer = undefined;
-      try {
-        this.flushSearchIndex();
-      } catch (err) {
-        this.onSearchFlushError(err);
-      }
+      this.flushSearchIndexSafe();
     }, SEARCH_FLUSH_MS);
     this.flushTimer.unref();
   }
 
+  /** Flush for paths that must not fail (timer, search reads): errors go to onSearchFlushError. */
+  private flushSearchIndexSafe(): void {
+    try {
+      this.flushSearchIndex();
+    } catch (err) {
+      this.onSearchFlushError(err);
+    }
+  }
+
   /**
-   * Indexes every session marked dirty, in one transaction, then re-derives the phase documents of
+   * Indexes every session whose search_dirty flag is set, then re-derives the phase documents of
    * the projects whose phases may have lost support (once per project, not once per change).
-   * Called by the timer, before every search read, on close, and by tests.
+   * Each session is indexed inside its own savepoint: one bad row is counted and, after
+   * SEARCH_MAX_FAILURES, quarantined in memory (skipped for SEARCH_QUARANTINE_MS, then retried;
+   * the durable flag stays set so the next open retries too) instead of blocking everyone. Called by the timer, before every search read, on open and close.
    */
   flushSearchIndex(): void {
     if (this.flushTimer !== undefined) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    if (this.dirtySearch.size === 0) return;
-    const ids = [...this.dirtySearch];
-    this.dirtySearch.clear();
+    if (this.closed) return;
+    if (this.stmt("SELECT 1 FROM sessions WHERE search_dirty = 1 LIMIT 1").get() === undefined)
+      return;
+    this.indexedPending.clear();
     try {
       this.transaction(() => {
         const projects = new Set<string>();
-        for (const id of ids) {
-          const r = this.stmt(
-            "SELECT snapshot, project_id, phase_label FROM sessions WHERE session_id = ?",
-          ).get(id) as
-            { snapshot: string; project_id: string | null; phase_label: string | null } | undefined;
-          if (r !== undefined)
-            this.indexSession(id, r.snapshot, r.project_id, r.phase_label, projects);
+        let after = "";
+        for (;;) {
+          const page = this.stmt(
+            `SELECT session_id, snapshot, project_id, phase_label FROM sessions
+             WHERE search_dirty = 1 AND session_id > ? ORDER BY session_id LIMIT 500`,
+          ).all(after) as {
+            session_id: string;
+            snapshot: string;
+            project_id: string | null;
+            phase_label: string | null;
+          }[];
+          if (page.length === 0) break;
+          for (const r of page) {
+            const q = this.quarantined.get(r.session_id);
+            if (q !== undefined) {
+              if (Date.now() - q < SEARCH_QUARANTINE_MS) continue;
+              this.quarantined.delete(r.session_id);
+            }
+            try {
+              this.transaction(() => {
+                this.indexSession(r.session_id, r.snapshot, r.project_id, r.phase_label, projects);
+                this.stmt(
+                  "UPDATE sessions SET search_dirty = 0 WHERE session_id = ? AND search_dirty = 1",
+                ).run(r.session_id);
+              });
+              this.flushFailures.delete(r.session_id);
+            } catch (err) {
+              this.indexedPending.delete(r.session_id);
+              const n = (this.flushFailures.get(r.session_id) ?? 0) + 1;
+              if (n >= SEARCH_MAX_FAILURES) {
+                this.flushFailures.delete(r.session_id);
+                this.quarantined.set(r.session_id, Date.now());
+                this.onSearchFlushError(
+                  new Error(`search index quarantined session ${r.session_id}`, { cause: err }),
+                );
+              } else {
+                this.flushFailures.set(r.session_id, n);
+                this.onSearchFlushError(err);
+              }
+            }
+          }
+          after = page[page.length - 1]!.session_id;
         }
-        for (const p of projects) this.reindexProjectPhases(p);
+        for (const p of projects) {
+          try {
+            this.transaction(() => this.reindexProjectPhases(p));
+          } catch (err) {
+            this.onSearchFlushError(err);
+          }
+        }
       });
     } catch (err) {
-      for (const id of ids) this.dirtySearch.add(id); // retried by the next flush
+      this.indexedPending.clear(); // rolled back: the flags are dirty again, the cache must not claim otherwise
       throw err;
     }
+    for (const [id, v] of this.indexedPending) this.rememberIndexed(id, v);
+    this.indexedPending.clear();
   }
 
   /**
@@ -464,8 +542,10 @@ export class Store {
     if (snap === null) return;
     const t = indexSessionText(snap, sessionId, manualPhase);
     const last = this.indexedAs.get(sessionId);
-    this.indexedAs.set(sessionId, { phase: t.phase, projectId });
     const was = this.putDoc("session", sessionId, projectId, t.title, t.body);
+    // Recorded only once the document write succeeded; inside a flush it is applied after commit.
+    if (reindex !== undefined) this.indexedPending.set(sessionId, { phase: t.phase, projectId });
+    else this.rememberIndexed(sessionId, { phase: t.phase, projectId });
     if (was === null) return;
     if (was.existed && reindex !== undefined) {
       // A renamed phase or a moved session can leave a phase document nobody supports any more.
@@ -533,8 +613,9 @@ export class Store {
   }
 
   /**
-   * Indexes every project and session that has no document yet (first open after migration 7, or
-   * healing after a crash). Idempotent; an open with nothing missing costs two anti-join probes.
+   * Indexes every project and session that has no document yet (first open after migration 7).
+   * Sessions whose text changed after their first document are repaired by the durable
+   * sessions.search_dirty flag (see flushSearchIndex), not here. Idempotent; an open with nothing missing costs two anti-join probes.
    */
   backfillSearch(): number {
     return this.transaction(() => {
@@ -575,7 +656,7 @@ export class Store {
 
   /** Ranked matches for an already-built MATCH expression (see buildMatch); live sessions rank higher. */
   searchMatch(match: string, limit: number): SearchHit[] {
-    this.flushSearchIndex();
+    this.flushSearchIndexSafe();
     // Ranking runs in the inner query on rowids only; snippet() is computed in the outer query for
     // the top `limit` rows, so a broad match builds `limit` snippets, not one per matched row.
     const rows = this.stmt(
@@ -603,7 +684,7 @@ export class Store {
 
   /** Most recently active sessions, then (at most 5) most recently active projects. */
   searchRecent(limit: number): SearchHit[] {
-    this.flushSearchIndex();
+    this.flushSearchIndexSafe();
     const projects = (
       this.stmt(
         `SELECT 'project' AS kind, p.id AS ref_id, p.id AS project_id, COALESCE(p.name, p.project_dir) AS title,
@@ -1068,9 +1149,13 @@ export class Store {
   }
 
   close(): void {
+    if (this.closed) return;
     try {
-      this.flushSearchIndex();
+      this.flushSearchIndexSafe();
     } finally {
+      this.closed = true;
+      if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
       this.db.close();
     }
   }

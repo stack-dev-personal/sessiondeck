@@ -117,4 +117,16 @@ CREATE VIRTUAL TABLE search_fts USING fts5(
 CREATE INDEX sessions_last_event ON sessions(last_event_at);
 `,
   },
+  {
+    version: 8,
+    name: "search_dirty",
+    // R5.4. Search indexing is deferred off the ingest transaction. The upsert sets
+    // sessions.search_dirty = 1 in the same statement (no extra write); the flush clears it, and
+    // the next open indexes every flagged row, so a crash between commit and flush loses nothing.
+    // The partial index keeps "find dirty rows" a probe. Valid on SQLite and Postgres.
+    sql: `
+ALTER TABLE sessions ADD COLUMN search_dirty INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX sessions_search_dirty ON sessions(session_id) WHERE search_dirty = 1;
+`,
+  },
 ];

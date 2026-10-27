@@ -135,7 +135,7 @@ describe("R5.1 every session has exactly one project", () => {
     ins.run("o3", snap("C:\\z\\Other"), null);
     s.db.prepare("INSERT INTO projects (project_dir, name) VALUES ('/legacy', 'Legacy')").run();
     s.migrateCeiling = Number.MAX_SAFE_INTEGER;
-    expect(s.migrate()).toEqual([6, 7]);
+    expect(s.migrate()).toEqual([6, 7, 8]);
     const pid = (id: string) => s.getSession(id)!.project_id;
     expect(pid("o1")).toBeTruthy();
     expect(pid("o2")).toBe(pid("o1"));
