@@ -43,14 +43,12 @@ async function saveThree(page: Page, openLayout: () => Promise<void>): Promise<v
 }
 
 /**
- * One unmeasured press right after a reload: the first switch pays one-off costs (lazy chunks, JIT,
- * first layout of the panes) that are not what the budget is about. Returns to solo afterwards so
- * the first measured press is a real switch.
+ * The very first switch after a reload pays one-off costs (lazy chunks, JIT, first layout of the
+ * panes). It is pressed on a slot that the measured run does not start with, so every measured
+ * switch is a real switch between two layouts. Its time is returned to be recorded, not asserted.
  */
-async function warmUp(page: Page, key: string, row: HubRow): Promise<void> {
-  await page.keyboard.press(key);
-  await expect(page.getByTestId("layout")).toHaveAttribute("data-layout-id", row.id);
-  await pickPreset(page, /Solo/, "solo");
+async function firstSwitch(page: Page, key: string, row: HubRow): Promise<number> {
+  return pressAndMeasure(page, key, row.id, paneCount(row.spec));
 }
 
 async function switchesAfterReload(page: Page, rows: HubRow[], tag: string): Promise<void> {
@@ -58,10 +56,10 @@ async function switchesAfterReload(page: Page, rows: HubRow[], tag: string): Pro
   const samples: Switch[] = [];
   const order = [1, 2, 3, 3, 1, 2, 1, 3, 2, 2, 3, 1, 1, 2, 3, 2, 1, 3];
   let shots = 0;
-  await warmUp(page, "1", bySlot(1));
-  // Start from a layout that is none of the saved ones, so the first press is a real switch.
-  await pickPreset(page, /Solo/, "solo");
-  let prev = "solo";
+  // First press after the reload is slot 2 (recorded; the layout in force is slot 3's, so it is a real
+  // switch); the order below starts with slot 1.
+  const firstAfterReload = await firstSwitch(page, "2", bySlot(2));
+  let prev = bySlot(2).id;
   for (const n of order) {
     const row = bySlot(n);
     if (row.id === prev) continue; // pressing the active layout's key changes nothing to measure
@@ -72,9 +70,11 @@ async function switchesAfterReload(page: Page, rows: HubRow[], tag: string): Pro
     await expect(page.getByTestId("layout-notice")).toContainText(`Layout ${n}: ${row.name}`);
     if (shots < 3) await page.screenshot({ path: shot(`R6.3-saved-${++shots}${tag}.png`) });
   }
-  writeTiming(`R6.3-timing${tag}.json`, samples);
+  writeTiming(`R6.3-timing${tag}.json`, samples, { first_after_reload_ms: firstAfterReload });
   const st = stats(samples.map((s) => s.ms));
-  console.log(`R6.3 switch ms${tag}: n=${st.n} max=${st.max} p95=${st.p95} mean=${st.mean}`);
+  console.log(
+    `R6.3 switch ms${tag}: n=${st.n} max=${st.max} p95=${st.p95} mean=${st.mean} first_after_reload=${firstAfterReload}`,
+  );
   expect(samples.length).toBeGreaterThanOrEqual(10);
   for (const s of samples) expect(s.ms, `key ${s.key}`).toBeLessThan(SWITCH_BUDGET_MS);
 }
@@ -127,8 +127,10 @@ test.describe("R6.3 fake hub", () => {
     await freezeClock(page);
     await page.goto("/layout?replay=fast");
     await waitForReplayDone(page);
+    await pickPreset(page, /Pair/, "pair");
+    await saveVia(page, "Cached pair", 5);
     await pickPreset(page, /Quad/, "quad");
-    await saveVia(page, "Cached quad", 4);
+    await saveVia(page, "Cached quad", 4); // the layout in force at reload
 
     hub.failNext = 429;
     await page.keyboard.press("s");
@@ -136,17 +138,20 @@ test.describe("R6.3 fake hub", () => {
     await page.getByRole("textbox", { name: "Name" }).press("Enter");
     await expect(page.getByTestId("save-error")).toContainText("Too many layout changes");
     await page.keyboard.press("Escape");
-    expect(hub.rows).toHaveLength(1);
+    expect(hub.rows).toHaveLength(2);
 
     // Hub gone: the reload cannot reach it, yet the key still works from the cache.
     await page.route(`${hub.origin}/**`, (r) => r.abort("connectionrefused"));
     await page.reload();
     await waitForReplayDone(page);
-    await warmUp(page, "4", hub.rows[0]!);
-    const id = hub.rows[0]!.id;
-    const ms = await pressAndMeasure(page, "4", id, paneCount(hub.rows[0]!.spec));
+    // First press (slot 5, recorded only), then slot 4 is a real switch between two layouts.
+    const pair = hub.rows.find((r) => r.hotkey === 5)!;
+    const quad = hub.rows.find((r) => r.hotkey === 4)!;
+    const first = await firstSwitch(page, "5", pair);
+    const ms = await pressAndMeasure(page, "4", quad.id, paneCount(quad.spec));
+    writeTiming("R6.3-timing-hub-down.json", [{ key: "4", ms }], { first_after_reload_ms: first });
     expect(ms).toBeLessThan(SWITCH_BUDGET_MS);
-    await expect(page.getByRole("button", { name: /Saved: 1 \(cached\)/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Saved: 2 \(cached\)/ })).toBeVisible();
   });
 
   test("R6.3 save dialog and manage dialog are keyboard operable", async ({ page }) => {

@@ -20,7 +20,8 @@ export function SessionPicker({ paneId, onClose }: { paneId: string; onClose: ()
   const spec = useLayout((s) => s.spec);
   const assign = useLayout((s) => s.assign);
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  // The highlight follows the session, not the row: the list re-sorts as board deltas arrive.
+  const [activeId, setActiveId] = useState<string | null>(null);
   const titleId = useId();
   const listId = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -45,7 +46,9 @@ export function SessionPicker({ paneId, onClose }: { paneId: string; onClose: ()
     [sorted, q],
   );
   const shown = matches.slice(0, PICKER_MAX_ROWS);
-  const cur = Math.min(active, Math.max(0, shown.length - 1));
+  const found = activeId === null ? -1 : shown.findIndex((s) => s.session_id === activeId);
+  const cur = found >= 0 ? found : 0;
+  const idAt = (i: number) => shown[i]?.session_id ?? null;
 
   useLayoutEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
@@ -74,10 +77,10 @@ export function SessionPicker({ paneId, onClose }: { paneId: string; onClose: ()
     onClose();
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "ArrowDown") setActive(Math.min(shown.length - 1, cur + 1));
-    else if (e.key === "ArrowUp") setActive(Math.max(0, cur - 1));
-    else if (e.key === "Home") setActive(0);
-    else if (e.key === "End") setActive(Math.max(0, shown.length - 1));
+    if (e.key === "ArrowDown") setActiveId(idAt(Math.min(shown.length - 1, cur + 1)));
+    else if (e.key === "ArrowUp") setActiveId(idAt(Math.max(0, cur - 1)));
+    else if (e.key === "Home") setActiveId(idAt(0));
+    else if (e.key === "End") setActiveId(idAt(Math.max(0, shown.length - 1)));
     else if (e.key === "Enter") choose(cur);
     else if (e.key === "Tab") {
       e.preventDefault(); // the dialog is one control: focus stays in the filter box
@@ -111,7 +114,7 @@ export function SessionPicker({ paneId, onClose }: { paneId: string; onClose: ()
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
-            setActive(0);
+            setActiveId(null);
           }}
           onKeyDown={onKey}
         />
@@ -131,7 +134,7 @@ export function SessionPicker({ paneId, onClose }: { paneId: string; onClose: ()
                 role="option"
                 aria-selected={i === cur}
                 data-session-id={s.session_id}
-                onMouseMove={() => setActive(i)}
+                onMouseMove={() => setActiveId(s.session_id)}
                 onClick={() => choose(i)}
                 className={`num flex h-[var(--strip-h)] cursor-pointer items-center gap-s-2 overflow-hidden whitespace-nowrap rounded px-s-2 ${i === cur ? "bg-surface-3 outline outline-1 -outline-offset-1 outline-accent" : ""}`}
               >

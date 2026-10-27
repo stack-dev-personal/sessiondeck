@@ -6,7 +6,7 @@
  * `defaultLayout`; only a user drag or key press (isUserInteraction) writes back, so mounting,
  * constraint changes and a later exact restore never overwrite the stored ratios.
  */
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Group,
   Panel,
@@ -111,14 +111,53 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
     </Group>
   );
   if (!columns) return group;
+  return <ColumnScroller count={split.children.length}>{group}</ColumnScroller>;
+}
+
+/**
+ * Sideways scroller for a row of project columns. When columns are off to the right it overlays an
+ * edge fade and "N more columns" at the right edge (absolute, so no geometry changes).
+ */
+function ColumnScroller({ count, children }: { count: number; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(0);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => {
+      const col = el.scrollWidth / count;
+      setMore(Math.max(0, count - Math.floor((el.scrollLeft + el.clientWidth + 1) / col)));
+    };
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      ro?.disconnect();
+    };
+  }, [count]);
   return (
-    <div className="h-full w-full overflow-x-auto overflow-y-hidden" data-testid="split-scroll">
+    <div className="relative h-full w-full">
       <div
-        className="h-full"
-        style={{ minWidth: `${split.children.length * PROJECT_COLUMN_REM}rem` }}
+        ref={box}
+        className="h-full w-full overflow-x-auto overflow-y-hidden"
+        data-testid="split-scroll"
       >
-        {group}
+        <div className="h-full" style={{ minWidth: `${count * PROJECT_COLUMN_REM}rem` }}>
+          {children}
+        </div>
       </div>
+      {more > 0 ? (
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 flex w-[16rem] items-center justify-end bg-gradient-to-l from-surface-1 to-transparent px-s-2"
+          data-testid="columns-more"
+        >
+          <span className="num rounded border border-border-strong bg-surface-2 px-s-2 py-s-1 text-xs text-fg">
+            {`▸ Scroll for ${more} more ${more === 1 ? "column" : "columns"}`}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { assignSession, sessionPaneOf, setPaneCompact, setRatiosAt, unassignPane } from "./ops";
+import {
+  assignSession,
+  dedupeSessions,
+  sessionPaneOf,
+  setPaneCompact,
+  setRatiosAt,
+  unassignPane,
+} from "./ops";
 import { buildPreset, PRESET_NAMES } from "./presets";
 import { panesOf, validate, type LayoutSpec } from "./spec";
 
@@ -70,6 +77,17 @@ describe("assignSession (R6.6)", () => {
     expect(sessionIds(s).filter((x) => x === "A")).toHaveLength(1);
   });
 
+  it("dedupeSessions keeps the first holder in reading order and shares an already clean spec", () => {
+    const clean = assignSession(buildPreset("quad"), "p0", "A");
+    expect(dedupeSessions(clean)).toBe(clean);
+    const dup = JSON.parse(JSON.stringify(buildPreset("quad"))) as LayoutSpec;
+    for (const p of panesOf(dup)) p.sessionId = "A";
+    expect(sessionIds(dedupeSessions(dup))).toEqual(["A", null, null, null]);
+    const mixed = JSON.parse(JSON.stringify(buildPreset("quad"))) as LayoutSpec;
+    panesOf(mixed).forEach((p, i) => (p.sessionId = ["A", "B", "A", "B"][i]));
+    expect(sessionIds(dedupeSessions(mixed))).toEqual(["A", "B", null, null]);
+  });
+
   it("property: any sequence of assign, unassign and preset switches keeps a session in at most one pane", () => {
     let seed = 12345;
     const rnd = (n: number) => {
@@ -96,8 +114,8 @@ describe("assignSession (R6.6)", () => {
               held[rnd(held.length)]!.sessionId!,
             );
         } else {
-          // Switching preset carries the assignments over by pane order in the real flow; here a
-          // fresh preset must also satisfy the invariant, and so must the old assignments reapplied.
+          // A preset switch builds a fresh spec with no assignments (the real flow carries none
+          // over); here the old sessions are reapplied by hand to check the invariant still holds.
           const before = panes.map((p) => p.sessionId).filter((x): x is string => !!x);
           spec = buildPreset(PRESET_NAMES[rnd(PRESET_NAMES.length)]!, ["/a", "/b"]);
           for (const id of before) {

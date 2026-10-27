@@ -4,6 +4,7 @@
  * Browsers only expose a drag's types (not its data) until the drop, which is all dragover needs.
  */
 import type { DragEvent } from "react";
+import { useBoard } from "../../store/board";
 
 export const SESSION_MIME = "application/x-sessiondeck-session";
 
@@ -17,6 +18,11 @@ export function sessionFromDrop(dt: Transfer | null): string | null {
   if (!dt || !hasSessionDrag(dt)) return null;
   const id = dt.getData(SESSION_MIME);
   return id === "" ? null : id;
+}
+
+/** A dropped id must be a session on this board; a stray string from another tab is ignored. */
+export function isKnownSession(id: string): boolean {
+  return Object.hasOwn(useBoard.getState().sessions, id);
 }
 
 /** Props that make an element a drag source for `sessionId`. */
