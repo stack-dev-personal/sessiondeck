@@ -12,6 +12,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:exe": "node scripts/build-exe.mjs",
+    "build:exe:host": "node scripts/build-exe.mjs --host-only",
     "test": "vitest run",
     "test:exe": "node scripts/test-exe.mjs",
     "test:proc": "vitest run -c vitest.proc.config.ts",
