@@ -192,10 +192,8 @@ function PaletteDialog() {
   const activeIdx = Math.min(active, Math.max(0, flat.length - 1));
 
   useEffect(() => {
-    document.getElementById(optId(activeIdx))?.scrollIntoView?.({ block: "nearest" });
-    // optId is derived from uid, which is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIdx, flat]);
+    document.getElementById(`${uid}-opt-${activeIdx}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [uid, activeIdx, flat]);
 
   const jump = useCallback(
     (r: SearchResult) => {
@@ -263,7 +261,7 @@ function PaletteDialog() {
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid="command-palette"
-        data-results-for={shown.forQuery ?? ""}
+        data-results-for={shown.forQuery ?? undefined}
         data-status={shown.status}
         data-took-ms={shown.tookMs ?? ""}
         onKeyDown={onKeyDown}

@@ -70,7 +70,7 @@ test("R5.4 palette: Ctrl+K, type, ArrowDown, Enter jumps to a project", async ({
   await openPalette(page);
   // Empty query: recent items, no typing needed.
   await expect(palette(page)).toHaveAttribute("data-results-for", "");
-  expect(await optionsOf(page).count()).toBeGreaterThan(0);
+  await expect(optionsOf(page)).not.toHaveCount(0);
 
   await search(page, "harvest");
   const groups = palette(page).getByRole("group");
