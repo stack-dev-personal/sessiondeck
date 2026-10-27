@@ -130,7 +130,7 @@ export function buildServer(opts: {
     return reply
       .code(204)
       .header("access-control-allow-origin", origin)
-      .header("access-control-allow-methods", "GET, PATCH")
+      .header("access-control-allow-methods", "GET, PUT, PATCH, DELETE")
       .header("access-control-allow-headers", "authorization, content-type")
       .header("access-control-max-age", "600")
       .send();
