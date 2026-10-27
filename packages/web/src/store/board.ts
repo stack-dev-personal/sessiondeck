@@ -77,13 +77,18 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     replaceAll: (list) => {
       queue = [];
       snaps = new Map();
+      const kept = list.filter((s) => !RESERVED_IDS.has(s.session_id));
       set({
-        sessions: Object.fromEntries(
-          list.filter((s) => !RESERVED_IDS.has(s.session_id)).map((s) => [s.session_id, s]),
-        ),
+        sessions: Object.fromEntries(kept.map((s) => [s.session_id, s])),
         exceeds200k: {},
         history: {},
-        activity: {},
+        // Each pane opens on the session's current state, not on an empty list.
+        activity: Object.fromEntries(
+          kept.map((s) => [
+            s.session_id,
+            appendRows(undefined, s.last_event_at, draftRows(undefined, s)),
+          ]),
+        ),
         loaded: true,
       });
     },

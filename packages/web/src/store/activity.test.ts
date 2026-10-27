@@ -73,6 +73,16 @@ function hook(session: string, name: string, ts: number): Envelope {
   };
 }
 
+describe("resync seeds each session's log (R6.4)", () => {
+  it("replaceAll gives every session a first row with its current state", () => {
+    const store = createBoardStore(() => 0);
+    store.getState().replaceAll([snap({ state: "working", last_event_at: 7 })]);
+    const rows = store.getState().activity["a"]!.rows;
+    expect(rows.map((r) => r.kind)).toEqual(["state"]);
+    expect(rows[0]!.ts).toBe(7);
+  });
+});
+
 describe("board store feeds the ring in the same coalesced commit (R6.4)", () => {
   it("one set() per frame carries sessions and activity; other sessions keep their log object", () => {
     const frames: (() => void)[] = [];

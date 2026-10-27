@@ -24,8 +24,8 @@ const LIVE_SPECS = [
   "**/R5.5-live.spec.ts",
   "**/R5.4-live.spec.ts",
 ];
-// R6.3 runs in both modes: a fake hub in the mock build, the real hub in live mode (its describes skip themselves).
-const BOTH_SPECS = ["**/R6.3.spec.ts"];
+// R6.3 and R6.4 run in both modes: a fake hub in the mock build, the real hub in live mode (its describes skip themselves).
+const BOTH_SPECS = ["**/R6.3.spec.ts", "**/R6.4.spec.ts"];
 const port = live ? 5174 : 5173;
 
 /**
