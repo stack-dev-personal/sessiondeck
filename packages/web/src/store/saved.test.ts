@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { create } from "zustand";
-import { HubError, memoryAdapter, type SavedAdapter } from "../layout/saved";
+import { HubError, InvalidResponseError, memoryAdapter, type SavedAdapter } from "../layout/saved";
 import { buildPreset } from "../layout/presets";
 import { STORAGE_KEYS } from "../lib/storage";
 import { createBoardStore } from "./board";
 import { DEFAULT_SETTINGS, type Settings } from "./ui";
 import { useLayout } from "./layout";
-import { loadCachedRows, startSaved, useSaved } from "./saved";
+import { hubKey, loadCachedRows, startSaved, useSaved } from "./saved";
 
 const wire = (id: string, extra: Record<string, unknown> = {}, preset = "pair" as const) => ({
   id,
@@ -33,6 +33,7 @@ function fake(over: Partial<SavedAdapter> = {}): SavedAdapter & { calls: string[
 
 beforeEach(() => {
   window.localStorage.clear();
+  useSaved.getState().setAdapter(fake(), ""); // back to the same-origin cache key
   useSaved.setState({ rows: [], status: "idle", notice: null });
   useLayout.setState({ spec: buildPreset("solo"), snapshot: null });
 });
@@ -293,5 +294,100 @@ describe("startSaved wiring", () => {
     ui.setState({ settings: settings({ hubUrl: "http://hub:1", token: "t3" }) });
     await Promise.resolve();
     expect(fetchFn).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("review findings, store half", () => {
+  it("finding 1: an older GET that answers after a PUT cannot overwrite the saved row", async () => {
+    let answer!: (v: unknown) => void;
+    useSaved.getState().setAdapter(fake({ list: () => new Promise((r) => (answer = r)) }));
+    const load = useSaved.getState().load();
+    expect(await useSaved.getState().save({ name: "New", hotkey: 4, host: null })).toBeNull();
+    const id = useSaved.getState().rows[0]!.id;
+    answer({ layouts: [wire("old")] }); // the GET was answered from before the PUT
+    await load;
+    expect(useSaved.getState().rows.map((r) => r.id)).toEqual([id]);
+    expect(loadCachedRows().map((r) => r.id)).toEqual([id]);
+    expect(useSaved.getState().status).toBe("ready");
+    useLayout.setState({ spec: buildPreset("solo") });
+    expect(useSaved.getState().press(4, null)?.id).toBe(id);
+  });
+
+  it("finding 1: an older GET cannot bring back a deleted row", async () => {
+    useSaved.setState({ rows: loadCachedRows() });
+    const a = fake();
+    useSaved.getState().setAdapter(a);
+    useSaved.setState({
+      rows: [
+        {
+          id: "gone",
+          name: "G",
+          hotkey: null,
+          host: null,
+          spec: buildPreset("pair"),
+          updatedAt: 1,
+        },
+      ],
+    });
+    let answer!: (v: unknown) => void;
+    useSaved.getState().setAdapter(fake({ list: () => new Promise((r) => (answer = r)) }));
+    const load = useSaved.getState().load();
+    expect(await useSaved.getState().remove("gone")).toBeNull();
+    answer({ layouts: [wire("gone")] });
+    await load;
+    expect(useSaved.getState().rows).toEqual([]);
+  });
+
+  it("finding 5: save while compacted stores the snapshot, not the all-compact spec", async () => {
+    useSaved.getState().setAdapter(fake());
+    useLayout.getState().applyPreset("quad");
+    const before = structuredClone(useLayout.getState().spec);
+    useLayout.getState().toggleCompactAll();
+    expect(JSON.stringify(useLayout.getState().spec)).toContain('"compact":true');
+    await useSaved.getState().save({ name: "Real", hotkey: 2, host: null });
+    const spec = useSaved.getState().rows[0]!.spec;
+    expect(JSON.stringify(spec)).not.toContain('"compact":true');
+    expect(spec.root).toEqual(before.root);
+  });
+
+  it("finding 9: an invalid PUT answer and an update on an uncached row get their own messages", async () => {
+    useSaved.getState().setAdapter(fake({ put: () => Promise.resolve({ nonsense: true }) }));
+    const bad = await useSaved.getState().save({ name: "X", hotkey: null, host: null });
+    expect(bad).toMatch(/cannot read/);
+    expect(bad).not.toMatch(/Cannot reach/);
+    const missing = await useSaved.getState().update("nope", { name: "Y" });
+    expect(missing).toMatch(/no longer in the list/);
+    expect(missing).not.toMatch(/Cannot reach/);
+    expect(new InvalidResponseError()).toBeInstanceOf(Error);
+  });
+
+  it("finding 10: the cache is keyed by hub; a changed hub URL shows nothing from the old hub", async () => {
+    const board = createBoardStore();
+    const settings = (hubUrl: string): Settings => ({ ...DEFAULT_SETTINGS, hubUrl, token: "t" });
+    const ui = create<{ settings: Settings }>()(() => ({ settings: settings("http://a:1") }));
+    const seen: string[] = [];
+    const f = ((url: string) => {
+      seen.push(url);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ layouts: url.startsWith("http://a:1") ? [wire("fromA")] : [] }),
+        ),
+      );
+    }) as unknown as typeof fetch;
+    const stop = startSaved(board, ui, useSaved, f);
+    await vi.waitFor(() => expect(useSaved.getState().rows.map((r) => r.id)).toEqual(["fromA"]));
+    expect(loadCachedRows(hubKey("http://a:1")).map((r) => r.id)).toEqual(["fromA"]);
+    expect(loadCachedRows(hubKey("http://b:2"))).toEqual([]);
+    // Hub B is unreachable-slow: until it answers, A's row is not offered.
+    ui.setState({ settings: settings("http://b:2") });
+    expect(useSaved.getState().rows).toEqual([]);
+    expect(useSaved.getState().press(1, null)).toBeNull();
+    await vi.waitFor(() => expect(useSaved.getState().status).toBe("ready"));
+    expect(useSaved.getState().rows).toEqual([]);
+    // Back to A: one cache slot, now B's, so nothing is offered until A answers.
+    ui.setState({ settings: settings("http://a:1") });
+    expect(useSaved.getState().rows).toEqual([]);
+    await vi.waitFor(() => expect(useSaved.getState().rows.map((r) => r.id)).toEqual(["fromA"]));
+    stop();
   });
 });
