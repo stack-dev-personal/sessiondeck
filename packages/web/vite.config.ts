@@ -11,6 +11,11 @@ export default defineConfig({
     proxy: {
       "/stream": { target: "http://localhost:8787", ws: true },
       "/sessions": "http://localhost:8787",
+      // /projects is also an SPA route: browser navigations (Accept: text/html) get the app, fetches go to the hub.
+      "/projects": {
+        target: "http://localhost:8787",
+        bypass: (req) => (req.headers.accept?.includes("text/html") ? "/index.html" : undefined),
+      },
       "/health": "http://localhost:8787",
     },
   },

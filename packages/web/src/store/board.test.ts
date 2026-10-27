@@ -1,4 +1,4 @@
-import type { Envelope } from "@sessiondeck/contract";
+import { createSnapshot, type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBoardStore } from "./board";
 
@@ -74,5 +74,57 @@ describe("board store rAF coalescing", () => {
     frames.shift()!();
     expect(store.getState().sessions["a"]).toBe(a);
     expect(Object.keys(store.getState().sessions).sort()).toEqual(["a", "b"]);
+  });
+});
+
+describe("board store keeps hub project and phase fields", () => {
+  const frames: (() => void)[] = [];
+  const raf = (cb: () => void) => {
+    frames.push(cb);
+    return frames.length;
+  };
+  const fields = {
+    project_id: "p_1",
+    project_name: "repo",
+    project_color: "#3e63dd",
+    phase: "Hardening",
+    phase_source: "manual",
+  };
+  const base = createSnapshot({ session_id: "a", host: "h1", cwd: "/p", ts: 1 });
+
+  it("a delta passes the fields through; a later envelope keeps them", () => {
+    const store = createBoardStore(raf);
+    store.getState().enqueueSnapshot({ ...base, ...fields } as SessionSnapshot);
+    frames.shift()!();
+    expect(store.getState().sessions["a"]).toMatchObject(fields);
+    store.getState().enqueue(hook("a", "UserPromptSubmit", 5));
+    frames.shift()!();
+    expect(store.getState().sessions["a"]).toMatchObject({ ...fields, state: "working" });
+  });
+
+  it("a newer delta replaces them, including a cleared phase", () => {
+    const store = createBoardStore(raf);
+    store.getState().replaceAll([{ ...base, ...fields } as SessionSnapshot]);
+    store.getState().enqueueSnapshot({
+      ...base,
+      ...fields,
+      project_id: "p_2",
+      phase: null,
+      phase_source: null,
+    } as SessionSnapshot);
+    frames.shift()!();
+    expect(store.getState().sessions["a"]).toMatchObject({
+      project_id: "p_2",
+      phase: null,
+      phase_source: null,
+    });
+  });
+
+  it("a delta without the fields keeps the previous ones", () => {
+    const store = createBoardStore(raf);
+    store.getState().replaceAll([{ ...base, ...fields } as SessionSnapshot]);
+    store.getState().enqueueSnapshot({ ...base, last_event_at: 99 });
+    frames.shift()!();
+    expect(store.getState().sessions["a"]).toMatchObject({ ...fields, last_event_at: 99 });
   });
 });

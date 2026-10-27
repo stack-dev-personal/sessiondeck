@@ -3,6 +3,7 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { applyEnvelope } from "../ingest";
 import { exceeds200kOf } from "../statusline-adapter";
 import { RESERVED_IDS } from "../live/stream-client";
+import { carryAtlas } from "../atlas/types";
 import { recordEnvelope, type SessionHistory } from "./history";
 
 export type ConnectionStatus = "mock" | "connecting" | "open" | "closed" | "invalid";
@@ -98,7 +99,9 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
           if (flags[e.session_id] !== f) flags = { ...flags, [e.session_id]: f };
         }
       }
-      for (const [id, snap] of deltas) next[id] = snap;
+      // Hub deltas carry project and phase fields; they pass through untouched (a delta from a hub
+      // that predates them keeps the previous values).
+      for (const [id, snap] of deltas) next[id] = carryAtlas(snap, next[id]);
       set({ sessions: next, exceeds200k: flags, history });
     },
   }));

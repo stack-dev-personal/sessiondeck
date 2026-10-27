@@ -4,6 +4,10 @@ import { formatClockSec, formatDuration, formatReset, formatTokens } from "../li
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { windowAt } from "../statusline-adapter";
 import { EMPTY_HISTORY, type Sample, type SessionHistory } from "../store/history";
+import { atlasOf } from "../atlas/types";
+import { MoveToProject } from "./MoveToProject";
+import { PhaseChip } from "./PhaseChip";
+import { ProjectLink } from "./ProjectLink";
 import { cardInfo } from "./SessionCard";
 import { Meter, windowModel } from "./Meter";
 
@@ -20,7 +24,8 @@ export const DRAWER_SECTIONS = [
   "raw",
 ] as const;
 
-const FOCUSABLE = 'button, a[href], [tabindex="0"]';
+const FOCUSABLE =
+  'button:not(:disabled), a[href], select:not(:disabled), input:not(:disabled), [tabindex="0"]';
 
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   const uid = useId();
@@ -232,6 +237,34 @@ export function DetailDrawer({
             Close (Esc)
           </button>
         </header>
+        <div
+          data-testid="drawer-atlas"
+          className="flex flex-col gap-s-2 border-b border-border px-s-3 py-s-2"
+        >
+          <div className="flex items-center gap-s-2">
+            <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-fg-muted">
+              Project
+            </span>
+            <ProjectLink
+              id={atlasOf(s).project_id}
+              name={atlasOf(s).project_name}
+              color={atlasOf(s).project_color}
+              onNavigate={onClose}
+            />
+          </div>
+          <div className="flex items-center gap-s-2">
+            <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-fg-muted">
+              Phase
+            </span>
+            <PhaseChip session={s} />
+          </div>
+          <div className="flex items-center gap-s-2">
+            <span className="w-14 shrink-0 text-xs uppercase tracking-wide text-fg-muted">
+              Move
+            </span>
+            <MoveToProject session={s} className="w-56" />
+          </div>
+        </div>
         <div className="flex min-h-0 flex-1 flex-col gap-s-4 overflow-y-auto p-s-3">
           <Section id="timeline" title="State timeline">
             {timeline.length === 0 ? (
