@@ -6,6 +6,7 @@ import Fastify, {
 } from "fastify";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { HubConfig } from "./config.ts";
+import { registerCors } from "./cors.ts";
 import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
@@ -107,6 +108,7 @@ export function buildServer(opts: {
   );
   // Layout writes only (ingest is unchanged): 2/s, burst 10 per principal.
   const writeLimiter = new RateLimiter(2, 10, 16, now);
+  registerCors(app, opts.config.allowedOrigins); // before the bearer hook: preflights carry no auth
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
