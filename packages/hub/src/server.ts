@@ -11,6 +11,7 @@ import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
 import { registerCost } from "./routes/cost.ts";
+import { registerLayouts } from "./routes/layouts.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
 import { IngestActivity } from "./ingest/activity.ts";
@@ -158,6 +159,7 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
+  registerLayouts(app, opts.store, now);
   registerCost(
     app,
     opts.store,
