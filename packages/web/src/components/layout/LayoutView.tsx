@@ -30,7 +30,7 @@ import { PaneChrome } from "./PaneChrome";
 const MIN_PANE_PX = 96;
 const MIN_STRIP_PANE_PX = 64;
 
-const nodeId = (n: Node, i: number): string => (n.kind === "pane" ? n.id : `s${i}`);
+const nodeId = (n: Node, i: number): string => (n.kind === "pane" ? n.id : `split:${i}`);
 const signature = (n: Node): string =>
   n.kind === "pane" ? n.id : `(${n.dir[0]}${n.children.map(signature).join(",")})`;
 
@@ -105,11 +105,16 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
   );
 }
 
-const NodeView = memo(function NodeView({ node, path }: { node: Node; path: number[] }) {
-  if (node.kind === "pane") return <PaneView pane={node} />;
-  // Keyed on structure so a different tree (preset switch) remounts its groups with fresh defaults.
-  return <SplitView key={signature(node)} split={node} path={path} />;
-});
+// The path is a fresh array every render, so compare it by value: a ratio change elsewhere must not
+// re-render unrelated subtrees (node identity is shared by the reducers for untouched subtrees).
+const NodeView = memo(
+  function NodeView({ node, path }: { node: Node; path: number[] }) {
+    if (node.kind === "pane") return <PaneView pane={node} />;
+    // Keyed on structure so a different tree (preset switch) remounts its groups with fresh defaults.
+    return <SplitView key={signature(node)} split={node} path={path} />;
+  },
+  (a, b) => a.node === b.node && pathKey(a.path) === pathKey(b.path),
+);
 
 export function LayoutView({ spec }: { spec: LayoutSpec }) {
   return (

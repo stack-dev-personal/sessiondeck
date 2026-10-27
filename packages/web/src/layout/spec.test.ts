@@ -153,15 +153,20 @@ describe("preset shapes", () => {
   });
   it("grid6 has six", () => expect(shape("grid6")).toEqual(Array(6).fill("session")));
   it("strip is the compact board only", () => expect(shape("strip")).toEqual(["board"]));
-  it("by-project makes one project pane per distinct project, sorted", () => {
-    const s = buildPreset("by-project", ["web", "hub", "web"]);
-    expect(panesOf(s).map((p) => p.projectDir)).toEqual(["hub", "web"]);
+  it("by-project makes one project pane per distinct dir, in the order given", () => {
+    const s = buildPreset("by-project", ["/w/web", "/w/hub", "/w/web"]);
+    expect(panesOf(s).map((p) => p.projectDir)).toEqual(["/w/web", "/w/hub"]);
     expect(shape("by-project", ["a", "b", "c"])).toEqual(["project", "project", "project"]);
   });
   it("by-project with no projects still renders one unassigned project pane", () => {
     expect(panesOf(buildPreset("by-project", []))).toEqual([
       { kind: "pane", id: "p0", type: "project" },
     ]);
+  });
+  it("by-project keeps the first MAX_PROJECT_COLUMNS dirs given (attention order)", () => {
+    const dirs = Array.from({ length: 14 }, (_, i) => `/w/z${i}`);
+    const kept = panesOf(buildPreset("by-project", dirs)).map((p) => p.projectDir);
+    expect(kept).toEqual(dirs.slice(0, 12));
   });
   it("by-project is capped below the pane limit", () => {
     const many = Array.from({ length: 40 }, (_, i) => `p${String(i).padStart(2, "0")}`);
@@ -177,5 +182,25 @@ describe("preset shapes", () => {
       const idsList = panesOf(a).map((p) => p.id);
       expect(new Set(idsList).size).toBe(idsList.length);
     }
+  });
+});
+
+describe("pane ids (R6.1)", () => {
+  it("rejects ':' in a pane id, the namespace of split panel ids", () => {
+    const bad = {
+      version: 1,
+      id: "x",
+      name: "x",
+      root: {
+        kind: "split",
+        dir: "row",
+        ratios: [0.5, 0.5],
+        children: [
+          { kind: "pane", id: "split:1", type: "board" },
+          { kind: "pane", id: "b", type: "board" },
+        ],
+      },
+    };
+    expect(validate(bad).ok).toBe(false);
   });
 });

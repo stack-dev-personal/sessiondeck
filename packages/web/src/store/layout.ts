@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { readStored, STORAGE_KEYS, writeStored } from "../lib/storage";
 import { setPaneCompact, setRatiosAt } from "../layout/ops";
 import { buildPreset, type PresetName } from "../layout/presets";
-import { parse, serialize, type LayoutSpec } from "../layout/spec";
+import { parse, serialize, validate, type LayoutSpec } from "../layout/spec";
 
 /** The layout a fresh viewer gets, and the fallback when the stored one is corrupt. */
 export const DEFAULT_PRESET: PresetName = "solo";
@@ -33,6 +33,8 @@ export interface LayoutState {
 export const useLayout = create<LayoutState>()((set, get) => {
   const commit = (spec: LayoutSpec) => {
     if (spec === get().spec) return;
+    // Never persist or show a spec that parse() would reject on the next load.
+    if (!validate(spec).ok) return;
     writeStored(STORAGE_KEYS.layout, serialize(spec));
     set({ spec });
   };
@@ -40,7 +42,18 @@ export const useLayout = create<LayoutState>()((set, get) => {
     spec: loadLayout(),
     setSpec: commit,
     applyPreset: (name, projects = []) => commit(buildPreset(name, projects)),
-    setRatios: (path, ratios) => commit(setRatiosAt(get().spec, path, ratios)),
+    // The library reports percentages that can drift from an exact sum; rescale before validating.
+    setRatios: (path, ratios) => {
+      const sum = ratios.reduce((a, b) => a + b, 0);
+      if (!(sum > 0)) return;
+      commit(
+        setRatiosAt(
+          get().spec,
+          path,
+          ratios.map((r) => r / sum),
+        ),
+      );
+    },
     setPaneCompact: (id, compact) => commit(setPaneCompact(get().spec, id, compact)),
   };
 });

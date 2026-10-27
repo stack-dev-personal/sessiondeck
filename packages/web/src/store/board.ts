@@ -17,6 +17,9 @@ export interface BoardState {
   /** Bounded per-session history for the detail drawer; fed by the same flush as snapshots. */
   history: Record<string, SessionHistory>;
   connection: ConnectionStatus;
+  /** True once the first full set has arrived (hub resync or the end of the mock replay). */
+  loaded: boolean;
+  setLoaded: (loaded: boolean) => void;
   /** Epoch ms of the next reconnect attempt while closed; null otherwise. */
   retryAt: number | null;
   setConnection: (c: ConnectionStatus, retryAt?: number | null) => void;
@@ -52,6 +55,8 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     exceeds200k: {},
     history: {},
     connection: "closed",
+    loaded: false,
+    setLoaded: (loaded) => set({ loaded }),
     retryAt: null,
     setConnection: (connection, retryAt = null) => set({ connection, retryAt }),
     enqueue: (e) => {
@@ -73,6 +78,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
         ),
         exceeds200k: {},
         history: {},
+        loaded: true,
       });
     },
     flush: () => {

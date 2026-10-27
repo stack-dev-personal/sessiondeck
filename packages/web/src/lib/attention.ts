@@ -11,6 +11,45 @@ export function projectOf(s: SessionSnapshot): string {
   return basename(s.project_dir) ?? basename(s.cwd) ?? s.session_id;
 }
 
+/** Pane value for sessions that report neither project_dir nor cwd. */
+export const NO_PROJECT_DIR = "(no project)";
+
+/** Full project directory used to match project panes: project_dir, else cwd, else NO_PROJECT_DIR. */
+export function projectDirOf(s: SessionSnapshot): string {
+  return s.project_dir || s.cwd || NO_PROJECT_DIR;
+}
+
+/**
+ * Distinct full project dirs, most urgent first: a project ranks by its best session in
+ * sortForAttention order (waiting sessions first, then newest event).
+ */
+export function projectDirsByAttention(sessions: Record<string, SessionSnapshot>): string[] {
+  return [...new Set(sortForAttention(Object.values(sessions)).map(projectDirOf))];
+}
+
+const segments = (p: string): string[] => p.split(/[\\/]/).filter(Boolean);
+
+/**
+ * Display label per full dir: the basename, or "parent/basename" when two dirs share a basename.
+ */
+export function projectLabels(dirs: readonly string[]): Map<string, string> {
+  const base = (d: string) => segments(d).at(-1) ?? d;
+  const count = new Map<string, number>();
+  for (const d of dirs) count.set(base(d), (count.get(base(d)) ?? 0) + 1);
+  return new Map(
+    dirs.map((d) => {
+      const seg = segments(d);
+      const label =
+        d === NO_PROJECT_DIR
+          ? d
+          : (count.get(base(d)) ?? 0) > 1 && seg.length > 1
+            ? `${seg.at(-2)}/${base(d)}`
+            : base(d);
+      return [d, label];
+    }),
+  );
+}
+
 /** Name used in the card title and in notifications: the session name, else the project. */
 export function displayNameOf(s: SessionSnapshot): string {
   return s.session_name ?? projectOf(s);

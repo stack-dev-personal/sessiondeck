@@ -1,32 +1,50 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "react";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import { useNow } from "../../hooks/useNow";
-import { displayNameOf, projectOf, sortForAttention } from "../../lib/attention";
+import { displayNameOf, projectDirOf, projectLabels, sortForAttention } from "../../lib/attention";
 import { STATE_VOCAB } from "../../lib/state-vocab";
 import { useBoard } from "../../store/board";
 import { useUi } from "../../store/ui";
 import { CompactCard, SessionCard } from "../SessionCard";
 
-/** Height of one strip card plus its gap, in px (--strip-h plus the 4 px gap), for the strip/list switch. */
-const STRIP_H = 36;
+/** Fallback for the --strip-h token (one strip card) when it cannot be read, e.g. in jsdom. */
+const STRIP_H_FALLBACK = 36;
+
+/** The --strip-h token in px, read from the element's computed style. */
+function stripHeightOf(el: HTMLElement): number {
+  const v = parseFloat(getComputedStyle(el).getPropertyValue("--strip-h"));
+  return Number.isFinite(v) && v > 0 ? v : STRIP_H_FALLBACK;
+}
+
+/** Label of a project pane's dir, disambiguated against the dirs of all current sessions. */
+export function useProjectLabel(dir: string | undefined): string | undefined {
+  return useBoard((s) => {
+    if (dir === undefined) return undefined;
+    const dirs = new Set(Object.values(s.sessions).map(projectDirOf));
+    dirs.add(dir);
+    return projectLabels([...dirs]).get(dir);
+  });
+}
 
 function useSortedSessions(): SessionSnapshot[] {
   const sessions = useBoard((s) => s.sessions);
   return useMemo(() => sortForAttention(Object.values(sessions)), [sessions]);
 }
 
-function useHeight(ref: React.RefObject<HTMLElement | null>): number {
+function useHeight(ref: React.RefObject<HTMLElement | null>): { h: number; unit: number } {
   const [h, setH] = useState(0);
+  const [unit, setUnit] = useState(STRIP_H_FALLBACK);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    setUnit(stripHeightOf(el));
     setH(el.clientHeight);
     if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setH(el.clientHeight));
     ro.observe(el);
     return () => ro.disconnect();
   }, [ref]);
-  return h;
+  return { h, unit };
 }
 
 const Empty = ({ children }: { children: string }) => (
@@ -43,8 +61,9 @@ export function BoardPaneBody() {
   const openSession = useUi((s) => s.openSession);
   const now = useNow();
   const ref = useRef<HTMLDivElement>(null);
-  const h = useHeight(ref);
-  const strip = h < STRIP_H * 2;
+  const { h, unit } = useHeight(ref);
+  // Less than two strip cards of room: one scrolling row; otherwise a column.
+  const strip = h < unit * 2;
   return (
     <div
       ref={ref}
@@ -108,19 +127,20 @@ export function ProjectPaneBody({ projectDir }: { projectDir: string | undefined
   const flags = useBoard((s) => s.exceeds200k);
   const openSession = useUi((s) => s.openSession);
   const now = useNow();
+  const label = useProjectLabel(projectDir);
   if (projectDir === undefined)
     return (
       <div data-unassigned="true">
         <Empty>Unassigned. No project chosen for this pane.</Empty>
       </div>
     );
-  const mine = list.filter((s) => projectOf(s) === projectDir);
-  if (mine.length === 0) return <Empty>{`No sessions in ${projectDir}.`}</Empty>;
+  const mine = list.filter((s) => projectDirOf(s) === projectDir);
+  if (mine.length === 0) return <Empty>{`No sessions in ${label ?? projectDir}.`}</Empty>;
   return (
     <div className="h-full overflow-auto">
       <ul
         className="m-0 flex min-w-[28rem] list-none flex-col gap-s-2 p-s-2"
-        aria-label={`${projectDir} sessions`}
+        aria-label={`${label ?? projectDir} sessions`}
       >
         {mine.map((s) => (
           <li key={s.session_id} className="min-w-0">
@@ -139,12 +159,13 @@ export function ProjectPaneBody({ projectDir }: { projectDir: string | undefined
 
 /** Metrics pane: counts by state, glyph and label with the number (never color alone). */
 export function MetricsPaneBody() {
-  const sessions = useBoard((s) => s.sessions);
-  const counts = useMemo(() => {
+  // A string selector: only a change in the counts re-renders, not every session delta.
+  const key = useBoard((s) => {
     const c: Record<string, number> = {};
-    for (const s of Object.values(sessions)) c[s.state] = (c[s.state] ?? 0) + 1;
-    return c;
-  }, [sessions]);
+    for (const x of Object.values(s.sessions)) c[x.state] = (c[x.state] ?? 0) + 1;
+    return JSON.stringify(c);
+  });
+  const counts = useMemo(() => JSON.parse(key) as Record<string, number>, [key]);
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   return (
     <dl className="m-0 grid grid-cols-[auto_1fr_auto] items-center gap-x-s-3 gap-y-s-1 p-s-3 text-sm">
@@ -174,22 +195,24 @@ export function CompactPaneBody({
   sessionId: string | undefined;
   projectDir: string | undefined;
 }) {
-  const sessions = useBoard((s) => s.sessions);
-  const text = useMemo(() => {
-    const all = Object.values(sessions);
+  // The selector returns the finished line, so a delta to another session never re-renders this.
+  const text = useBoard((st) => {
     if (type === "session") {
-      const s = sessionId === undefined ? undefined : sessions[sessionId];
-      return sessionId === undefined
-        ? "Unassigned"
-        : s
-          ? `${STATE_VOCAB[s.state].glyph} ${displayNameOf(s)}: ${STATE_VOCAB[s.state].label}`
-          : `${sessionId} not on the board`;
+      if (sessionId === undefined) return "Unassigned";
+      const s = st.sessions[sessionId];
+      return s
+        ? `${STATE_VOCAB[s.state].glyph} ${displayNameOf(s)}: ${STATE_VOCAB[s.state].label}`
+        : `${sessionId} not on the board`;
     }
+    const all = Object.values(st.sessions);
     if (type === "project") {
       if (projectDir === undefined) return "Unassigned";
-      return `${projectDir}: ${all.filter((s) => projectOf(s) === projectDir).length} sessions`;
+      const dirs = new Set(all.map(projectDirOf));
+      dirs.add(projectDir);
+      const label = projectLabels([...dirs]).get(projectDir) ?? projectDir;
+      return `${label}: ${all.filter((s) => projectDirOf(s) === projectDir).length} sessions`;
     }
     return `${all.length} sessions`;
-  }, [sessions, type, sessionId, projectDir]);
+  });
   return <p className="num m-0 truncate px-s-2 py-s-1 text-sm text-fg-muted">{text}</p>;
 }
