@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
-// Every suite that spawns the built entries (hook, statusline, subagents, probe CLI) EXCEPT the
-// real-exe suites, which have their own config (vitest.proc.exe.config.ts) so the R1.3 exe stress
+// Every suite that spawns the built entries (hook, statusline, subagents, probe CLI, stand-in installs) EXCEPT the
+// real-exe suites (files named *-exe*), which have their own config (vitest.proc.exe.config.ts) so the R1.3 exe stress
 // runs alone instead of competing with the timing-dependent suites here.
 export default defineConfig({
   test: {
