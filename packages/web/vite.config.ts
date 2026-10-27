@@ -10,7 +10,11 @@ export default defineConfig({
     host: process.env["SD_WEB_HOST"] ?? "127.0.0.1",
     proxy: {
       "/stream": { target: "http://localhost:8787", ws: true },
-      "/sessions": "http://localhost:8787",
+      // /sessions is also an SPA route (the session list): same rule as /projects.
+      "/sessions": {
+        target: "http://localhost:8787",
+        bypass: (req) => (req.headers.accept?.includes("text/html") ? "/index.html" : undefined),
+      },
       // /projects is also an SPA route: browser navigations (Accept: text/html) get the app, fetches go to the hub.
       "/projects": {
         target: "http://localhost:8787",
