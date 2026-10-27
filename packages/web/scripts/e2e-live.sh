@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command for the live e2e: builds the hub image, starts hub + ws-gate + Playwright containers
-# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
+# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9, R5.5-live; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
 # screenshots, removes everything.
 #
 #   packages/web/scripts/e2e-live.sh
@@ -73,6 +73,7 @@ set +e
 docker run --name "$PW" --network "$NET" --shm-size=1g "${MOUNT[@]}" -w "$ROOT/packages/web" \
   -e HOME=/root -e CI=1 -e SCREENS_DIR=/tmp/screens \
   -e SD_E2E_HUB_URL="http://$GATE:8787" -e SD_E2E_HUB_DIRECT_URL="http://$HUB:8787" \
+  -v /var/run/docker.sock:/var/run/docker.sock -e SD_E2E_HUB_CONTAINER="$HUB" \
   -e SD_E2E_GATE_URL="http://$GATE:9000" -e SD_E2E_SKIP_PERF="${SD_E2E_SKIP_PERF:-}" -e SD_E2E_ARGS="${SD_E2E_ARGS:-}" --env-file "$ENVDIR/pw.env" \
   "$PW_IMG" sh -c 'node node_modules/@playwright/test/cli.js test $SD_E2E_ARGS; rc=$?; chown -R '"$(id -u):$(id -g)"' dist e2e /tmp/screens /tmp/sd-pw-results 2>/dev/null; exit $rc'
 rc=$?

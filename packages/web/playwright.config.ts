@@ -11,11 +11,18 @@ const vite = "node ./node_modules/vite/bin/vite.js";
  *   SD_E2E_HUB_TOKEN       the hub's HUB_TOKEN (passed in the environment, never committed)
  *   SD_E2E_HUB_DIRECT_URL  where the test POSTs /ingest; defaults to SD_E2E_HUB_URL
  *   SD_E2E_GATE_URL        ws-gate control URL (scripts/ws-gate.mjs); R3.9 skips without it
+ *   SD_E2E_HUB_CONTAINER   hub container name; R5.5-live restarts it through the docker socket (SD_E2E_DOCKER_SOCK, default /var/run/docker.sock) and skips without it
  * Unset, the live specs are not run and the mock suite is unchanged. One command that starts the
  * hub, gate and Playwright containers and cleans up: scripts/e2e-live.sh.
  */
 const live = (process.env["SD_E2E_HUB_URL"] ?? "") !== "";
-const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.3.spec.ts", "**/R3.6.spec.ts", "**/R3.9.spec.ts"];
+const LIVE_SPECS = [
+  "**/R3.1.spec.ts",
+  "**/R3.3.spec.ts",
+  "**/R3.6.spec.ts",
+  "**/R3.9.spec.ts",
+  "**/R5.5-live.spec.ts",
+];
 const port = live ? 5174 : 5173;
 
 /**
