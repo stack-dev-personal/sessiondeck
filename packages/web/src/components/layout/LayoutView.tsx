@@ -115,23 +115,33 @@ function SplitView({ split, path }: { split: Split; path: number[] }) {
 }
 
 /**
- * Sideways scroller for a row of project columns. When columns are off to the right it overlays an
- * edge fade and "N more columns" at the right edge (absolute, so no geometry changes).
+ * Sideways scroller for a row of project columns. When columns are off to the right it overlays a
+ * narrow edge fade and a "N more columns" chip at the right edge (absolute, so no geometry
+ * changes). The fade is only a few rem wide and the chip sits at the bottom, so a column that is
+ * fully on screen, header buttons included, stays fully readable.
  */
 function ColumnScroller({ count, children }: { count: number; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
+  const inner = useRef<HTMLDivElement>(null);
   const [more, setMore] = useState(0);
   useEffect(() => {
     const el = box.current;
     if (!el) return;
+    // Columns may be resized by the user, so count the panels themselves: those whose left edge is
+    // at or past the right edge of the visible area.
     const measure = () => {
-      const col = el.scrollWidth / count;
-      setMore(Math.max(0, count - Math.floor((el.scrollLeft + el.clientWidth + 1) / col)));
+      const edge = el.getBoundingClientRect().left + el.clientWidth;
+      let hidden = 0;
+      for (const p of el.querySelectorAll('[data-testid="pane"]')) {
+        if (p.getBoundingClientRect().left >= edge - 1) hidden++;
+      }
+      setMore(hidden);
     };
     measure();
     el.addEventListener("scroll", measure, { passive: true });
     const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     ro?.observe(el);
+    if (inner.current) ro?.observe(inner.current);
     return () => {
       el.removeEventListener("scroll", measure);
       ro?.disconnect();
@@ -144,16 +154,22 @@ function ColumnScroller({ count, children }: { count: number; children: ReactNod
         className="h-full w-full overflow-x-auto overflow-y-hidden"
         data-testid="split-scroll"
       >
-        <div className="h-full" style={{ minWidth: `${count * PROJECT_COLUMN_REM}rem` }}>
+        <div
+          ref={inner}
+          className="h-full"
+          style={{ minWidth: `${count * PROJECT_COLUMN_REM}rem` }}
+        >
           {children}
         </div>
       </div>
       {more > 0 ? (
-        <div
-          className="pointer-events-none absolute inset-y-0 right-0 flex w-[16rem] items-center justify-end bg-gradient-to-l from-surface-1 to-transparent px-s-2"
-          data-testid="columns-more"
-        >
-          <span className="num rounded border border-border-strong bg-surface-2 px-s-2 py-s-1 text-xs text-fg">
+        <div className="pointer-events-none absolute inset-0" data-testid="columns-more">
+          <div
+            className="absolute inset-y-0 right-0 w-[2.5rem] bg-gradient-to-l from-surface-1 to-transparent"
+            data-testid="columns-fade"
+            aria-hidden="true"
+          />
+          <span className="num absolute bottom-s-2 right-s-3 rounded border border-border-strong bg-surface-2 px-s-2 py-s-1 text-xs text-fg">
             {`▸ Scroll for ${more} more ${more === 1 ? "column" : "columns"}`}
           </span>
         </div>

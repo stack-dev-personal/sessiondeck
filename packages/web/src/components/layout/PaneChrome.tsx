@@ -5,7 +5,7 @@ import { LAYOUT_KEYS, keyName } from "../../lib/keys";
 import { useBoard } from "../../store/board";
 import { useLayout } from "../../store/layout";
 import { hasSessionDrag, isKnownSession, sessionDragProps, sessionFromDrop } from "./dnd";
-import { useProjectLabel } from "./PaneBodies";
+import { ownGet, useProjectLabel } from "./PaneBodies";
 import { SessionPicker } from "./SessionPicker";
 
 const TYPE_LABEL: Record<Pane["type"], string> = {
@@ -37,10 +37,11 @@ export function PaneChrome({ pane, children }: { pane: Pane; children: ReactNode
     const ids = panesOf(s.spec).filter((p) => p.type === "session");
     return ids.findIndex((p) => p.id === pane.id) + 1;
   });
-  const held = useBoard((s) =>
-    pane.sessionId !== undefined ? s.sessions[pane.sessionId] : undefined,
-  );
-  const heldName = held ? displayNameOf(held) : (pane.sessionId ?? "unassigned");
+  // A string: the pane re-renders when the name changes, not on every delta of its session.
+  const heldName = useBoard((s) => {
+    const held = ownGet(s.sessions, pane.sessionId);
+    return held ? displayNameOf(held) : (pane.sessionId ?? "unassigned");
+  });
   const detail =
     pane.type === "project" ? projectLabel : pane.type === "session" ? pane.sessionId : undefined;
 

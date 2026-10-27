@@ -7,11 +7,14 @@ import { PRESET_LABELS, PRESET_NAMES, type PresetName } from "../../layout/prese
  */
 export function LayoutMenu({
   current,
+  currentName,
   open,
   onOpenChange,
   onPick,
 }: {
   current: string;
+  /** Saved name of the current layout when it is not a builtin preset (its id is not for people). */
+  currentName?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPick: (name: PresetName) => void;
@@ -46,7 +49,7 @@ export function LayoutMenu({
   };
   const label = PRESET_NAMES.includes(current as PresetName)
     ? PRESET_LABELS[current as PresetName].split(":")[0]
-    : current;
+    : (currentName ?? current);
   return (
     <div className="relative">
       <button

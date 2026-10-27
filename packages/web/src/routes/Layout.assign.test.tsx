@@ -324,19 +324,47 @@ describe("review fixes (R6.6, R6.2)", () => {
     await user.keyboard("a");
     expect(screen.getByTestId("sessions-more")).toBeInTheDocument();
   });
+  /** jsdom has no layout: panes sit at `lefts` (px, relative to the scroller) minus scrollLeft. */
+  function withLayout(dims: { clientWidth: number; scrollLeft: number; lefts: number[] }) {
+    const proto = HTMLElement.prototype;
+    const props = ["clientWidth", "scrollLeft"] as const;
+    const orig = props.map((k) => Object.getOwnPropertyDescriptor(proto, k));
+    const origRect = proto.getBoundingClientRect;
+    for (const k of props)
+      Object.defineProperty(proto, k, { configurable: true, get: () => dims[k] });
+    proto.getBoundingClientRect = function (this: HTMLElement) {
+      const panes = [...document.querySelectorAll('[data-testid="pane"]')];
+      const i = panes.indexOf(this);
+      const left = i >= 0 ? (dims.lefts[i] ?? 0) - dims.scrollLeft : 0;
+      return {
+        left,
+        right: left,
+        top: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        x: left,
+        y: 0,
+      } as DOMRect;
+    };
+    return () => {
+      proto.getBoundingClientRect = origRect;
+      props.forEach((k, i) => {
+        const d = orig[i];
+        if (d) Object.defineProperty(proto, k, d);
+        else delete (proto as unknown as Record<string, unknown>)[k];
+      });
+    };
+  }
   it("by-project columns past the visible width say how many are off to the right", () => {
     put(...Array.from({ length: 8 }, (_, i) => sess(`s${i}`, 100 - i)));
     useLayout.setState({ spec: buildPreset("by-project", panesOfDirs(8)) });
-    const proto = HTMLElement.prototype;
-    const dims = { scrollWidth: 2400, clientWidth: 900, scrollLeft: 0 };
-    const orig = Object.fromEntries(
-      Object.keys(dims).map((k) => [k, Object.getOwnPropertyDescriptor(proto, k)]),
-    );
-    for (const k of Object.keys(dims))
-      Object.defineProperty(proto, k, {
-        configurable: true,
-        get: () => dims[k as keyof typeof dims],
-      });
+    const dims = {
+      clientWidth: 900,
+      scrollLeft: 0,
+      lefts: Array.from({ length: 8 }, (_, i) => i * 300),
+    };
+    const restore = withLayout(dims);
     try {
       mount();
       expect(screen.getByTestId("columns-more")).toHaveTextContent("Scroll for 5 more columns");
@@ -344,10 +372,54 @@ describe("review fixes (R6.6, R6.2)", () => {
       fireEvent.scroll(screen.getByTestId("split-scroll"));
       expect(screen.queryByTestId("columns-more")).toBeNull();
     } finally {
-      for (const [k, d] of Object.entries(orig)) {
-        if (d) Object.defineProperty(proto, k, d);
-        else delete (proto as unknown as Record<string, unknown>)[k];
+      restore();
+    }
+  });
+  it("resized (unequal) columns are counted by their position, and the inner box is observed (R6.1)", () => {
+    put(...Array.from({ length: 4 }, (_, i) => sess(`s${i}`, 100 - i)));
+    useLayout.setState({ spec: buildPreset("by-project", panesOfDirs(4)) });
+    // Column 1 is wide: the others start at 600, 1400, 1700. Visible width 1000.
+    const dims = { clientWidth: 1000, scrollLeft: 0, lefts: [0, 600, 1400, 1700] };
+    const restore = withLayout(dims);
+    const observed: Element[] = [];
+    const fires = new Map<Element, () => void>();
+    class RO {
+      constructor(private cb: () => void) {}
+      observe(el: Element) {
+        observed.push(el);
+        fires.set(el, this.cb);
       }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", RO);
+    try {
+      mount();
+      // Equal-width maths (scrollWidth / count) would say 3 here; the panels at 1400 and 1700 are 2.
+      expect(screen.getByTestId("columns-more")).toHaveTextContent("Scroll for 2 more columns");
+      const scroller = screen.getByTestId("split-scroll");
+      expect(observed).toContain(scroller);
+      expect(observed).toContain(scroller.firstElementChild);
+      // The user drags a divider: the inner box resizes, the observer fires, the count follows.
+      dims.lefts = [0, 300, 600, 1100];
+      act(() => fires.get(scroller.firstElementChild!)?.());
+      expect(screen.getByTestId("columns-more")).toHaveTextContent("Scroll for 1 more column");
+    } finally {
+      vi.unstubAllGlobals();
+      restore();
+    }
+  });
+  it("the edge fade is narrow and the chip is not over the header row (R6.1)", () => {
+    put(...Array.from({ length: 4 }, (_, i) => sess(`s${i}`, 100 - i)));
+    useLayout.setState({ spec: buildPreset("by-project", panesOfDirs(4)) });
+    const restore = withLayout({ clientWidth: 1000, scrollLeft: 0, lefts: [0, 500, 1000, 1500] });
+    try {
+      mount();
+      expect(screen.getByTestId("columns-fade").className).toMatch(/w-\[(2|3)(\.5)?rem\]/);
+      expect(screen.getByTestId("columns-more").className).not.toMatch(/w-\[16rem\]/);
+      expect(screen.getByTestId("columns-more").textContent).toContain("more column");
+    } finally {
+      restore();
     }
   });
 });

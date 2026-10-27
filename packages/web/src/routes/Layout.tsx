@@ -68,6 +68,9 @@ export function Layout() {
   const press = useSaved((s) => s.press);
   const savedCount = useSaved((s) => s.rows.length);
   const savedStatus = useSaved((s) => s.status);
+  // A saved layout is shown by its name (the live row, so a rename shows), never by its id.
+  const savedName = useSaved((s) => s.rows.find((r) => r.id === spec.id)?.name);
+  const currentName = savedName ?? spec.name;
   // The host is read at key time so a hotkey never closes over a stale setting.
   const hostRef = useRef(host);
   hostRef.current = host;
@@ -113,7 +116,13 @@ export function Layout() {
     <div className="flex h-full flex-col" data-testid="layout-route">
       <h1 className="sr-only">Layout</h1>
       <div className="flex shrink-0 items-center gap-s-3 border-b border-border px-s-4 py-s-2">
-        <LayoutMenu current={spec.id} open={open} onOpenChange={setOpen} onPick={pick} />
+        <LayoutMenu
+          current={spec.id}
+          currentName={currentName}
+          open={open}
+          onOpenChange={setOpen}
+          onPick={pick}
+        />
         <span className="num w-[5rem] shrink-0 text-sm text-fg-muted" data-testid="pane-count">
           {panesOf(spec).length} {panesOf(spec).length === 1 ? "pane" : "panes"}
         </span>
