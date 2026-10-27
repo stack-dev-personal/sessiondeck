@@ -46,3 +46,11 @@ export function setPaneCompact(spec: LayoutSpec, id: string, compact: boolean): 
     return compact ? { ...rest, compact: true } : rest;
   });
 }
+
+/** Every pane compact (R6.5). Ratios and assignments are untouched; panes already compact are shared. */
+export function compactAll(spec: LayoutSpec): LayoutSpec {
+  const root = mapNode(spec.root, (n) =>
+    n.kind === "pane" && n.compact !== true ? { ...n, compact: true } : n,
+  );
+  return root === spec.root ? spec : { ...spec, root };
+}
