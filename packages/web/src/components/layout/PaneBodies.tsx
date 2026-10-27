@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useLayoutEffect } from "react";
+import { useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import { useNow } from "../../hooks/useNow";
 import { displayNameOf, projectDirOf, projectLabels, sortForAttention } from "../../lib/attention";
@@ -6,6 +6,7 @@ import { STATE_VOCAB } from "../../lib/state-vocab";
 import { useBoard } from "../../store/board";
 import { useUi } from "../../store/ui";
 import { CompactCard, SessionCard } from "../SessionCard";
+import { ActivityList } from "./ActivityList";
 import { sessionDragProps } from "./dnd";
 
 /** Fallback for the --strip-h token (one strip card) when it cannot be read, e.g. in jsdom. */
@@ -109,27 +110,73 @@ export function BoardPaneBody() {
   );
 }
 
+/** True while the element intersects the viewport. Without IntersectionObserver it counts as seen. */
+export function useOnScreen(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [seen, setSeen] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1];
+      if (last) setSeen(last.isIntersecting);
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return seen;
+}
+
+/** One status line for the pane: state glyph and label, then context. Strings, so it re-renders only on a change. */
+function SessionStatusLine({ sessionId }: { sessionId: string }) {
+  const state = useBoard((st) => {
+    const s = ownGet(st.sessions, sessionId);
+    return s ? `${STATE_VOCAB[s.state].glyph} ${STATE_VOCAB[s.state].label}` : "not on the board";
+  });
+  const ctx = useBoard((st) => {
+    const p = ownGet(st.sessions, sessionId)?.context.used_pct;
+    return p === null || p === undefined ? "ctx n/a" : `ctx ${Math.round(p)}%`;
+  });
+  return (
+    <div
+      className="num flex h-[var(--activity-row-h)] shrink-0 items-center justify-between gap-s-2 border-b border-border px-s-2 text-xs text-fg"
+      data-testid="session-status"
+    >
+      <span className="min-w-0 truncate">{state}</span>
+      <span className="shrink-0 text-fg-muted">{ctx}</span>
+    </div>
+  );
+}
+
+/** The live list of one session: the only subscriber to its log, so other sessions' deltas pass it by. */
+function LiveActivity({ sessionId }: { sessionId: string }) {
+  const log = useBoard((st) => ownGet(st.activity, sessionId));
+  if (!log || log.rows.length === 0) return <Empty>No activity yet.</Empty>;
+  return <ActivityList rows={log.rows} />;
+}
+
 /**
- * SEAM (R6.4): the live content view of one session. Phase 6 later replaces this body with the
- * virtualized live message list; the pane chrome, assignment and compact handling stay as they are.
- * Until then it shows the session's card, or the unassigned state.
+ * SEAM (R6.4): the live content of one session. Phase 4's content view replaces this body; the pane
+ * chrome, assignment and compact handling stay as they are. Today: a status line and a virtualized
+ * list of the session's recent activity (state changes, tools, prompts, usage), newest at the
+ * bottom. The list is mounted only while the pane is on screen; a compacted pane never renders
+ * this component, and leaving the route unmounts it.
  */
 export function SessionPaneBody({ sessionId }: { sessionId: string | undefined }) {
-  const s = useBoard((st) => ownGet(st.sessions, sessionId));
-  const flag = useBoard((st) => ownGet(st.exceeds200k, sessionId) ?? null);
-  const openSession = useUi((st) => st.openSession);
-  const now = useNow();
+  const ref = useRef<HTMLDivElement>(null);
+  const seen = useOnScreen(ref);
+  const known = useBoard((st) => ownGet(st.sessions, sessionId) !== undefined);
   if (sessionId === undefined)
     return (
       <div data-unassigned="true">
         <Empty>Unassigned. Assign a session to see its content here.</Empty>
       </div>
     );
-  if (!s) return <Empty>{`Session ${sessionId} is not on the board.`}</Empty>;
   return (
-    <div className="h-full overflow-auto">
-      <div className="min-w-[28rem] p-s-2">
-        <SessionCard s={s} now={now} exceeds200k={flag} onOpen={openSession} />
+    <div ref={ref} className="flex h-full min-h-0 flex-col" data-testid="session-body">
+      {known ? null : <Empty>{`Session ${sessionId} is not on the board.`}</Empty>}
+      {known ? <SessionStatusLine sessionId={sessionId} /> : null}
+      <div className="min-h-0 flex-1" data-slot="activity" data-mounted={seen ? "true" : "false"}>
+        {seen && known ? <LiveActivity sessionId={sessionId} /> : null}
       </div>
     </div>
   );
