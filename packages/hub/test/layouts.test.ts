@@ -218,8 +218,9 @@ describe("R6.3 layouts API", () => {
     expect(p95).toBeLessThan(50);
   });
 
-  it("rate limits layout writes per principal with 429 and leaves ingest and reads alone", async () => {
-    const fixed = await makeHub({}, () => 1_800_000_000_000);
+  it("rate limits layout writes per principal with 429, refills over time, leaves ingest and reads alone", async () => {
+    let t = 1_800_000_000_000;
+    const fixed = await makeHub({}, () => t);
     try {
       const w = (i: number) =>
         fixed.app.inject({
@@ -235,9 +236,53 @@ describe("R6.3 layouts API", () => {
       expect(d.body).toBe("");
       const g = await fixed.app.inject({ method: "GET", url: "/layouts", headers: AUTH });
       expect(g.statusCode).toBe(200);
+      const ing = await fixed.app.inject({
+        method: "POST",
+        url: "/ingest",
+        headers: AUTH,
+        payload: { host: "h", events: [] } as object,
+      });
+      expect(ing.statusCode).not.toBe(429);
+      t += 500; // 2/s refills one token
+      expect((await w(11)).statusCode).toBe(200);
+      expect((await w(12)).statusCode).toBe(429);
     } finally {
       await fixed.cleanup();
     }
+  });
+
+  it.each(["/%6Cayouts/x", "/%6cayouts/x"])(
+    "percent-encoded path %s cannot skip the write limiter (PUT and DELETE)",
+    async (url) => {
+      const fixed = await makeHub({}, () => 1_800_000_000_000);
+      try {
+        for (let i = 0; i < 10; i++) {
+          await fixed.app.inject({ method: "PUT", url, headers: AUTH, payload: body() as object });
+        }
+        const p = await fixed.app.inject({
+          method: "PUT",
+          url,
+          headers: AUTH,
+          payload: body() as object,
+        });
+        expect(p.statusCode).toBe(429);
+        const d = await fixed.app.inject({ method: "DELETE", url, headers: AUTH });
+        expect(d.statusCode).toBe(429);
+      } finally {
+        await fixed.cleanup();
+      }
+    },
+  );
+
+  it("PUT reports active_hotkey the same way the next GET does", async () => {
+    const r = await put("k", body({ hotkey: 3, host: null }));
+    expect((r.json() as { active_hotkey: boolean }).active_hotkey).toBe(true);
+    const p = await put("pk", body({ hotkey: 4, host: "h1" }));
+    expect((p.json() as { active_hotkey: boolean }).active_hotkey).toBe(true);
+    const n = await put("nk", body({ hotkey: null }));
+    expect((n.json() as { active_hotkey: boolean }).active_hotkey).toBe(false);
+    const got = await list();
+    expect(got.find((l) => l.id === "k")).toMatchObject({ active_hotkey: true });
   });
 
   it("active_hotkey: the pinned layout wins for its host", async () => {

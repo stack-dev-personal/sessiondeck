@@ -3,7 +3,7 @@
 // reports this as `active_hotkey`: with ?host=<h>, true for the row the key opens on h (a pinned
 // row for h, or an unpinned row whose slot no pinned row for h shadows), false for a shadowed or
 // slotless row. Without ?host it reflects unpinned rows only (pinned rows are false).
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { deleteLayout, listLayouts, putLayout, type LayoutRow } from "../db/layouts.ts";
 import type { Store } from "../db/store.ts";
@@ -71,7 +71,20 @@ function withActive(rows: LayoutRow[], host: string | undefined) {
 const bad = (reply: FastifyReply, reason: string) =>
   reply.code(400).send({ error: "invalid_body", reason });
 
-export function registerLayouts(app: FastifyInstance, store: Store, now: () => number): void {
+export function registerLayouts(
+  app: FastifyInstance,
+  store: Store,
+  now: () => number,
+  /** Takes one write token for the authenticated principal (header -> bucket); false = limited. */
+  allowWrite: (authorization: string | string[] | undefined) => boolean,
+): void {
+  // Route-level, so it follows the matched route (not the raw URL: /%6Cayouts/x routes here too)
+  // and runs after the global bearer hook.
+  const writeGuard = async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!allowWrite(req.headers.authorization)) {
+      return reply.code(429).header("content-length", "0").send();
+    }
+  };
   // Auth: the global onRequest bearer hook covers every route here (reads and writes alike).
   app.get("/layouts", async (req, reply) => {
     const q = ListQuery.safeParse(req.query);
@@ -83,7 +96,7 @@ export function registerLayouts(app: FastifyInstance, store: Store, now: () => n
 
   app.put<{ Params: { id: string } }>(
     "/layouts/:id",
-    { bodyLimit: PUT_BODY_LIMIT },
+    { bodyLimit: PUT_BODY_LIMIT, onRequest: writeGuard },
     async (req, reply) => {
       const id = Id.safeParse(req.params.id);
       if (!id.success) return bad(reply, "id");
@@ -106,11 +119,14 @@ export function registerLayouts(app: FastifyInstance, store: Store, now: () => n
                 : "layout_limit",
         });
       }
-      return wire(r.row, false);
+      const row = r.row;
+      const scope = row.host ?? undefined;
+      const mine = withActive(listLayouts(store, scope), scope).find((x) => x.id === row.id);
+      return mine ?? wire(row, false);
     },
   );
 
-  app.delete<{ Params: { id: string } }>("/layouts/:id", async (req, reply) => {
+  app.delete<{ Params: { id: string } }>("/layouts/:id", { onRequest: writeGuard }, async (req, reply) => {
     const id = Id.safeParse(req.params.id);
     if (!id.success) return reply.code(404).header("content-length", "0").send();
     const r = deleteLayout(store, id.data);
