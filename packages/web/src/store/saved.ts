@@ -107,14 +107,16 @@ export const useSaved = create<SavedState>()((set, get) => {
   };
   /**
    * A finished write settles the list: any GET still in flight started before it and may carry the
-   * old rows, so it is invalidated (its status moves to ready, the write proved the hub answers).
+   * old rows, so it is invalidated. If one was still loading, the list is fetched again, so the
+   * startup list never stays stale (the write's own rows are already applied meanwhile).
    * A write that outlives a change of hub is dropped.
    */
   const settled = (from: SavedAdapter, apply: () => void) => {
     if (from !== adapter) return;
+    const cancelled = get().status === "loading";
     loadSeq++;
     apply();
-    if (get().status === "loading") set({ status: "ready" });
+    if (cancelled) void get().load();
   };
   const putRow = async (
     id: string,
