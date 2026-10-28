@@ -1,7 +1,8 @@
 // Foreground daemon runner shared by dist/daemon.mjs and `probe daemon run`:
 // `[--home <dir>] [--stderr]`. Runs until SIGINT/SIGTERM (or until the console closes). A second
 // instance for the same home exits 0.
-import { defaultProbeHome } from "../paths.ts";
+import { readConfig } from "../config/config.ts";
+import { defaultProbeHome, probeConfigFile } from "../paths.ts";
 import { defaultComponents } from "./components.ts";
 import { parseBackoffCapMs, parseHeartbeatMs } from "./env-knobs.ts";
 import { startDaemon } from "./index.ts";
@@ -15,12 +16,23 @@ export async function runDaemon(argv: string[]): Promise<void> {
   // shortens the 30 s retry cap, SESSIONDECK_HEARTBEAT_MS the 30 s heartbeat interval.
   const backoffCapMs = parseBackoffCapMs(process.env["SESSIONDECK_BACKOFF_CAP_MS"]);
   const heartbeatMs = parseHeartbeatMs(process.env["SESSIONDECK_HEARTBEAT_MS"]);
+  // The archive importer is configured once at start (restart the daemon to change it). A config
+  // that does not validate is reported and the importer stays off; hook forwarding is unaffected.
+  const archive = await readConfig(probeConfigFile(home)).then(
+    (c) => c?.archive,
+    (e: unknown) => {
+      process.stderr.write(
+        `sessiondeck archive import off: ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+      return undefined;
+    },
+  );
   let daemon: Awaited<ReturnType<typeof startDaemon>>;
   try {
     daemon = await startDaemon({
       home,
       stderr: argv.includes("--stderr"),
-      components: defaultComponents(home),
+      components: defaultComponents(home, process.env, archive),
       onLockLost: () => process.exit(0),
       ...(backoffCapMs !== undefined ? { backoffCapMs } : {}),
       ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),

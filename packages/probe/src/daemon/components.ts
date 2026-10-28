@@ -1,7 +1,9 @@
 // Production component set for the daemon process: the transcript tailer (R1.6) and the liveness
 // monitor (R1.7). State files live under the probe home; the Claude config dir is only read.
 import { existsSync } from "node:fs";
+import type { ArchiveConfig } from "../config/config.ts";
 import { daemonChild } from "../paths.ts";
+import { ArchiveComponent } from "./archive.ts";
 import { LivenessMonitor } from "./liveness.ts";
 import { projectsDir, sessionsDir } from "./sessions-file.ts";
 import { TranscriptTailer } from "./transcript.ts";
@@ -29,8 +31,9 @@ export function dirsReport(env: Record<string, string | undefined> = process.env
 export function defaultComponents(
   home: string,
   env: Record<string, string | undefined> = process.env,
+  archive?: ArchiveConfig,
 ): DaemonComponent[] {
-  return [
+  const components: DaemonComponent[] = [
     dirsReport(env),
     new TranscriptTailer({
       statePath: daemonChild(home, "transcript-offsets.json"),
@@ -41,4 +44,13 @@ export function defaultComponents(
       sessionsDir: sessionsDir(env),
     }),
   ];
+  if (archive && archive.roots.length > 0) {
+    components.push(
+      new ArchiveComponent({
+        config: archive,
+        statePath: daemonChild(home, "archive-index.json"),
+      }),
+    );
+  }
+  return components;
 }

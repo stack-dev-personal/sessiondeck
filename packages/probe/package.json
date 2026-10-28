@@ -22,6 +22,7 @@
     "harness:outage": "node scripts/harness-daemon-outage.mjs",
     "harness:integration-hub": "node scripts/harness-integration-hub.mjs",
     "bench:hook": "node scripts/bench-hook.mjs",
-    "bench:statusline": "node scripts/bench-statusline.mjs"
+    "bench:statusline": "node scripts/bench-statusline.mjs",
+    "bench:archive": "node scripts/bench-archive.mjs"
   }
 }

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { chmod, readFile, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { resolveHostName } from "../host.ts";
 import { isFile, system32Dir } from "../win-utf8.ts";
 import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
@@ -12,6 +12,73 @@ export interface ProbeConfig {
   host: string;
   /** Opt-in to cleartext http for a non-loopback hub (a LAN hub without TLS). */
   allowInsecureHub?: boolean;
+  /** Vault archive import (Phase 5): read-only roots scanned by the daemon. */
+  archive?: ArchiveConfig;
+}
+
+export interface ArchiveConfig {
+  roots: Array<{ label: string; path: string }>;
+  /** Seconds between scans; default 300, minimum 30. */
+  intervalSec?: number;
+}
+
+export const ARCHIVE_DEFAULT_INTERVAL_SEC = 300;
+export const ARCHIVE_MIN_INTERVAL_SEC = 30;
+const ARCHIVE_MAX_ROOTS = 16;
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Validates the `archive` block of probe.json. Throws ConfigError with a clear message. */
+export function validateArchiveConfig(raw: unknown): ArchiveConfig {
+  if (!isPlainObject(raw)) throw new ConfigError("probe.json: archive must be an object");
+  for (const k of Object.keys(raw)) {
+    if (k !== "roots" && k !== "intervalSec") {
+      throw new ConfigError(`probe.json: unknown key archive.${k}`);
+    }
+  }
+  const rootsRaw = raw["roots"];
+  if (!Array.isArray(rootsRaw)) throw new ConfigError("probe.json: archive.roots must be an array");
+  if (rootsRaw.length > ARCHIVE_MAX_ROOTS) {
+    throw new ConfigError(`probe.json: archive.roots has more than ${ARCHIVE_MAX_ROOTS} entries`);
+  }
+  const seen = new Set<string>();
+  const roots: ArchiveConfig["roots"] = [];
+  rootsRaw.forEach((r: unknown, i: number) => {
+    const at = `archive.roots[${i}]`;
+    if (!isPlainObject(r)) throw new ConfigError(`probe.json: ${at} must be an object`);
+    for (const k of Object.keys(r)) {
+      if (k !== "label" && k !== "path")
+        throw new ConfigError(`probe.json: unknown key ${at}.${k}`);
+    }
+    const label = r["label"];
+    if (typeof label !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(label)) {
+      throw new ConfigError(
+        `probe.json: ${at}.label must be 1-64 letters, digits, '_' or '-', starting with a letter or digit`,
+      );
+    }
+    const path = r["path"];
+    if (typeof path !== "string" || path === "" || !isAbsolute(path)) {
+      throw new ConfigError(`probe.json: ${at}.path must be an absolute path`);
+    }
+    if (seen.has(label.toLowerCase())) {
+      throw new ConfigError(`probe.json: duplicate archive root label "${label}"`);
+    }
+    seen.add(label.toLowerCase());
+    roots.push({ label, path });
+  });
+  const out: ArchiveConfig = { roots };
+  const iv = raw["intervalSec"];
+  if (iv !== undefined) {
+    if (typeof iv !== "number" || !Number.isFinite(iv) || iv < ARCHIVE_MIN_INTERVAL_SEC) {
+      throw new ConfigError(
+        `probe.json: archive.intervalSec must be a number of at least ${ARCHIVE_MIN_INTERVAL_SEC}`,
+      );
+    }
+    out.intervalSec = iv;
+  }
+  return out;
 }
 
 export class ConfigError extends Error {}
@@ -40,6 +107,7 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   if (typeof r["hubUrl"] === "string") cfg.hubUrl = r["hubUrl"];
   if (typeof r["token"] === "string") cfg.token = r["token"];
   if (r["allowInsecureHub"] === true) cfg.allowInsecureHub = true;
+  if (r["archive"] !== undefined) cfg.archive = validateArchiveConfig(r["archive"]);
   return cfg;
 }
 
@@ -181,6 +249,7 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void>
   if (cfg.token !== undefined) body["token"] = cfg.token;
   body["host"] = cfg.host;
   if (cfg.allowInsecureHub === true) body["allowInsecureHub"] = true;
+  if (cfg.archive !== undefined) body["archive"] = cfg.archive;
   await writeFileAtomic(path, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
     beforeWrite: async (tmp) => {
