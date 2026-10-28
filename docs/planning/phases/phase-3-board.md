@@ -56,6 +56,9 @@ Out:
 - R3.8 Mock mode runs the full UI with no hub.
 - R3.9 WS disconnect shows a banner and auto-reconnects with resync; no stale "working" card persists after reconnect.
 
+Added 2026-10-28 from user report (session S8d). R3.14 and R3.15 are left for other sessions; add, never renumber.
+- R3.16 Board labels transcript-derived figures (a small "from transcript" marker or tooltip on cost and context) and shows cost as "API-equivalent". No estimates.
+
 ## Definition of done
 - [ ] All R3.x pass; Playwright smoke green in CI.
 - [ ] Used daily by you for three days with real sessions; a `docs/BOARD-FEEDBACK.md` lists what you changed your mind on (feeds Phases 5 and 6).
