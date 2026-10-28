@@ -1,0 +1,34 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-08-0900-hours-only.md"
+  },
+  "schema_version": 2,
+  "session_id": "a43cf0e6-decd-486d-a097-06d7101e8b8f",
+  "collection": "harness/agentic-harness",
+  "title": "CI matrix on windows",
+  "date": "2026-09-08",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 3600,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Bash",
+      "count": null
+    },
+    {
+      "name": "Read",
+      "count": null
+    }
+  ],
+  "commits": [
+    "aaa1111 Add windows runner"
+  ],
+  "prs": [
+    "#50"
+  ],
+  "outcome": "CI runs on ubuntu and windows.",
+  "outcome_truncated": false
+}

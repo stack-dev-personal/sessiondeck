@@ -1,0 +1,30 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "projects/sessiondeck/sessions/2026-09-11-1500-hub-auth.md"
+  },
+  "schema_version": 2,
+  "session_id": "0873bd60-475b-4247-a5b4-4da38d25fcfb",
+  "collection": "projects/sessiondeck",
+  "title": "Hub bearer auth",
+  "date": "2026-09-11",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 3000,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Edit",
+      "count": 7
+    },
+    {
+      "name": "Bash",
+      "count": 5
+    }
+  ],
+  "commits": [],
+  "prs": [],
+  "outcome": "Bearer token checked on every ingest request.",
+  "outcome_truncated": false
+}

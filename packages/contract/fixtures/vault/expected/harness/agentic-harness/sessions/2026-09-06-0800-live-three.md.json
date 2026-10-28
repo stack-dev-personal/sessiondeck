@@ -1,0 +1,44 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-06-0800-live-three.md"
+  },
+  "schema_version": 2,
+  "session_id": "8cc38311-7274-400a-8426-a201e49b8e4f",
+  "collection": "harness/agentic-harness",
+  "title": "Merge live and archive records",
+  "date": "2026-09-06",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 11400,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": "p5/archive-import",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": 20
+    },
+    {
+      "name": "Edit",
+      "count": 15
+    },
+    {
+      "name": "Bash",
+      "count": 31
+    },
+    {
+      "name": "Grep",
+      "count": 9
+    }
+  ],
+  "commits": [
+    "beef001 Merge by session_id",
+    "beef002 Test merge"
+  ],
+  "prs": [
+    "#47",
+    "#48"
+  ],
+  "outcome": "Live and archived rows now share a session_id key.\nMerge keeps live state authoritative.",
+  "outcome_truncated": false
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-03-1000-statusline.md"
+  },
+  "schema_version": 2,
+  "session_id": "690c4e41-40d2-4354-a7ee-73b066a67362",
+  "collection": "harness/agentic-harness",
+  "title": "Statusline schema: rate limits",
+  "date": "2026-09-03",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 1800,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": "main",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    }
+  ],
+  "commits": [],
+  "prs": [],
+  "outcome": "Documented the rate_limits shape.",
+  "outcome_truncated": false
+}

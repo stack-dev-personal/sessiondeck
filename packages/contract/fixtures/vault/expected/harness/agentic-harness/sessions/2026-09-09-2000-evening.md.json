@@ -1,0 +1,34 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-09-2000-evening.md"
+  },
+  "schema_version": 2,
+  "session_id": "be2160b4-3293-40ae-a20d-e44a29accecf",
+  "collection": "harness/agentic-harness",
+  "title": "Probe daemon logging",
+  "date": "2026-09-09",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 2100,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": "p2/logging",
+  "tools_used": [
+    {
+      "name": "Edit",
+      "count": 4
+    },
+    {
+      "name": "Read",
+      "count": 6
+    }
+  ],
+  "commits": [
+    "e1e1e1e Add log rotation"
+  ],
+  "prs": [
+    "#52"
+  ],
+  "outcome": "Daemon logs rotate at 1 MB.",
+  "outcome_truncated": false
+}

@@ -1,0 +1,34 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-02-1300-reducer-fix.md"
+  },
+  "schema_version": 2,
+  "session_id": "a9648976-1965-4d5a-8cf8-eb285b22406f",
+  "collection": "harness/agentic-harness",
+  "title": "Fix reducer on SubagentStop",
+  "date": "2026-09-02",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 7200,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": 8
+    },
+    {
+      "name": "Edit",
+      "count": 5
+    }
+  ],
+  "commits": [
+    "12ab34c Handle SubagentStop"
+  ],
+  "prs": [
+    "#44"
+  ],
+  "outcome": "SubagentStop no longer resets the parent state.\nRegression test added.",
+  "outcome_truncated": false
+}

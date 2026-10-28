@@ -1,0 +1,38 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-04-1100-multiline.md"
+  },
+  "schema_version": 2,
+  "session_id": "43ec5250-ec05-4cf2-aee3-b646e5602e1c",
+  "collection": "harness/agentic-harness",
+  "title": "Atlas search design",
+  "date": "2026-09-04",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 5400,
+  "project_dir": null,
+  "branch": "p5/atlas-core",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Grep",
+      "count": null
+    },
+    {
+      "name": "Write",
+      "count": null
+    }
+  ],
+  "commits": [
+    "33ee22f Draft FTS schema"
+  ],
+  "prs": [
+    "#46"
+  ],
+  "outcome": "## Outcome\n\nFTS5 table over session text.\n\n## Decisions\n\n1. Porter tokenizer off.\n2. Phase is inferred, editable.\n\n## Open\n\n- ranking weights",
+  "outcome_truncated": false
+}

@@ -1,0 +1,28 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-05-0930-crlf-two.md"
+  },
+  "schema_version": 2,
+  "session_id": "1ff22c8a-6de4-4525-a4f1-1d05aead70c4",
+  "collection": "harness/agentic-harness",
+  "title": "Tunnel health check",
+  "date": "2026-09-05",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 900,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Bash",
+      "count": 6
+    }
+  ],
+  "commits": [
+    "11ff00a Add /healthz probe"
+  ],
+  "prs": [],
+  "outcome": "Health endpoint added.\nCloudflare tunnel reports healthy.",
+  "outcome_truncated": false
+}

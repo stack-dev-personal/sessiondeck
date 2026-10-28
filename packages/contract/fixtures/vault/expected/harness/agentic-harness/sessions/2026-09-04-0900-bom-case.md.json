@@ -1,0 +1,32 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-04-0900-bom-case.md"
+  },
+  "schema_version": 2,
+  "session_id": "5db5a1c5-9f0a-4ecd-a5aa-333bd9c50c7d",
+  "collection": "harness/agentic-harness",
+  "title": "Windows path normalisation",
+  "date": "2026-09-04",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 1800,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Edit",
+      "count": null
+    }
+  ],
+  "commits": [
+    "55dd44e Normalize slashes"
+  ],
+  "prs": [],
+  "outcome": "Paths are forward slash everywhere in the snapshot.",
+  "outcome_truncated": false
+}

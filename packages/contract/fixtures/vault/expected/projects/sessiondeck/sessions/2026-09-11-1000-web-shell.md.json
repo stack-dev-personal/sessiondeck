@@ -1,0 +1,34 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "projects/sessiondeck/sessions/2026-09-11-1000-web-shell.md"
+  },
+  "schema_version": 2,
+  "session_id": "b41fbb82-de05-41bc-aa45-a3588d0a8451",
+  "collection": "projects/sessiondeck",
+  "title": "Web shell scaffold",
+  "date": "2026-09-11",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 2400,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": "p3/shell",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Write",
+      "count": null
+    }
+  ],
+  "commits": [
+    "c1c1c1c Scaffold shell"
+  ],
+  "prs": [
+    "#54"
+  ],
+  "outcome": "Vite app boots with the nav shell.",
+  "outcome_truncated": false
+}

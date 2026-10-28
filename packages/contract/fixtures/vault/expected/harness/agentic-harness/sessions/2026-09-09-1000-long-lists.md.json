@@ -1,0 +1,49 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-09-1000-long-lists.md"
+  },
+  "schema_version": 2,
+  "session_id": "fadc62af-43d4-4461-a461-329ee7b5f539",
+  "collection": "harness/agentic-harness",
+  "title": "Refactor wire schemas",
+  "date": "2026-09-09",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 9600,
+  "project_dir": null,
+  "branch": "p4/wire-refactor",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": 40
+    },
+    {
+      "name": "Edit",
+      "count": 33
+    },
+    {
+      "name": "Write",
+      "count": 4
+    },
+    {
+      "name": "Bash",
+      "count": 18
+    },
+    {
+      "name": "Grep",
+      "count": 12
+    }
+  ],
+  "commits": [
+    "b000001 Split wire.ts",
+    "b000002 Rename types",
+    "b000003 Fix imports"
+  ],
+  "prs": [
+    "#51",
+    "#52"
+  ],
+  "outcome": "wire.ts split into three modules.\nPublic exports unchanged.",
+  "outcome_truncated": false
+}
