@@ -89,7 +89,7 @@ const PRIMER_MS = 4_000;
 const SETTLE_MS = 400;
 /** Deltas per session pushed before the run so every log is at the cap. R64_SEED=0 is a diagnostic: logs grow from empty. */
 const SEED_PER_SESSION = Number(process.env["R64_SEED"] ?? 700);
-const ABBA = [
+const ABBA_FULL = [
   "control",
   "board",
   "board",
@@ -99,6 +99,10 @@ const ABBA = [
   "board",
   "control",
 ] as const;
+/** R64_MODES=control,board is a diagnostic (a short A/B); the gate needs the full ABBA and fails otherwise. */
+const ABBA: readonly ("control" | "board")[] = process.env["R64_MODES"]
+  ? (process.env["R64_MODES"].split(",") as ("control" | "board")[])
+  : ABBA_FULL;
 const MODE = LIVE.hubUrl === "" ? "mock" : "live";
 const TICK_MS = 50;
 /** Wall time a window takes beyond its 12 s: probes, start/stop of tracing, the evaluates. */
@@ -325,6 +329,8 @@ async function measure(page: Page, browser: Browser) {
       // stall with an idle main thread.
       "benchmark",
       "rail",
+      // Diagnostic only (R64_PROFILE=1): V8 samples, to see which functions the script time is.
+      ...(process.env["R64_PROFILE"] ? ["disabled-by-default-v8.cpu_profiler"] : []),
     ],
   });
   // The window is bounded inside the page and marked in the trace (console.timeStamp), so tracing

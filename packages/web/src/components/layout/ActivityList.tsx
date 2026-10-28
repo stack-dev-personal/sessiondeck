@@ -9,6 +9,12 @@
  * six live lists in the first version). Scrolling up unpins; the view then stays on the rows the
  * reader is looking at (the scroll distance grows by the rows appended). Scrolling back to the
  * bottom, End, or the "Jump to latest" button pins again.
+ *
+ * Rows do not move in the layer. A row sits at an absolute `top` fixed by its seq number `n`
+ * (relative to a rebase point that changes every REBASE rows), and one transform on the list shifts
+ * the oldest kept row to the top. An append that trims the oldest row therefore changes one
+ * transform, adds one row and removes one; the other rows keep their position, so Chromium repaints
+ * one row instead of every row of the pane (at the cap, every append used to slide all of them).
  */
 import {
   memo,
@@ -22,6 +28,8 @@ import {
 import { KIND_LABEL, type ActivityRow } from "../../store/activity";
 
 export const OVERSCAN = 6;
+/** Row positions are relative to a multiple of this seq number, so offsets stay small and rebase rarely. */
+const REBASE = 1024;
 /** Fallbacks for jsdom, where nothing has a size. */
 const ROW_H_FALLBACK = 24;
 const VIEW_H_FALLBACK = 240;
@@ -45,13 +53,21 @@ export function windowOf(
  * nodes per row keep paint cheap when six live lists repaint on every update. The kind label is the
  * non-color cue; the state glyph, where there is one, is in the text itself.
  */
-const Row = memo(function Row({ row, h }: { row: ActivityRow; h: number }) {
+const Row = memo(function Row({
+  row,
+  h,
+  base,
+}: {
+  row: ActivityRow;
+  h: number;
+  base: number;
+}) {
   const t = new Date(row.ts);
   const clock = Number.isFinite(t.getTime()) ? t.toTimeString().slice(0, 8) : "n/a";
   return (
     <li
-      className="flex items-center gap-s-2 whitespace-pre px-s-2 text-xs [contain:layout_paint_style]"
-      style={{ height: h }}
+      className="absolute inset-x-0 flex items-center gap-s-2 whitespace-pre px-s-2 text-xs"
+      style={{ height: h, top: (row.n - base) * h }}
       data-row={row.n}
       data-kind={row.kind}
     >
@@ -131,6 +147,9 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
 
   const { start, end } = windowOf(rows.length, rowH, top, viewH);
   const visible = rows.slice(start, end);
+  // Seq number of the first kept row (rows are contiguous) and the rebase point below it.
+  const first = rows[0]?.n ?? 0;
+  const base = Math.floor(first / REBASE) * REBASE;
   return (
     <div
       className="relative h-full [contain:layout_paint_style] [will-change:transform]"
@@ -150,12 +169,12 @@ export function ActivityList({ rows }: { rows: readonly ActivityRow[] }) {
       >
         <div className="relative mb-auto shrink-0" style={{ height: total }}>
           <ul
-            className="absolute inset-x-0 m-0 list-none p-0"
-            style={{ top: start * rowH }}
+            className="absolute inset-x-0 top-0 m-0 list-none p-0 [will-change:transform]"
+            style={{ transform: `translateY(${-(first - base) * rowH}px)` }}
             data-window={`${start}-${end}`}
           >
             {visible.map((r) => (
-              <Row key={r.n} row={r} h={rowH} />
+              <Row key={r.n} row={r} h={rowH} base={base} />
             ))}
           </ul>
         </div>
