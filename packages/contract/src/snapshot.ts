@@ -15,7 +15,21 @@ export interface SubagentSnapshot {
   context_window: number | null;
   model: string | null;
   /** Where tokens, model and context_window came from. Set by the hub; absent until filled. */
-  figures_source?: "subagent_statusline" | "transcript";
+  figures_source?: SubagentFigureSource;
+  /** Null or absent unless a transcript or hook row states it (decision 28). */
+  effort?: string | null;
+}
+
+/** Where a subagent's tokens, model and context_window came from. */
+export type SubagentFigureSource = "subagent_statusline" | "transcript";
+
+export const SUBAGENT_FIGURE_SOURCES: readonly SubagentFigureSource[] = [
+  "subagent_statusline",
+  "transcript",
+];
+
+export function isSubagentFigureSource(x: unknown): x is SubagentFigureSource {
+  return typeof x === "string" && (SUBAGENT_FIGURE_SOURCES as readonly string[]).includes(x);
 }
 
 /** Where a snapshot figure came from. */

@@ -148,7 +148,8 @@ These behaviors are not confirmed by a capture (synthetic payloads, or cases the
 Headless `claude -p` sessions send hooks but no statusline payloads, so the hub fills model, context, cost, git branch and last assistant message from stored transcript lines. Two optional fields say where a figure came from, so the board can label it:
 
 - `SessionSnapshot.sources?: { model?, context?, cost?, git_branch?, last_assistant_message? }`, each `"statusline" | "transcript"`. An absent key means the field is not filled yet. `createSnapshot()` never sets `sources`; the hub does. There is no `effort` key: effort is filled only by statusline or an explicit statement (decision 28).
-- `SubagentSnapshot.figures_source?: "subagent_statusline" | "transcript"` covers tokens, model and context_window.
+- `SubagentSnapshot.figures_source?: SubagentFigureSource` (`"subagent_statusline" | "transcript"`) covers tokens, model and context_window. `SUBAGENT_FIGURE_SOURCES` lists the values and `isSubagentFigureSource` is the guard (`isFigureSource` does not accept `"subagent_statusline"`).
+- `SubagentSnapshot.effort?: string | null`: stays null (or absent) unless a transcript or hook row states it (decision 28). SubagentStart row creation does not set it.
 
 Rule: statusline wins when present. `mergeSource(sources, key, src)` returns a new object and keeps an existing `"statusline"` entry when `"transcript"` arrives. `isFigureSource` is the type guard; `FIGURE_SOURCES` lists the values.
 

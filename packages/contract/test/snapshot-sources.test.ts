@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   FIGURE_SOURCES,
+  SUBAGENT_FIGURE_SOURCES,
   createSnapshot,
   isFigureSource,
+  isSubagentFigureSource,
   mergeSource,
   type SnapshotSources,
+  type SubagentFigureSource,
+  type SubagentSnapshot,
 } from "../src/index";
 
 describe("FIGURE_SOURCES and isFigureSource", () => {
@@ -20,6 +24,37 @@ describe("FIGURE_SOURCES and isFigureSource", () => {
     expect(isFigureSource(null)).toBe(false);
     expect(isFigureSource(undefined)).toBe(false);
     expect(isFigureSource(1)).toBe(false);
+  });
+});
+
+describe("SubagentSnapshot figures_source and effort (R2.13)", () => {
+  it("lists subagent_statusline and transcript", () => {
+    expect([...SUBAGENT_FIGURE_SOURCES]).toEqual(["subagent_statusline", "transcript"]);
+  });
+
+  it("guards subagent sources", () => {
+    expect(isSubagentFigureSource("subagent_statusline")).toBe(true);
+    expect(isSubagentFigureSource("transcript")).toBe(true);
+    expect(isSubagentFigureSource("statusline")).toBe(false);
+    expect(isSubagentFigureSource(null)).toBe(false);
+    expect(isSubagentFigureSource(2)).toBe(false);
+  });
+
+  it("types figures_source and effort as optional", () => {
+    expectTypeOf<SubagentSnapshot["figures_source"]>().toEqualTypeOf<
+      SubagentFigureSource | undefined
+    >();
+    expectTypeOf<SubagentSnapshot["effort"]>().toEqualTypeOf<string | null | undefined>();
+    const row: SubagentSnapshot = {
+      agent_id: "a",
+      agent_type: "t",
+      started_at: 1,
+      ended_at: null,
+      tokens: null,
+      context_window: null,
+      model: null,
+    };
+    expect(row.effort).toBeUndefined();
   });
 });
 
