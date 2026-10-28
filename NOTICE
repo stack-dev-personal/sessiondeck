@@ -40,3 +40,6 @@ Actual borrowings (update as code lands):
 - DeanLa/cctop plugin/scripts/cctop-poller.py (read_new_jsonl_lines) → packages/probe/src/daemon/transcript.ts (MIT, Copyright (c) 2025 Dean Langsam, commit 6ec6256; ported to TypeScript, per-(session, agent) byte offsets persisted, complete lines only, replace detection reworked)
 - martinwickman/ccmonitor internal/hook/hook.go (findParentPID) → packages/probe/src/daemon/proc-info.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a; ported from Go to TypeScript via the description quoted in docs/planning/01-architecture.md section 3.2, with an injectable process table)
 - martinwickman/ccmonitor internal/hook/hook.go (cleanupSamePID) → packages/probe/src/daemon/liveness.ts (MIT, Copyright (c) 2026 Martin Wickman, commit 88f7d1a; behaviour only, implementation original)
+- stravu/crystal frontend/src/components/panels/ai/transformers/{ClaudeMessageTransformer,MessageTransformer}.ts → packages/contract/src/normalize.ts and src/transcript.ts (MIT, Copyright (c) 2024 Stravu, commit 1e18e0b)
+- BloopAI/vibe-kanban crates/executors/src/logs/mod.rs NormalizedEntryType/ActionType → packages/contract/src/transcript.ts and normalize.ts (Apache-2.0, shape only, commit 7c38070)
+- ccusage/ccusage v19.0.3 usage dedup rule (message id plus request id) → packages/contract/src/normalize.ts (MIT, Copyright (c) 2025 ryoppippi)

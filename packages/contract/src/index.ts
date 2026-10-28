@@ -7,3 +7,4 @@ export * from "./snapshot";
 export * from "./transcript";
 export * from "./wire";
 export * from "./statusline";
+export * from "./normalize";
