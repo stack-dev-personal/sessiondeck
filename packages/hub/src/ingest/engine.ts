@@ -11,6 +11,7 @@ import {
   type SessionSnapshot,
 } from "@sessiondeck/contract";
 import type { SampleRow } from "../db/store.ts";
+import { keepTranscriptFigures } from "../derive/apply.ts";
 import { applyStatusLine, applySubagents, clampSnapshot } from "./reduce.ts";
 
 export interface EngineLogger {
@@ -78,6 +79,22 @@ export class SnapshotEngine {
       this.original.set(id, snap);
     }
     return this.cache.get(id);
+  }
+
+  /** Session ids whose snapshot did not exist at the start of this run and exists now. */
+  createdIds(): string[] {
+    const out: string[] = [];
+    for (const [id, s] of this.cache)
+      if (s !== undefined && this.original.get(id) === undefined) out.push(id);
+    return out;
+  }
+
+  /** Replaces a loaded snapshot with fn(snapshot); no-op when the session does not exist. */
+  amend(id: string, fn: (s: SessionSnapshot) => SessionSnapshot): void {
+    const cur = this.load(id);
+    if (cur === undefined) return;
+    const next = fn(cur);
+    if (next !== cur) this.set(next);
   }
 
   /** Changed snapshots in first-change order. */
@@ -185,7 +202,8 @@ export class SnapshotEngine {
       });
     switch (env.kind) {
       case "hook": {
-        const next = reduce(prev ?? fresh(), env as Envelope<"hook">);
+        const base = prev ?? fresh();
+        const next = keepTranscriptFigures(base, reduce(base, env as Envelope<"hook">));
         this.set(next);
         if (env.hook_event_name === "SessionStart") this.supersede(next, env.ts);
         return null;

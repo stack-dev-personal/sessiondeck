@@ -306,6 +306,17 @@ export class Store {
         ).all(sessionId, agentId, after, limit) as TranscriptLineRow[]);
   }
 
+  /** Main-transcript (agent_id '') lines of a session below beforeLine, newest first. */
+  listMainLinesBefore(
+    sessionId: string,
+    beforeLine: number,
+    limit: number,
+  ): { line_no: number; raw: string }[] {
+    return this.stmt(
+      "SELECT line_no, raw FROM transcript_lines WHERE session_id = ? AND agent_id = '' AND line_no < ? ORDER BY line_no DESC LIMIT ?",
+    ).all(sessionId, beforeLine, limit) as { line_no: number; raw: string }[];
+  }
+
   /**
    * Usage feed for the cost index. transcript_lines is append-only (inserts never update), so the
    * rowid is a high-water mark: pass the last rowid seen, get the next rows in rowid order.

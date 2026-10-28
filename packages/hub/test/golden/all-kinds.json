@@ -72,6 +72,11 @@
       "tracking": {
         "last_tool": null,
         "permission": null
+      },
+      "sources": {
+        "model": "statusline",
+        "context": "statusline",
+        "cost": "statusline"
       }
     },
     "kinds-second-session": {

@@ -5,9 +5,11 @@
 import {
   StatusLinePayloadSchema,
   epochSecondsToMs,
+  mergeSource,
   normalizeRateLimitWindow,
   type Envelope,
   type RateLimitPeriod,
+  type SnapshotSources,
   type SessionSnapshot,
   type Window,
 } from "@sessiondeck/contract";
@@ -15,6 +17,12 @@ import { z } from "zod";
 import type { SampleRow } from "../db/store.ts";
 
 const MAX_TEXT = 200;
+const EMPTY_CONTEXT: SessionSnapshot["context"] = {
+  used_pct: null,
+  window: null,
+  input: null,
+  output: null,
+};
 const cap = (s: string): string => (s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) : s);
 const finite = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -90,14 +98,21 @@ export function applyStatusLine(
   if (!parsed.success) throw new Error("statusline payload does not match StatusLinePayloadSchema");
   const p = parsed.data;
   const s: SessionSnapshot = { ...prev, last_event_at: Math.max(prev.last_event_at, e.ts) };
+  // R2.12: a figure the statusline sets is owned by it from now on (transcripts never overwrite it).
+  let sources: SnapshotSources | undefined = prev.sources;
+  const own = (key: keyof SnapshotSources): void => {
+    sources = mergeSource(sources, key, "statusline");
+  };
 
   const modelRaw = p.model;
   if (typeof modelRaw === "string" && modelRaw !== "") {
     s.model = { id: cap(modelRaw), display_name: cap(modelRaw) };
+    own("model");
   } else if (typeof modelRaw === "object" && modelRaw !== null) {
     const id = nonEmpty(modelRaw.id);
     if (id !== null) {
       s.model = { id: cap(id), display_name: cap(nonEmpty(modelRaw.display_name) ?? id) };
+      own("model");
     }
   }
   const level = p.effort?.level;
@@ -112,6 +127,7 @@ export function applyStatusLine(
   const worktree = nonEmpty(p.workspace?.git_worktree) ?? nonEmpty(p.worktree?.name);
   const prNumber = finite(p.pr?.number);
   const prUrl = nonEmpty(p.pr?.url);
+  if (branch !== null) own("git_branch");
   s.git = {
     branch: branch !== null ? cap(branch) : prev.git.branch,
     worktree: worktree !== null ? cap(worktree) : prev.git.worktree,
@@ -125,15 +141,15 @@ export function applyStatusLine(
       onNulled("context_window.used_percentage");
       used = null;
     }
+    // Tokens a transcript filled are not statusline figures: do not carry them into a statusline context.
+    const base = prev.sources?.context === "transcript" ? EMPTY_CONTEXT : prev.context;
     s.context = {
-      used_pct: cw.used_percentage === undefined ? prev.context.used_pct : used,
-      window:
-        cw.context_window_size === undefined ? prev.context.window : finite(cw.context_window_size),
-      input:
-        cw.total_input_tokens === undefined ? prev.context.input : finite(cw.total_input_tokens),
-      output:
-        cw.total_output_tokens === undefined ? prev.context.output : finite(cw.total_output_tokens),
+      used_pct: cw.used_percentage === undefined ? base.used_pct : used,
+      window: cw.context_window_size === undefined ? base.window : finite(cw.context_window_size),
+      input: cw.total_input_tokens === undefined ? base.input : finite(cw.total_input_tokens),
+      output: cw.total_output_tokens === undefined ? base.output : finite(cw.total_output_tokens),
     };
+    own("context");
   }
 
   const cost = p.cost;
@@ -154,6 +170,9 @@ export function applyStatusLine(
           : finite(cost.total_lines_removed),
     };
   }
+
+  if (finite(cost?.total_cost_usd) !== null) own("cost");
+  if (sources !== prev.sources) s.sources = sources;
 
   const rl = p.rate_limits;
   const base = prev.rate_limits;

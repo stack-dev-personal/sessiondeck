@@ -2,6 +2,8 @@ import { type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { EventEmitter } from "node:events";
 import type { SampleRow, SessionRow, Store, TranscriptLineRow } from "../db/store.ts";
+import { applyFigures } from "../derive/apply.ts";
+import { TranscriptDeriver } from "../derive/deriver.ts";
 import { SnapshotEngine, type SessionSource } from "./engine.ts";
 import { parseTranscriptPayload } from "./reduce.ts";
 import { SIGNATURE_WINDOW_MS, computeEventSignature } from "./signature.ts";
@@ -98,6 +100,7 @@ export class Ingestor {
   private exceptions = 0;
 
   private readonly source: SessionSource;
+  private readonly deriver: TranscriptDeriver;
 
   constructor(
     private readonly store: Store,
@@ -106,6 +109,7 @@ export class Ingestor {
     private readonly limits: IngestLimits = { maxOpenSessionsPerHost: 1000 },
   ) {
     this.source = new StoreSessions(store);
+    this.deriver = new TranscriptDeriver(store, log);
   }
 
   reducerExceptionCount(): number {
@@ -242,12 +246,45 @@ export class Ingestor {
     if (os !== null && envelopes.length > 0) {
       store.upsertHost({ host, os, last_seen: this.clock(), last_seq: storedMax });
     }
+    this.deriveTranscriptFigures(engine, transcripts);
     for (const sn of engine.dirtySnapshots()) {
       store.upsertSession(rowOf(sn));
       out.sessions.push(sn);
     }
     out.transcripts.push(...transcripts.values());
     return { accepted, duplicates, expired, last_seq: batchMax ?? 0 };
+  }
+
+  /**
+   * R2.12. Folds this batch's fresh main-transcript lines into each session's figures and applies
+   * them to its snapshot. Sessions created in this batch also pick up lines that arrived before
+   * their SessionStart (a transcript never creates a session). Pure reads of stored lines, no
+   * pricing: the lifetime cost is filled after commit (CostFiller).
+   */
+  private deriveTranscriptFigures(
+    engine: SnapshotEngine,
+    transcripts: ReadonlyMap<string, TranscriptDelta>,
+  ): void {
+    const fresh = new Map<string, { line_no: number; raw: string }[]>();
+    for (const d of transcripts.values()) if (d.agent_id === "") fresh.set(d.session_id, d.lines);
+    for (const id of engine.createdIds()) if (!fresh.has(id)) fresh.set(id, []);
+    for (const [id, lines] of fresh) {
+      // Always fold, even with no session yet, so the cache never misses lines; applied once it exists.
+      const figures = this.deriver.update(id, "", lines);
+      engine.amend(id, (s) => applyFigures(s, figures));
+    }
+  }
+
+  /** Emits a committed change made outside ingest (the cost fill); same event WS clients already follow. */
+  publish(host: string, sessions: SessionSnapshot[]): void {
+    try {
+      this.events.emit("batch", { host, sessions, transcripts: [] });
+    } catch (err) {
+      this.log.warn(
+        { err: err instanceof Error ? err.message : "listener error" },
+        "publish listener threw",
+      );
+    }
   }
 
   /** Inserts parsed transcript lines (primary-key dedup) and records the fresh ones; returns how many were new. */
