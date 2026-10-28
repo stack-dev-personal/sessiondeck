@@ -46,3 +46,11 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 ### Decisions made
 - 2026-10-28 Answer to /state/2/questions/S8b.md (conductor, under the user's standing rules): option A, conservative window rule. A parent link is "known" only if every spawn queued between two moments when the pending queue was empty came from one context; any mix, failure, or cap drop in that window marks every start in that window "unlinked". Also apply the MINOR (failed Agent call marks ambiguous only when new Set(pending).size > 1) and both security LOWs (dedupe rows by agent_id keeping the first; cap at SUBAGENT_ROWS_MAX before normalizing). One more fix and review round; if the reviewer still finds a wrong-but-known case, switch the hook path to option B (unlinked until S7 transcript links) and record it, without asking again.
 - 2026-10-28 Decision 28 (no Fable row, no estimates in the usage widget) confirmed applied: handoff c14d298, phase doc R3.12 and R3.13. U4 drops the Fable item.
+- 2026-10-28 Review iteration 4 (window rule, 2fff86e): reviewer fix-then-merge with three wrong-but-known cases (failure after start, cap drop clearing taint, prompt reset); security pass. Per the answer's fallback, switched the hook path to option B without asking again: every hook-built subagent row is parent_agent_id null, parent_known false ("unlinked", first level) until S7 transcript links (5c494e7, hub ab83dc1).
+
+### U1/U1b closed
+- Option B review: reviewer fix-then-merge, minors only (CONTRACT.md wording, hub parseStoredSnapshot tracking normalize, two NITs); security pass (one pre-existing LOW, deferred). Fixed in 0ed8e05 (contract) and 39d6e14 (hub). Contract 1112 pass / 1 skip, hub 287 pass.
+- Gap recorded (R3.11): live hook data gives no nesting; the popout shows all subagents at the first level with an "unlinked" marker until S7 attaches transcript links. Nesting is exercised through mock data (R3.13) and stored links.
+
+### Deferred findings
+- [LOW, security, pre-existing] packages/contract/src/tracking.ts:64-67 readTracking/readHolder do not length-cap stored last_tool/permission strings; only reachable with DB write access.
