@@ -120,9 +120,10 @@ export function discoverLiterals(rows, vocabulary, lookup = git) {
     own.add(gitEmail);
   } else gitMissing.push("git user.email");
   // The git name is a person's name: swept whole when it is one handle, otherwise word by word.
-  const nameParts = nameWords(lookup(["config", "user.name"]));
-  for (const n of nameParts) accounts.add(n);
-  if (nameParts.length === 0) gitMissing.push("git user.name");
+  // A set name counts as present even when no word of it is long enough to sweep (e.g. "Al Wu").
+  const gitName = lookup(["config", "user.name"]);
+  for (const n of nameWords(gitName)) accounts.add(n);
+  if (gitName === "") gitMissing.push("git user.name");
   const owners = ownersIn(lookup(["remote", "get-url", "origin"]));
   for (const o of owners) addHandle(o);
   if (owners.length === 0) gitMissing.push("origin owner");

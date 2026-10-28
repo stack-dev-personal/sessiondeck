@@ -14,6 +14,20 @@ export const NO_GIT_LITERALS = "--no-git-literals";
 export const OWN_PROJECT = "--own-project";
 
 /**
+ * Reads the transcript scrub's command-line flags.
+ * @param {readonly string[]} argv arguments after the script name
+ * @returns {{ noGitLiterals: boolean, ownProject?: string }}
+ */
+export function parseScrubFlags(argv) {
+  const i = argv.indexOf(OWN_PROJECT);
+  const value = i >= 0 ? argv[i + 1] : undefined;
+  return {
+    noGitLiterals: argv.includes(NO_GIT_LITERALS),
+    ...(value === undefined || value === "" ? {} : { ownProject: value }),
+  };
+}
+
+/**
  * Message for the git lookups that came back empty, or null when none did or the gate is off.
  * @param {string[]} missing source names from discoverLiterals
  * @param {boolean} optOut whether --no-git-literals was given

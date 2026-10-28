@@ -226,14 +226,18 @@ differences.
   survivor. Without the file (CI) both run without it. Hashes of the words are deliberately not
   committed: short words with a public salt can be guessed, which would itself be a leak.
 - Private content: an object whose path field (`path`, `filename`, `file_path`, `filePath`,
-  `displayPath`) points outside the session's own project (the user-level `.claude` folder, another
+  `displayPath`) points outside this repository's folder (the user-level `.claude` folder, another
   repo, a temp folder) has its `content`, `snippet`, diffs, `pattern` and similar fields dropped to
   `<BLOB n>`. The same goes for the output (result block and `toolUseResult`) of a tool use that read,
   searched or wrote such a path, or ran a shell command naming one (or `gh api`, `gh repo`).
 - Outside the project means: any `<HOME>` or `<ROOT>` path that is not under the session's own
-  project folder (`<PROJECT_A>`), the user-level `.claude` folder, and the gitignored `.sprint/`
-  folder. A shell command that names `.sprint`, the `.claude` folder, another home path, `gh api`
-  or `gh repo` makes its output private as well.
+  repository's folder (`<PROJECT_A>`, the main checkout's name even when the session ran in a
+  worktree), the user-level `.claude` folder, and these gitignored private paths inside the
+  repository, in relative and `<PROJECT_A>`-rooted form: `.sprint/`, any `raw/` folder (including
+  `packages/contract/fixtures/raw/` and `raw/deny-words.txt`), `.env*` files and `probe.json`.
+  Absolute paths of a worktree are treated as outside (over-cut on purpose). A shell command that
+  names `.sprint`, the `.claude` folder, another home path, `gh api`, `gh repo`, the raw fixtures
+  folder, `deny-words`, `probe.json` or an `.env` file makes its output private as well.
 - `rendered[]` of an attachment row (the text copy Claude Code keeps next to it) is dropped to
   `<BLOB n>` when the attachment names an outside path, is a hook row, or is a skill listing.
 - Label cuts in message text, in the scrub and in the check alike: the text after `Contents of

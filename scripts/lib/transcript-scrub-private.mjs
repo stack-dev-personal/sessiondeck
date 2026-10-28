@@ -10,7 +10,8 @@
 //      and in message text the block after "Contents of <outside path>", after a hook label
 //      ("SessionStart hook additional context:") and after "Result of calling the X tool:" of a
 //      private "Called the X tool" is cut down to its label
-//   5. the gitignored .sprint/ folder counts as outside the project
+//   5. the gitignored .sprint/ folder, raw capture folders, env files and probe.json count as
+//      outside the project (relative and <PROJECT_A>-rooted forms alike)
 
 /** Fields that name a file or directory next to the content they describe. */
 export const PATH_SIBLINGS = [
@@ -44,9 +45,16 @@ const PROJECT_A = /^<HOME>\/projects\/<PROJECT_A>(?:\/|$)/;
 const ANY_ROOT = /^(?:<HOME>|<ROOT>)(?:\/|$)/;
 /** The gitignored sprint folder (decisions, conductor log, handoff, env file): never public. */
 const SPRINT_DIR = /^(?:<HOME>\/projects\/<PROJECT_A>\/|\.\/)?\.sprint(?:\/|$)/;
-/** A shell command naming the user-level folder, another home path, or the GitHub API for an account. */
+/**
+ * Gitignored private files inside this repository, in the relative form, the "./" form and the
+ * <PROJECT_A>-rooted form: the raw capture folder (also as a bare "raw/" below the fixtures folder),
+ * env files and probe.json at any depth. Over-cuts on purpose (any segment named raw).
+ */
+const PRIVATE_IN_REPO =
+  /^(?:<HOME>\/projects\/<PROJECT_A>\/|\.\/)?(?:(?:[^/]+\/)*raw(?:\/|$)|(?:[^/]+\/)*\.env[^/]*$|(?:[^/]+\/)*probe\.json$)/;
+/** A shell command naming the user-level folder, another home path, the GitHub API for an account, or a private in-repo file. */
 export const PRIVATE_COMMAND =
-  /(?:~|\$HOME|<HOME>)\/\.claude\b|<HOME>\/(?!projects\/<PROJECT_A>)|(?<![A-Za-z0-9])\.sprint\b|\bgh\s+(?:api|repo)\b/;
+  /(?:~|\$HOME|<HOME>)\/\.claude\b|<HOME>\/(?!projects\/<PROJECT_A>)|(?<![A-Za-z0-9])\.sprint\b|\bgh\s+(?:api|repo)\b|fixtures[\\/]+raw\b|deny-words|probe\.json|(?<![A-Za-z0-9])\.env(?![A-Za-z])/;
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
 
@@ -57,7 +65,7 @@ const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
  */
 export function isOutsideProject(mapped) {
   if (mapped.startsWith("~") || mapped.startsWith("$HOME")) return true;
-  if (SPRINT_DIR.test(mapped)) return true;
+  if (SPRINT_DIR.test(mapped) || PRIVATE_IN_REPO.test(mapped.replace(/\\/g, "/"))) return true;
   return ANY_ROOT.test(mapped) && !PROJECT_A.test(mapped);
 }
 

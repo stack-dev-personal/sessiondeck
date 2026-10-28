@@ -23,6 +23,7 @@ import { join, relative, resolve } from "node:path";
 import { FIXTURES_ROOT, RAW_ROOT, listEvents, readEvent } from "./lib/fixture-files.mjs";
 import { Scrubber } from "./lib/fixture-scrub-core.mjs";
 import { runTranscripts } from "./lib/transcript-scrub-run.mjs";
+import { parseScrubFlags } from "./lib/transcript-scrub-own.mjs";
 import { Mapper } from "./lib/fixture-scrub-paths.mjs";
 import { buildSynthetic } from "./lib/fixture-synthetic.mjs";
 import {
@@ -96,11 +97,7 @@ function main() {
   if (!existsSync(raw)) throw new Error("raw directory not found");
   assertSafeOut(out, raw);
   if (process.argv.includes("--transcripts")) {
-    const own = arg("--own-project", "");
-    process.exitCode = runTranscripts(raw, out, {
-      noGitLiterals: process.argv.includes("--no-git-literals"),
-      ...(own === "" ? {} : { ownProject: own }),
-    });
+    process.exitCode = runTranscripts(raw, out, parseScrubFlags(process.argv.slice(2)));
     return;
   }
 
