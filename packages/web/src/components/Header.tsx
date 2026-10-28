@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { NavLink } from "react-router-dom";
 import { openPalette } from "./CommandPalette";
 import { selectHosts, useBoard } from "../store/board";
@@ -8,9 +8,9 @@ const btn =
   "rounded border border-border-control bg-surface-2 px-s-3 py-s-1 text-sm text-fg hover:bg-surface-3";
 
 export function Header() {
-  const sessions = useBoard((s) => s.sessions);
   const connection = useBoard((s) => s.connection);
-  const hosts = useMemo(() => selectHosts(sessions), [sessions]);
+  // A list compared by content: a delta for one session does not re-render the header.
+  const hosts = useBoard(useShallow((s) => selectHosts(s.sessions)));
   const { theme, compact, toggleTheme, toggleCompact } = useUi();
   const link = ({ isActive }: { isActive: boolean }) =>
     `px-s-2 py-s-1 rounded ${isActive ? "bg-surface-3 text-fg" : "text-fg-muted hover:text-fg"}`;

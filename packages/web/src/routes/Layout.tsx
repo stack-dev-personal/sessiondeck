@@ -14,6 +14,7 @@ import { isPresetName, MAX_PROJECT_COLUMNS, type PresetName } from "../layout/pr
 import { panesOf } from "../layout/spec";
 import { LAYOUT_KEYS, useShortcuts } from "../lib/keys";
 import { projectDirsByAttention } from "../lib/attention";
+import { useShallow } from "zustand/react/shallow";
 import { useBoard } from "../store/board";
 import { useLayout } from "../store/layout";
 import { useSaved } from "../store/saved";
@@ -27,9 +28,17 @@ import { useUi } from "../store/ui";
 export function Layout() {
   const spec = useLayout((s) => s.spec);
   const applyPreset = useLayout((s) => s.applyPreset);
-  const sessions = useBoard((s) => s.sessions);
+  // Derived lists, not the sessions map: a delta for one session changes the map but rarely these,
+  // so the layout, its panes and the header do not re-render on every update (R6.4).
+  const projects = useBoard(useShallow((s) => projectDirsByAttention(s.sessions)));
+  const liveProjects = useBoard(
+    useShallow((s) =>
+      projectDirsByAttention(
+        Object.fromEntries(Object.entries(s.sessions).filter(([, v]) => isLive(v))),
+      ),
+    ),
+  );
   const loaded = useBoard((s) => s.loaded);
-  const projects = useMemo(() => projectDirsByAttention(sessions), [sessions]);
   const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const wanted = params.get("preset");
@@ -98,18 +107,11 @@ export function Layout() {
   const shownDirs = new Set<string>();
   for (const p of panesOf(spec)) if (p.projectDir !== undefined) shownDirs.add(p.projectDir);
   // Only projects with a live session are advertised, the same set "p" would give a column.
-  const liveProjects = useMemo(
-    () =>
-      projectDirsByAttention(
-        Object.fromEntries(Object.entries(sessions).filter(([, s]) => isLive(s))),
-      ),
-    [sessions],
-  );
   const hidden = liveProjects.filter((d) => !shownDirs.has(d)).length;
   // Only when the six panes were filled (by Arrange); a grid6 picked from the menu says nothing.
   const sessionPanes = panesOf(spec).filter((p) => p.type === "session");
   const filled = spec.id === "grid6" && sessionPanes.every((p) => p.sessionId !== undefined);
-  const moreLive = filled ? autoFitMore(Object.values(sessions)) : 0;
+  const moreLive = useBoard((s) => (filled ? autoFitMore(Object.values(s.sessions)) : 0));
   const pick = (name: PresetName) => applyPreset(name, projects);
 
   return (

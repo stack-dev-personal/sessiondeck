@@ -157,3 +157,38 @@ describe("ActivityList pinning (R6.4)", () => {
     expect(screen.getByText("row 200")).toBeInTheDocument();
   });
 });
+
+describe("rows keep their place when the log trims (R6.4)", () => {
+  const topOf = (el: Element) => (el as HTMLElement).style.top;
+
+  it("an append at the cap changes one transform, adds one row, drops one; the rest keep node and top", () => {
+    const { rerender } = render(<ActivityList rows={rows(0, ACTIVITY_CAP)} />);
+    const before = new Map(mounted().map((li) => [li.getAttribute("data-row"), li]));
+    const list = mounted()[0]!.parentElement as HTMLElement;
+    const transform0 = list.style.transform;
+    rerender(<ActivityList rows={rows(1, ACTIVITY_CAP + 1)} />);
+    const after = mounted();
+    const kept = after.filter((li) => before.get(li.getAttribute("data-row")) === li);
+    // Same DOM node, same top: nothing to repaint for these.
+    for (const li of kept) expect(topOf(li)).toBe(topOf(before.get(li.getAttribute("data-row"))!));
+    expect(after.length - kept.length).toBe(1);
+    expect(kept.length).toBe(before.size - 1);
+    expect(list.style.transform).not.toBe(transform0);
+  });
+
+  it("the visible row order and offsets are the same as before the change", () => {
+    render(<ActivityList rows={rows(1500, 1500 + ACTIVITY_CAP)} />);
+    const list = mounted()[0]!.parentElement as HTMLElement;
+    const shift = Number(/translateY\((-?[\d.]+)px\)/.exec(list.style.transform)![1]);
+    // Final y of a row = its top + the list's translate = its index from the oldest kept row.
+    const li = mounted().at(-1)!;
+    const idx = Number(li.getAttribute("data-row")) - 1500;
+    expect(parseFloat(li.style.top) + shift).toBe(idx * ROW_H);
+  });
+
+  it("offsets stay small however many rows have passed (rebased)", () => {
+    render(<ActivityList rows={rows(5_000_000, 5_000_000 + ACTIVITY_CAP)} />);
+    for (const li of mounted()) expect(parseFloat(li.style.top)).toBeLessThan(2048 * ROW_H);
+  });
+});
+
