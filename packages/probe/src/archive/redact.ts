@@ -129,7 +129,7 @@ function extraSecretLength(v: string, rest: string): number {
   if (assign?.[0].endsWith("=")) return EOL; // `name=value`: ENV_LINE masked the rest of the line
   if (/^[ \t]*=/.test(rest)) return EOL;
   if (next) {
-    if (!/:$/.test(core)) return 0;
+    if (!/:$/.test(core)) return /=$/.test(core) ? EOL : 0; // `name:tail=`: ENV_LINE masks the rest
     const t = TAIL_VALUE.exec(rest)?.[0] ?? "";
     return /=$/.test(t) ? EOL : t.length;
   }

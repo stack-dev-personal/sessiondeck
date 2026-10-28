@@ -611,6 +611,13 @@ describe("redaction coverage (R5.2)", () => {
           expect(redactText(input), input).not.toContain("Hunter2Zq9");
         }
   });
+  it("masks to end of line when a `name:` token tail ends in `=` (U4b review 2)", () => {
+    const out = redactText("--password token:-Hunter2Zq9= Hunter2Zq9");
+    expect(out).not.toContain("Hunter2Zq9");
+    expect(redactText("--password token:-Hunter2Zq9= Hunter2Zq9\r\nnext")).toBe(
+      "--password [REDACTED]\r\nnext",
+    );
+  });
   it("keeps the CR of a CRLF line when masking to end of line (U4b)", () => {
     expect(redactText("--api-key= db_pass= x x=S\r\nnext line")).toBe(
       "--api-key= [REDACTED]\r\nnext line",
