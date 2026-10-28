@@ -453,9 +453,11 @@ describe("transcript tailer review fixes", () => {
       });
       await t.onSessionStart(S, f);
       t.onSpoolLine(hook("SessionEnd", S, {}));
-      await new Promise((r) => setTimeout(r, 50));
+      await vi.waitFor(() =>
+        expect(logs.some((l) => l.startsWith("error ") && l.includes("SessionEnd"))).toBe(true),
+      );
+      await new Promise((r) => setImmediate(r));
       expect(unhandled).not.toHaveBeenCalled();
-      expect(logs.some((l) => l.startsWith("error ") && l.includes("SessionEnd"))).toBe(true);
     } finally {
       process.off("unhandledRejection", unhandled);
     }

@@ -210,8 +210,8 @@ describe("redaction", () => {
 
   it("pass ordering: CLI flags and UPPER_ENV do not consume the next assignment (U2 LOW)", () => {
     expect(redactText("run --password = hunter2")).toBe("run --password = [REDACTED]");
-    expect(redactText("X_TOKEN api_key: hunter2")).toBe("X_TOKEN api_key: [REDACTED]");
-    expect(redactText("--token api_key=hunter2")).toBe("--token api_key=[REDACTED]");
+    expect(redactText("X_TOKEN api_key: hunter2")).toBe("X_TOKEN [REDACTED]");
+    expect(redactText("--token api_key=hunter2")).toBe("--token [REDACTED]");
     expect(redactText("PGPASSWORD hunter2")).toBe("PGPASSWORD [REDACTED]");
     expect(redactText("--password hunter2")).toBe("--password [REDACTED]");
   });
@@ -308,7 +308,54 @@ function importer(
   });
 }
 
+describe("redaction differential (review iteration 2)", () => {
+  // Every input here was fully masked by f00fd4e; the secret must stay out of the output.
+  const SECRETS = ["Hunter2Zq9", "b c", "tail9Zq"];
+  const cases = [
+    "--password Hunter2Zq9secret:",
+    "PGPASSWORD Hunter2Zq9token=",
+    "--api-key Hunter2Zq9_pass=x",
+    "--db-secret Hunter2Zq9secret: more",
+    '--password "pass:"Hunter2Zq9',
+    "--password `pass: Hunter2Zq9`",
+    "--token \u201Ca b c\u201D",
+    "--api-key token :Hunter2Zq9",
+    "--api-key token : Hunter2Zq9",
+    "--password \u2018pass: Hunter2Zq9\u2019",
+    "--password = Hunter2Zq9",
+    "X_TOKEN api_key: Hunter2Zq9",
+    "--token api_key=Hunter2Zq9",
+    '--password "unclosed Hunter2Zq9',
+    "--secret Hunter2Zq9:x",
+  ];
+  it.each(cases)("%s", (input) => {
+    const out = redactText(input);
+    for (const sec of SECRETS) expect(out).not.toContain(sec);
+    expect(out).toContain("[REDACTED]");
+  });
+  it("does not swallow a following flag after an ordinary value", () => {
+    expect(redactText("--password a --token b --verbose")).toBe(
+      "--password [REDACTED] --token [REDACTED] --verbose",
+    );
+  });
+});
+
 describe("importer", () => {
+  it("uses archiveEnvelopeId: same capture, same id; another host, another id (review iteration 2)", async () => {
+    const a = await setup();
+    const s1 = sink();
+    const s2 = sink();
+    const s3 = sink();
+    await importer(a.root, a.state, s1).scan();
+    await importer(a.root, a.state + ".2", s2).scan();
+    await importer(a.root, a.state + ".3", s3, { host: "other" }).scan();
+    const ids = (s: Sink) => s.lines.map((l) => l.id).sort();
+    expect(ids(s1)).toEqual(ids(s2));
+    expect(ids(s3)).not.toEqual(ids(s1));
+    expect(ids(s3).some((i) => ids(s1).includes(i))).toBe(false);
+    for (const i of ids(s3)) expect(i).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+  });
+
   it("is idempotent and incremental", async () => {
     const { root, state } = await setup();
     const s = sink();

@@ -85,8 +85,15 @@ function maskBlockScalars(text: string): string {
 }
 
 // CLI forms: `-u user:pass`, `--password value` / `--token=value`, and `PGPASSWORD value`
-// (UPPERCASE env-like name with a prefix, then a space, then the value).
-const VALUE = `(?:"[^"\\n]{1,512}"|'[^'\\n]{1,512}'|[^\\s"'][^\\s]{0,512})`;
+// (UPPERCASE env-like name with a prefix, then a space, then the value). A quoted value (ASCII,
+// backtick or typographic quotes) swallows any text glued to its closing quote; an unclosed quote
+// swallows the rest of the line. All alternatives are bounded and do not nest quantifiers.
+const TAIL = "[^\\s]{0,512}";
+const VALUE =
+  `(?:"[^"\\n]{1,512}"${TAIL}|'[^'\\n]{1,512}'${TAIL}|\`[^\`\\n]{1,512}\`${TAIL}` +
+  `|[\u201C\u201D][^\u201C\u201D\\n]{1,512}[\u201C\u201D]${TAIL}` +
+  `|[\u2018\u2019][^\u2018\u2019\\n]{1,512}[\u2018\u2019]${TAIL}` +
+  `|["'\`\u2018\u2019\u201C\u201D][^\\n]{0,512}|[^\\s]{1,512})`;
 const CLI_USER = new RegExp(
   `(?<!\\S)(-u|--user)([ \\t]+)(?:["']?[^\\s:"']{1,128}:[^\\s]{1,512})`,
   "g",
@@ -100,16 +107,43 @@ const UPPER_ENV = new RegExp(
   "g",
 );
 
-// A value that is itself `secret_name:` / `secret_name=` is the next assignment, not a value; the
-// ENV_LINE pass below handles it, so the earlier passes must leave it alone.
+// A value that looks like `secret_name:` / `secret_name=...` may be the next assignment, but it may
+// equally be a secret that happens to look like one (`Hunter2secret:`). Never keep it: it is masked
+// together with the value that follows it, so nothing is left behind either way.
 const NEXT_ASSIGN = new RegExp(`^["']?${NAME_SRC}\\b["']?[ \\t]*[=:]`, "i");
+const BARE_NAME = new RegExp(`^${NAME_SRC}$`, "i");
+const TAIL_VALUE = new RegExp(`^[ \\t]*(?:${VALUE})`);
+const TAIL_AFTER_SEP = new RegExp(`^[ \\t]*[:=][ \\t]*(?:${VALUE})?`);
 
-// Only an unquoted `name:` (nothing after it) or `name=value` is the next assignment. Quoted
-// values and `name:value` tokens are real values and are masked whole.
-const isNextAssign = (v: string): boolean => {
-  if (/^["']/.test(v) || !NEXT_ASSIGN.test(v)) return false;
-  return /[=:]$/.test(v) || /^[^:=]*=/.test(v);
-};
+/** How many chars after the matched value are still part of the secret (0 for an ordinary value). */
+function extraSecretLength(v: string, rest: string): number {
+  if (/^["'`\u2018\u2019\u201C\u201D]/.test(v)) return 0;
+  if (NEXT_ASSIGN.test(v)) {
+    if (/[=:]$/.test(v)) return TAIL_VALUE.exec(rest)?.[0].length ?? 0;
+    return 0; // `name=value` is one token, already masked whole
+  }
+  if (BARE_NAME.test(v)) return TAIL_AFTER_SEP.exec(rest)?.[0].length ?? 0; // `token :X`
+  return 0;
+}
+
+function maskCli(
+  s: string,
+  re: RegExp,
+  build: (m: RegExpExecArray) => { head: string; v: string },
+): string {
+  let out = "";
+  let pos = 0;
+  re.lastIndex = 0;
+  for (let m = re.exec(s); m; m = re.exec(s)) {
+    const { head, v } = build(m);
+    const end = m.index + m[0].length;
+    const extra = m[0].endsWith(REDACTED) ? 0 : extraSecretLength(v, s.slice(end, end + 1100));
+    out += s.slice(pos, m.index) + head + REDACTED;
+    pos = end + extra;
+    re.lastIndex = pos;
+  }
+  return out + s.slice(pos);
+}
 
 /** Replaces secrets in text with [REDACTED]. Pure and total. */
 export function redactText(text: string): string {
@@ -120,15 +154,11 @@ export function redactText(text: string): string {
   s = s.replace(BEARER, (_m, b: string, sp: string) => `${b}${sp}${REDACTED}`);
   s = maskBlockScalars(s);
   s = s.replace(CLI_USER, (_m, f: string, sp: string) => `${f}${sp}${REDACTED}`);
-  s = s.replace(CLI_FLAG, (m: string, f: string, sep: string) => {
-    const v = m.slice(f.length + sep.length);
-    return m.endsWith(REDACTED) || (!sep.includes("=") && isNextAssign(v))
-      ? m
-      : `${f}${sep}${REDACTED}`;
-  });
-  s = s.replace(UPPER_ENV, (m: string, n: string, sp: string, v: string) =>
-    m.endsWith(REDACTED) || isNextAssign(v) ? m : `${n}${sp}${REDACTED}`,
-  );
+  s = maskCli(s, CLI_FLAG, (m) => ({
+    head: `${m[1]}${m[2]}`,
+    v: m[0].slice((m[1] as string).length + (m[2] as string).length),
+  }));
+  s = maskCli(s, UPPER_ENV, (m) => ({ head: `${m[1]}${m[2]}`, v: m[3] as string }));
   s = s.replace(ENV_LINE, (m: string, name: string, rest: string) => {
     const sep = rest[0] as string;
     const value = rest.slice(1).trim();

@@ -343,7 +343,7 @@ export class ArchiveImporter {
         session_id: res.payload.session_id,
         payload: res.payload,
         ts: this.now(),
-        id: archiveEnvelopeId(res.payload),
+        id: archiveEnvelopeId(res.payload, this.o.host),
       });
       // The hub validates the same schema; refuse to ship anything that would be rejected.
       if (!ArchiveEnvelopeSchema.safeParse({ ...env, seq: 0 }).success) {
@@ -426,20 +426,25 @@ const ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
  * Deterministic envelope id for a capture: the ULID time part is the file mtime, the 80-bit rest is
- * a SHA-256 of the payload. Shipping the same capture again (lost index, outbox retry after a lost
+ * a SHA-256 of the host and the payload (events.id is global across hosts). Shipping the same capture again (lost index, outbox retry after a lost
  * ack) yields the same id, so the hub drops it as a duplicate event; an edited capture gets a new id.
  */
-export function archiveEnvelopeId(payload: {
-  source: { mtime_ms: number };
-  [k: string]: unknown;
-}): string {
+export function archiveEnvelopeId(
+  payload: {
+    source: { mtime_ms: number };
+    [k: string]: unknown;
+  },
+  host = "",
+): string {
   let n = Math.max(0, Math.floor(payload.source.mtime_ms));
   let time = "";
   for (let i = 0; i < 10; i++) {
     time = ULID_ALPHABET[n % 32] + time;
     n = Math.floor(n / 32);
   }
-  const h = createHash("sha256").update(JSON.stringify(payload)).digest();
+  const h = createHash("sha256")
+    .update(`${host}\n${JSON.stringify(payload)}`)
+    .digest();
   let rand = "";
   for (let i = 0; i < 16; i++) rand += ULID_ALPHABET[(h[i] as number) & 31];
   return time + rand;
