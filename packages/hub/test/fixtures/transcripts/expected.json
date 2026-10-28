@@ -37,11 +37,11 @@
         },
         {
           "id": "22222222-aaaa-4bbb-8ccc-000000000002",
-          "input": 15,
-          "output": 55,
-          "cacheCreation": 20,
+          "input": 25,
+          "output": 75,
+          "cacheCreation": 1020,
           "cacheRead": 900,
-          "cost": 0.002025,
+          "cost": 0.008825,
           "models": ["claude-opus-5"]
         }
       ],
@@ -73,11 +73,11 @@
         },
         {
           "id": "2026-01-03",
-          "input": 45,
-          "output": 555,
-          "cacheCreation": 620,
+          "input": 55,
+          "output": 575,
+          "cacheCreation": 1620,
           "cacheRead": 8900,
-          "cost": 0.014265,
+          "cost": 0.021065,
           "models": ["claude-opus-5", "claude-sonnet-4-5-20250929"]
         }
       ]
@@ -111,11 +111,11 @@
         },
         {
           "id": "22222222-aaaa-4bbb-8ccc-000000000002",
-          "input": 15,
-          "output": 55,
-          "cacheCreation": 20,
+          "input": 25,
+          "output": 75,
+          "cacheCreation": 1020,
           "cacheRead": 900,
-          "cost": 0.002025,
+          "cost": 0.008825,
           "models": ["claude-opus-5"]
         }
       ],
@@ -146,12 +146,12 @@
         },
         {
           "id": "2026-01-03",
-          "input": 30,
-          "output": 500,
-          "cacheCreation": 600,
+          "input": 40,
+          "output": 520,
+          "cacheCreation": 1600,
           "cacheRead": 8000,
-          "cost": 0.012240000000000001,
-          "models": ["claude-sonnet-4-5-20250929"]
+          "cost": 0.01904,
+          "models": ["claude-opus-5", "claude-sonnet-4-5-20250929"]
         },
         {
           "id": "2026-01-04",

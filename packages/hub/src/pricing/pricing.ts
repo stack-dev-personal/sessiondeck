@@ -71,6 +71,9 @@ function oneHourRates(p: ModelPricing): { base: number | undefined; above: numbe
   const base =
     p.cache_creation_input_token_cost_above_1hr ??
     (p.input_cost_per_token != null ? 2 * p.input_cost_per_token : undefined);
+  // Asymmetry, deliberate: the 5-minute tier comes from cache_creation_input_token_cost_above_200k_
+  // tokens, while the derived 1-hour tier is 2x input_cost_per_token_above_200k_tokens (LiteLLM has
+  // no explicit 1-hour above-200k field for most models, and 2x input is Anthropic's 1-hour rule).
   const above =
     p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
     (p.input_cost_per_token_above_200k_tokens != null
@@ -83,14 +86,14 @@ function oneHourRates(p: ModelPricing): { base: number | undefined; above: numbe
  * Cache-write cost. With a TTL split, h = 1-hour tokens, f = 5-minute tokens, and any remainder of
  * cache_creation_input_tokens not covered by h + f is priced at the 5-minute rate; if h + f exceeds
  * the total, the split wins (the total is only the remainder source). All writes are tiered as one
- * quantity (200k threshold), and the 1-hour share (h / total) is priced at the 1-hour rates, so a
- * row with h = 0 prices exactly as ccusage does.
+ * quantity (200k threshold), and the 1-hour share (h / all) is priced at the 1-hour rates. A row
+ * with h = 0 prices exactly as ccusage does (all = total then, whatever the 5-minute count says).
  */
 function cacheWriteCost(tokens: TokenCounts, p: ModelPricing, split: boolean): number {
   const total = tokens.cache_creation_input_tokens ?? 0;
   const h = split ? (tokens.cache_creation_1h_tokens ?? 0) : 0;
   const f = split ? (tokens.cache_creation_5m_tokens ?? 0) : 0;
-  const all = Math.max(total, h + f);
+  const all = h > 0 ? Math.max(total, h + f) : total;
   const at5m = tiered(
     all,
     p.cache_creation_input_token_cost,
@@ -153,6 +156,13 @@ export class PricingTable {
     // Model strings come from transcripts: bound the memo so junk names cannot grow it.
     if (this.memo.size < MEMO_MAX) this.memo.set(model, found);
     return found;
+  }
+
+  /** Which lookup step resolves the model: exact key, provider prefix, substring scan, or none. */
+  matchKind(model: string): "exact" | "prefix" | "substring" | null {
+    if (this.models.get(model) != null) return "exact";
+    if (PROVIDER_PREFIXES.some((x) => this.models.get(`${x}${model}`) != null)) return "prefix";
+    return this.find(model) !== null ? "substring" : null;
   }
 
   private find(model: string): ModelPricing | null {

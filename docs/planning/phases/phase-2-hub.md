@@ -57,7 +57,7 @@ Out:
 - R2.8 Bearer token required on every route except `/health`; missing token → 401, no body detail.
 - R2.9 `hub replay` rebuilds all snapshots from events in under 60 s for 30 days of your typical volume.
 - R2.10 Cost history per session and per day matches ccusage `session` output for the same transcripts within 1%.
-  - Note, 2026-10-28 (decision 25): history cost follows official Anthropic prices (1-hour cache writes at 2x input, 5-minute writes at 1.25x input) and may exceed ccusage by exactly the 1-hour cache-write difference.
+  - Note, 2026-10-28, decision 25: history cost follows official Anthropic prices (1-hour cache writes at 2x input) and may exceed ccusage by exactly the 1-hour cache-write difference.
 
 ## Definition of done
 - [ ] All R2.x pass; load numbers in `docs/HUB-BENCH.md`.

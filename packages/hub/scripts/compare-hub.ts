@@ -6,9 +6,15 @@ import path from "node:path";
 import { loadConfig } from "../src/config.ts";
 import { Store } from "../src/db/store.ts";
 import { PricingProvider, loadPricing } from "../src/pricing/loader.ts";
-import { PricingTable } from "../src/pricing/pricing.ts";
+import { PricingTable, type ModelPricing } from "../src/pricing/pricing.ts";
 import { buildServer } from "../src/server.ts";
-import type { DailyUsage, SessionUsage } from "../src/usage/usage.ts";
+import {
+  createUniqueHash,
+  makeDayFormatter,
+  parseUsageLine,
+  type DailyUsage,
+  type SessionUsage,
+} from "../src/usage/usage.ts";
 
 const TOKEN = "compare-harness-token";
 const B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -197,4 +203,116 @@ export async function hubReport(opts: {
     await app.close();
     store.close();
   }
+}
+
+const TIER = 200_000;
+const tierCost = (n: number, base: number | undefined, above: number | undefined): number =>
+  n <= 0 || base == null
+    ? 0
+    : n > TIER && above != null
+      ? TIER * base + (n - TIER) * above
+      : n * base;
+
+export interface IndependentDelta {
+  bySession: Record<string, number>;
+  byDay: Record<string, number>;
+  total: number;
+}
+
+/**
+ * The expected hub-minus-ccusage cost (sum of 1-hour write tokens x (1-hour rate - 5-minute rate)),
+ * computed straight from the transcript files and the pricing file, without the hub's cost formula.
+ * Dedup follows usage.ts (id:requestId; more tokens wins, then speed present, then smaller file key
+ * and line) but is written out here; rows with costUSD or an unpriced model have no delta.
+ */
+export function independentDelta(opts: {
+  dir: string;
+  pricingFile: string;
+  tz: string;
+}): IndependentDelta {
+  const projects = path.join(opts.dir, "projects");
+  const table = new PricingTable(loadPricing({ file: opts.pricingFile }).models, "file");
+  const dayOf = makeDayFormatter(opts.tz);
+  interface Best {
+    session: string;
+    key: string;
+    line: number;
+    total: number;
+    fast: boolean;
+    delta: number;
+    ts: string;
+  }
+  const best = new Map<string, Best>();
+  const rows: Best[] = [];
+  for (const file of walk(projects).sort()) {
+    const { session } = locate(projects, file);
+    const key = path.relative(projects, file);
+    readFileSync(file, "utf8")
+      .split("\n")
+      .forEach((raw, line) => {
+        const d = parseUsageLine(raw);
+        if (d === null) return;
+        const u = d.message.usage;
+        const cc = u.cache_creation_input_tokens ?? 0;
+        const h = u.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+        const total = u.input_tokens + u.output_tokens + cc + (u.cache_read_input_tokens ?? 0);
+        let delta = 0;
+        const p: ModelPricing | null =
+          d.costUSD === undefined && d.message.model ? table.lookup(d.message.model) : null;
+        if (p !== null && h > 0 && cc > 0) {
+          const r5 = (n: number) =>
+            tierCost(
+              n,
+              p.cache_creation_input_token_cost,
+              p.cache_creation_input_token_cost_above_200k_tokens,
+            );
+          const r1 = (n: number) =>
+            tierCost(
+              n,
+              p.cache_creation_input_token_cost_above_1hr ??
+                (p.input_cost_per_token == null ? undefined : 2 * p.input_cost_per_token),
+              p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
+                (p.input_cost_per_token_above_200k_tokens == null
+                  ? undefined
+                  : 2 * p.input_cost_per_token_above_200k_tokens),
+            );
+          const all = Math.max(cc, h + (u.cache_creation?.ephemeral_5m_input_tokens ?? 0));
+          const fast = u.speed === "fast" ? (p.provider_specific_entry?.fast ?? 1) : 1;
+          // Average per-token rate gap over the whole write, times the 1-hour tokens.
+          delta = h * ((r1(all) - r5(all)) / all) * fast;
+        }
+        const row: Best = {
+          session,
+          key,
+          line,
+          total,
+          fast: u.speed != null,
+          delta,
+          ts: d.timestamp,
+        };
+        const hash = createUniqueHash(d);
+        if (hash === null) return void rows.push(row);
+        const ex = best.get(hash);
+        if (ex !== undefined) {
+          const better =
+            row.total !== ex.total
+              ? row.total > ex.total
+              : row.fast !== ex.fast
+                ? row.fast
+                : row.key < ex.key || (row.key === ex.key && row.line < ex.line);
+          if (!better) return;
+          rows.splice(rows.indexOf(ex), 1);
+        }
+        best.set(hash, row);
+        rows.push(row);
+      });
+  }
+  const out: IndependentDelta = { bySession: {}, byDay: {}, total: 0 };
+  for (const r of rows) {
+    out.bySession[r.session] = (out.bySession[r.session] ?? 0) + r.delta;
+    const day = dayOf(r.ts);
+    out.byDay[day] = (out.byDay[day] ?? 0) + r.delta;
+    out.total += r.delta;
+  }
+  return out;
 }

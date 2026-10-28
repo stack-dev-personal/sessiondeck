@@ -13,7 +13,8 @@
 // exceeds the tolerance (percent) or any token count differs. ccusage prices all cache writes at the
 // 5-minute rate and the hub prices 1-hour writes at the 1-hour rate (decision 25), so each row's
 // expected delta (hub split cost minus hub 5-minute-only cost) is subtracted before the tolerance
-// check; the per-row figures include delta_exp and resid.
+// check, and must equal the delta computed independently from the transcripts (1h tokens x rate
+// gap) and be non-negative; the per-row figures include delta_exp and resid.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -66,7 +67,7 @@ try {
     logLevel: "warning",
     absWorkingDir: path.join(here, ".."),
   });
-  const { hubReport } = await import(pathToFileURL(outfile).href);
+  const { hubReport, independentDelta } = await import(pathToFileURL(outfile).href);
 
   const runCcusage = (cmd, tz) => {
     const home = mkdtempSync(path.join(tmp, "home-"));
@@ -119,7 +120,7 @@ try {
   let failures = 0;
   const expected = {};
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(6) : String(n));
-  const compare = (title, ref, hubRows, legacyRows) => {
+  const compare = (title, ref, hubRows, legacyRows, indep) => {
     console.log(`\n${title}`);
     console.log(
       [
@@ -133,6 +134,7 @@ try {
         "d_cr",
         "delta_exp",
         "resid",
+        "delta_chk",
         "models",
         "ok",
       ].join("\t"),
@@ -150,7 +152,13 @@ try {
       }
       const lg = legacyRows.find((r) => r.id === id);
       const delta = lg ? expectedDelta(h.cost, lg.cost) : 0;
-      const j = judgeCost({ hub: h.cost, cc: c.cost, delta, tolerancePct: tolerance });
+      const j = judgeCost({
+        hub: h.cost,
+        cc: c.cost,
+        delta,
+        independent: indep[id] ?? 0,
+        tolerancePct: tolerance,
+      });
       const d = pct(h.cost - delta, c.cost);
       const dt = [
         h.input - c.input,
@@ -170,6 +178,7 @@ try {
           ...dt,
           fmt(delta),
           `${j.residual.toExponential(2)}${j.exact ? "" : "!"}`,
+          j.deltaOk ? "dok" : `DELTA!=${fmt(indep[id] ?? 0)}`,
           modelsOk ? "same" : "DIFF",
           ok ? "ok" : "FAIL",
         ].join("\t"),
@@ -182,6 +191,7 @@ try {
     const daily = runCcusage("daily", tz);
     const cSess = sess.session.map(norm);
     const cDay = daily.daily.map(norm);
+    const ind = independentDelta({ dir, pricingFile: pricing, tz });
     for (const order of orders) {
       const hub = await hubReport({ dir, pricingFile: pricing, tz, order });
       const legacy = await hubReport({
@@ -197,18 +207,21 @@ try {
         cSess,
         hub.sessions.map((s) => normHub(s, s.session_id)),
         legacy.sessions.map((s) => normHub(s, s.session_id)),
+        ind.bySession,
       );
       compare(
         "per session: ccusage session vs hub GET /sessions/:id/cost",
         cSess,
         Object.entries(hub.sessionCost).map(([id, s]) => normHub(s, id)),
         Object.entries(legacy.sessionCost).map(([id, s]) => normHub(s, id)),
+        ind.bySession,
       );
       compare(
         "per day: ccusage daily vs hub GET /history/daily",
         cDay,
         hub.days.map((d) => normHub(d, d.date)),
         legacy.days.map((d) => normHub(d, d.date)),
+        ind.byDay,
       );
     }
     expected[tz] = { sessions: cSess, days: cDay };

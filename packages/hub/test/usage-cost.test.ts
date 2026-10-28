@@ -1,6 +1,6 @@
 // R2.10. Expected values in test/fixtures/transcripts/expected.json come from ccusage 19.0.3 run
 // through scripts/ccusage-compare.mjs on the synthetic transcripts (see its provenance block).
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -17,7 +17,7 @@ import {
 import { PricingTable, parseLiteLLM } from "../src/pricing/pricing.ts";
 import { UsageService } from "../src/usage/service.ts";
 import { UsageCollector, createUniqueHash, parseUsageLine } from "../src/usage/usage.ts";
-import { hubReport } from "../scripts/compare-hub.ts";
+import { hubReport, independentDelta } from "../scripts/compare-hub.ts";
 import { AUTH, makeHub } from "./support/hub.ts";
 
 const FX = path.resolve(import.meta.dirname, "fixtures/transcripts");
@@ -52,16 +52,22 @@ interface HubRow {
   cost_usd: number;
   models: string[];
 }
-function expectRow(got: HubRow | undefined, want: Row) {
+function expectRow(got: HubRow | undefined, legacy: HubRow | undefined, want: Row, indep: number) {
   expect(got, want.id).toBeDefined();
+  expect(legacy, want.id).toBeDefined();
   const g = got!;
+  const l = legacy!;
   expect([g.input_tokens, g.output_tokens, g.cache_creation_tokens, g.cache_read_tokens]).toEqual([
     want.input,
     want.output,
     want.cacheCreation,
     want.cacheRead,
   ]);
-  expect(Math.abs(g.cost_usd - want.cost)).toBeLessThanOrEqual(want.cost * 0.01);
+  // Legacy (5-minute-only) pricing is ccusage's; split pricing adds exactly the 1-hour delta.
+  expect(Math.abs(l.cost_usd - want.cost)).toBeLessThanOrEqual(want.cost * 0.01);
+  const delta = g.cost_usd - l.cost_usd;
+  expect(delta).toBeGreaterThanOrEqual(-1e-12);
+  expect(Math.abs(delta - indep)).toBeLessThanOrEqual(1e-9 * Math.max(Math.abs(indep), 1e-12));
   expect(g.models).toEqual(want.models);
 }
 
@@ -71,19 +77,34 @@ describe("cost history matches ccusage 19.0.3 (R2.10)", () => {
       it(`sessions and days in ${tz}, ${order} arrival: tokens exact, cost within 1%, models in order`, async () => {
         const want = expected.byTimezone[tz]!;
         const r = await hubReport({ dir: FX, pricingFile: PRICING, tz, order });
+        const lg = await hubReport({
+          dir: FX,
+          pricingFile: PRICING,
+          tz,
+          order,
+          legacyCacheWrites: true,
+        });
+        const ind = independentDelta({ dir: FX, pricingFile: PRICING, tz });
+        // The fixture's one 1h row: 600 x (2 x 5e-6 - 6.25e-6) on claude-opus-5.
+        expect(ind.total).toBeCloseTo(600 * 3.75e-6, 12);
         expect(r.sessions.length).toBe(want.sessions.length);
         for (const w of want.sessions) {
+          const i = ind.bySession[w.id] ?? 0;
           expectRow(
             r.sessions.find((s) => s.session_id === w.id),
+            lg.sessions.find((s) => s.session_id === w.id),
             w,
+            i,
           );
-          expectRow(r.sessionCost[w.id], w);
+          expectRow(r.sessionCost[w.id], lg.sessionCost[w.id], w, i);
         }
         expect(r.days.map((d) => d.date)).toEqual(want.days.map((d) => d.id).sort());
         for (const w of want.days) {
           expectRow(
             r.days.find((d) => d.date === w.id),
+            lg.days.find((d) => d.date === w.id),
             w,
+            ind.byDay[w.id] ?? 0,
           );
         }
       }, 60_000);
@@ -94,6 +115,12 @@ describe("cost history matches ccusage 19.0.3 (R2.10)", () => {
       path.join(FX, "projects/-synthetic-proj-a/11111111-aaaa-4bbb-8ccc-000000000001.jsonl"),
       "utf8",
     );
+    expect(
+      readFileSync(
+        path.join(FX, "projects/-synthetic-proj-b/22222222-aaaa-4bbb-8ccc-000000000002.jsonl"),
+        "utf8",
+      ),
+    ).toContain('"ephemeral_1h_input_tokens":600');
     expect(text).toContain('"<synthetic>"');
     expect(text).toContain('"costUSD"');
     expect(text).toContain('"speed":"fast"');
@@ -886,5 +913,118 @@ describe("cache write TTL split and unpriced models (R2.10, decision 25)", () =>
   it("a fully priced session reports an empty unpricedModels", () => {
     expect(costOf(row("a", { input_tokens: 5 })).unpricedModels).toEqual([]);
     expect(costOf(row("a", { input_tokens: 5 }, "acme-x")).unpricedModels).toEqual(["acme-x"]);
+  });
+});
+
+describe("official prices on the bundled table (R2.10, decision 25)", () => {
+  const bundled = bundledTable();
+  const MTOK = 1_000_000;
+  const rowOf = (id: string, model: string, usage: Record<string, unknown>, extra = {}) =>
+    JSON.stringify({
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { id, model, usage: { input_tokens: 0, output_tokens: 0, ...usage }, ...extra },
+    });
+  const costOf = (raw: string, t: PricingTable = bundled) => {
+    const c = new UsageCollector();
+    c.addRow({ session_id: "s", raw });
+    return c.sessions(t, "UTC")[0]!;
+  };
+  // USD per MTok, from the official price list: opus-5-5 in 4, 5m write 5, 1h write 8, read 0.20,
+  // out 20; fable-5-1 in 10, 5m write 12.50, 1h write 20, read 0.25, out 50.
+  const all = (model: string, extra = {}) =>
+    costOf(
+      rowOf(
+        "a",
+        model,
+        {
+          input_tokens: MTOK,
+          output_tokens: MTOK,
+          cache_read_input_tokens: MTOK,
+          cache_creation_input_tokens: 2 * MTOK,
+          cache_creation: { ephemeral_1h_input_tokens: MTOK, ephemeral_5m_input_tokens: MTOK },
+        },
+        extra,
+      ),
+    ).cost_usd;
+
+  it("opus 5.5: 1-hour and 5-minute writes, read, input, output", () => {
+    // 4 + 20 + 0.20 + 8 (1h) + 5 (5m)
+    expect(all("claude-opus-5-5")).toBeCloseTo(37.2, 9);
+  });
+  it("fable 5.1: 1-hour and 5-minute writes, read, input, output", () => {
+    // 10 + 50 + 0.25 + 20 (1h) + 12.5 (5m)
+    expect(all("claude-fable-5-1")).toBeCloseTo(92.75, 9);
+  });
+  it("5-minute-only split and no split price at the 5-minute rate", () => {
+    const five = rowOf("a", "claude-opus-5-5", {
+      cache_creation_input_tokens: MTOK,
+      cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: MTOK },
+    });
+    const none = rowOf("b", "claude-fable-5-1", { cache_creation_input_tokens: MTOK });
+    expect(costOf(five).cost_usd).toBeCloseTo(5, 9);
+    expect(costOf(none).cost_usd).toBeCloseTo(12.5, 9);
+  });
+  it("fast mode multiplies by the table's fast factor (opus 5.5: 2x)", () => {
+    expect(bundled.lookup("claude-opus-5-5")?.provider_specific_entry?.fast).toBe(2);
+    const fast = costOf(
+      rowOf("f", "claude-opus-5-5", {
+        speed: "fast",
+        input_tokens: MTOK,
+        output_tokens: MTOK,
+        cache_creation_input_tokens: MTOK,
+        cache_creation: { ephemeral_1h_input_tokens: MTOK },
+      }),
+    ).cost_usd;
+    // (4 + 20 + 8) x 2
+    expect(fast).toBeCloseTo(64, 9);
+    // A model with no fast factor is not multiplied.
+    const noFast = costOf(
+      rowOf("g", "claude-fable-5-1", { speed: "fast", input_tokens: MTOK }),
+    ).cost_usd;
+    expect(noFast).toBeCloseTo(10, 9);
+  });
+  it("high effort: thinking tokens are inside output_tokens and priced once", () => {
+    const raw = JSON.stringify({
+      timestamp: "2026-01-01T00:00:00.000Z",
+      effort: "high",
+      message: {
+        id: "t",
+        model: "claude-opus-5-5",
+        content: [
+          { type: "thinking", thinking: "x".repeat(5000) },
+          { type: "text", text: "done" },
+        ],
+        usage: { input_tokens: 0, output_tokens: 150_000, thinking_tokens: 120_000 },
+      },
+    });
+    // 150000 x 20 / MTok = 3.00 exactly; thinking_tokens is never added on top.
+    expect(costOf(raw).cost_usd).toBeCloseTo(3, 12);
+    expect(costOf(raw).output_tokens).toBe(150_000);
+  });
+  it("an unknown model is unpriced (cost 0, listed)", () => {
+    const r = costOf(rowOf("u", "acme-unpriced-1", { input_tokens: MTOK }));
+    expect(r.cost_usd).toBe(0);
+    expect(r.unpricedModels).toEqual(["acme-unpriced-1"]);
+  });
+  it("every priced model id in the fixtures resolves by exact match in the bundled snapshot", () => {
+    const roots = [
+      path.resolve(import.meta.dirname, "../../contract/fixtures/transcripts"),
+      path.resolve(import.meta.dirname, "fixtures"),
+    ];
+    const ids = new Set<string>();
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (e.name.endsWith(".jsonl")) {
+          for (const m of readFileSync(f, "utf8").matchAll(/"model":\s*"([^"]+)"/g)) ids.add(m[1]!);
+        }
+      }
+    };
+    roots.forEach(walk);
+    const priced = [...ids].filter((m) => m !== "<synthetic>" && m !== "acme-unpriced-1");
+    expect(priced.length).toBeGreaterThanOrEqual(8);
+    for (const m of priced) expect({ m, kind: bundled.matchKind(m) }).toEqual({ m, kind: "exact" });
+    expect(bundled.matchKind("acme-unpriced-1")).toBeNull();
   });
 });

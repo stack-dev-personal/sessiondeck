@@ -9,20 +9,25 @@
 export const pct = (h, c) =>
   h === c ? 0 : c === 0 ? Infinity : (Math.abs(h - c) / Math.abs(c)) * 100;
 
-/** Expected hub-minus-ccusage cost for one row: split-priced cost minus legacy-priced cost. */
+/** Hub-measured 1-hour delta for one row: split-priced cost minus legacy (5-minute-only) cost. */
 export const expectedDelta = (splitCost, legacyCost) => splitCost - legacyCost;
 
 /**
- * Judges one cost row. `residual` is hub - ccusage - expected delta. The row passes when the cost
- * after removing the expected 1-hour delta is within `tolerancePct` of ccusage; `exact` reports
- * whether the residual is also within 1e-9 relative.
+ * Judges one cost row. `delta` is the hub's split minus legacy cost; `independent` is the same
+ * quantity computed from the transcripts (sum of 1h tokens x (1h rate - 5m rate)), so a pricing bug
+ * that lands in the delta is caught: the row fails when the two disagree by more than 1e-9
+ * relative, or when the delta is negative. The legacy cost (hub - delta) must be within
+ * `tolerancePct` of ccusage; `exact` reports whether hub - ccusage - delta is within 1e-9 relative.
  */
-export function judgeCost({ hub, cc, delta, tolerancePct }) {
+export function judgeCost({ hub, cc, delta, independent, tolerancePct }) {
   const residual = hub - cc - delta;
   const scale = Math.max(Math.abs(hub), Math.abs(cc), Number.MIN_VALUE);
+  const dscale = Math.max(Math.abs(delta), Math.abs(independent), 1e-12);
+  const deltaOk = delta >= -1e-12 && Math.abs(delta - independent) <= 1e-9 * dscale;
   return {
     residual,
     exact: Math.abs(residual) <= 1e-9 * scale,
-    ok: pct(hub - delta, cc) <= tolerancePct,
+    deltaOk,
+    ok: deltaOk && pct(hub - delta, cc) <= tolerancePct,
   };
 }
