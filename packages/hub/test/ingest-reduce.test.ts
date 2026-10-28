@@ -160,6 +160,32 @@ describe("subagents and transcript", () => {
     ]);
   });
 
+  it("damaged stored subagents are dropped on read, not thrown", async () => {
+    const good = {
+      agent_id: "a",
+      agent_type: "x",
+      started_at: 1,
+      ended_at: null,
+      tokens: 1,
+      context_window: 2,
+      model: null,
+    };
+    seedSession(h.store, "bad1", {
+      subagents: [null, 7, good] as unknown as SessionSnapshot["subagents"],
+    });
+    seedSession(h.store, "bad2", {
+      subagents: "nope" as unknown as SessionSnapshot["subagents"],
+    });
+    const r1 = await h.app.inject({ method: "GET", url: "/sessions/bad1", headers: AUTH });
+    expect(r1.statusCode).toBe(200);
+    const subs = (r1.json() as SessionSnapshot).subagents;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toMatchObject({ agent_id: "a", parent_known: false });
+    const r2 = await h.app.inject({ method: "GET", url: "/sessions/bad2", headers: AUTH });
+    expect(r2.statusCode).toBe(200);
+    expect((r2.json() as SessionSnapshot).subagents).toEqual([]);
+  });
+
   it("a stored subagent row without parent fields reads as parent null / unknown", async () => {
     const old = seedSession(h.store, "old1", {
       subagents: [
