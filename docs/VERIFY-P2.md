@@ -170,3 +170,22 @@ Verified 2026-10-21T19:28:06Z by sd-verifier. Compose project sd-1-fix5, images 
 | CI at 45ec370 | GitHub Actions | not runnable (billing block) | pending CI (Actions billing block) | 2026-10-21T19:28:06Z |
 
 Count: 6 pass / 0 fail / 0 unverifiable, 1 needs laptop confirmation (R2.4), 1 pending CI. The BuildKit allow-list row from the dbb1e33 section is unchanged (no buildx here; no infra file changed since dbb1e33).
+
+## R2.12 transcript-derived snapshot fields, after U2, HEAD 220c624
+
+Verified 2026-10-28T23:23:34Z by sd-verifier on p2/headless-metrics. Host: Windows 11 Home, AMD Ryzen AI 9 465, node v24.19.0. Benches not re-run; docs/HUB-BENCH.md cited as context only.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R2.12 headless session (no statusline) gets model, context tokens, cost, git branch, last message, each with source "transcript"; cost equals GET /sessions/:id/cost; effort stays null | `pnpm -F @sessiondeck/hub exec vitest run test/transcript-figures.test.ts` (cd packages/hub) | 10/10 pass. Headless test asserts s.cost.usd toBe cost route cost_usd, sources all "transcript", exact last message, effort null. Also: SessionStart after transcript keeps transcript model, malformed lines ignored, lines before SessionStart and out of order | pass | 2026-10-28T23:23:34Z |
+| R2.12 statusline always wins; later statusline flips source | same file, "statusline wins" tests | statusline model/context/git_branch/cost unchanged and sources stay "statusline"; later statusline replaces transcript-filled values | pass | 2026-10-28T23:23:34Z |
+| R2.12 updates flow through WS deltas | same file, "live delta" test | connected client receives transcript-filled figures, cost.usd > 0 | pass | 2026-10-28T23:23:34Z |
+| R2.9 replay equality with the new fields | same file, "replay equality" tests, plus transcript-figures-review.test.ts (2 tests: replay honours HUB_PRICING_FILE; bounded rebuild scan) | replay snapshot equals ingest snapshot, statusline sources and values kept; review tests 2/2 | pass | 2026-10-28T23:23:34Z |
+| R2.12 unit behaviour (cap, row reading, apply purity) and cost filler (debounce, deferred index rebuild, shutdown) | `vitest run test/transcript-figures-unit.test.ts test/cost-filler.test.ts` | 11/11 and 6/6; all four files: 4 passed, 29 tests passed | pass | 2026-10-28T23:23:34Z |
+| Regression guard R2.3, R2.5, R2.9 | `pnpm exec vitest run` in packages/hub | 25 files passed; 307 passed, 4 skipped (311). R2.3 golden replay over HTTP and replay tests green | pass | 2026-10-28T23:23:34Z |
+| R2.12 percent used against model context window | no test named for percent or unknown-model-no-percent found in the four proving files by this verifier (context tokens asserted; percent not separately confirmed) | not checked beyond the files above | unverifiable | 2026-10-28T23:23:34Z |
+| R2.12 live-shape harness (read-only, own hub on a separate port, fixture copy, prints filled snapshot) | none in repo yet; lands in the next unit | n/a | pending (next unit) | 2026-10-28T23:23:34Z |
+
+R2.12 status: PARTIAL. Everything the four proving files cover passes; the live-shape harness from the handoff test list is pending and the percent-of-window clause has no separately identified check. Not marked pass.
+
+Count: 6 pass / 0 fail / 1 unverifiable, 1 pending (live-shape harness).
