@@ -35,3 +35,8 @@
 - LOW scripts/lib/fixture-leak-core.mjs:104,155-159: non-golden .json/.jsonl under vault paths get no structure check (no such files today).
 - LOW packages/contract/src/archive.ts:63-71: DEL, C1, bidi overrides pass text fields; handled at render time in U5.
 - LOW docs/planning/phases/phase-5-atlas.md:28 names real Windows user folders; outside S9b scope.
+
+### U2 probe importer (sd-executor-probe) - review iteration 1
+- Commit 0c4962a. Tests 368 pass / 1 skip; bench 293 files run1 276 ms, run2 0 shipped.
+- Reviewer: fix-then-merge (BLOCKING invalid archive config stops forwarding; MAJOR outbox not synced before index write; MAJOR install/wiring untested; MAJOR junction root). Security: Gate fail (HIGH URL credential and connection string redaction gaps; MEDIUM intermediate symlink escape; MEDIUM config).
+- Decision D-S9b-4: the configured root may itself be a link (user chose it): resolve realpath once; every directory and file below must stay inside that realpath; intermediate links refused and counted. Resolves the reviewer/security disagreement.
