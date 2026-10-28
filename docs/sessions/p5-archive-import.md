@@ -26,3 +26,12 @@
 ### U1 contract (sd-executor-contract) - review iteration 1
 - Commit 08456c3. Reviewer: fix-then-merge (MAJOR caps vs 1 MiB ingest limit; MAJOR hub accepts archive unvalidated and leaks open-session slots -> U3). Security: Gate pass, MEDIUM strict payload, MEDIUM redaction -> U2, MEDIUM merge on (host, session_id) -> U3.
 - Carried forward: U2 must redact outcome/title/commits/prs and parse YAML timestamps as strings; U3 must validate with ArchiveEnvelopeSchema, skip reduceOne/admit for archive in ingest and replay, merge on (host, session_id), bound params and FTS MATCH quoting.
+- Iteration 2 (0367b27): reviewer `merge`; security `Gate: pass`. Contract tests 1145 pass / 1 skip; fixture-leak-check PASS (264 files).
+- Requirement verification deferred to after U4 (contract layer alone cannot prove R5.2/R5.3).
+- Carried into U2: null out invalid dates instead of failing the payload; CRLF to LF and trim list items/title before validation.
+- Status: done (review), verification pending U4.
+
+## Deferred findings (U1)
+- LOW scripts/lib/fixture-leak-core.mjs:104,155-159: non-golden .json/.jsonl under vault paths get no structure check (no such files today).
+- LOW packages/contract/src/archive.ts:63-71: DEL, C1, bidi overrides pass text fields; handled at render time in U5.
+- LOW docs/planning/phases/phase-5-atlas.md:28 names real Windows user folders; outside S9b scope.
