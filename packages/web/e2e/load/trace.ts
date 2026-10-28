@@ -186,3 +186,49 @@ export function scriptMsPerSecond(events: TraceEvent[], windowUs: number): numbe
   const busiest = Math.max(0, ...[...perThread.values()].map((iv) => unionLength(iv)));
   return r2(busiest / 1000 / (windowUs / 1e6));
 }
+
+/**
+ * Compositor frame outcomes from `PipelineReporter` async events (categories `benchmark` and
+ * `rail`). Each reported frame carries `args.frame_reporter.state` (older builds: `chrome_frame_reporter`); `STATE_DROPPED` is a
+ * frame the compositor or renderer did not deliver. Works for a stalled raster or GPU thread with
+ * an idle main thread, which the in-page rAF gaps cannot see.
+ */
+export function pipelineFrames(events: TraceEvent[], edgeMs = 100) {
+  const states: Record<string, number> = {};
+  const dropReasons: Record<string, number> = {};
+  const reported: { ts: number; state: string; args: Record<string, unknown> }[] = [];
+  for (const e of events) {
+    if (e.name !== "PipelineReporter") continue;
+    const rep = (e.args?.["frame_reporter"] ?? e.args?.["chrome_frame_reporter"]) as
+      { state?: string; reason?: string } | undefined;
+    if (!rep || typeof rep.state !== "string") continue;
+    reported.push({ ts: e.ts, state: rep.state, args: rep as Record<string, unknown> });
+    states[rep.state] = (states[rep.state] ?? 0) + 1;
+    if (rep.state === "STATE_DROPPED") {
+      const why = rep.reason ?? "unknown";
+      dropReasons[why] = (dropReasons[why] ?? 0) + 1;
+    }
+  }
+  const first = reported.reduce((m, f) => Math.min(m, f.ts), Infinity);
+  const last = reported.reduce((m, f) => Math.max(m, f.ts), -Infinity);
+  // Where each dropped frame sits in the trace, to tell tracing start/stop edges from mid-window drops.
+  const droppedAt = reported
+    .filter((f) => f.state === "STATE_DROPPED")
+    .map((f) => ({
+      fromStartMs: r2((f.ts - first) / 1000),
+      fromEndMs: r2((last - f.ts) / 1000),
+      hasMainAnimation: f.args["has_main_animation"] === true,
+      frameType: String(f.args["frame_type"] ?? ""),
+    }));
+  // The first and last frames of a trace are tracing start-up and shut-down, not the page: a
+  // dropped frame within `edgeMs` of either end is counted apart (`droppedAtEdge`).
+  const mid = droppedAt.filter((d) => d.fromStartMs >= edgeMs && d.fromEndMs >= edgeMs);
+  return {
+    total: reported.length,
+    dropped: mid.length,
+    droppedAtEdge: droppedAt.length - mid.length,
+    states,
+    dropReasons,
+    droppedAt,
+  };
+}
