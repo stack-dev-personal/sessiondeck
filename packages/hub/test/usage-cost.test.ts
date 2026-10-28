@@ -775,7 +775,7 @@ describe("cache write TTL split and unpriced models (R2.10, decision 25)", () =>
       }),
     );
     expect(rem.cost_usd).toBeCloseTo(8 + 2 * 5, 9);
-    // Split larger than the total: the split wins.
+    // Split larger than the total: the split wins, in cost (pricing) and in reported tokens (usage).
     const over = costOf(
       row("b", {
         cache_creation_input_tokens: MTOK,
@@ -786,6 +786,16 @@ describe("cache write TTL split and unpriced models (R2.10, decision 25)", () =>
       }),
     );
     expect(over.cost_usd).toBeCloseTo(8 + 5, 9);
+    expect(over.cache_creation_tokens).toBe(2 * MTOK);
+  });
+  it("1h tokens with no cache_creation_input_tokens are priced and reported from the split", () => {
+    const r = costOf(
+      row("n", {
+        cache_creation: { ephemeral_1h_input_tokens: MTOK, ephemeral_5m_input_tokens: 0 },
+      }),
+    );
+    expect(r.cost_usd).toBeCloseTo(8, 9);
+    expect(r.cache_creation_tokens).toBe(MTOK);
   });
   it("an explicit 1h table field wins over 2x input; above-200k derives 2x the above-200k input", () => {
     const t = new PricingTable(

@@ -206,12 +206,6 @@ export async function hubReport(opts: {
 }
 
 const TIER = 200_000;
-const tierCost = (n: number, base: number | undefined, above: number | undefined): number =>
-  n <= 0 || base == null
-    ? 0
-    : n > TIER && above != null
-      ? TIER * base + (n - TIER) * above
-      : n * base;
 
 export interface IndependentDelta {
   bySession: Record<string, number>;
@@ -259,27 +253,20 @@ export function independentDelta(opts: {
         let delta = 0;
         const p: ModelPricing | null =
           d.costUSD === undefined && d.message.model ? table.lookup(d.message.model) : null;
-        if (p !== null && h > 0 && cc > 0) {
-          const r5 = (n: number) =>
-            tierCost(
-              n,
-              p.cache_creation_input_token_cost,
-              p.cache_creation_input_token_cost_above_200k_tokens,
-            );
-          const r1 = (n: number) =>
-            tierCost(
-              n,
-              p.cache_creation_input_token_cost_above_1hr ??
-                (p.input_cost_per_token == null ? undefined : 2 * p.input_cost_per_token),
-              p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
-                (p.input_cost_per_token_above_200k_tokens == null
-                  ? undefined
-                  : 2 * p.input_cost_per_token_above_200k_tokens),
-            );
+        if (p !== null && h > 0) {
+          // Independent of the hub's formula: h x (1-hour rate - 5-minute rate), per token, with
+          // each tier taken directly (writes tiered as one quantity at the 200k threshold).
           const all = Math.max(cc, h + (u.cache_creation?.ephemeral_5m_input_tokens ?? 0));
+          const hi = all > TIER;
+          const r5 = hi
+            ? (p.cache_creation_input_token_cost_above_200k_tokens ?? 0)
+            : (p.cache_creation_input_token_cost ?? 0);
+          const r1 = hi
+            ? (p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
+              2 * (p.input_cost_per_token_above_200k_tokens ?? 0))
+            : (p.cache_creation_input_token_cost_above_1hr ?? 2 * (p.input_cost_per_token ?? 0));
           const fast = u.speed === "fast" ? (p.provider_specific_entry?.fast ?? 1) : 1;
-          // Average per-token rate gap over the whole write, times the 1-hour tokens.
-          delta = h * ((r1(all) - r5(all)) / all) * fast;
+          delta = h * (r1 - r5) * fast;
         }
         const row: Best = {
           session,

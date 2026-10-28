@@ -369,7 +369,16 @@ export class UsageCollector {
       speed: u.speed,
       input: u.input_tokens,
       output: u.output_tokens,
-      cacheCreation: u.cache_creation_input_tokens ?? 0,
+      // Reported = priced: with a 1-hour share the TTL split wins when it exceeds the total
+      // (see cacheWriteCost). Rows with no 1-hour tokens keep ccusage's value unchanged.
+      cacheCreation:
+        (u.cache_creation?.ephemeral_1h_input_tokens ?? 0) > 0
+          ? Math.max(
+              u.cache_creation_input_tokens ?? 0,
+              (u.cache_creation?.ephemeral_1h_input_tokens ?? 0) +
+                (u.cache_creation?.ephemeral_5m_input_tokens ?? 0),
+            )
+          : (u.cache_creation_input_tokens ?? 0),
       cacheRead: u.cache_read_input_tokens ?? 0,
       cache1h: u.cache_creation?.ephemeral_1h_input_tokens,
       cache5m: u.cache_creation?.ephemeral_5m_input_tokens,
