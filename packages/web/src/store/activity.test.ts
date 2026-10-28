@@ -81,6 +81,29 @@ describe("resync seeds each session's log (R6.4)", () => {
     expect(rows.map((r) => r.kind)).toEqual(["state"]);
     expect(rows[0]!.ts).toBe(7);
   });
+  it("a resync keeps the log of a known session and adds a state row only on a change", () => {
+    const store = createBoardStore(() => 0);
+    store.getState().replaceAll([snap({ state: "working", last_event_at: 7 })]);
+    for (let i = 0; i < 5; i++)
+      store.setState((st) => ({
+        activity: {
+          ...st.activity,
+          a: appendRows(st.activity["a"], 8 + i, [{ kind: "event", text: `e${i}` }]),
+        },
+      }));
+    const before = store.getState().activity["a"]!;
+    expect(before.rows).toHaveLength(6);
+    store.getState().replaceAll([snap({ state: "working", last_event_at: 20 })]);
+    expect(store.getState().activity["a"]).toBe(before);
+    store.getState().replaceAll([snap({ state: "idle", last_event_at: 30 })]);
+    const after = store.getState().activity["a"]!;
+    expect(after.rows).toHaveLength(7);
+    expect(after.rows[6]!.kind).toBe("state");
+    expect(after.rows[0]).toEqual(before.rows[0]);
+    // A session that left the list is gone; a new one opens on its state.
+    store.getState().replaceAll([snap({ session_id: "b", state: "idle" })]);
+    expect(Object.keys(store.getState().activity)).toEqual(["b"]);
+  });
 });
 
 describe("board store feeds the ring in the same coalesced commit (R6.4)", () => {

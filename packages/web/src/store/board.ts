@@ -81,12 +81,22 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
         sessions: Object.fromEntries(kept.map((s) => [s.session_id, s])),
         exceeds200k: {},
         history: {},
-        // Each pane opens on the session's current state, not on an empty list.
+        // A session already known keeps its log (scroll position and history survive a reconnect)
+        // and gets a state row only if its state changed; a new one opens on its current state.
         activity: Object.fromEntries(
-          kept.map((s) => [
-            s.session_id,
-            appendRows(undefined, s.last_event_at, draftRows(undefined, s)),
-          ]),
+          kept.map((s) => {
+            const prev = get().sessions[s.session_id];
+            const log = get().activity[s.session_id];
+            if (prev !== undefined && log !== undefined) {
+              return [
+                s.session_id,
+                prev.state === s.state
+                  ? log
+                  : appendRows(log, s.last_event_at, draftRows(prev, s).slice(0, 1)),
+              ];
+            }
+            return [s.session_id, appendRows(undefined, s.last_event_at, draftRows(undefined, s))];
+          }),
         ),
         loaded: true,
       });

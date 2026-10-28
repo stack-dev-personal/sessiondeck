@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { longTaskDetails, mainThreadBusy, type TraceEvent } from "../e2e/load/trace";
+import {
+  longTaskDetails,
+  mainThreadBusy,
+  pipelineFrames,
+  type TraceEvent,
+} from "../e2e/load/trace";
 
 const meta: TraceEvent = {
   ph: "M",
@@ -87,5 +92,53 @@ describe("R3.6 trace analysis", () => {
       x("Paint", 100, 40_000),
     ];
     expect(longTaskDetails(ev)).toHaveLength(1);
+  });
+});
+
+describe("pipelineFrames (R6.4)", () => {
+  const pr = (state: string, key = "frame_reporter", extra = {}): TraceEvent => ({
+    ph: "b",
+    name: "PipelineReporter",
+    pid: 1,
+    tid: 3,
+    ts: 1,
+    args: { [key]: { state, ...extra } },
+  });
+  it("counts frames by state and dropped ones with their reason", () => {
+    const ev: TraceEvent[] = [
+      pr("STATE_PRESENTED_ALL"),
+      pr("STATE_PRESENTED_PARTIAL"),
+      pr("STATE_DROPPED", "frame_reporter", { reason: "REASON_MAIN_THREAD" }),
+      pr("STATE_DROPPED", "chrome_frame_reporter"),
+      { ph: "e", name: "PipelineReporter", pid: 1, tid: 3, ts: 2 },
+      {
+        ph: "X",
+        name: "Other",
+        pid: 1,
+        tid: 3,
+        ts: 3,
+        args: { frame_reporter: { state: "STATE_DROPPED" } },
+      },
+    ];
+    const r = pipelineFrames(ev);
+    expect(r.total).toBe(4);
+    expect(r.dropped + r.droppedAtEdge).toBe(2);
+    expect(r.dropReasons).toEqual({ REASON_MAIN_THREAD: 1, unknown: 1 });
+  });
+  it("a dropped frame at the very start or end of the trace is counted apart", () => {
+    const at = (ts: number, state: string): TraceEvent => ({ ...pr(state), ts });
+    const ev = [
+      at(1_000_000, "STATE_DROPPED"),
+      at(1_050_000, "STATE_PRESENTED_ALL"),
+      at(2_000_000, "STATE_DROPPED"),
+      at(3_000_000, "STATE_PRESENTED_ALL"),
+      at(3_020_000, "STATE_DROPPED"),
+    ];
+    const r = pipelineFrames(ev);
+    expect(r.dropped).toBe(1);
+    expect(r.droppedAtEdge).toBe(2);
+  });
+  it("an empty trace reports zero frames, so a caller can refuse to pass on no evidence", () => {
+    expect(pipelineFrames([]).total).toBe(0);
   });
 });
