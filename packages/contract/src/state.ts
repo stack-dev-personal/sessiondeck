@@ -48,13 +48,19 @@ function applyTransition(
   ctx: TransitionContext,
   ts: number,
 ): SessionSnapshot {
+  const next = nextTracking(t, ctx);
+  const pending = s.tracking.pending_spawns;
   return {
     ...s,
     state: t.to,
     state_since: t.to === s.state ? s.state_since : ts,
     state_detail: resolveDetail(t, ctx),
     ended_reason: t.to === "ended" ? s.ended_reason : null,
-    tracking: nextTracking(t, ctx),
+    // Spawn bookkeeping is written by applyEventFields, so it survives the transition (not a session reset).
+    tracking:
+      t.trigger === "SessionStart" || pending === undefined
+        ? next
+        : { ...next, pending_spawns: pending },
   };
 }
 

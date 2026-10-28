@@ -7,12 +7,13 @@ import {
   LAST_PROMPT_MAX_CHARS,
   MODEL_ID_MAX_CHARS,
   STATE_DETAIL_MAX_CHARS,
+  PENDING_SPAWNS_MAX,
   SUBAGENT_ROWS_MAX,
   TASK_SUBJECT_MAX_CHARS,
   truncate,
 } from "./limits";
 import type { PayloadRecord } from "./payload";
-import { isSubagentEnvelope, readString } from "./payload";
+import { agentIdOf, isSubagentEnvelope, readString } from "./payload";
 import type { SessionSnapshot, SubagentSnapshot } from "./snapshot";
 
 /** Fallbacks used when a documented field is missing or of the wrong type. */
@@ -107,9 +108,52 @@ function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
   return rows.filter((_, i) => !dropped.has(i));
 }
 
+const SPAWN_TOOLS: readonly string[] = ["Agent", "Task"];
+
+/** With pending set aside: the tracking with a spawn list (key omitted when empty). */
+function withPending(s: SessionSnapshot, pending: (string | null)[]): SessionSnapshot {
+  const { pending_spawns: _old, ...rest } = s.tracking;
+  void _old;
+  return { ...s, tracking: pending.length === 0 ? rest : { ...rest, pending_spawns: pending } };
+}
+
+/** PreToolUse of the Agent or Task tool: remember which context asked for a spawn. */
+function onPreToolUse(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
+  const tool = readString(ctx.payload, "tool_name");
+  if (tool === null || !SPAWN_TOOLS.includes(tool)) return s;
+  const pending = [...(s.tracking.pending_spawns ?? []), agentIdOf(ctx.e)];
+  return withPending(s, pending.slice(-PENDING_SPAWNS_MAX));
+}
+
+/** A new prompt starts a new turn: spawn requests that never produced a SubagentStart are stale. */
+function onPromptReset(s: SessionSnapshot): SessionSnapshot {
+  return s.tracking.pending_spawns === undefined ? s : withPending(s, []);
+}
+
+/**
+ * Parent attribution. SubagentStart takes the oldest pending spawn. Exactly one spawning context
+ * among the pending entries gives a known parent (null: main thread); none, or more than one
+ * distinct context, gives parent_known false (the oldest entry is still consumed).
+ */
+function takeParent(s: SessionSnapshot): {
+  parent: string | null;
+  known: boolean;
+  rest: (string | null)[];
+} {
+  const pending = s.tracking.pending_spawns ?? [];
+  if (pending.length === 0) return { parent: null, known: false, rest: [] };
+  const contexts = new Set(pending);
+  const oldest = pending[0] ?? null;
+  const rest = pending.slice(1);
+  return contexts.size === 1
+    ? { parent: oldest, known: true, rest }
+    : { parent: null, known: false, rest };
+}
+
 function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const agentId = payloadAgentId(ctx);
   if (agentId === null || s.subagents.some((a) => a.agent_id === agentId)) return s;
+  const { parent, known, rest } = takeParent(s);
   const agentType = readString(ctx.payload, "agent_type") ?? UNKNOWN_AGENT_TYPE;
   const row = {
     agent_id: agentId,
@@ -119,8 +163,10 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
     tokens: null,
     context_window: null,
     model: null,
+    parent_agent_id: parent === agentId ? null : parent,
+    parent_known: known && parent !== agentId,
   };
-  return { ...s, subagents: capSubagents([...s.subagents, row]) };
+  return { ...withPending(s, rest), subagents: capSubagents([...s.subagents, row]) };
 }
 
 function onSubagentStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
@@ -135,7 +181,8 @@ function onSubagentStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot 
 
 const FIELD_PATCHES: Readonly<Record<string, FieldPatch>> = {
   SessionStart: onSessionStart,
-  UserPromptSubmit: onUserPromptSubmit,
+  UserPromptSubmit: (s, ctx) => onPromptReset(onUserPromptSubmit(s, ctx)),
+  PreToolUse: onPreToolUse,
   Stop: onStop,
   SessionEnd: onSessionEnd,
   PostCompact: onPostCompact,

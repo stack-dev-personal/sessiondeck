@@ -14,6 +14,13 @@ export interface SubagentSnapshot {
   tokens: number | null;
   context_window: number | null;
   model: string | null;
+  /**
+   * The agent that spawned this one; null when the main thread did (or when unknown, see
+   * parent_known). Rows stored before this field existed read as null / false.
+   */
+  parent_agent_id: string | null;
+  /** False when the reducer could not attribute the parent (no pending spawn, or spawns from more than one context). */
+  parent_known: boolean;
 }
 
 /**
@@ -40,6 +47,12 @@ export function isUnknownRequester(
 export interface Tracking {
   last_tool: string | null;
   permission: PermissionHolder | null;
+  /**
+   * Spawn requests seen (PreToolUse Agent or Task) and not yet matched by a SubagentStart, oldest
+   * first; each entry is the spawning context's agent_id (null: main thread). Omitted when empty.
+   * Capped at PENDING_SPAWNS_MAX.
+   */
+  pending_spawns?: (string | null)[];
 }
 
 /** Fresh empty tracking. New object on every call. */
@@ -127,4 +140,14 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     compactions: 0,
     tracking: createTracking(),
   };
+}
+
+/**
+ * A subagent row with the parent fields filled in: rows stored before parent links existed read as
+ * parent_agent_id null, parent_known false. Always a fresh object.
+ */
+export function readSubagentRow(row: SubagentSnapshot): SubagentSnapshot {
+  const raw = row as Partial<SubagentSnapshot>;
+  const parent = typeof raw.parent_agent_id === "string" ? raw.parent_agent_id : null;
+  return { ...row, parent_agent_id: parent, parent_known: raw.parent_known === true };
 }

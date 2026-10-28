@@ -1,4 +1,4 @@
-import { TOOL_NAME_MAX_CHARS, truncate } from "./limits";
+import { PENDING_SPAWNS_MAX, TOOL_NAME_MAX_CHARS, truncate } from "./limits";
 import { asRecord, readString } from "./payload";
 import type { PermissionHolder, SessionSnapshot, Tracking } from "./snapshot";
 import { createTracking } from "./snapshot";
@@ -62,10 +62,15 @@ function readHolder(value: unknown): PermissionHolder | null {
 export function readTracking(value: unknown): Tracking {
   const record = asRecord(value);
   const lastTool = record["last_tool"];
-  return {
+  const base: Tracking = {
     last_tool: typeof lastTool === "string" ? lastTool : null,
     permission: readHolder(record["permission"]),
   };
+  const raw = record["pending_spawns"];
+  const pending = Array.isArray(raw)
+    ? raw.filter((x): x is string | null => isStringOrNull(x)).slice(-PENDING_SPAWNS_MAX)
+    : [];
+  return pending.length === 0 ? base : { ...base, pending_spawns: pending };
 }
 
 /** The snapshot with its tracking replaced by readTracking(tracking). */

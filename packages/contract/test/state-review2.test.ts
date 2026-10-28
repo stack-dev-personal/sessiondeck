@@ -180,6 +180,8 @@ describe("finding 6: copied text and subagent rows are capped", () => {
     tokens: null,
     context_window: null,
     model: null,
+    parent_agent_id: null,
+    parent_known: false,
   });
   const rows = (n: number, endedIdx: readonly number[] = []): SubagentSnapshot[] =>
     Array.from({ length: n }, (_, i) => row(i, endedIdx.includes(i)));
