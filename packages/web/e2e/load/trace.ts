@@ -232,3 +232,178 @@ export function pipelineFrames(events: TraceEvent[], edgeMs = 100) {
     droppedAt,
   };
 }
+
+/* ------------------------------------------------------------------------------------------ */
+/* R6.4 drop attribution                                                                       */
+/* ------------------------------------------------------------------------------------------ */
+
+/** Main-thread work that is the page's own: script, layout and style, paint and commit, GC. */
+type WorkKind = "script" | "layout" | "paint" | "gc";
+const WORK: Record<string, WorkKind> = {
+  FireAnimationFrame: "script",
+  TimerFire: "script",
+  EventDispatch: "script",
+  FunctionCall: "script",
+  Layout: "layout",
+  UpdateLayoutTree: "layout",
+  RecalculateStyles: "layout",
+  "LocalFrameView::RunStyleAndLayoutLifecyclePhases": "layout",
+  "LocalFrameView::RunPrePaintLifecyclePhase": "paint",
+  "LocalFrameView::RunPaintLifecyclePhase": "paint",
+  PrePaint: "paint",
+  Paint: "paint",
+  Layerize: "paint",
+  Commit: "paint",
+  CullRectUpdate: "paint",
+};
+const workKind = (name: string): WorkKind | undefined =>
+  WORK[name] ?? (GC.test(name) ? "gc" : undefined);
+
+/** App work inside a frame gap or dropped frame at or above this many ms makes the drop the app's. */
+export const APP_WORK_MS = 8;
+
+/** Bounds of the measured window: the `console.timeStamp` marks the test puts in the trace. */
+export function markedWindow(
+  events: TraceEvent[],
+  start = "r64-start",
+  end = "r64-end",
+): [number, number] | null {
+  const at = (msg: string): number | undefined =>
+    events.find(
+      (e) =>
+        e.name === "TimeStamp" &&
+        ((e.args?.["data"] as { message?: string } | undefined)?.message ?? "") === msg,
+    )?.ts;
+  const a = at(start);
+  const b = at(end);
+  return a !== undefined && b !== undefined && b > a ? [a, b] : null;
+}
+
+export interface Drop {
+  kind: "raf-gap" | "compositor";
+  /** Start of the gap or frame, ms after the window start. */
+  atMs: number;
+  /** Length of the gap (raf-gap) or of the dropped frame (compositor), ms. */
+  lengthMs: number;
+  /** Renderer main-thread work inside it, ms (union of events, so nesting counts once). */
+  workMs: number;
+  byKind: Record<WorkKind, number>;
+  /** workMs >= the threshold: the page's own work filled the gap. */
+  app: boolean;
+}
+
+/**
+ * Splits every dropped frame in the window into the app's and the host's.
+ *
+ * Frames: gaps between consecutive `FireAnimationFrame` starts on the renderer main thread (the
+ * in-page rAF loop runs in each one). A gap longer than `factor` x the median gap is a drop.
+ * Compositor: every `PipelineReporter` frame whose state is STATE_DROPPED and that starts inside
+ * the window. For each drop the union of script, layout/style, paint/commit and GC events on the
+ * main thread inside the gap (or the frame's interval) is summed; `appWorkMs` or more means the
+ * main thread was busy with the app's own work (the app's drop), less means it was idle or waiting
+ * (the host's: a descheduled thread, a slow raster or GPU stall).
+ * `window` is the measured window in trace ts (see markedWindow); without it the whole trace.
+ */
+export function attributeDrops(
+  events: TraceEvent[],
+  opts: { window?: [number, number] | null; factor?: number; appWorkMs?: number } = {},
+) {
+  const factor = opts.factor ?? 1.5;
+  const limitUs = (opts.appWorkMs ?? APP_WORK_MS) * 1000;
+  const mains = mainThreadKeys(events);
+  const main = events.filter((e) => e.ph === "X" && mains.has(key(e)));
+  const t0 = opts.window?.[0] ?? -Infinity;
+  const t1 = opts.window?.[1] ?? Infinity;
+  const origin = opts.window?.[0] ?? main.reduce((m, e) => Math.min(m, e.ts), Infinity);
+
+  const work = main
+    .filter((e) => workKind(e.name) !== undefined && (e.dur ?? 0) > 0)
+    .map((e) => ({ a: e.ts, b: e.ts + (e.dur ?? 0), kind: workKind(e.name)! }));
+  const inside = (a: number, b: number) => {
+    const by: Record<WorkKind, [number, number][]> = { script: [], layout: [], paint: [], gc: [] };
+    const all: [number, number][] = [];
+    for (const w of work) {
+      if (w.b <= a || w.a >= b) continue;
+      const iv: [number, number] = [Math.max(w.a, a), Math.min(w.b, b)];
+      by[w.kind].push(iv);
+      all.push(iv);
+    }
+    const ms = (iv: [number, number][]) => r2(unionLength(iv) / 1000);
+    return {
+      workMs: ms(all),
+      byKind: { script: ms(by.script), layout: ms(by.layout), paint: ms(by.paint), gc: ms(by.gc) },
+    };
+  };
+
+  // rAF gaps. The first frame's predecessor is outside the window, so gaps start inside it.
+  const starts = main
+    .filter((e) => e.name === "FireAnimationFrame" && e.ts >= t0 && e.ts <= t1)
+    .map((e) => e.ts)
+    .sort((a, b) => a - b);
+  const gaps = starts.slice(1).map((s, i) => s - starts[i]!);
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const medianUs = sorted[Math.floor(sorted.length / 2)] ?? 0;
+  const drops: Drop[] = [];
+  gaps.forEach((g, i) => {
+    if (g <= factor * medianUs) return;
+    const a = starts[i]!;
+    drops.push({
+      kind: "raf-gap",
+      atMs: r2((a - origin) / 1000),
+      lengthMs: r2(g / 1000),
+      ...inside(a, a + g),
+      app: false,
+    });
+  });
+
+  // Compositor frames in STATE_DROPPED: pair each async begin with the next end of the same id.
+  const open = new Map<string, TraceEvent>();
+  let compositorFrames = 0;
+  for (const e of events) {
+    if (e.name !== "PipelineReporter") continue;
+    const id = `${e.pid}:${String((e as { id2?: { local?: string } }).id2?.local ?? "")}`;
+    if (e.ph === "b") {
+      open.set(id, e);
+      continue;
+    }
+    if (e.ph !== "e") continue;
+    const begin = open.get(id);
+    open.delete(id);
+    if (!begin || begin.ts < t0 || begin.ts > t1) continue;
+    const rep = (begin.args?.["frame_reporter"] ?? begin.args?.["chrome_frame_reporter"]) as
+      | { state?: string }
+      | undefined;
+    if (typeof rep?.state !== "string") continue;
+    compositorFrames++;
+    if (rep.state !== "STATE_DROPPED") continue;
+    drops.push({
+      kind: "compositor",
+      atMs: r2((begin.ts - origin) / 1000),
+      lengthMs: r2((e.ts - begin.ts) / 1000),
+      ...inside(begin.ts, e.ts),
+      app: false,
+    });
+  }
+  for (const d of drops) d.app = d.workMs * 1000 >= limitUs;
+  drops.sort((a, b) => a.atMs - b.atMs);
+
+  const rafGaps = drops.filter((d) => d.kind === "raf-gap");
+  const compositor = drops.filter((d) => d.kind === "compositor");
+  const other = drops.filter((d) => !d.app);
+  return {
+    frames: starts.length,
+    medianGapMs: r2(medianUs / 1000),
+    maxGapMs: r2((sorted[sorted.length - 1] ?? 0) / 1000),
+    compositorFrames,
+    rafGaps: rafGaps.length,
+    compositorDrops: compositor.length,
+    appDrops: drops.filter((d) => d.app).length,
+    otherDrops: other.length,
+    /** Longest rAF gap that is not the app's, in vsyncs (gap / median). */
+    maxOtherGapVsyncs: r2(
+      Math.max(0, ...other.filter((d) => d.kind === "raf-gap").map((d) => d.lengthMs)) /
+        (medianUs / 1000 || 1),
+    ),
+    drops,
+  };
+}
