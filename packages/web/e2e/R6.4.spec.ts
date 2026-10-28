@@ -562,9 +562,9 @@ test.describe("mock build, in-page delivery", () => {
       const load = createLoad({ hosts: ["h1", "h2"], sessions: 6 });
       const setup = [...load.setupBatch("h1"), ...load.setupBatch("h2")];
       const ids = load.sessions.map((s) => s.id);
-      // Seed: enough deltas that every log is past the cap before the first measurement (~3 rows per
-      // delta at most; 400 per session is generous), so the steady state trims on every update.
-      const seed = Array.from({ length: 400 * 6 }, (_, i) => load.nextFor(i % 6));
+      // Seed: enough deltas that every log is past the cap before the first measurement (measured:
+      // about one row per delta, so 700 per session), so the steady state trims on every update.
+      const seed = Array.from({ length: 700 * 6 }, (_, i) => load.nextFor(i % 6));
       // The schedule is sized from the run: warm-up + primer + windows, never replayed.
       const totalMs =
         WARMUP_MS + PRIMER_MS + c.modes.length * (WINDOW_MS + WINDOW_OVERHEAD_MS) + 30_000;
