@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { access, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, type Page } from "@playwright/test";
 
@@ -98,3 +99,51 @@ export async function waitConnected(page: Page): Promise<void> {
 
 export const card = (page: Page, id: string) =>
   page.locator(`[data-testid="session-card"][data-session-id="${id}"]`);
+
+/** Directory inside this container that scripts/e2e-live.sh checks with `docker exec`; no shared mount, no Docker socket. */
+export const HUB_RESTART_DIR = process.env["SD_E2E_RESTART_DIR"] ?? "";
+
+/**
+ * Restarts the hub process (container restart, same data volume). The Playwright container has no
+ * Docker access: this creates restart.req in HUB_RESTART_DIR and waits for restart.ack, which the host-side
+ * poller in scripts/e2e-live.sh creates (via docker exec) after `docker restart` of the hub container, then waits for
+ * /health.
+ */
+export async function restartHub(): Promise<void> {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const req = `${HUB_RESTART_DIR}/restart.req`;
+  const ack = `${HUB_RESTART_DIR}/restart.ack`;
+  await rm(ack, { force: true });
+  await writeFile(req, id);
+  const ackDeadline = Date.now() + 60_000;
+  for (;;) {
+    try {
+      await access(ack);
+      break;
+    } catch {
+      /* not yet */
+    }
+    if (Date.now() > ackDeadline)
+      throw new Error("host did not acknowledge the hub restart in 60 s");
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      if ((await fetch(`${LIVE.directUrl}/health`)).ok) return;
+    } catch {
+      /* still down */
+    }
+    if (Date.now() > deadline) throw new Error("hub did not come back within 30 s");
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/** Authenticated GET against the hub itself (not through the gate). */
+export async function hubJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${LIVE.directUrl}${path}`, {
+    headers: { authorization: `Bearer ${LIVE.token}` },
+  });
+  if (!res.ok) throw new Error(`GET ${path}: ${res.status}`);
+  return (await res.json()) as T;
+}

@@ -4,6 +4,7 @@ import { displayNameOf, projectOf } from "../lib/attention";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
 import { Meter, MeterValue, metersFor } from "./Meter";
+import { ProjectSwatch } from "./ProjectSwatch";
 import { StateChip } from "./StateChip";
 
 export const MAX_DOTS = 5;
@@ -164,6 +165,8 @@ function SessionCardImpl({
     ? `${shortModel(s.model.display_name)}${s.effort ? `·${s.effort}` : ""}`
     : "n/a";
   const wt = s.git.worktree;
+  const color = (s as { project_color?: string | null }).project_color;
+  const swatch = color ? <ProjectSwatch color={color} className="mr-s-1" /> : null;
   const where = `${project} · ${s.git.branch ?? "n/a"}${wt && wt !== project ? ` (${wt})` : ""}`;
   return (
     <article
@@ -198,6 +201,7 @@ function SessionCardImpl({
           title={where}
           className="num min-w-0 shrink-[8] truncate text-fg-muted"
         >
+          {swatch}
           {where}
         </span>
       </div>
@@ -305,6 +309,12 @@ function CompactCardImpl({
         <span className="text-xs">{vocab.label}</span>
       </span>
       <span data-slot="name" className="min-w-0 flex-1 truncate">
+        {(s as { project_color?: string | null }).project_color ? (
+          <ProjectSwatch
+            color={(s as { project_color?: string | null }).project_color}
+            className="mr-s-1"
+          />
+        ) : null}
         <span className="num text-fg-muted">{project}</span> · {s.session_name ? `"${name}"` : name}
       </span>
       {meters.map((m) => (

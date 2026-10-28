@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command for the live e2e: builds the hub image, starts hub + ws-gate + Playwright containers
-# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
+# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9, R5.5-live, R5.4-live with real hub CORS and a hub restart through the host-side poller; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
 # screenshots, removes everything.
 #
 #   packages/web/scripts/e2e-live.sh
@@ -13,8 +13,16 @@
 #   SD_E2E_SKIP_PERF    1 skips R3.6 (the 40 s load and trace run) for quick runs
 #   SD_E2E_WORK_VOLUME  docker volume that holds the checkout at its path (sprint container: sprint-1-work mounted at /work).
 #                       Unset: the checkout is bind-mounted, which needs a host-visible path (CI, local).
+#
+# Hardening: the Playwright container is root on a rw mount of the checkout, so (1) the whole script is one function
+# called on the last line, so bash has parsed every byte before `docker run` and in-place edits of this file are not
+# executed; (2) the restart channel is not a shared file or mount: the host only runs `docker exec <pw> test -e` (exit
+# code only) and `touch`, never reads or writes container-controlled host paths. Residual risk: the checkout is still
+# mounted rw (work-volume mode cannot mount sub-paths read-only), so a container can plant files (.git/hooks,
+# node_modules/.bin) that later host-side tooling in the same checkout might run; review the tree after a run.
 set -euo pipefail
 
+main() {
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 P="${SD_E2E_PREFIX:-sd-1-S6}"
 NET="$P-net"; HUB="$P-hub"; GATE="$P-gate"; PW="$P-pw"
@@ -30,10 +38,12 @@ fi
 TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 ENVDIR=""
+POLLER=""
 cleanup() {
   docker rm -f "$PW" "$GATE" "$HUB" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   docker image rm "$IMG" >/dev/null 2>&1 || true
+  [ -z "$POLLER" ] || kill "$POLLER" >/dev/null 2>&1 || true
   [ -z "$ENVDIR" ] || rm -rf "$ENVDIR"
 }
 trap cleanup EXIT
@@ -47,7 +57,8 @@ chmod 700 "$ENVDIR"
   printf 'SD_E2E_HUB_TOKEN=%s\n' "$TOKEN" > "$ENVDIR/pw.env" )
 
 docker build -q -f "$ROOT/packages/hub/Dockerfile" -t "$IMG" "$ROOT" >/dev/null
-docker network create "$NET" >/dev/null
+# --internal: no egress from the test network (images are built/pulled above; nothing in the run needs it).
+docker network create --internal "$NET" >/dev/null
 
 docker run -d --name "$HUB" --network "$NET" \
   --env-file "$ENVDIR/hub.env" \
@@ -63,19 +74,38 @@ docker create --name "$GATE" --network "$NET" -e UPSTREAM="$HUB:8787" \
 docker cp "$ROOT/packages/web/scripts/ws-gate.mjs" "$GATE:/gate.mjs"
 docker start "$GATE" >/dev/null
 
-# Mount: the checkout (node_modules, build output, specs) is read-write because Playwright writes dist/
+# Mount: no Docker socket anywhere. The checkout (node_modules, build output, specs) is read-write because Playwright writes dist/
 # and e2e/__screenshots__. With a work volume the whole volume is mounted (the sprint container keeps
 # every checkout there); that is the documented exception. --shm-size replaces --ipc=host (Chromium
 # needs more than Docker's default 64 MB of shared memory, not the host IPC namespace).
 if [ -n "${SD_E2E_WORK_VOLUME:-}" ]; then MOUNT=(-v "$SD_E2E_WORK_VOLUME:/work"); else MOUNT=(-v "$ROOT:$ROOT"); fi
 
-set +e
-docker run --name "$PW" --network "$NET" --shm-size=1g "${MOUNT[@]}" -w "$ROOT/packages/web" \
+docker create --name "$PW" --network "$NET" --shm-size=1g "${MOUNT[@]}" -w "$ROOT/packages/web" \
   -e HOME=/root -e CI=1 -e SCREENS_DIR=/tmp/screens \
   -e SD_E2E_HUB_URL="http://$GATE:8787" -e SD_E2E_HUB_DIRECT_URL="http://$HUB:8787" \
+  -e SD_E2E_RESTART_DIR=/tmp/sd-req \
   -e SD_E2E_GATE_URL="http://$GATE:9000" -e SD_E2E_SKIP_PERF="${SD_E2E_SKIP_PERF:-}" -e SD_E2E_ARGS="${SD_E2E_ARGS:-}" --env-file "$ENVDIR/pw.env" \
-  "$PW_IMG" sh -c 'node node_modules/@playwright/test/cli.js test $SD_E2E_ARGS; rc=$?; chown -R '"$(id -u):$(id -g)"' dist e2e /tmp/screens /tmp/sd-pw-results 2>/dev/null; exit $rc'
-rc=$?
+  "$PW_IMG" sh -c 'mkdir -p /tmp/sd-req; node node_modules/@playwright/test/cli.js test $SD_E2E_ARGS; rc=$?; chown -R '"$(id -u):$(id -g)"' dist e2e /tmp/screens /tmp/sd-pw-results 2>/dev/null; exit $rc'
+docker start "$PW" >/dev/null
+# Hub restart for R5.5-live without the Docker socket and without any host path shared with the container.
+# The spec creates /tmp/sd-req/restart.req inside its own container; this host-side poller asks the container
+# only for an exit code, never reads the request, restarts exactly "$HUB", then creates a constant
+# /tmp/sd-req/restart.ack inside the container. Bounded to 25 min, killed on EXIT.
+(
+  end=$((SECONDS + 1500))
+  while [ "$SECONDS" -lt "$end" ]; do
+    if docker exec "$PW" sh -c 'test -f /tmp/sd-req/restart.req && ! test -L /tmp/sd-req/restart.req' >/dev/null 2>&1; then
+      docker exec "$PW" rm -f /tmp/sd-req/restart.req >/dev/null 2>&1 || true
+      docker restart -t 2 "$HUB" >/dev/null 2>&1 || true
+      docker exec "$PW" sh -c ': > /tmp/sd-req/restart.ack' >/dev/null 2>&1 || true
+    fi
+    sleep 0.3
+  done
+) &
+POLLER=$!
+set +e
+docker logs -f "$PW"
+rc=$(docker wait "$PW")
 set -e
 
 mkdir -p "$OUT"
@@ -87,3 +117,7 @@ if [ -n "$RESULTS_OUT" ]; then
   echo "results: $RESULTS_OUT"
 fi
 exit "$rc"
+
+}
+main "$@"
+exit $?

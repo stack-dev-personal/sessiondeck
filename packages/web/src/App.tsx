@@ -1,11 +1,15 @@
 import { Suspense, lazy, useMemo } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { CommandPalette } from "./components/CommandPalette";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DrawerHost } from "./components/DrawerHost";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
 import { Board } from "./routes/Board";
+import { ProjectView } from "./routes/ProjectView";
+import { Projects } from "./routes/Projects";
+import { SessionList } from "./routes/SessionList";
 import { Settings } from "./routes/Settings";
 import { useUi } from "./store/ui";
 
@@ -31,6 +35,9 @@ export function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/board" replace />} />
             <Route path="/board" element={<Board />} />
+            <Route path="/projects" element={<Projects />} />
+            <Route path="/projects/:id" element={<ProjectView />} />
+            <Route path="/sessions" element={<SessionList />} />
             <Route path="/settings" element={<Settings />} />
             {DevCards ? (
               <Route
@@ -49,6 +56,9 @@ export function App() {
       <ConnectionBanner />
       <ErrorBoundary>
         <DrawerHost />
+      </ErrorBoundary>
+      <ErrorBoundary>
+        <CommandPalette />
       </ErrorBoundary>
     </div>
   );

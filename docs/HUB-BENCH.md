@@ -139,3 +139,120 @@ Command: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --
 | orchestrator 3 | dbb1e33 | 11.34 | 22.54 | 36.80 | 54.74 | FAIL |
 
 `git log 0e321fe..HEAD -- packages/hub packages/contract` is empty and hub's resolved dependencies are identical, so there is no regression versus 0e321fe; the failures are host contention. Earlier clean-host runs in this file passed (p95 10.91 to 12.89 ms). Verdict for FIX-5: R2.4 fail on this host, needs-laptop-confirmation. Raw: /state/1/gate/FIX-5/verify-load-HEAD.txt, f3-load-*.log.
+
+## Search (R5.4)
+
+Requirement: search returns in < 100 ms for your data size. Threshold: p95 < 100 ms at the route, overall AND for every query class.
+
+Fix round 1 (2026-10-27) changes: a final token shorter than 2 characters is no longer prefix-matched (a lone 1-character query returns recent items), `snippet()` is computed only for the top `limit` rows after ranking, and the corpus now has English-like Zipf (s = 1) frequencies with real stopwords (the, to, a, of, test, fix, file ...) at the top ranks over a 3,000-word vocabulary, so common words occur in nearly every document. Same data size as before: 2,000 sessions (300 archived) over 50 projects, 2,336 documents, SQLite file in the temp directory. 400 queries in 11 classes (40 each; phase and empty 20 each): prefix (3 letters), word, multi (2 words), no-hit, multi-prefix, char1 (t, a, s, f, c, p, i, e), common-word (the, to, a, test, fix, file, of, and), stop-prefix (th, te, to, fi, fu, se, co, an), common-multi (two common words plus a letter), phase, empty. Timed through `GET /search` via `fastify.inject`; the store column is reported, not asserted.
+
+Command: `pnpm -F @sessiondeck/hub bench:search`; asserted (route overall and every class p95 < 100 ms) by `test/search.R5.4.bench.test.ts`, which runs only under `pnpm -F @sessiondeck/hub test:bench`.
+
+Machine: Linux WSL2 6.18.33.2, AMD Ryzen AI 9 465, node v22.23.3; shared host, load average 1 to 2 during the runs.
+
+Route p95 ms per class (p50 in brackets), three runs:
+
+| Class | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| overall | 20.09 (4.32) | 15.96 (3.80) | 19.15 (4.12) |
+| prefix | 20.70 (13.08) | 16.01 (11.38) | 20.92 (10.92) |
+| word | 22.51 (7.44) | 16.57 (6.84) | 19.27 (7.70) |
+| multi | 21.26 (3.55) | 14.97 (3.50) | 20.78 (3.95) |
+| no-hit | 1.48 (1.03) | 1.61 (0.99) | 1.52 (1.00) |
+| multi-prefix | 23.83 (3.34) | 15.95 (3.16) | 19.80 (3.21) |
+| char1 | 6.54 (3.91) | 5.35 (3.55) | 5.18 (4.00) |
+| common-word | 19.65 (12.50) | 17.70 (11.09) | 15.72 (12.72) |
+| stop-prefix | 21.54 (15.47) | 20.46 (14.55) | 20.80 (17.19) |
+| common-multi | 14.32 (1.31) | 14.05 (1.23) | 12.56 (1.36) |
+| phase | 3.14 (1.56) | 1.94 (1.41) | 4.14 (1.54) |
+| empty | 5.34 (4.07) | 9.10 (3.65) | 5.27 (3.77) |
+
+Store p95 (not asserted): 20.71, 18.03, 20.12 ms; max route 29.37 ms. Verdict: R5.4 latency PASS, worst class p95 about 24 ms, about 4x headroom. The reviewer's first-keystroke case (`t` over common-word text) was 101 ms p50 with the old query; it is now a recent-items lookup (char1 class p95 about 6 ms, which includes the 1-character queries and recent-items path).
+
+Index cost on ingest: an upsert whose snapshot is byte-identical (and project unchanged) now returns before any parse, hash or probe (it was about 43 microseconds per session per batch); a changed snapshot parses once and rewrites the document only when its indexed text changed.
+
+Load bench after this round (`pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --p95-limit 20`, 2026-10-27, HEAD plus this change): p95 82.07 ms, then 352.84 ms (host load average 1.3 to 1.8). Both FAIL the 20 ms limit, and the figure is contention-dominated, not attributable to this change: an A/B on the same code with indexing short-circuited (temporary env switch, since removed) versus normal gave p95 72, 33 (index off) against 51, 68 (index on) at 40 s each, host load average 1 to 5. The same R2.4 FAIL-on-contended-host pattern is recorded under FIX-5 above (22 to 164 ms on identical commits). R2.4 therefore still needs a quiet-host or laptop confirmation; this round did not obtain a clean run in this container.
+
+### Superseded run (2026-10-27, before fix round 1)
+
+Requirement: search returns in < 100 ms for your data size. Threshold: p95 < 100 ms at the route.
+
+Data: 2,000 sessions (about 300 archived harness captures plus live history, x6 margin on the expected size) over 50 projects, 2,336 search documents (sessions, projects, phases), on a SQLite file in the temp directory. The contract fixtures carry scrubbed text (`<TEXT 1792>`), so texts are generated deterministically from a 3,000-word vocabulary at the fixture sizes (names of 3 to 6 words, prompts of about 200 characters, last assistant messages of about 1,800 characters, archived outcomes of 300). 200 queries: prefix (3 letters), single word, two words, two words plus a 2-letter prefix, no-hit, phase label, empty (recent). Each is timed through `GET /search` with `fastify.inject` (auth, rate limiter, zod, route, serialization) and again at `Store.search`; 20 warm-up queries first. The route runs each query before the store does, so the store column carries the first-touch page cost and is not faster than the route column.
+
+Command: `pnpm -F @sessiondeck/hub bench:search` (equivalently `node packages/hub/scripts/bench-search.mjs`); the same run is asserted by `test/search.R5.4.bench.test.ts` (`test:bench` only).
+
+Machine: Linux a931702caf2a 6.18.33.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026 x86_64; AMD Ryzen AI 9 465 w/ Radeon 880M; node v22.23.3; shared host, load average 1.7 at the time.
+
+| Run | Route p50 ms | Route p95 ms | Route max ms | Store p50 ms | Store p95 ms | Store max ms |
+|---|---|---|---|---|---|---|
+| 1 | 3.47 | 21.19 | 38.30 | 1.80 | 23.58 | 42.93 |
+| 2 | 3.16 | 19.54 | 33.95 | 1.89 | 25.71 | 30.12 |
+| 3 | 2.33 | 14.03 | 22.01 | 1.23 | 16.69 | 24.76 |
+
+Slowest class is the 3-letter prefix (p50 about 20 ms, p95 about 35 ms at the route): it matches many documents and builds a snippet from each candidate. Everything else is under 25 ms at p95. Verdict: R5.4 latency PASS with about 5x headroom against the 100 ms limit. Index cost on ingest: a session's index entry is written only when its indexed text changed.
+
+## R2.4 A/B (S9)
+
+2026-10-27. Question: does the Phase 5 hub work (head 7facd61, atlas + FTS5 indexing) regress R2.4 ingest load against the base `origin/sprint/3-organize` (cde5b02)?
+
+Machine: Linux 6.18.33.2-microsoft-standard-WSL2, AMD Ryzen AI 9 465 w/ Radeon 880M, 20 logical CPUs, node v22.23.3. Shared host; nothing else started by this session during the runs.
+
+Method: throwaway detached worktree of the base, alternated base, head, base, head, base, head, 60 s each, `node scripts/load-ingest.mjs --rate 1000 --duration 60 --batch 100 --p95-limit 20` run from `packages/hub` of each tree (this is what `pnpm -F @sessiondeck/hub load` runs). Deviations: `pnpm install --frozen-lockfile --offline` failed in the base (binary-extensions@2.3.0 not in the offline store), and pnpm refuses to run in a tree whose node_modules is a symlink. The base therefore used symlinked node_modules from the head checkout (pnpm-lock.yaml and all package.json dependencies are identical between base and head except a hub package.json edit of 3 lines) and was invoked via `node` directly. The script builds from its own root, so each side ran its own hub source. A first attempt of 6 runs (head only valid, base refused to start) was discarded.
+
+| Run | Tree | p50 ms | p95 ms | p99 ms | max ms | envelopes/s | loadavg (1/5/15) before |
+|---|---|---|---|---|---|---|---|
+| 1 | base | 17.00 | 45.81 | 62.24 | 72.83 | 1001 | 1.81 2.52 2.34 |
+| 2 | head | 24.82 | 73.39 | 106.66 | 192.49 | 1001 | 1.74 2.32 2.28 |
+| 3 | base | 16.96 | 39.94 | 64.18 | 158.15 | 1001 | 2.98 2.58 2.37 |
+| 4 | head | 32.55 | 80.36 | 130.19 | 304.93 | 1001 | 2.58 2.52 2.37 |
+| 5 | base | 21.03 | 53.26 | 71.17 | 146.81 | 1001 | 3.68 2.89 2.51 |
+| 6 | head | 25.14 | 83.61 | 145.65 | 397.79 | 1001 | 2.99 2.83 2.52 |
+
+Summary: base p95 39.94 to 53.26 (mean 46.3); head p95 73.39 to 83.61 (mean 79.1). Distributions do not overlap; head is about 1.7x base at p95, with the same ordering at p50 and p99. Every run on both sides FAILS the 20 ms limit, so the host is contended (as in FIX-5), but the head is consistently worse than the base under the same conditions.
+
+Conclusion: regression. The head is consistently worse than the base beyond run-to-run noise, most likely the per-ingest atlas/search indexing added in packages/hub/src/ingest/ingestor.ts. Absolute R2.4 pass still needs a quiet-host or laptop run. Caveat: n=3 per side, load average rose during the sequence for both sides.
+
+## R2.4 A/B after U2b (S9)
+
+2026-10-27. Fix for the regression above. Same machine and method as "R2.4 A/B (S9)" (throwaway detached worktree of `origin/sprint/3-organize` with symlinked node_modules, `node scripts/load-ingest.mjs --rate 1000 --duration 60 --batch 100 --p95-limit 20` run directly in each tree's `packages/hub`, 60 s runs, alternated). The host was busier than during the first A/B (other sessions running; loadavg 1.4 to 6.4), which raises both sides.
+
+Profile (20 s run, 1000 env/s, 1973 session upserts, time spent inside `Store.upsertSession` in the ingest transaction):
+
+| | upsertSession total | of which indexSession | of which reindexProjectPhases |
+|---|---|---|---|
+| before (693cd07) | 2923 ms | 2273 ms (putDoc 363 ms) | 1682 ms in 649 calls (2.6 ms each, a re-parse of every session in the project) |
+| after | 314 ms | n/a (deferred) | n/a (once per project per flush, only on phase or project change) |
+
+The deferred work runs in 92 flushes totalling 453 ms (about 5 ms each, outside the ingest transaction). Dominant cost was the per-change project phase re-derivation, not the FTS5 writes themselves.
+
+| Run | Tree | p50 ms | p95 ms | p99 ms | max ms | loadavg (1) before |
+|---|---|---|---|---|---|---|
+| 1 | base | 41.14 | 129.85 | 310.27 | 580.97 | 3.71 |
+| 2 | head | 14.64 | 23.29 | 42.68 | 67.47 | 3.17 |
+| 3 | base | 14.91 | 22.71 | 39.19 | 76.36 | 1.41 |
+| 4 | head | 17.38 | 44.23 | 75.73 | 129.33 | 1.46 |
+| 5 | base | 15.53 | 38.00 | 47.32 | 78.84 | 2.79 |
+| 6 | head | 26.23 | 58.45 | 74.00 | 112.92 | 1.71 |
+| 7 | head | 17.17 | 41.28 | 63.86 | 111.10 | 6.42 |
+| 8 | base | 17.94 | 59.79 | 96.67 | 418.65 | 3.88 |
+| 9 | head | 39.26 | 72.49 | 127.33 | 284.47 | 6.17 |
+| 10 | base | 39.73 | 78.23 | 178.35 | 282.73 | 4.00 |
+| 11 | head | 36.34 | 136.66 | 395.98 | 655.35 | 5.06 |
+| 12 | base | 24.66 | 47.89 | 59.01 | 65.95 | 3.49 |
+
+Summary: head p95 23.29 to 136.66 (median 51.34, n=6); base p95 22.71 to 129.85 (median 53.84, n=6). The distributions overlap completely (before: head 73 to 84 vs base 40 to 53, disjoint). With this spread and n=6 the A/B alone has little power; the profile above (upsertSession 2923 -> 314 ms over the same 20 s load) is the main evidence, and the A/B is only a consistency check that nothing regressed beyond noise. Every run on both sides still fails the 20 ms limit, so absolute R2.4 pass still needs a quiet host or the laptop run; this section shows only that the atlas/search work no longer costs ingest latency beyond noise.
+
+Search after the change (`node scripts/bench-search.mjs`, 2000 sessions, 50 projects, 2336 docs): route p50 5.56, p95 20.57, max 30.05 ms; worst class common-multi p95 26.63 ms (limit 100 ms).
+
+### After fix round 1 (durable dirty flag)
+
+The pending-index flag moved from memory to `sessions.search_dirty` (migration 8), set by the same UPSERT statement (no extra statement per session). Re-profiled the same way (20 s, 1000 env/s, temporary timer around `Store.upsertSession`, removed afterwards): upsertSession total 341.8 ms over 1976 calls (was 314 ms over 1973 before the flag; the difference is within run-to-run noise on this shared host, and the 2923 ms starting point is unchanged in order of magnitude). That run's batch p95 was 66 ms on the contended host (limit 20 ms, same caveat as above).
+
+### How R5.4 is proven (test split, 2026-10-27)
+
+The hard p95 threshold is not part of the default `pnpm -F @sessiondeck/hub test` run: on a loaded host (loadavg about 10 on 20 cores) the same code measured 107 to 111 ms for single classes and failed intermittently. The default suite keeps `test/search.R5.4.smoke.test.ts` (small corpus, correct results, timing printed, only a 1000 ms ceiling). The proof commands are:
+
+- `pnpm -F @sessiondeck/hub test:bench` (vitest, `vitest.bench.config.ts`, `*.bench.test.ts` only, `--no-file-parallelism`), and
+- `node packages/hub/scripts/bench-search.mjs` (CLI; exits non-zero if the route p95 or any class p95 is >= 100 ms).
+
+The threshold must be measured on a non-contended host (check `uptime` first); a figure taken under load says nothing about the code.

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 export const MARKER = "fef17e22-168c-4fef-8964-9af573b7f2e9";
 export const HOOK = "__sd";
+/** Marker string of the atlas mock (src/mock/atlas.ts); must not ship in real builds. */
+export const ATLAS_MOCK = "sd-mock-atlas-v1";
 
 /** Pure: returns the list of problems for a mode given the bundle text. Empty means pass. */
 export function problems(text, mode) {
@@ -15,6 +17,7 @@ export function problems(text, mode) {
   if (mode === "nomock") {
     if (marker) out.push("fixture marker present in nomock bundle");
     if (hook) out.push(`${HOOK} test hook present in nomock bundle`);
+    if (text.includes(ATLAS_MOCK)) out.push("atlas mock marker present in nomock bundle");
   }
   if (mode === "mock" && !marker) out.push("fixture marker absent from mock bundle");
   return out;

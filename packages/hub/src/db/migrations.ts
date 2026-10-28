@@ -82,4 +82,53 @@ DROP INDEX events_signature_ts;
 DROP INDEX events_session_ts;
 `,
   },
+  {
+    version: 6,
+    name: "atlas_projects_phases",
+    // R5.1, R5.5. Each session carries exactly one project_id (inferred on ingest, or the manual
+    // override). Manual choices live in session_overrides, outside sessions, so `hub replay`
+    // (which deletes and rebuilds sessions) cannot lose them; upsertSession re-applies them.
+    // sessions.phase_label is the materialized manual phase. projects gains a stable short id.
+    // Existing rows are backfilled by Store.migrate (path inference is code, not SQL).
+    sql: `
+ALTER TABLE projects ADD COLUMN id TEXT;
+ALTER TABLE projects ADD COLUMN created_at BIGINT;
+CREATE UNIQUE INDEX projects_id ON projects(id);
+ALTER TABLE sessions ADD COLUMN project_id TEXT;
+ALTER TABLE sessions ADD COLUMN phase_label TEXT;
+CREATE INDEX sessions_project ON sessions(project_id, state);
+CREATE TABLE session_overrides (session_id TEXT PRIMARY KEY, project_id TEXT, phase TEXT, updated_at BIGINT NOT NULL);
+`,
+  },
+  {
+    version: 7,
+    name: "search_fts",
+    // R5.4. FTS5 is SQLite-only: the Postgres twin of this file (Phase 7, same number) uses a
+    // tsvector column with a GIN index. search_docs maps (kind, ref_id) to the FTS rowid so a row is
+    // replaced by rowid, never by a scan; hash is the digest of the indexed text, so the ingest hot
+    // path writes the index only when that text changed. Stored rows are filled by Store.migrate
+    // (the text is derived from snapshots in code, like the project backfill).
+    sql: `
+CREATE TABLE search_docs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, ref_id TEXT NOT NULL, project_id TEXT, hash TEXT NOT NULL);
+CREATE UNIQUE INDEX search_docs_ref ON search_docs(kind, ref_id);
+CREATE VIRTUAL TABLE search_fts USING fts5(
+  kind UNINDEXED, ref_id UNINDEXED, project_id UNINDEXED, title, body,
+  tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3');
+CREATE INDEX sessions_last_event ON sessions(last_event_at);
+`,
+  },
+  {
+    version: 8,
+    name: "search_dirty",
+    // R5.4. Search indexing is deferred off the ingest transaction. The upsert sets
+    // sessions.search_dirty = 1 in the same statement (no extra write); the flush clears it, and
+    // the next open indexes every flagged row, so a crash between commit and flush loses nothing.
+    // The partial index keeps "find dirty rows" a probe. Valid on SQLite and Postgres.
+    sql: `
+ALTER TABLE sessions ADD COLUMN search_dirty INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX sessions_search_dirty ON sessions(session_id) WHERE search_dirty = 1;
+-- Entries left stale by the earlier in-memory pending design are repaired on the next open (unchanged text is skipped by digest).
+UPDATE sessions SET search_dirty = 1;
+`,
+  },
 ];

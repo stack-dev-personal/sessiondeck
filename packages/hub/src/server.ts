@@ -10,6 +10,8 @@ import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
+import { registerAtlas } from "./routes/atlas.ts";
+import { registerSearch } from "./routes/search.ts";
 import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
@@ -104,6 +106,40 @@ export function buildServer(opts: {
     16,
     now,
   );
+  // CORS for the web app's REST calls when it is served from another origin. Driven by
+  // HUB_ALLOWED_ORIGINS (exact match, never "*"). Unlike the WS check, an empty list means no CORS
+  // headers at all (same-origin only), not "accept any". /ingest is never exposed to browsers.
+  // Bearer header, not cookies: no Allow-Credentials.
+  const corsOrigins = new Set(opts.config.allowedOrigins);
+  const corsOriginOf = (req: FastifyRequest): string | null => {
+    const o = req.headers.origin;
+    if (typeof o !== "string" || !corsOrigins.has(o)) return null;
+    if (req.url.split("?")[0] === "/ingest") return null;
+    return o;
+  };
+  const preflightLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 1024, now);
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.method !== "OPTIONS" || req.headers["access-control-request-method"] === undefined)
+      return;
+    const origin = corsOriginOf(req);
+    if (origin === null) return; // falls through to the bearer hook: 401, no CORS headers
+    if (!preflightLimiter.take(req.ip, 1)) {
+      return reply.code(429).header("content-length", "0").send();
+    }
+    return reply
+      .code(204)
+      .header("access-control-allow-origin", origin)
+      .header("access-control-allow-methods", "GET, PATCH")
+      .header("access-control-allow-headers", "authorization, content-type")
+      .header("access-control-max-age", "600")
+      .send();
+  });
+  app.addHook("onSend", async (req, reply, payload) => {
+    reply.header("vary", "Origin");
+    const origin = corsOriginOf(req);
+    if (origin !== null) reply.header("access-control-allow-origin", origin);
+    return payload;
+  });
   app.addHook("onRequest", async (req, reply) => {
     if ((req.method === "GET" || req.method === "HEAD") && req.url.split("?")[0] === "/health")
       return;
@@ -116,7 +152,11 @@ export function buildServer(opts: {
     if (req.method === "POST" && req.url.split("?")[0] === "/ingest") {
       reply.raw.once("close", activity.begin());
     }
-    if ((req.method === "GET" || req.method === "HEAD") && !readLimiter.take(principal, 1)) {
+    // PATCH (atlas edits) shares the read bucket: no separate write bucket for a handful of routes.
+    if (
+      (req.method === "GET" || req.method === "HEAD" || req.method === "PATCH") &&
+      !readLimiter.take(principal, 1)
+    ) {
       return reply.code(429).header("content-length", "0").send();
     }
     if (
@@ -134,6 +174,11 @@ export function buildServer(opts: {
 
   app.get("/health", async () => ({ ok: true }));
 
+  opts.store.onSearchFlushError = (err) =>
+    app.log.error(
+      { err: err instanceof Error ? err.message : "error" },
+      "search index flush failed",
+    );
   const ingestor = new Ingestor(opts.store, app.log, now, {
     maxOpenSessionsPerHost: opts.config.maxOpenSessionsPerHost,
   });
@@ -158,12 +203,20 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
-  registerCost(
+  const pricing = opts.pricing ?? new PricingProvider(bundledTable());
+  const usage = registerCost(app, opts.store, pricing, opts.config.timezone);
+  // Same global bearer hook as every other route: PATCH needs the ingest token.
+  registerAtlas(
     app,
     opts.store,
-    opts.pricing ?? new PricingProvider(bundledTable()),
+    now,
+    usage,
+    pricing,
     opts.config.timezone,
+    ingestor.events,
+    app.log,
   );
+  registerSearch(app, opts.store);
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,

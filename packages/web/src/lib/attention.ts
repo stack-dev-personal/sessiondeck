@@ -6,8 +6,13 @@ export function isAttentionState(state: SessionState): boolean {
   return state === "waiting_permission" || state === "waiting_input";
 }
 
-/** Project name shown on the card and used by the project filter: project_dir, else cwd, else id. */
+/**
+ * Project name shown on the card and used by the project filter: the hub's project name (worktrees
+ * roll up to the repo, manual reassignment wins), else project_dir, else cwd, else id.
+ */
 export function projectOf(s: SessionSnapshot): string {
+  const named = (s as { project_name?: unknown }).project_name;
+  if (typeof named === "string" && named !== "") return named;
   return basename(s.project_dir) ?? basename(s.cwd) ?? s.session_id;
 }
 

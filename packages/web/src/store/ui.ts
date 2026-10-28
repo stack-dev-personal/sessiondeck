@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from "@sessiondeck/contract";
 import { create } from "zustand";
 import { readStored, STORAGE_KEYS, writeStored } from "../lib/storage";
 
@@ -54,7 +55,12 @@ export interface UiState {
   settings: Settings;
   /** Session whose detail drawer is open; null when closed. Not persisted. */
   selectedSessionId: string | null;
-  openSession: (id: string) => void;
+  /** Snapshot for a session the board does not hold (ended long ago, from GET /sessions). */
+  fallbackSession: SessionSnapshot | null;
+  /** Command palette (Ctrl+K) is open. Board and list keys are off while it is. */
+  paletteOpen: boolean;
+  setPaletteOpen: (open: boolean) => void;
+  openSession: (id: string, fallback?: SessionSnapshot) => void;
   closeSession: () => void;
   toggleTheme: () => void;
   toggleCompact: () => void;
@@ -66,8 +72,11 @@ export const useUi = create<UiState>()((set, get) => ({
   compact: readStored(STORAGE_KEYS.compact) === "1",
   settings: loadSettings(),
   selectedSessionId: null,
-  openSession: (id) => set({ selectedSessionId: id }),
-  closeSession: () => set({ selectedSessionId: null }),
+  fallbackSession: null,
+  paletteOpen: false,
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  openSession: (id, fallback) => set({ selectedSessionId: id, fallbackSession: fallback ?? null }),
+  closeSession: () => set({ selectedSessionId: null, fallbackSession: null }),
   toggleTheme: () => {
     const theme: Theme = get().theme === "dark" ? "light" : "dark";
     writeStored(STORAGE_KEYS.theme, theme);

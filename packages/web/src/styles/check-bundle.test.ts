@@ -15,6 +15,11 @@ describe("check-bundle problems()", () => {
       "__sd test hook present in nomock bundle",
     ]);
   });
+  it("nomock fails when the atlas mock leaks", () => {
+    expect(cb.problems(`x="${cb.ATLAS_MOCK}"`, "nomock")).toEqual([
+      "atlas mock marker present in nomock bundle",
+    ]);
+  });
   it("mock requires the marker", () => {
     expect(cb.problems("var a=1;", "mock")).toHaveLength(1);
     expect(cb.problems(cb.MARKER, "mock")).toEqual([]);

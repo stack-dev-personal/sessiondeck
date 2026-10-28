@@ -1,5 +1,6 @@
 import type { BoardState } from "../store/board";
 import type { StoreApi, UseBoundStore } from "zustand";
+import { installMockAtlas } from "./atlas";
 import { playTimeline } from "./player";
 import { buildMockTimeline } from "./timeline";
 
@@ -25,7 +26,8 @@ export function startMock(store: UseBoundStore<StoreApi<BoardState>>): () => voi
   const root = document.documentElement;
   setConnection("mock");
   root.dataset["replay"] = "running";
-  return playTimeline(buildMockTimeline(Date.now()), enqueue, {
+  const stopAtlas = installMockAtlas(store);
+  const stopPlay = playTimeline(buildMockTimeline(Date.now()), enqueue, {
     ...paceFromUrl(),
     onDone: () => {
       requestAnimationFrame(() =>
@@ -35,4 +37,8 @@ export function startMock(store: UseBoundStore<StoreApi<BoardState>>): () => voi
       );
     },
   });
+  return () => {
+    stopPlay();
+    stopAtlas();
+  };
 }

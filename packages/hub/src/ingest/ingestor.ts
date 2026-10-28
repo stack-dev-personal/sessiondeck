@@ -25,7 +25,8 @@ export interface BatchCommitted {
   transcripts: TranscriptDelta[];
 }
 
-export type HubEvents = { batch: [BatchCommitted] };
+/** `atlas`: sessions whose project or phase presentation changed by a PATCH (no ingest involved). */
+export type HubEvents = { batch: [BatchCommitted]; atlas: [SessionSnapshot[]] };
 export type HubEmitter = EventEmitter<HubEvents>;
 
 export interface IngestResult {
