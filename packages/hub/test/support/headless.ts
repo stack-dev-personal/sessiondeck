@@ -13,6 +13,9 @@ export const HEADLESS_BRANCH = "p1/hook-exe";
 export const HEADLESS_MODEL = "claude-opus-5-5";
 /** Tokens of the last assistant row of the fixture: 2 + 198 + 93972. */
 export const HEADLESS_CONTEXT_TOKENS = 94_172;
+/** Last non-empty text block of the fixture's last non-sidechain assistant row (placeholder text as scrubbed). */
+export const HEADLESS_LAST_MESSAGE =
+  "# A15 is blocked: the Bun hook exe lands right on the 80 ms limit\n\nThe Bun-compiled hook is about twice as fast as the N<TRUNCATED 2809>";
 export const HEADLESS_HOST = "laptop";
 export const SUBAGENT_ID = "a0521282f787974c4";
 

@@ -8,6 +8,7 @@ import {
   HEADLESS_BRANCH,
   HEADLESS_CONTEXT_TOKENS,
   HEADLESS_HOST,
+  HEADLESS_LAST_MESSAGE,
   HEADLESS_MODEL,
   HEADLESS_SESSION,
   headlessSession,
@@ -58,9 +59,9 @@ describe("R2.12 headless session, no statusline", () => {
       output: null,
     });
     expect(s.git.branch).toBe(HEADLESS_BRANCH);
-    expect(s.last_assistant_message).toBeTypeOf("string");
-    expect(s.last_assistant_message).not.toBe("<TEXT 1792>"); // the Stop hook did not displace it
-    expect(s.last_assistant_message?.length).toBeLessThanOrEqual(2000);
+    // Exactly the last text block of the last main-thread assistant row (not the Stop hook's
+    // "<TEXT 1792>", not a sidechain or earlier row).
+    expect(s.last_assistant_message).toBe(HEADLESS_LAST_MESSAGE);
 
     const cost = await h.app.inject({
       method: "GET",
@@ -79,6 +80,24 @@ describe("R2.12 headless session, no statusline", () => {
       last_assistant_message: "transcript",
     });
     expect(s.effort).toBeNull(); // measured figures only
+  });
+
+  it("a SessionStart hook after the transcript does not displace the transcript model", async () => {
+    const h = await boot();
+    const seq = new EnvSeq();
+    seq.hook("SessionStart/01-startup.json", { model: "claude-fable-5-1" });
+    seq.transcript(mainLines(), 100);
+    await sendAll(h, seq);
+    expect((await snapshot(h)).model?.id).toBe(HEADLESS_MODEL);
+
+    const again = new EnvSeq(HEADLESS_HOST, HEADLESS_SESSION, 6_000_000);
+    again.hook("SessionStart/01-startup.json", { model: "claude-fable-5-1", source: "resume" });
+    again.hook("Stop/01-after-ask.json");
+    await sendAll(h, again);
+    const s = await snapshot(h);
+    expect(s.model).toEqual({ id: HEADLESS_MODEL, display_name: HEADLESS_MODEL });
+    expect(s.sources?.model).toBe("transcript");
+    expect(s.last_assistant_message).toBe(HEADLESS_LAST_MESSAGE);
   });
 
   it("ignores malformed lines without failing the batch", async () => {
