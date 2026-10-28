@@ -165,19 +165,27 @@ export function SessionPaneBody({ sessionId }: { sessionId: string | undefined }
   const ref = useRef<HTMLDivElement>(null);
   const seen = useOnScreen(ref);
   const known = useBoard((st) => ownGet(st.sessions, sessionId) !== undefined);
-  if (sessionId === undefined)
-    return (
-      <div data-unassigned="true">
-        <Empty>Unassigned. Assign a session to see its content here.</Empty>
-      </div>
-    );
+  // The observed wrapper is always rendered, so assigning a session to an empty pane later
+  // (drag or keyboard, R6.6) still has an element for the observer: no list stays mounted off screen.
   return (
     <div ref={ref} className="flex h-full min-h-0 flex-col" data-testid="session-body">
-      {known ? null : <Empty>{`Session ${sessionId} is not on the board.`}</Empty>}
-      {known ? <SessionStatusLine sessionId={sessionId} /> : null}
-      <div className="min-h-0 flex-1" data-slot="activity" data-mounted={seen ? "true" : "false"}>
-        {seen && known ? <LiveActivity sessionId={sessionId} /> : null}
-      </div>
+      {sessionId === undefined ? (
+        <div data-unassigned="true">
+          <Empty>Unassigned. Assign a session to see its content here.</Empty>
+        </div>
+      ) : (
+        <>
+          {known ? null : <Empty>{`Session ${sessionId} is not on the board.`}</Empty>}
+          {known ? <SessionStatusLine sessionId={sessionId} /> : null}
+          <div
+            className="min-h-0 flex-1"
+            data-slot="activity"
+            data-mounted={seen ? "true" : "false"}
+          >
+            {seen && known ? <LiveActivity sessionId={sessionId} /> : null}
+          </div>
+        </>
+      )}
     </div>
   );
 }
