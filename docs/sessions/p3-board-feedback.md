@@ -23,3 +23,21 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 ## Decisions made
 
 ## Deferred findings
+
+## Resume 2026-10-28 (after exit 137)
+
+- Previous run was OOM-killed during U1 hub tests. Executors since run vitest with --pool=forks, maxForks=2, one package at a time; no further kills.
+- Conductor amendment (decision 28, 2026-10-28T20:18Z) found uncommitted in the handoff: no Fable row in R3.12. Committed c14d298; phase doc R3.12 follows it (f72a951). The "Fable estimate source" note above is void.
+
+### U1 contract parent links (sd-executor-contract): e3e96dd, 2d431ad, e3c9144
+### U1b hub read path (sd-executor-hub, new unit): 55e1000, 8e67272, 08d3280, d26ad6b
+- Contract 1119 tests pass (1 skipped); hub 286 pass; typecheck, lint, prettier clean in both. Web typecheck fails on the new required fields (to fix in U2).
+- Fixtures: main-thread PreToolUse Agent (21-agent.json) has no agent_id; subagent hooks carry agent_id; no fixture shows a subagent spawning a subagent, so nested cases are synthetic (marked PROVISIONAL in CONTRACT.md).
+- Review iteration 1: reviewer fix-then-merge (MAJOR wrong parent after ambiguous set); security pass (MEDIUM loops/missing parents, LOWs). Fixed.
+- Review iteration 2: reviewer fix-then-merge (MAJOR from the failure-drop fix); security pass (MEDIUM eviction loop). Fixed.
+- Review iteration 3: reviewer fix-then-merge (MAJOR spawn queued after an ambiguous start; MINOR); security pass (2 LOWs). Cap of three iterations reached: session BLOCKED. Question and verbatim findings: /state/2/questions/S8b.md.
+
+## Decisions made
+- 2026-10-28 PostToolUseFailure on a spawn tool marks the pending list ambiguous rather than removing an entry (unknown is acceptable, wrong-but-known is not).
+- 2026-10-28 Stored subagent rows are normalized through contract readSubagentRows (one function for write and read).
+- 2026-10-28 Blocked on the attribution design after three review iterations; recommended option A (conservative window rule).
