@@ -33,6 +33,7 @@ prs: [..] or block list
 
 ## Normalizations a correct parser applies
 
+- YAML timestamps stay strings. A default gray-matter or js-yaml load turns an unquoted `2026-09-01` into a `Date`; use the core or JSON schema (no timestamp type) or quote on read, because the goldens hold strings.
 - BOM stripped; CRLF treated as LF; body (outcome) is trimmed and uses LF.
 - `duration` / `duration_s`: numbers are seconds; `Nh Mm`, `Nh`, `Nm` strings are converted to seconds.
 - `tools_used` becomes `[{name, count}]`: a list of names gives `count: null`; `name: count` maps (block map, flow map `{a: 1}`, or a block list of single-key maps `- a: 1`) give the integer. An empty list gives `[]`.

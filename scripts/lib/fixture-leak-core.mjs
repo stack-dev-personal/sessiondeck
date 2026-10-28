@@ -63,9 +63,65 @@ const isTimeline = (/** @type {string} */ file, /** @type {string} */ rel) =>
 /** Raw-derived words that are public: only the extra text files carry any (keyed by entry, not label). */
 const NO_WORDS = new Set();
 
+/**
+ * Vault mode: vault/ and vault-edge/ hold synthetic markdown captures and their expected JSON
+ * goldens, not hook payloads. The hook-payload structure checks do not apply; every text and
+ * pattern check still does. The goldens are checked against the ArchivePayload key set instead.
+ */
+const isVault = (/** @type {string} */ rel) => /^vault(?:-edge)?\//.test(rel);
+const isVaultGolden = (/** @type {string} */ rel) => /^vault\/expected\/.+\.md\.json$/.test(rel);
+/** The one placeholder home path allowed in vault files (nothing else under Users/ or home/). */
+const VAULT_HOME = /C:\/Users\/dev(?![A-Za-z0-9_-])/g;
+/** Non-data files that live next to the fixtures (forced -text rules for the byte-exact vault). */
+const KNOWN_NON_DATA = new Set([".gitattributes"]);
+/**
+ * Keys of ArchivePayloadSchema (packages/contract/src/archive.ts), mirrored because this script is
+ * plain .mjs; packages/contract/test/archive.test.ts asserts the mirror equals the schema's shape.
+ * Goldens omit source.mtime_ms and source.size (they vary by checkout), so source keys are a subset.
+ */
+export const ARCHIVE_PAYLOAD_KEYS = [
+  "source",
+  "schema_version",
+  "session_id",
+  "collection",
+  "title",
+  "date",
+  "started_at",
+  "ended_at",
+  "duration_s",
+  "project_dir",
+  "branch",
+  "tools_used",
+  "commits",
+  "prs",
+  "outcome",
+  "outcome_truncated",
+];
+export const ARCHIVE_SOURCE_KEYS = ["root_label", "rel_path", "mtime_ms", "size"];
+export const ARCHIVE_TOOL_KEYS = ["name", "count"];
+
+/** @param {unknown} d @param {(c: string, n?: number) => void} hit */
+function checkArchiveGolden(d, hit) {
+  const isObj = (/** @type {unknown} */ v) =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  if (!isObj(d)) return hit("golden-schema");
+  const o = /** @type {Record<string, any>} */ (d);
+  const extra = (/** @type {object} */ v, /** @type {string[]} */ keys) =>
+    Object.keys(v).filter((k) => !keys.includes(k)).length;
+  const missing = ARCHIVE_PAYLOAD_KEYS.filter((k) => k !== "source" && !(k in o)).length;
+  if (extra(o, ARCHIVE_PAYLOAD_KEYS) + missing > 0) hit("golden-schema");
+  if (isObj(o.source) && extra(o.source, ARCHIVE_SOURCE_KEYS) > 0) hit("golden-schema");
+  if (Array.isArray(o.tools_used))
+    for (const t of o.tools_used)
+      if (!isObj(t) || extra(t, ARCHIVE_TOOL_KEYS) > 0) hit("golden-schema");
+}
+
 /** Whether the file is a captured or synthetic payload (as opposed to prose or installer input). */
 const isPayload = (/** @type {string} */ file, /** @type {string} */ rel) =>
-  /\.jsonl?$/.test(file) && !TEXT_ONLY_TOP.has(rel.split("/")[0] ?? "") && !TIMELINE_FILE.test(rel);
+  /\.jsonl?$/.test(file) &&
+  !TEXT_ONLY_TOP.has(rel.split("/")[0] ?? "") &&
+  !TIMELINE_FILE.test(rel) &&
+  !isVault(rel);
 
 /** @param {string} file @param {string} text @returns {unknown[]} */
 function parseDocs(file, text) {
@@ -136,11 +192,14 @@ export function leakCheck(fixturesRoot, opts = {}) {
     /** @type {Map<string, number>} */
     const counts = new Map();
     const hit = (/** @type {string} */ c, n = 1) => counts.set(c, (counts.get(c) ?? 0) + n);
-    if (HOME_SHAPES.some((re) => re.test(text))) hit("home-path-shape");
+    const vault = isVault(rel);
+    const homeText = vault ? text.replace(VAULT_HOME, "") : text;
+    if (HOME_SHAPES.some((re) => re.test(homeText))) hit("home-path-shape");
     if (userRes.some((re) => re.test(text))) hit("user-name");
     // Hand-written files (.md, settings/) can name the user without a Users/ prefix.
     if (!isPayload(file, rel) && userBareRes.some((re) => re.test(text))) hit("user-name");
-    if (!/\.(?:jsonl?|md)$/.test(file)) hit("unscanned-file");
+    const dataRe = vault ? /\.(?:jsonl?|md|txt)$/ : /\.(?:jsonl?|md)$/;
+    if (!dataRe.test(file) && !KNOWN_NON_DATA.has(rel)) hit("unscanned-file");
     for (const x of nameRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
     for (const x of segPathRes) if (!allowed.has(x.n) && x.re.test(text)) hit("project-name");
     if (!isPayload(file, rel))
@@ -157,7 +216,9 @@ export function leakCheck(fixturesRoot, opts = {}) {
     if (file.endsWith(".json") || file.endsWith(".jsonl")) {
       try {
         const docs = parseDocs(file, text);
-        if (isPayload(file, rel)) for (const d of docs) checkStructure(d, hit, docAllowFor(rel));
+        if (isVaultGolden(rel)) for (const d of docs) checkArchiveGolden(d, hit);
+        else if (isPayload(file, rel))
+          for (const d of docs) checkStructure(d, hit, docAllowFor(rel));
         else if (!extra && isTimeline(file, rel)) for (const d of docs) checkTimeline(d, hit);
       } catch {
         hit("unparseable-json");

@@ -37,21 +37,23 @@ The probe parses one vault capture file (`projects/<x>/sessions/*.md` or `harnes
 
 | Field | Type | Rule |
 | --- | --- | --- |
-| `source.root_label` | string | which configured vault, 1 to 64 chars |
-| `source.rel_path` | string | vault-relative, forward slashes, no leading slash, no `.`, `..` or empty segments, no drive letter, max 512 |
-| `source.mtime_ms`, `source.size` | integer >= 0 | file mtime (epoch ms) and byte size; the importer's change check |
+| `source.root_label` | string | which configured vault; `^[a-z0-9][a-z0-9_-]{0,63}$` (case-insensitive) |
+| `source.rel_path` | string | `(projects\|harness)/<x>/sessions/<file>.md`, forward slashes, no `.`, `..` or empty segments, no control chars or `:`, no segment ending in `.` or space, no Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without extension), max 512 |
+| `source.mtime_ms`, `source.size` | safe integer >= 0 | file mtime (epoch ms) and byte size; the importer's change check |
 | `schema_version` | integer or null | frontmatter `schema_version` |
-| `session_id` | string | 1 to 128 chars; must equal the envelope `session_id` (`isArchiveEnvelopeConsistent`, `ArchiveEnvelopeSchema`) |
-| `collection` | string or null | `projects/<x>` or `harness/<x>`, from the path |
-| `title`, `date`, `started_at`, `ended_at` | string or null | title max 300; the others ISO 8601 date or datetime, max 40 |
-| `duration_s` | number >= 0 or null | seconds; the probe converts `1h 23m` style strings |
+| `session_id` | string | `^[A-Za-z0-9-]{1,128}$`; must equal the envelope `session_id` (`isArchiveEnvelopeConsistent`, `ArchiveEnvelopeSchema`) |
+| `collection` | string or null | `projects/<x>` or `harness/<x>`; when not null it must equal the first two segments of `source.rel_path` |
+| `title`, `date`, `started_at`, `ended_at` | string or null | title max 300; the others ISO 8601 date or datetime, max 40, components in range (month 1-12, a real day, hour 0-23, minute and second 0-59) |
+| `duration_s` | number >= 0 or null | seconds, at most 30 days; the probe converts `1h 23m` style strings |
 | `project_dir`, `branch` | string or null | `project_dir` from frontmatter `project_dir`, else `cwd`; max 1024 and 255 |
-| `tools_used` | array of `{ name, count }` | max 100 entries, name max 100, `count` integer or null (a plain name list gives null) |
-| `commits`, `prs` | string array | max 200 entries, each max 500 chars |
+| `tools_used` | array of `{ name, count }` | max 100 entries, name max 100, `count` integer 0 to 1,000,000 or null (a plain name list gives null) |
+| `commits`, `prs` | string array | max 50 entries, each max 200 chars |
 | `outcome` | string | trimmed markdown body, max 16384 chars |
 | `outcome_truncated` | boolean | true when the probe cut the body to the cap |
 
-The caps are exported as `ARCHIVE_MAX_*` constants so the probe truncates to the numbers the hub enforces.
+The caps are exported as `ARCHIVE_MAX_*` constants so the probe truncates to the numbers the hub enforces. All archive objects are `.strict()`: an unknown key is rejected, never passed through, and `ArchiveEnvelopeSchema` returns the parsed payload. `title`, `branch`, `project_dir`, `commits`, `prs` and tool names reject C0 control characters other than `\n` and `\t`; `outcome` also allows `\r`. Bidi overrides are not rejected here; the web unit owns rendering safety. A max-size payload stays under half of the hub's 1 MiB ingest body limit even at 6 bytes per character (tested).
+
+Parsers of vault frontmatter must read YAML timestamps as strings (YAML core or JSON schema semantics). A default gray-matter or js-yaml load turns an unquoted `2026-09-01` into a `Date`, which breaks the string-typed `date`, `started_at` and `ended_at` and the goldens.
 
 ## State machine
 
