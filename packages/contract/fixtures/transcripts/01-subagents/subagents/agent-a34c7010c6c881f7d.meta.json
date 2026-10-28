@@ -1,0 +1,10 @@
+{
+  "agentType": "<AGENT_13>",
+  "isBuiltIn": false,
+  "description": "R1.1 laptop exe bench x3",
+  "toolUseId": "toolu_019w34xqiCooTdxdQTJGMTfB",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

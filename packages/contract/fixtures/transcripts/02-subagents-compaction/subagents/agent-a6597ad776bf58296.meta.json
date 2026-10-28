@@ -1,0 +1,10 @@
+{
+  "agentType": "claude-code-guide",
+  "launchedWithDefaults": true,
+  "description": "Nested claude -p auth in Bash",
+  "toolUseId": "toolu_01YVSUx3NF5Xzw71MFxw5fM8",
+  "spawnDepth": 1,
+  "requestShape": "background",
+  "requestNonInteractive": true,
+  "finished": true
+}

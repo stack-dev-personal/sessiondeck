@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_10>",
+  "description": "Code review U1 and U4 commits",
+  "toolUseId": "toolu_012uwoCVRVYH6esFGGqonYvu",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

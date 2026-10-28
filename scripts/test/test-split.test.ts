@@ -96,6 +96,11 @@ describe("test split (default run vs sprint tooling run vs guard timing run)", (
     expect(runsOf("test/test-split.test.ts")).toEqual(["default"]);
   });
 
+  it("keeps the suite that spawns the transcript inventory script in the proc run", () => {
+    expect(runsOf("test/transcript-inventory.test.ts")).toEqual(["proc"]);
+    expect(runsOf("test/transcript-review-fixes.test.ts")).toEqual(["default"]);
+  });
+
   it("lists only existing test files in the proc run, each exactly once", () => {
     const files = testFiles();
     expect(new Set(PROC_TESTS).size).toBe(PROC_TESTS.length);
