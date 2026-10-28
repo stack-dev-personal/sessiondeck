@@ -114,28 +114,30 @@ function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
 
 const SPAWN_TOOLS: readonly string[] = ["Agent", "Task"];
 
-/** With the spawn bookkeeping replaced (keys omitted when empty or zero). */
+/**
+ * With the spawn bookkeeping replaced (keys omitted when empty). The taint flag lives only while the
+ * queue is non-empty: an empty queue ends the window.
+ */
 function withPending(
   s: SessionSnapshot,
   pending: (string | null)[],
-  ambiguous = 0,
+  tainted = false,
 ): SessionSnapshot {
-  const { pending_spawns: _p, ambiguous_remaining: _a, ...rest } = s.tracking;
+  const { pending_spawns: _p, pending_tainted: _t, ...rest } = s.tracking;
   void _p;
-  void _a;
-  const n = Math.min(ambiguous, pending.length);
+  void _t;
   return {
     ...s,
     tracking: {
       ...rest,
       ...(pending.length === 0 ? {} : { pending_spawns: pending }),
-      ...(n > 0 ? { ambiguous_remaining: n } : {}),
+      ...(pending.length > 0 && tainted ? { pending_tainted: true as const } : {}),
     },
   };
 }
 
-function ambiguousOf(s: SessionSnapshot): number {
-  return s.tracking.ambiguous_remaining ?? 0;
+function taintedOf(s: SessionSnapshot): boolean {
+  return s.tracking.pending_tainted === true;
 }
 
 function spawnToolOf(ctx: FieldContext): boolean {
@@ -143,56 +145,61 @@ function spawnToolOf(ctx: FieldContext): boolean {
   return tool !== null && SPAWN_TOOLS.includes(tool);
 }
 
-/** PreToolUse of the Agent or Task tool: remember which context asked for a spawn. */
+/**
+ * PreToolUse of the Agent or Task tool: remember which context asked for a spawn. The window (the
+ * span while the queue is non-empty) is tainted when this spawn's context differs from a pending
+ * one, or when the cap drops entries (their contexts are lost).
+ */
 function onPreToolUse(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   if (!spawnToolOf(ctx)) return s;
-  const all = [...(s.tracking.pending_spawns ?? []), agentIdOf(ctx.e)];
+  const before = s.tracking.pending_spawns ?? [];
+  const who = agentIdOf(ctx.e);
+  const all = [...before, who];
   const dropped = Math.max(0, all.length - PENDING_SPAWNS_MAX);
-  const kept = all.slice(dropped);
-  // Dropping entries loses which context they belonged to, so the kept list cannot be trusted.
-  return withPending(s, kept, dropped > 0 ? kept.length : ambiguousOf(s));
+  const mixed = before.some((c) => c !== who);
+  return withPending(s, all.slice(dropped), taintedOf(s) || mixed || dropped > 0);
 }
 
 /**
  * A failed Agent or Task call never starts a subagent, but which pending entry it belonged to cannot
- * be told (the spawn may already have been consumed by a start). The entries stay and the whole
- * pending list reads unknown. Fixtures show PostToolUseFailure with tool_name; no fixture shows it
- * for Agent, and PermissionDenied has no fixture, so only PostToolUseFailure is handled.
+ * be told (the spawn may already have been consumed by a start). When every pending entry shares one
+ * context, any of them may be dropped without changing what the rest mean, so one is dropped and the
+ * window keeps its state. With more than one context pending the window is tainted. Fixtures show
+ * PostToolUseFailure with tool_name; no fixture shows it for Agent, and PermissionDenied has no
+ * fixture, so only PostToolUseFailure is handled.
  */
 function onPostToolUseFailure(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   if (!spawnToolOf(ctx)) return s;
   const pending = s.tracking.pending_spawns ?? [];
-  return pending.length === 0 ? s : withPending(s, [...pending], pending.length);
+  if (pending.length === 0) return s;
+  if (new Set(pending).size > 1) return withPending(s, [...pending], true);
+  return withPending(s, pending.slice(1), taintedOf(s));
 }
 
 /** A new prompt starts a new turn: spawn requests that never produced a SubagentStart are stale. */
 function onPromptReset(s: SessionSnapshot): SessionSnapshot {
-  return s.tracking.pending_spawns === undefined && s.tracking.ambiguous_remaining === undefined
+  return s.tracking.pending_spawns === undefined && s.tracking.pending_tainted === undefined
     ? s
     : withPending(s, []);
 }
 
 /**
- * Parent attribution. SubagentStart takes the oldest pending spawn. Exactly one spawning context
- * among the pending entries gives a known parent (null: main thread). Anything else gives
- * parent_known false, and then every entry left over from that ambiguous set also reads unknown
- * (ambiguous_remaining counts them), since which start belongs to which context cannot be told.
+ * Parent attribution by window. SubagentStart takes the oldest pending spawn. The parent is known
+ * only when the window is untainted (every spawn queued since the queue was last empty came from one
+ * context, no cap drop, no mixed failure). Otherwise parent_known is false for this start and for
+ * every later start until the queue is empty again. The entry is consumed either way.
  */
 function takeParent(s: SessionSnapshot): {
   parent: string | null;
   known: boolean;
   rest: (string | null)[];
-  ambiguous: number;
+  tainted: boolean;
 } {
   const pending = s.tracking.pending_spawns ?? [];
-  if (pending.length === 0) return { parent: null, known: false, rest: [], ambiguous: 0 };
+  if (pending.length === 0) return { parent: null, known: false, rest: [], tainted: false };
   const rest = pending.slice(1);
-  const carried = ambiguousOf(s);
-  if (carried > 0) return { parent: null, known: false, rest, ambiguous: carried - 1 };
-  if (new Set(pending).size === 1) {
-    return { parent: pending[0] ?? null, known: true, rest, ambiguous: 0 };
-  }
-  return { parent: null, known: false, rest, ambiguous: rest.length };
+  const tainted = taintedOf(s);
+  return { parent: pending[0] ?? null, known: !tainted, rest, tainted };
 }
 
 function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
@@ -218,7 +225,7 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
     parent_known: linkable,
   };
   return {
-    ...withPending(s, taken.rest, taken.ambiguous),
+    ...withPending(s, taken.rest, taken.tainted),
     subagents: capSubagents([...s.subagents, row]),
   };
 }

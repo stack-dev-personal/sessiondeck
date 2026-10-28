@@ -49,7 +49,7 @@ function applyTransition(
   ts: number,
 ): SessionSnapshot {
   const next = nextTracking(t, ctx);
-  const { pending_spawns: pending, ambiguous_remaining: ambiguous } = s.tracking;
+  const { pending_spawns: pending, pending_tainted: tainted } = s.tracking;
   return {
     ...s,
     state: t.to,
@@ -63,7 +63,7 @@ function applyTransition(
         : {
             ...next,
             pending_spawns: pending,
-            ...(ambiguous === undefined ? {} : { ambiguous_remaining: ambiguous }),
+            ...(tainted === undefined ? {} : { pending_tainted: tainted }),
           },
   };
 }

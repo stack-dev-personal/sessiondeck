@@ -87,7 +87,7 @@ describe("subagent parent links", () => {
     expect(row(s, "B")).toMatchObject({ parent_agent_id: null, parent_known: false });
     expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: false });
     expect(s.tracking.pending_spawns).toBeUndefined();
-    expect(s.tracking.ambiguous_remaining).toBeUndefined();
+    expect(s.tracking.pending_tainted).toBeUndefined();
   });
 
   it("a spawn made after the ambiguous set starts clean once the set is drained", () => {
@@ -124,14 +124,14 @@ describe("subagent parent links", () => {
   const stop = (s: SessionSnapshot, id: string): SessionSnapshot =>
     reduce(s, hook("SubagentStop", { agent_id: id }, (t += 1), { agent_id: id }));
 
-  it("a failed Agent call keeps pending entries and marks the whole list unknown", () => {
+  it("a failed Agent call with one pending context drops one entry and stays known", () => {
     let s = start(spawn(snap("working"), null), "A");
-    s = spawn(s, "A");
+    s = spawn(spawn(s, "A"), "A");
     s = failAgent(s, "A");
     expect(s.tracking.pending_spawns).toEqual(["A"]);
-    expect(s.tracking.ambiguous_remaining).toBe(1);
+    expect(s.tracking.pending_tainted).toBeUndefined();
     s = start(s, "C");
-    expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(row(s, "C")).toMatchObject({ parent_agent_id: "A", parent_known: true });
   });
 
   it("MAJOR: failure of an already-started spawn does not make a later start wrongly known", () => {
@@ -153,7 +153,7 @@ describe("subagent parent links", () => {
     s = spawn(s, "A0");
     for (let i = 0; i < PENDING_SPAWNS_MAX; i += 1) s = spawn(s, null);
     expect(s.tracking.pending_spawns).toHaveLength(PENDING_SPAWNS_MAX);
-    expect(s.tracking.ambiguous_remaining).toBe(PENDING_SPAWNS_MAX);
+    expect(s.tracking.pending_tainted).toBe(true);
     s = start(s, "K");
     expect(row(s, "K")).toMatchObject({ parent_agent_id: null, parent_known: false });
   });
@@ -263,10 +263,172 @@ describe("subagent parent links", () => {
     expect(long.parent_agent_id).toHaveLength(AGENT_ID_MAX_CHARS);
   });
 
-  it("readTracking shortens stored pending ids and keeps ambiguous_remaining in range", () => {
-    const t2 = readTracking({ pending_spawns: ["p".repeat(500), null], ambiguous_remaining: 9 });
+  it("readTracking shortens stored pending ids and keeps the taint flag only when true", () => {
+    const t2 = readTracking({ pending_spawns: ["p".repeat(500), null], pending_tainted: true });
     expect(t2.pending_spawns?.[0]).toHaveLength(AGENT_ID_MAX_CHARS);
-    expect(t2.ambiguous_remaining).toBe(2);
+    expect(t2.pending_tainted).toBe(true);
+    expect(
+      readTracking({ pending_spawns: [null], pending_tainted: 1 }).pending_tainted,
+    ).toBeUndefined();
+    expect(readTracking({ pending_tainted: true }).pending_tainted).toBeUndefined();
+  });
+});
+
+describe("window rule (conservative parent attribution)", () => {
+  const failAgent = (s: SessionSnapshot, by: string | null): SessionSnapshot =>
+    reduce(
+      s,
+      hook(
+        "PostToolUseFailure",
+        { ...agentPre, hook_event_name: "PostToolUseFailure" },
+        (t += 1),
+        by === null ? {} : { agent_id: by },
+      ),
+    );
+  const unlinked = { parent_agent_id: null, parent_known: false };
+
+  it("reviewer case: rows A and B, spawn(null), spawn(A), s1, spawn(B), s2, s3: none known", () => {
+    let s = start(spawn(snap("working"), null), "A");
+    s = start(spawn(s, "A"), "B");
+    s = spawn(spawn(s, null), "A");
+    s = start(s, "s1");
+    s = spawn(s, "B");
+    s = start(start(s, "s2"), "s3");
+    for (const id of ["s1", "s2", "s3"]) expect(row(s, id)).toMatchObject(unlinked);
+    expect(s.tracking.pending_spawns).toBeUndefined();
+    expect(s.tracking.pending_tainted).toBeUndefined();
+  });
+
+  it("an early known start stays right when a different context spawns later", () => {
+    // spawn(null) x2, s1 consumes null (all queued so far are main): known null is causally right.
+    let s = start(spawn(snap("working"), null), "A");
+    s = start(spawn(spawn(s, null), null), "s1");
+    expect(row(s, "s1")).toMatchObject({ parent_agent_id: null, parent_known: true });
+    s = spawn(s, "A"); // mixes now
+    expect(s.tracking.pending_tainted).toBe(true);
+    s = start(start(s, "s2"), "s3");
+    expect(row(s, "s2")).toMatchObject(unlinked);
+    expect(row(s, "s3")).toMatchObject(unlinked);
+  });
+
+  it("single context parallel: main spawns 3, one fails, both starts are known null", () => {
+    let s = spawn(spawn(spawn(snap("working"), null), null), null);
+    s = failAgent(s, null);
+    s = start(start(s, "P"), "Q");
+    expect(row(s, "P")).toMatchObject({ parent_agent_id: null, parent_known: true });
+    expect(row(s, "Q")).toMatchObject({ parent_agent_id: null, parent_known: true });
+  });
+
+  it("mixed failure: pending [null, A] then failure: all starts until empty are unlinked", () => {
+    let s = start(spawn(snap("working"), null), "A");
+    s = spawn(spawn(s, null), "A");
+    // taint already set by the mix; the failure keeps the list and the taint
+    s = failAgent(s, null);
+    expect(s.tracking.pending_spawns).toEqual([null, "A"]);
+    s = start(start(s, "X"), "Y");
+    expect(row(s, "X")).toMatchObject(unlinked);
+    expect(row(s, "Y")).toMatchObject(unlinked);
+    expect(s.tracking.pending_tainted).toBeUndefined();
+  });
+
+  it("a taint survives a failure that leaves one context pending", () => {
+    let s = start(spawn(snap("working"), null), "A");
+    s = spawn(spawn(spawn(s, null), "A"), "A");
+    s = start(s, "X"); // pending [A, A], tainted
+    s = failAgent(s, "A");
+    s = start(s, "Y");
+    expect(row(s, "Y")).toMatchObject(unlinked);
+  });
+
+  it("cap drop taints the window; a fresh single-context window is known again", () => {
+    let s = snap("working");
+    for (let i = 0; i < PENDING_SPAWNS_MAX + 1; i += 1) s = spawn(s, null);
+    for (let i = 0; i < PENDING_SPAWNS_MAX; i += 1) {
+      s = start(s, `K${i}`);
+      expect(row(s, `K${i}`)).toMatchObject(unlinked);
+    }
+    expect(s.tracking.pending_spawns).toBeUndefined();
+    expect(s.tracking.pending_tainted).toBeUndefined();
+    s = start(spawn(s, null), "FRESH");
+    expect(row(s, "FRESH")).toMatchObject({ parent_agent_id: null, parent_known: true });
+  });
+
+  it("a new prompt ends the window and clears the taint", () => {
+    let s = spawn(spawn(snap("working"), null), "A");
+    s = reduce(s, hook("UserPromptSubmit", {}));
+    expect(s.tracking.pending_tainted).toBeUndefined();
+    s = start(spawn(s, null), "N");
+    expect(row(s, "N")).toMatchObject({ parent_agent_id: null, parent_known: true });
+  });
+
+  it("a taint survives a transition", () => {
+    const s = reduce(spawn(spawn(snap("working"), null), "A"), hook("Stop", {}));
+    expect(s.tracking.pending_tainted).toBe(true);
+  });
+
+  /*
+   * Ground-truth fuzz. Model: spawns are issued in order by random contexts; each spawn either
+   * fails or yields a start. The real start order is any interleaving that respects causality (a
+   * start/failure comes after its spawn), and the real spawn-to-start mapping is arbitrary (not just
+   * FIFO). Invariant: when the reducer marks a start known with parent P, P is the true parent under
+   * EVERY mapping consistent with the events seen so far (causality only), i.e. the set of contexts
+   * that were possible for that start is exactly {P}. We compute the possible set as all contexts of
+   * spawns queued (issued and not yet resolved by the reducer's own count) at the start.
+   */
+  it("fuzz: parent_known true implies the parent is the only causally possible one", () => {
+    let seed = 20_261_028;
+    const rnd = (n: number): number => {
+      seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+      return seed % n;
+    };
+    const ctxs: (string | null)[] = [null, "A", "B"];
+    let knownCount = 0;
+    const t0 = Date.now();
+    for (let run = 0; run < 2_000; run += 1) {
+      const mk = (id: string) => ({
+        agent_id: id,
+        agent_type: "t",
+        started_at: 1,
+        ended_at: null,
+        tokens: null,
+        context_window: null,
+        model: null,
+        parent_agent_id: null,
+        parent_known: true,
+      });
+      let s = snap("working", { subagents: [mk("A"), mk("B")] });
+      // truth: unresolved spawns with their contexts (multiset); every start picks one at random.
+      const open: (string | null)[] = [];
+      let n = 0;
+      const steps = 4 + rnd(16);
+      for (let i = 0; i < steps; i += 1) {
+        const op = rnd(10);
+        if (op < 5 || open.length === 0) {
+          const c = ctxs[rnd(ctxs.length)] ?? null;
+          open.push(c);
+          s = spawn(s, c);
+        } else if (op < 8) {
+          const k = rnd(open.length);
+          const truth = open.splice(k, 1)[0] ?? null;
+          const id = `r${run}-${n++}`;
+          s = start(s, id);
+          const r = row(s, id);
+          if (r?.parent_known === true) {
+            knownCount += 1;
+            // possible parents: every context of a spawn that was unresolved when the start came
+            const possible = new Set(open.concat([truth]));
+            expect(possible.size).toBe(1);
+            expect(r.parent_agent_id).toBe(truth);
+          }
+        } else {
+          const k = rnd(open.length);
+          open.splice(k, 1);
+          s = failAgent(s, ctxs[rnd(ctxs.length)] ?? null);
+        }
+      }
+    }
+    expect(knownCount).toBeGreaterThan(0);
+    expect(Date.now() - t0).toBeLessThan(2_000);
   });
 });
 
@@ -309,5 +471,31 @@ describe("stored subagent rows", () => {
     expect(by["c"]).toMatchObject({ parent_agent_id: "a", parent_known: true });
     expect(by["f"]).toMatchObject({ parent_agent_id: null, parent_known: true });
     expect(by["g"]).toMatchObject({ parent_agent_id: "f", parent_known: true });
+  });
+
+  it("readSubagentRows keeps the first of duplicate agent_ids", () => {
+    const rows = readSubagentRows([
+      { ...base, agent_id: "a", agent_type: "first" },
+      { ...base, agent_id: "a", agent_type: "second" },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.agent_type).toBe("first");
+  });
+
+  it("readSubagentRows normalizes only the last SUBAGENT_ROWS_MAX of 5,000 rows, fast", () => {
+    const many = Array.from({ length: 5_000 }, (_, i) => ({
+      ...base,
+      agent_id: `r${i}`,
+      parent_agent_id: i === 0 ? null : `r${i - 1}`,
+      parent_known: true,
+    }));
+    const t0 = Date.now();
+    const rows = readSubagentRows(many);
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(rows).toHaveLength(SUBAGENT_ROWS_MAX);
+    expect(rows[0]?.agent_id).toBe(`r${5_000 - SUBAGENT_ROWS_MAX}`);
+    // the first kept row's parent was cut off, so it reads unknown; the rest keep their links
+    expect(rows[0]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(rows[1]).toMatchObject({ parent_known: true });
   });
 });

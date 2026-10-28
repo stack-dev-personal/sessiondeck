@@ -74,9 +74,11 @@ export function readTracking(value: unknown): Tracking {
         .slice(-PENDING_SPAWNS_MAX)
     : [];
   if (pending.length === 0) return base;
-  const amb = record["ambiguous_remaining"];
-  const n = typeof amb === "number" && Number.isInteger(amb) ? Math.min(amb, pending.length) : 0;
-  return { ...base, pending_spawns: pending, ...(n > 0 ? { ambiguous_remaining: n } : {}) };
+  return {
+    ...base,
+    pending_spawns: pending,
+    ...(record["pending_tainted"] === true ? { pending_tainted: true as const } : {}),
+  };
 }
 
 /** The snapshot with its tracking replaced by readTracking(tracking). */

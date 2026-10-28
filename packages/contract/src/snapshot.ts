@@ -1,4 +1,4 @@
-import { AGENT_ID_MAX_CHARS, truncate } from "./limits";
+import { AGENT_ID_MAX_CHARS, SUBAGENT_ROWS_MAX, truncate } from "./limits";
 import { asRecord } from "./payload";
 import type { SessionState } from "./state";
 import { normalizeSubagentLinks } from "./subagent-links";
@@ -57,10 +57,11 @@ export interface Tracking {
    */
   pending_spawns?: (string | null)[];
   /**
-   * How many of the oldest pending_spawns belong to an already-ambiguous set: those starts read
-   * parent_known false. Omitted when zero.
+   * True when the current spawn window (the span while pending_spawns is non-empty) mixed
+   * contexts, lost entries to the cap, or saw a failure with mixed contexts pending: every start
+   * until the queue is empty reads parent_known false. Omitted when false or the queue is empty.
    */
-  ambiguous_remaining?: number;
+  pending_tainted?: true;
 }
 
 /** Fresh empty tracking. New object on every call. */
@@ -167,20 +168,22 @@ export function readSubagentRow(row: unknown): SubagentSnapshot {
 
 /**
  * A stored subagents value read defensively: [] for a non-array; elements that are not plain objects
- * or lack a string agent_id are dropped; each row goes through readSubagentRow; then links are
+ * or lack a string agent_id are dropped; rows repeating an agent_id are dropped (first kept); only the
+ * last SUBAGENT_ROWS_MAX remain; each row goes through readSubagentRow; then links are
  * normalized over the whole list (a parent that is not in the list, or on a parent cycle, reads
  * null / unknown). Same normalizer as the reducer's write path.
  */
 export function readSubagentRows(raw: unknown): SubagentSnapshot[] {
   if (!Array.isArray(raw)) return [];
-  const rows = raw
-    .filter(
-      (r): r is Record<string, unknown> =>
-        typeof r === "object" &&
-        r !== null &&
-        !Array.isArray(r) &&
-        typeof (r as Record<string, unknown>)["agent_id"] === "string",
-    )
-    .map((r) => readSubagentRow(r));
-  return normalizeSubagentLinks(rows);
+  const seen = new Set<string>();
+  const unique: Record<string, unknown>[] = [];
+  for (const r of raw) {
+    if (typeof r !== "object" || r === null || Array.isArray(r)) continue;
+    const id = (r as Record<string, unknown>)["agent_id"];
+    if (typeof id !== "string" || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(r as Record<string, unknown>);
+  }
+  // Bound the O(n^2) normalize: only the newest rows are kept.
+  return normalizeSubagentLinks(unique.slice(-SUBAGENT_ROWS_MAX).map((r) => readSubagentRow(r)));
 }
