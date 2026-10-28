@@ -87,6 +87,8 @@ const WARMUP_MS = 3_000;
 const WINDOW_MS = 12_000;
 const PRIMER_MS = 4_000;
 const SETTLE_MS = 400;
+/** Deltas per session pushed before the run so every log is at the cap. R64_SEED=0 is a diagnostic: logs grow from empty. */
+const SEED_PER_SESSION = Number(process.env["R64_SEED"] ?? 700);
 const ABBA = [
   "control",
   "board",
@@ -575,7 +577,7 @@ test.describe("mock build, in-page delivery", () => {
       const ids = load.sessions.map((s) => s.id);
       // Seed: enough deltas that every log is past the cap before the first measurement (measured:
       // about one row per delta, so 700 per session), so the steady state trims on every update.
-      const seed = Array.from({ length: 700 * 6 }, (_, i) => load.nextFor(i % 6));
+      const seed = Array.from({ length: SEED_PER_SESSION * 6 }, (_, i) => load.nextFor(i % 6));
       // The schedule is sized from the run: warm-up + primer + windows, never replayed.
       const totalMs =
         WARMUP_MS + PRIMER_MS + c.modes.length * (WINDOW_MS + WINDOW_OVERHEAD_MS) + 30_000;
@@ -607,7 +609,7 @@ test.describe("mock build, in-page delivery", () => {
           ),
         )
         .toBe(6);
-      await seedLogs(page, seed, ids, 500);
+      if (SEED_PER_SESSION > 0) await seedLogs(page, seed, ids, 500);
       await page.locator("body").click({ position: { x: 5, y: 5 } });
       await page.keyboard.press("a");
       await expect(page.getByTestId("layout")).toHaveAttribute("data-layout-id", "grid6");
@@ -692,7 +694,7 @@ test.describe("mock build, in-page delivery", () => {
       });
       saveBoardTraces(c.name, c.gate ? wins : []);
       expect(exhausted, `${c.name}: the delivery schedule ran out (state would replay)`).toBe(false);
-      expectSound(c.name, c.perSec, wins, panes);
+      expectSound(c.name, c.perSec, wins, panes, 20, SEED_PER_SESSION > 0 ? 500 : null);
       if (verdict) expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
     });
   }
