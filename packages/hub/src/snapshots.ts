@@ -1,3 +1,4 @@
+import { parseStoredSnapshot } from "./snapshot-parse.ts";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import type { SessionRow } from "./db/store.ts";
 import { applyRateLimitStaleness } from "./ingest/reduce.ts";
@@ -13,5 +14,5 @@ export const MAX_LIMIT = 1000;
  * against the current time, so an idle session never shows a window past its resets_at.
  */
 export function readSnapshot(row: SessionRow, nowMs: number): SessionSnapshot {
-  return applyRateLimitStaleness(JSON.parse(row.snapshot) as SessionSnapshot, nowMs);
+  return applyRateLimitStaleness(parseStoredSnapshot(row.snapshot), nowMs);
 }

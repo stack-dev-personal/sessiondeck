@@ -43,7 +43,9 @@
           "ended_at": 1760001434000,
           "tokens": null,
           "context_window": null,
-          "model": null
+          "model": null,
+          "parent_agent_id": null,
+          "parent_known": false
         }
       ],
       "tasks": {

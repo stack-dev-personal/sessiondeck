@@ -419,7 +419,10 @@
       "compactions": 0,
       "tracking": {
         "last_tool": "Monitor",
-        "permission": null
+        "permission": null,
+        "pending_spawns": [
+          null
+        ]
       }
     },
     "fef17e22-168c-4fef-8964-9af573b7f2e9": {
