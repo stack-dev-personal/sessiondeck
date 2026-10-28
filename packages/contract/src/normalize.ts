@@ -74,6 +74,9 @@ const RAW_ROW_MAX = 16384;
 const RAW_DEPTH_MAX = 4;
 const RAW_KEYS_MAX = 40;
 const RAW_ITEMS_MAX = 20;
+const KEY_MAX = 200;
+const INPUT_BYTES_MAX = 64 * 1024;
+const INPUT_DEPTH_MAX = 8;
 const RESULT_JSON_MAX = 20000;
 const KIND_LABEL_MAX = 100;
 const MAX_SUBAGENT_DEPTH = 8;
@@ -110,11 +113,69 @@ export function capRaw(value: unknown): unknown {
     }
     const o: Record<string, unknown> = {};
     const keys = Object.keys(v);
+    let i = 0;
     for (const k of keys.slice(0, RAW_KEYS_MAX)) {
-      budget.left -= k.length;
-      o[k] = walk((v as Record<string, unknown>)[k], depth + 1);
+      if (budget.left <= 0) {
+        o["[truncated]"] = "budget spent";
+        break;
+      }
+      const shown = k.length > KEY_MAX ? `${k.slice(0, KEY_MAX)}~${i}` : k;
+      i++;
+      budget.left -= shown.length;
+      o[shown] = walk((v as Record<string, unknown>)[k], depth + 1);
     }
     if (keys.length > RAW_KEYS_MAX) o["[truncated]"] = `${keys.length - RAW_KEYS_MAX} more keys`;
+    return o;
+  };
+  try {
+    return walk(value, 0);
+  } catch {
+    return "[unreadable]";
+  }
+}
+
+/**
+ * Structure-keeping copy of a tool_use input: depth at most 8, about 64 KB of strings and keys in total.
+ * Real inputs under the limit come back unchanged in shape. Never throws.
+ */
+export function limitInput(value: unknown): unknown {
+  const budget = { left: INPUT_BYTES_MAX };
+  const walk = (v: unknown, depth: number): unknown => {
+    if (typeof v === "string") {
+      if (budget.left <= 0) return "[truncated]";
+      const cut = v.length > budget.left ? `${v.slice(0, budget.left)}[truncated]` : v;
+      budget.left -= v.length;
+      return cut;
+    }
+    if (v === null || typeof v === "number" || typeof v === "boolean") {
+      budget.left -= 8;
+      return v;
+    }
+    if (typeof v !== "object") return v === undefined ? undefined : String(v);
+    if (depth >= INPUT_DEPTH_MAX) return Array.isArray(v) ? "[array]" : "[object]";
+    if (Array.isArray(v)) {
+      const arr: unknown[] = [];
+      for (let i = 0; i < v.length; i++) {
+        if (budget.left <= 0) {
+          arr.push(`[${v.length - i} more truncated]`);
+          break;
+        }
+        arr.push(walk(v[i], depth + 1));
+      }
+      return arr;
+    }
+    const o: Record<string, unknown> = {};
+    let i = 0;
+    for (const k of Object.keys(v)) {
+      if (budget.left <= 0) {
+        o["[truncated]"] = "budget spent";
+        break;
+      }
+      const shown = k.length > KEY_MAX ? `${k.slice(0, KEY_MAX)}~${i}` : k;
+      i++;
+      budget.left -= shown.length;
+      o[shown] = walk((v as Record<string, unknown>)[k], depth + 1);
+    }
     return o;
   };
   try {
@@ -751,7 +812,7 @@ function segmentOfBlock(b: unknown): MessageSegment | null {
       const name = str(b.name);
       if (id === undefined || name === undefined)
         return rawSegment("content block: malformed tool_use", b);
-      return { type: "tool_call", tool: { id, name, input: b.input } };
+      return { type: "tool_call", tool: { id, name, input: limitInput(b.input) } };
     }
     default:
       return rawSegment(`content block: ${typeof b.type === "string" ? b.type : "untyped"}`, b);
@@ -1009,6 +1070,7 @@ function buildThread(
 
   // Finish assistant messages, pair results and nest subagent threads.
   let toolCallCount = 0;
+  const pairedIds = new Set<string>();
   for (const st of asm.values()) {
     st.msg.segments = [...st.blocks.values()].sort((a, b) => a.order - b.order).map((b) => b.seg);
   }
@@ -1017,6 +1079,9 @@ function buildThread(
       if (seg.type !== "tool_call") continue;
       toolCallCount++;
       const call = seg.tool;
+      // One result per id: later calls reusing an id get nothing (no output amplification).
+      if (pairedIds.has(call.id)) continue;
+      pairedIds.add(call.id);
       const paired = results.get(call.id);
       if (paired) call.result = paired.result;
       const aid = paired?.agentId ?? ctx.metaByToolUse.get(call.id);
@@ -1133,9 +1198,11 @@ function buildSubagent(
 ): SubagentThread | undefined {
   const items = ctx.sub.get(agentId);
   if (!items || ctx.used.has(agentId)) return undefined;
-  ctx.used.add(agentId);
+  const tooDeep = depth > MAX_SUBAGENT_DEPTH;
+  // A depth-truncated placeholder must not claim the agent: a shallower call can still get the thread.
+  if (!tooDeep) ctx.used.add(agentId);
   let t: ThreadResult;
-  if (depth > MAX_SUBAGENT_DEPTH || ctx.subMessages > MAX_SUBAGENT_MESSAGES) {
+  if (tooDeep || ctx.subMessages > MAX_SUBAGENT_MESSAGES) {
     const why =
       depth > MAX_SUBAGENT_DEPTH
         ? `truncated: subagent nesting deeper than ${MAX_SUBAGENT_DEPTH}`
@@ -1184,6 +1251,9 @@ function buildSubagent(
  * Normalizes the rows of a main transcript (parsed objects or raw JSONL lines) into messages.
  * Never throws: rows it has no case for, and lines that do not parse, become raw messages.
  * Sidechain rows leave the main list; their threads nest under the spawning Agent/Task call.
+ *
+ * Callers MUST enforce an input byte cap before calling: known-kind text is not capped here, and
+ * cost is linear in row count (1M tiny rows take about 10 s). The hub transcript API enforces it.
  */
 export function normalizeTranscript(
   input: ReadonlyArray<unknown>,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   HANDLED_ROW_KINDS,
+  capRaw,
   ROW_KIND_REGISTRY,
   countRowKinds,
   normalizeTranscript,
@@ -908,5 +909,82 @@ describe("review fixes: hostile input bounds", () => {
     expect(
       seg?.type === "tool_result" && (seg.result.truncation?.path?.length ?? 0),
     ).toBeLessThanOrEqual(512);
+  });
+});
+
+describe("security review iteration 2", () => {
+  it("1000 tool_use blocks sharing one id do not amplify one result", () => {
+    const big = "r".repeat(100_000);
+    const blocks = Array.from({ length: 1000 }, () => toolUse("dup"));
+    const rows = [
+      user("u0", null, "go"),
+      asst("a1", "u0", "m1", blocks),
+      user("r1", "a1", [toolResult("dup", big)]),
+    ];
+    const inputSize = JSON.stringify(rows).length;
+    const ms = normalizeTranscript(rows);
+    expect(JSON.stringify(ms).length).toBeLessThan(inputSize * 2);
+    const withResult = calls(ms).filter((c) => c.result !== undefined);
+    expect(withResult).toHaveLength(1);
+    expect(calls(ms)[0]?.result).toBeDefined();
+  });
+
+  it("streaming replacement of the same tool_use still pairs once", () => {
+    const rows = [
+      user("u0", null, "go"),
+      asst("a1", "u0", "m1", [toolUse("t1", "Bash", { command: "partial" })]),
+      asst("a1b", "a1", "m1", [toolUse("t1", "Bash", { command: "full" })]),
+      user("r1", "a1b", [toolResult("t1", "ok")]),
+    ];
+    const cs = calls(normalizeTranscript(rows));
+    expect(cs).toHaveLength(1);
+    expect(cs[0]?.result).toBeDefined();
+  });
+
+  it("limits tool_use.input depth so JSON.stringify of the output does not throw", () => {
+    let deep: unknown = "leaf";
+    for (let i = 0; i < 200_000; i++) deep = { k: deep };
+    const rows = [user("u0", null, "go"), asst("a1", "u0", "m1", [toolUse("t1", "Edit", deep)])];
+    const ms = normalizeTranscript(rows);
+    expect(() => JSON.stringify(ms)).not.toThrow();
+    expect(JSON.stringify(ms).length).toBeLessThan(10_000);
+  });
+
+  it("keeps a normal tool_use.input intact and bounds an oversized one", () => {
+    const small = { file_path: "/a", old_string: "x".repeat(5000), new_string: "y" };
+    const huge = { content: "z".repeat(5_000_000) };
+    const rows = [
+      user("u0", null, "go"),
+      asst("a1", "u0", "m1", [toolUse("t1", "Edit", small), toolUse("t2", "Write", huge)]),
+    ];
+    const cs = calls(normalizeTranscript(rows));
+    expect(cs[0]?.input).toEqual(small);
+    expect(JSON.stringify(cs[1]?.input).length).toBeLessThan(70_000);
+  });
+
+  it("capRaw cuts oversized keys and stops adding keys once the budget is spent", () => {
+    const o: Record<string, unknown> = { type: "brand_new", ["k".repeat(5_000_000)]: 1 };
+    for (let i = 0; i < 40; i++) o[`${i}`.repeat(3000)] = 1;
+    const out = capRaw(o);
+    expect(JSON.stringify(out).length).toBeLessThan(40_000);
+    expect(Object.keys(out as object).every((k) => k.length <= 210)).toBe(true);
+  });
+
+  it("a second call to the same agent gets subagentRef, the first gets the thread", () => {
+    const rows = [
+      user("u0", null, "go"),
+      asst("a1", "u0", "m1", [toolUse("tA", "Agent", { description: "d" })]),
+      user("r1", "a1", [toolResult("tA", "done")], { toolUseResult: { agentId: "ag1" } }),
+      asst("a2", "r1", "m2", [toolUse("tB", "SendMessage", { to: "ag1" })]),
+      user("r2", "a2", [toolResult("tB", "sent")], { toolUseResult: { agentId: "ag1" } }),
+    ];
+    const subagents = {
+      ag1: [{ ...user("ag1-u", null, "sub task"), isSidechain: true, agentId: "ag1" }],
+    };
+    const cs = calls(normalizeTranscript(rows, { subagents }));
+    expect(cs[0]?.subagent?.agentId).toBe("ag1");
+    expect(cs[0]?.subagentRef).toBeUndefined();
+    expect(cs[1]?.subagentRef).toBe("ag1");
+    expect(cs[1]?.subagent).toBeUndefined();
   });
 });
