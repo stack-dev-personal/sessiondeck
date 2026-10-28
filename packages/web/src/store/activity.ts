@@ -123,15 +123,14 @@ export function appendRows(
 ): ActivityLog {
   const log = prev ?? EMPTY_LOG;
   if (drafts.length === 0) return log;
-  const rows = log.rows.concat(
-    drafts.map((d, i) => ({
-      n: log.total + i,
-      ts,
-      kind: d.kind,
-      glyph: GLYPH[d.kind],
-      text: d.text,
-    })),
-  );
+  // One copy of the kept rows (the oldest drop first), then the new ones pushed on: no second
+  // 500-slot array per append, which at 20 appends/s over six logs is steady garbage.
+  const drop = Math.max(0, log.rows.length + drafts.length - ACTIVITY_CAP);
+  const rows = drop === 0 ? log.rows.slice() : log.rows.slice(drop);
+  drafts.forEach((d, i) => {
+    rows.push({ n: log.total + i, ts, kind: d.kind, glyph: GLYPH[d.kind], text: d.text });
+  });
+  // A batch longer than the cap keeps only its newest rows.
   return {
     rows: rows.length > ACTIVITY_CAP ? rows.slice(rows.length - ACTIVITY_CAP) : rows,
     total: log.total + drafts.length,
