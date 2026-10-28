@@ -22,7 +22,7 @@ export interface SubagentSnapshot {
    * parent_known). Rows stored before this field existed read as null / false.
    */
   parent_agent_id: string | null;
-  /** False when the reducer could not attribute the parent (no pending spawn, or spawns from more than one context). */
+  /** False when the reducer could not attribute the parent (always false for rows built from hook envelopes; S7 transcripts set real links). */
   parent_known: boolean;
 }
 
@@ -50,18 +50,6 @@ export function isUnknownRequester(
 export interface Tracking {
   last_tool: string | null;
   permission: PermissionHolder | null;
-  /**
-   * Spawn requests seen (PreToolUse Agent or Task) and not yet matched by a SubagentStart, oldest
-   * first; each entry is the spawning context's agent_id (null: main thread). Omitted when empty.
-   * Capped at PENDING_SPAWNS_MAX.
-   */
-  pending_spawns?: (string | null)[];
-  /**
-   * True when the current spawn window (the span while pending_spawns is non-empty) mixed
-   * contexts, lost entries to the cap, or saw a failure with mixed contexts pending: every start
-   * until the queue is empty reads parent_known false. Omitted when false or the queue is empty.
-   */
-  pending_tainted?: true;
 }
 
 /** Fresh empty tracking. New object on every call. */
@@ -159,8 +147,10 @@ export function readSubagentRow(row: unknown): SubagentSnapshot {
   const raw = asRecord(row);
   const parent = raw["parent_agent_id"];
   const id = typeof parent === "string" ? truncate(parent, AGENT_ID_MAX_CHARS) : null;
+  const agentId = raw["agent_id"];
   return {
     ...raw,
+    ...(typeof agentId === "string" ? { agent_id: truncate(agentId, AGENT_ID_MAX_CHARS) } : {}),
     parent_agent_id: id,
     parent_known: raw["parent_known"] === true && (parent === null || typeof parent === "string"),
   } as unknown as SubagentSnapshot;
@@ -179,8 +169,10 @@ export function readSubagentRows(raw: unknown): SubagentSnapshot[] {
   const unique: Record<string, unknown>[] = [];
   for (const r of raw) {
     if (typeof r !== "object" || r === null || Array.isArray(r)) continue;
-    const id = (r as Record<string, unknown>)["agent_id"];
-    if (typeof id !== "string" || seen.has(id)) continue;
+    const rawId = (r as Record<string, unknown>)["agent_id"];
+    if (typeof rawId !== "string") continue;
+    const id = truncate(rawId, AGENT_ID_MAX_CHARS);
+    if (seen.has(id)) continue;
     seen.add(id);
     unique.push(r as Record<string, unknown>);
   }

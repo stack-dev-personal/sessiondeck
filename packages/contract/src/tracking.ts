@@ -1,4 +1,4 @@
-import { AGENT_ID_MAX_CHARS, PENDING_SPAWNS_MAX, TOOL_NAME_MAX_CHARS, truncate } from "./limits";
+import { TOOL_NAME_MAX_CHARS, truncate } from "./limits";
 import { asRecord, readString } from "./payload";
 import type { PermissionHolder, SessionSnapshot, Tracking } from "./snapshot";
 import { createTracking } from "./snapshot";
@@ -66,19 +66,8 @@ export function readTracking(value: unknown): Tracking {
     last_tool: typeof lastTool === "string" ? lastTool : null,
     permission: readHolder(record["permission"]),
   };
-  const raw = record["pending_spawns"];
-  const pending = Array.isArray(raw)
-    ? raw
-        .filter((x): x is string | null => isStringOrNull(x))
-        .map((x) => (x === null ? null : truncate(x, AGENT_ID_MAX_CHARS)))
-        .slice(-PENDING_SPAWNS_MAX)
-    : [];
-  if (pending.length === 0) return base;
-  return {
-    ...base,
-    pending_spawns: pending,
-    ...(record["pending_tainted"] === true ? { pending_tainted: true as const } : {}),
-  };
+  // Old stored snapshots may carry pending_spawns / pending_tainted / ambiguous_remaining: ignored.
+  return base;
 }
 
 /** The snapshot with its tracking replaced by readTracking(tracking). */

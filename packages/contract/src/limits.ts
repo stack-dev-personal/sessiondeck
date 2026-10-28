@@ -10,8 +10,6 @@ export const AGENT_ID_MAX_CHARS = 120;
 export const TASK_SUBJECT_MAX_CHARS = 200;
 /** Rows kept in snapshot.subagents; the oldest ended rows go first. */
 export const SUBAGENT_ROWS_MAX = 50;
-/** Spawn requests (PreToolUse Agent or Task) waiting for their SubagentStart; the oldest go first. */
-export const PENDING_SPAWNS_MAX = 16;
 
 /** Visible end of every truncated text. */
 export const TRUNCATION_MARKER = "...[truncated]";

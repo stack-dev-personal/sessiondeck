@@ -7,15 +7,14 @@ import {
   LAST_PROMPT_MAX_CHARS,
   MODEL_ID_MAX_CHARS,
   STATE_DETAIL_MAX_CHARS,
-  PENDING_SPAWNS_MAX,
   SUBAGENT_ROWS_MAX,
   TASK_SUBJECT_MAX_CHARS,
   truncate,
 } from "./limits";
 import type { PayloadRecord } from "./payload";
-import { agentIdOf, isSubagentEnvelope, readString } from "./payload";
+import { isSubagentEnvelope, readString } from "./payload";
 import type { SessionSnapshot, SubagentSnapshot } from "./snapshot";
-import { normalizeSubagentLinks, reachesAgent } from "./subagent-links";
+import { normalizeSubagentLinks } from "./subagent-links";
 
 /** Fallbacks used when a documented field is missing or of the wrong type. */
 const UNKNOWN_END_REASON = "unknown";
@@ -112,106 +111,13 @@ function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
   return normalizeSubagentLinks(rows.filter((_, i) => !dropped.has(i)));
 }
 
-const SPAWN_TOOLS: readonly string[] = ["Agent", "Task"];
-
 /**
- * With the spawn bookkeeping replaced (keys omitted when empty). The taint flag lives only while the
- * queue is non-empty: an empty queue ends the window.
+ * Option B: hook envelopes do not carry the spawning context reliably, so every row created here is
+ * unlinked (parent null, parent_known false). Exact links arrive with S7 transcript attachment.
  */
-function withPending(
-  s: SessionSnapshot,
-  pending: (string | null)[],
-  tainted = false,
-): SessionSnapshot {
-  const { pending_spawns: _p, pending_tainted: _t, ...rest } = s.tracking;
-  void _p;
-  void _t;
-  return {
-    ...s,
-    tracking: {
-      ...rest,
-      ...(pending.length === 0 ? {} : { pending_spawns: pending }),
-      ...(pending.length > 0 && tainted ? { pending_tainted: true as const } : {}),
-    },
-  };
-}
-
-function taintedOf(s: SessionSnapshot): boolean {
-  return s.tracking.pending_tainted === true;
-}
-
-function spawnToolOf(ctx: FieldContext): boolean {
-  const tool = readString(ctx.payload, "tool_name");
-  return tool !== null && SPAWN_TOOLS.includes(tool);
-}
-
-/**
- * PreToolUse of the Agent or Task tool: remember which context asked for a spawn. The window (the
- * span while the queue is non-empty) is tainted when this spawn's context differs from a pending
- * one, or when the cap drops entries (their contexts are lost).
- */
-function onPreToolUse(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
-  if (!spawnToolOf(ctx)) return s;
-  const before = s.tracking.pending_spawns ?? [];
-  const who = agentIdOf(ctx.e);
-  const all = [...before, who];
-  const dropped = Math.max(0, all.length - PENDING_SPAWNS_MAX);
-  const mixed = before.some((c) => c !== who);
-  return withPending(s, all.slice(dropped), taintedOf(s) || mixed || dropped > 0);
-}
-
-/**
- * A failed Agent or Task call never starts a subagent, but which pending entry it belonged to cannot
- * be told (the spawn may already have been consumed by a start). When every pending entry shares one
- * context, any of them may be dropped without changing what the rest mean, so one is dropped and the
- * window keeps its state. With more than one context pending the window is tainted. Fixtures show
- * PostToolUseFailure with tool_name; no fixture shows it for Agent, and PermissionDenied has no
- * fixture, so only PostToolUseFailure is handled.
- */
-function onPostToolUseFailure(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
-  if (!spawnToolOf(ctx)) return s;
-  const pending = s.tracking.pending_spawns ?? [];
-  if (pending.length === 0) return s;
-  if (new Set(pending).size > 1) return withPending(s, [...pending], true);
-  return withPending(s, pending.slice(1), taintedOf(s));
-}
-
-/** A new prompt starts a new turn: spawn requests that never produced a SubagentStart are stale. */
-function onPromptReset(s: SessionSnapshot): SessionSnapshot {
-  return s.tracking.pending_spawns === undefined && s.tracking.pending_tainted === undefined
-    ? s
-    : withPending(s, []);
-}
-
-/**
- * Parent attribution by window. SubagentStart takes the oldest pending spawn. The parent is known
- * only when the window is untainted (every spawn queued since the queue was last empty came from one
- * context, no cap drop, no mixed failure). Otherwise parent_known is false for this start and for
- * every later start until the queue is empty again. The entry is consumed either way.
- */
-function takeParent(s: SessionSnapshot): {
-  parent: string | null;
-  known: boolean;
-  rest: (string | null)[];
-  tainted: boolean;
-} {
-  const pending = s.tracking.pending_spawns ?? [];
-  if (pending.length === 0) return { parent: null, known: false, rest: [], tainted: false };
-  const rest = pending.slice(1);
-  const tainted = taintedOf(s);
-  return { parent: pending[0] ?? null, known: !tainted, rest, tainted };
-}
-
 function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const agentId = payloadAgentId(ctx);
   if (agentId === null || s.subagents.some((a) => a.agent_id === agentId)) return s;
-  const taken = takeParent(s);
-  // A link is kept only when it is the main thread or an existing row (no dangling or looping links).
-  const linkable =
-    taken.known &&
-    taken.parent !== agentId &&
-    (taken.parent === null || s.subagents.some((a) => a.agent_id === taken.parent)) &&
-    !reachesAgent(s.subagents, taken.parent, agentId);
   const agentType = readString(ctx.payload, "agent_type") ?? UNKNOWN_AGENT_TYPE;
   const row = {
     agent_id: agentId,
@@ -221,13 +127,10 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
     tokens: null,
     context_window: null,
     model: null,
-    parent_agent_id: linkable ? taken.parent : null,
-    parent_known: linkable,
+    parent_agent_id: null,
+    parent_known: false,
   };
-  return {
-    ...withPending(s, taken.rest, taken.tainted),
-    subagents: capSubagents([...s.subagents, row]),
-  };
+  return { ...s, subagents: capSubagents([...s.subagents, row]) };
 }
 
 function onSubagentStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
@@ -242,9 +145,7 @@ function onSubagentStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot 
 
 const FIELD_PATCHES: Readonly<Record<string, FieldPatch>> = {
   SessionStart: onSessionStart,
-  UserPromptSubmit: (s, ctx) => onPromptReset(onUserPromptSubmit(s, ctx)),
-  PreToolUse: onPreToolUse,
-  PostToolUseFailure: onPostToolUseFailure,
+  UserPromptSubmit: onUserPromptSubmit,
   Stop: onStop,
   SessionEnd: onSessionEnd,
   PostCompact: onPostCompact,
