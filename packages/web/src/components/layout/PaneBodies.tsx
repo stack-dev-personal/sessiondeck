@@ -112,7 +112,8 @@ export function BoardPaneBody() {
 
 /** True while the element intersects the viewport. Without IntersectionObserver it counts as seen. */
 export function useOnScreen(ref: React.RefObject<HTMLElement | null>): boolean {
-  const [seen, setSeen] = useState(true);
+  // With an observer, start unseen: the first report decides, so no list mounts for one frame off screen.
+  const [seen, setSeen] = useState(typeof IntersectionObserver === "undefined");
   useEffect(() => {
     const el = ref.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
@@ -151,7 +152,8 @@ function SessionStatusLine({ sessionId }: { sessionId: string }) {
 function LiveActivity({ sessionId }: { sessionId: string }) {
   const log = useBoard((st) => ownGet(st.activity, sessionId));
   if (!log || log.rows.length === 0) return <Empty>No activity yet.</Empty>;
-  return <ActivityList rows={log.rows} />;
+  // Keyed by session: scroll state (pinned, distance, last row) must not carry over when the pane is reassigned.
+  return <ActivityList key={sessionId} rows={log.rows} />;
 }
 
 /**
@@ -182,7 +184,7 @@ export function SessionPaneBody({ sessionId }: { sessionId: string | undefined }
             data-slot="activity"
             data-mounted={seen ? "true" : "false"}
           >
-            {seen && known ? <LiveActivity sessionId={sessionId} /> : null}
+            {seen && known ? <LiveActivity key={sessionId} sessionId={sessionId} /> : null}
           </div>
         </>
       )}

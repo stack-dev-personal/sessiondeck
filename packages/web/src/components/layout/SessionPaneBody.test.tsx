@@ -69,10 +69,17 @@ beforeEach(() => {
 
 const lists = () => screen.queryAllByTestId("activity-list");
 
+/** The observer's first report: every observed pane is on screen. */
+const reveal = () =>
+  act(() => {
+    for (const io of [...ios]) io.cb([{ isIntersecting: true }]);
+  });
+
 describe("SessionPaneBody (R6.4)", () => {
   it("renders a windowed list: far fewer DOM rows than the 500 buffered", () => {
     useLayout.setState({ spec: spec(false) });
     render(<Live />);
+    reveal();
     expect(lists()).toHaveLength(2);
     const [first] = screen.getAllByRole("log");
     expect(first).toHaveAttribute("data-total", "500");
@@ -83,9 +90,11 @@ describe("SessionPaneBody (R6.4)", () => {
   it("a compacted pane has no list (and no log) at all", () => {
     useLayout.setState({ spec: spec(true) });
     render(<Live />);
+    reveal();
     expect(lists()).toHaveLength(1);
     expect(document.querySelectorAll('[data-pane-id="p1"] [data-row]')).toHaveLength(0);
     act(() => useLayout.getState().setPaneCompact("p1", false));
+    reveal();
     expect(lists()).toHaveLength(2);
     act(() => useLayout.getState().setPaneCompact("p1", true));
     expect(lists()).toHaveLength(1);
@@ -94,6 +103,7 @@ describe("SessionPaneBody (R6.4)", () => {
   it("a pane scrolled out of view unmounts its list and mounts it again when it returns", () => {
     useLayout.setState({ spec: spec(false) });
     render(<Live />);
+    reveal();
     expect(lists()).toHaveLength(2);
     const target = document.querySelector('[data-pane-id="p1"] [data-testid="session-body"]')!;
     const io = ios.find((x) => x.el === target)!;
@@ -118,6 +128,7 @@ describe("SessionPaneBody (R6.4)", () => {
       },
     });
     render(<Live />);
+    reveal();
     expect(document.querySelector('[data-unassigned="true"]')).not.toBeNull();
     act(() => useLayout.getState().assign("p1", "A"));
     expect(lists()).toHaveLength(1);
@@ -133,6 +144,7 @@ describe("SessionPaneBody (R6.4)", () => {
   it("leaving the route unmounts every list and observer", () => {
     useLayout.setState({ spec: spec(false) });
     const { unmount } = render(<Live />);
+    reveal();
     expect(ios.length).toBeGreaterThan(0);
     unmount();
     expect(lists()).toHaveLength(0);
@@ -143,6 +155,43 @@ describe("SessionPaneBody (R6.4)", () => {
     useBoard.setState({ activity: {} });
     useLayout.setState({ spec: spec(false) });
     render(<Live />);
+    reveal();
     expect(screen.getAllByText("No activity yet.")).toHaveLength(2);
+  });
+
+  it("mounts no list before the observer has reported (no one-frame mount off screen)", () => {
+    useLayout.setState({ spec: spec(false) });
+    render(<Live />);
+    expect(lists()).toHaveLength(0);
+    reveal();
+    expect(lists()).toHaveLength(2);
+  });
+
+  it("a pane reassigned to another session opens pinned at the newest row, not where the last one was scrolled", () => {
+    useLayout.setState({ spec: spec(false) });
+    useBoard.setState({
+      activity: { ...useBoard.getState().activity, B: seed("B", 120).log },
+    });
+    render(<Live />);
+    reveal();
+    const pane = () => document.querySelector('[data-pane-id="p1"]')!;
+    const log = () => pane().querySelector('[role="log"]') as HTMLElement;
+    // Scroll A up by 10 rows (the column-reverse box goes negative).
+    act(() => {
+      log().scrollTop = -240;
+      log().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(pane().querySelector('[data-testid="activity-list"]')).toHaveAttribute(
+      "data-pinned",
+      "false",
+    );
+    act(() => useLayout.getState().assign("p1", "B"));
+    expect(pane().querySelector('[data-testid="activity-list"]')).toHaveAttribute(
+      "data-pinned",
+      "true",
+    );
+    expect(log()).toHaveAttribute("data-total", "120");
+    // The newest row of B is in the window.
+    expect(pane().querySelector('[data-row="119"]')).not.toBeNull();
   });
 });
