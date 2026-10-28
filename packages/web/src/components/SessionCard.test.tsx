@@ -57,6 +57,8 @@ function full(): SessionSnapshot {
         tokens: 1,
         context_window: 1,
         model: null,
+        parent_agent_id: null,
+        parent_known: false,
       },
       {
         agent_id: "b",
@@ -66,6 +68,8 @@ function full(): SessionSnapshot {
         tokens: 1,
         context_window: 1,
         model: null,
+        parent_agent_id: null,
+        parent_known: false,
       },
     ],
     tasks: { total: 7, completed: 3, last_subject: "t" },
@@ -397,6 +401,8 @@ describe("nulls and layout stability", () => {
       tokens: null,
       context_window: null,
       model: null,
+      parent_agent_id: null,
+      parent_known: false,
     });
     const subagents = [
       ...[0, 1, 2, 3, 4].map((i) => mk(`e${i}`, true)),
@@ -456,6 +462,8 @@ describe("nulls and layout stability", () => {
       tokens: null,
       context_window: null,
       model: null,
+      parent_agent_id: null,
+      parent_known: false,
     }));
     render(<SessionCard s={snap({ subagents })} now={NOW} />);
     expect(document.querySelectorAll("[data-dot]")).toHaveLength(5);

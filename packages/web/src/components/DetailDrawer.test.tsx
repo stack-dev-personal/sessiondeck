@@ -299,6 +299,8 @@ describe("content", () => {
           tokens: 12_000,
           context_window: 200_000,
           model: "haiku",
+          parent_agent_id: null,
+          parent_known: false,
         },
       ],
       tasks: { total: 5, completed: 2, last_subject: "<b>ship</b>" },

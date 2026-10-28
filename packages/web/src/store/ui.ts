@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { clampGraceSec, DEFAULT_GRACE_SEC } from "../lib/display-activity";
 import { readStored, STORAGE_KEYS, writeStored } from "../lib/storage";
 
 export type Theme = "dark" | "light";
@@ -11,6 +12,8 @@ export interface Settings {
   sounds: { waiting_permission: boolean; waiting_input: boolean };
   /** One global mute that silences every tone without losing the per-state choices. */
   muted: boolean;
+  /** R3.10: seconds a session keeps showing as working after it goes idle. 0 to 900. */
+  idleGraceSec: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -19,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifications: false,
   sounds: { waiting_permission: false, waiting_input: false },
   muted: false,
+  idleGraceSec: DEFAULT_GRACE_SEC,
 };
 
 export function loadSettings(): Settings {
@@ -38,6 +42,8 @@ export function loadSettings(): Settings {
         waiting_input: snd.waiting_input === true,
       },
       muted: p.muted === true,
+      idleGraceSec:
+        p.idleGraceSec === undefined ? DEFAULT_GRACE_SEC : clampGraceSec(p.idleGraceSec),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -80,7 +86,8 @@ export const useUi = create<UiState>()((set, get) => ({
     set({ compact });
   },
   saveSettings: (settings) => {
-    writeStored(STORAGE_KEYS.settings, JSON.stringify(settings));
-    set({ settings });
+    const clean = { ...settings, idleGraceSec: clampGraceSec(settings.idleGraceSec) };
+    writeStored(STORAGE_KEYS.settings, JSON.stringify(clean));
+    set({ settings: clean });
   },
 }));

@@ -46,6 +46,8 @@ function agents(n: number, ended = 0): SubagentSnapshot[] {
     tokens: 1000,
     context_window: 200_000,
     model: null,
+    parent_agent_id: null,
+    parent_known: false,
   }));
 }
 

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { browserEnv, playTone, primeAudio } from "../alerts/deliver";
+import { clampGraceSec, MAX_GRACE_SEC } from "../lib/display-activity";
 import { streamUrl } from "../live/stream-client";
 import { useUi } from "../store/ui";
 
@@ -39,6 +40,7 @@ const PERM_TEXT: Record<Perm, string> = {
 export function Settings() {
   const { settings, saveSettings } = useUi();
   const [draft, setDraft] = useState(settings);
+  const [graceText, setGraceText] = useState(String(settings.idleGraceSec));
   const [saved, setSaved] = useState(false);
   const [perm, setPerm] = useState<Perm>(currentPermission);
   const warning = insecureHubWarning(draft.hubUrl);
@@ -106,6 +108,29 @@ export function Settings() {
             setSaved(false);
           }}
         />
+      </label>
+      <label className="flex flex-col gap-s-1">
+        Keep showing as working after idle (seconds, 0 to {MAX_GRACE_SEC})
+        <input
+          className={`${input} num w-32`}
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={MAX_GRACE_SEC}
+          step={1}
+          data-testid="grace-setting"
+          value={graceText}
+          onChange={(e) => {
+            setGraceText(e.target.value);
+            setDraft({ ...draft, idleGraceSec: clampGraceSec(e.target.value) });
+            setSaved(false);
+          }}
+          onBlur={() => setGraceText(String(draft.idleGraceSec))}
+        />
+        <span className="text-sm text-fg-muted">
+          A session that stops stays in the working group until it has been idle this long. Waiting
+          for permission or input always shows at once. 0 follows the raw state.
+        </span>
       </label>
       <fieldset className="flex flex-col gap-s-2 border-0 p-0">
         <legend className="mb-s-1">Alerts</legend>
