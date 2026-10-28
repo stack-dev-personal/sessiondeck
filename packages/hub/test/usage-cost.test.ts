@@ -676,3 +676,215 @@ describe("history index and limits", () => {
     }
   });
 });
+
+describe("cache write TTL split and unpriced models (R2.10, decision 25)", () => {
+  const OPUS = "claude-opus-5-5";
+  const table = new PricingTable(
+    parseLiteLLM({
+      [OPUS]: {
+        input_cost_per_token: 0.000004,
+        output_cost_per_token: 0.00002,
+        cache_creation_input_token_cost: 0.000005,
+        cache_read_input_token_cost: 2e-7,
+      },
+    }),
+    "test",
+  );
+  const MTOK = 1_000_000;
+  const row = (id: string, usage: Record<string, unknown>, model = OPUS) =>
+    JSON.stringify({
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { id, model, usage: { input_tokens: 0, output_tokens: 0, ...usage } },
+    });
+  const costOf = (raw: string, t = table) => {
+    const c = new UsageCollector();
+    c.addRow({ session_id: "s", raw });
+    return c.sessions(t, "UTC")[0]!;
+  };
+
+  it("prices 1h writes at 8 USD/MTok and 5m writes at 5 USD/MTok (opus-5-5)", () => {
+    const r = costOf(
+      row("a", {
+        cache_creation_input_tokens: 3 * MTOK,
+        cache_creation: {
+          ephemeral_1h_input_tokens: 1 * MTOK,
+          ephemeral_5m_input_tokens: 2 * MTOK,
+        },
+      }),
+    );
+    expect(r.cost_usd).toBeCloseTo(8 + 2 * 5, 9);
+    expect(r.cache_creation_tokens).toBe(3 * MTOK);
+    expect(
+      costOf(
+        row("b", {
+          cache_creation_input_tokens: MTOK,
+          cache_creation: { ephemeral_1h_input_tokens: MTOK, ephemeral_5m_input_tokens: 0 },
+        }),
+      ).cost_usd,
+    ).toBeCloseTo(8, 9);
+    // input 4 and output 20 / MTok are untouched by the split.
+    expect(costOf(row("c", { input_tokens: MTOK, output_tokens: MTOK })).cost_usd).toBeCloseTo(
+      24,
+      9,
+    );
+  });
+  it("a 5m-only split equals the old behavior", () => {
+    const r = costOf(
+      row("a", {
+        cache_creation_input_tokens: MTOK,
+        cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: MTOK },
+      }),
+    );
+    expect(r.cost_usd).toBeCloseTo(5, 9);
+  });
+  it("without a split every cache write is priced at the 5m rate", () => {
+    expect(costOf(row("a", { cache_creation_input_tokens: MTOK })).cost_usd).toBeCloseTo(5, 9);
+  });
+  it("remainder rule: the split is priced and any uncovered remainder goes to the 5m rate", () => {
+    const rem = costOf(
+      row("a", {
+        cache_creation_input_tokens: 3 * MTOK,
+        cache_creation: { ephemeral_1h_input_tokens: MTOK },
+      }),
+    );
+    expect(rem.cost_usd).toBeCloseTo(8 + 2 * 5, 9);
+    // Split larger than the total: the split wins.
+    const over = costOf(
+      row("b", {
+        cache_creation_input_tokens: MTOK,
+        cache_creation: {
+          ephemeral_1h_input_tokens: MTOK,
+          ephemeral_5m_input_tokens: MTOK,
+        },
+      }),
+    );
+    expect(over.cost_usd).toBeCloseTo(8 + 5, 9);
+  });
+  it("an explicit 1h table field wins over 2x input; above-200k derives 2x the above-200k input", () => {
+    const t = new PricingTable(
+      parseLiteLLM({
+        a: {
+          input_cost_per_token: 0.000004,
+          cache_creation_input_token_cost: 0.000005,
+          cache_creation_input_token_cost_above_1hr: 0.00001,
+        },
+        b: {
+          input_cost_per_token: 0.000003,
+          input_cost_per_token_above_200k_tokens: 0.000006,
+          cache_creation_input_token_cost: 0.00000375,
+          cache_creation_input_token_cost_above_200k_tokens: 0.0000075,
+        },
+      }),
+      "t",
+    );
+    const usage = (n: number) => ({
+      cache_creation_input_tokens: n,
+      cache_creation: { ephemeral_1h_input_tokens: n },
+    });
+    expect(costOf(row("a", usage(MTOK), "a"), t).cost_usd).toBeCloseTo(10, 9);
+    // 300k all 1h: 200k at 2x3=6/MTok, 100k at 2x6=12/MTok.
+    expect(costOf(row("b", usage(300_000), "b"), t).cost_usd).toBeCloseTo(1.2 + 1.2, 9);
+  });
+  it("fast mode multiplies the split-priced result", () => {
+    const t = new PricingTable(
+      parseLiteLLM({
+        f: {
+          input_cost_per_token: 0.000004,
+          cache_creation_input_token_cost: 0.000005,
+          provider_specific_entry: { fast: 6 },
+        },
+      }),
+      "t",
+    );
+    const r = costOf(
+      row(
+        "a",
+        {
+          speed: "fast",
+          cache_creation_input_tokens: MTOK,
+          cache_creation: { ephemeral_1h_input_tokens: MTOK },
+        },
+        "f",
+      ),
+      t,
+    );
+    expect(r.cost_usd).toBeCloseTo(48, 9);
+  });
+  it("splitCacheWrites=false reproduces ccusage (all writes at 5m)", () => {
+    const legacy = new PricingTable(table.models, "t", false);
+    const raw = row("a", {
+      cache_creation_input_tokens: MTOK,
+      cache_creation: { ephemeral_1h_input_tokens: MTOK },
+    });
+    expect(costOf(raw, legacy).cost_usd).toBeCloseTo(5, 9);
+  });
+
+  it("an unknown model is logged once per process and listed in the cost responses", async () => {
+    const warn: { model: string }[] = [];
+    const h = await makeHub({ HUB_HISTORY_BURST: "100" });
+    try {
+      // Capture the service logger by wrapping warn on the app logger.
+      const orig = h.app.log.warn.bind(h.app.log);
+      (h.app.log as unknown as { warn: unknown }).warn = (
+        o: { model?: string },
+        ...rest: unknown[]
+      ) => {
+        if (o && typeof o === "object" && "model" in o) warn.push({ model: String(o.model) });
+        return (orig as (...a: unknown[]) => unknown)(o, ...rest);
+      };
+      const lines = ["m1", "m2", "m3"].map((id, i) =>
+        JSON.stringify({
+          timestamp: `2026-03-01T12:00:0${i}.000Z`,
+          message: {
+            id,
+            model: "acme-unpriced-1",
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        }),
+      );
+      const priced = JSON.stringify({
+        timestamp: "2026-03-01T12:00:09.000Z",
+        message: {
+          id: "m4",
+          model: "claude-sonnet-4-5",
+          usage: { input_tokens: 1000, output_tokens: 10 },
+        },
+      });
+      const res = await h.post({
+        host: "h1",
+        envelopes: [
+          {
+            v: 1,
+            id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            kind: "transcript",
+            host: "h1",
+            os: "linux",
+            session_id: "sess-u",
+            ts: 1_760_000_000_000,
+            seq: 1,
+            payload: { start_line: 0, lines: [...lines, priced] },
+          },
+        ],
+      });
+      expect(res.statusCode).toBe(200);
+      const get = (u: string) => h.app.inject({ method: "GET", url: u, headers: AUTH });
+      const s = (await get("/sessions/sess-u/cost?tz=UTC")).json() as { unpricedModels: string[] };
+      expect(s.unpricedModels).toEqual(["acme-unpriced-1"]);
+      const d = (await get("/history/daily?tz=UTC")).json() as {
+        days: { unpricedModels: string[] }[];
+      };
+      expect(d.days[0]!.unpricedModels).toEqual(["acme-unpriced-1"]);
+      const hs = (await get("/history/sessions?tz=UTC")).json() as {
+        sessions: { unpricedModels: string[] }[];
+      };
+      expect(hs.sessions[0]!.unpricedModels).toEqual(["acme-unpriced-1"]);
+      expect(warn.filter((w) => w.model === "acme-unpriced-1")).toHaveLength(1);
+    } finally {
+      await h.cleanup();
+    }
+  });
+  it("a fully priced session reports an empty unpricedModels", () => {
+    expect(costOf(row("a", { input_tokens: 5 })).unpricedModels).toEqual([]);
+    expect(costOf(row("a", { input_tokens: 5 }, "acme-x")).unpricedModels).toEqual(["acme-x"]);
+  });
+});

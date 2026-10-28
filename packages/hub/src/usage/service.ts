@@ -12,11 +12,12 @@ const RESULT_CACHE_MAX = 32;
 export interface UsageLog {
   info: (obj: object, msg: string) => void;
   error: (obj: object, msg: string) => void;
+  warn?: (obj: object, msg: string) => void;
 }
 
 export class UsageService {
   /** Replaced (not mutated) when a session's project_dir changes; read it fresh each time. */
-  index = new UsageCollector();
+  index = this.newIndex();
   private epoch = 0;
   private hwm = 0;
   private projectsSeen = -1;
@@ -29,6 +30,17 @@ export class UsageService {
     private readonly store: Store,
     private readonly log?: UsageLog,
   ) {}
+
+  /** Models already logged as unpriced in this process (a cache: it only limits log noise). */
+  private readonly warnedUnpriced = new Set<string>();
+
+  private newIndex(): UsageCollector {
+    return new UsageCollector((model) => {
+      if (this.warnedUnpriced.has(model) || this.warnedUnpriced.size >= 200) return;
+      this.warnedUnpriced.add(model);
+      this.log?.warn?.({ model }, "no pricing entry for model; its cost counts as 0");
+    });
+  }
 
   close(): void {
     this.closed = true;
@@ -90,7 +102,7 @@ export class UsageService {
     // Cost: one full rebuild per session whose usage rows were indexed before its first
     // statusLine; re-keying only the changed session is deferred.
     this.epoch++;
-    this.index = new UsageCollector();
+    this.index = this.newIndex();
     this.hwm = 0;
   }
 

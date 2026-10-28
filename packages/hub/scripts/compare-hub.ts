@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadConfig } from "../src/config.ts";
 import { Store } from "../src/db/store.ts";
 import { PricingProvider, loadPricing } from "../src/pricing/loader.ts";
+import { PricingTable } from "../src/pricing/pricing.ts";
 import { buildServer } from "../src/server.ts";
 import type { DailyUsage, SessionUsage } from "../src/usage/usage.ts";
 
@@ -68,6 +69,8 @@ export async function hubReport(opts: {
   pricingFile: string;
   tz: string;
   order?: ArrivalOrder;
+  /** Price every cache write at the 5-minute rate (ccusage behavior) to derive the 1-hour delta. */
+  legacyCacheWrites?: boolean;
 }): Promise<HubReport> {
   const order = opts.order ?? "file";
   const projects = path.join(opts.dir, "projects");
@@ -78,7 +81,12 @@ export async function hubReport(opts: {
     HUB_PRICING_FETCH: "0",
     HUB_HISTORY_BURST: "1000",
   });
-  const pricing = new PricingProvider(loadPricing({ file: opts.pricingFile }));
+  const loaded = loadPricing({ file: opts.pricingFile });
+  const pricing = new PricingProvider(
+    opts.legacyCacheWrites === true
+      ? new PricingTable(loaded.models, loaded.source, false)
+      : loaded,
+  );
   const app = buildServer({ config, store, pricing });
   const auth = { authorization: `Bearer ${TOKEN.padEnd(16, "x")}` };
   await app.ready();

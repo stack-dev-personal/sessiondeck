@@ -10,7 +10,10 @@
 // ccusage runs as a child process with CLAUDE_CONFIG_DIR=<dir>, HOME pointed at an empty temp dir
 // (no other agents' data) and `--import scripts/ccusage-fetch-shim.mjs`, which serves the LiteLLM
 // URL from the pricing file and refuses any other fetch. Exit code is non-zero when any cost delta
-// exceeds the tolerance (percent) or any token count differs.
+// exceeds the tolerance (percent) or any token count differs. ccusage prices all cache writes at the
+// 5-minute rate and the hub prices 1-hour writes at the 1-hour rate (decision 25), so each row's
+// expected delta (hub split cost minus hub 5-minute-only cost) is subtracted before the tolerance
+// check; the per-row figures include delta_exp and resid.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -19,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import * as prettier from "prettier";
+import { expectedDelta, judgeCost, pct } from "./compare-delta.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -114,9 +118,8 @@ try {
 
   let failures = 0;
   const expected = {};
-  const pct = (h, c) => (h === c ? 0 : c === 0 ? Infinity : (Math.abs(h - c) / Math.abs(c)) * 100);
   const fmt = (n) => (Number.isFinite(n) ? n.toFixed(6) : String(n));
-  const compare = (title, ref, hubRows) => {
+  const compare = (title, ref, hubRows, legacyRows) => {
     console.log(`\n${title}`);
     console.log(
       [
@@ -128,6 +131,8 @@ try {
         "d_out",
         "d_cc",
         "d_cr",
+        "delta_exp",
+        "resid",
         "models",
         "ok",
       ].join("\t"),
@@ -139,11 +144,14 @@ try {
       if (!c || !h) {
         failures++;
         console.log(
-          `${id}\t${c ? "present" : "MISSING"}\t${h ? "present" : "MISSING"}\t\t\t\t\t\t\tFAIL`,
+          `${id}\t${c ? "present" : "MISSING"}\t${h ? "present" : "MISSING"}\t\t\t\t\t\t\t\t\tFAIL`,
         );
         continue;
       }
-      const d = pct(h.cost, c.cost);
+      const lg = legacyRows.find((r) => r.id === id);
+      const delta = lg ? expectedDelta(h.cost, lg.cost) : 0;
+      const j = judgeCost({ hub: h.cost, cc: c.cost, delta, tolerancePct: tolerance });
+      const d = pct(h.cost - delta, c.cost);
       const dt = [
         h.input - c.input,
         h.output - c.output,
@@ -151,7 +159,7 @@ try {
         h.cacheRead - c.cacheRead,
       ];
       const modelsOk = JSON.stringify(h.models) === JSON.stringify(c.models);
-      const ok = d <= tolerance && dt.every((x) => x === 0) && modelsOk;
+      const ok = j.ok && dt.every((x) => x === 0) && modelsOk;
       if (!ok) failures++;
       console.log(
         [
@@ -160,6 +168,8 @@ try {
           fmt(h.cost),
           fmt(d),
           ...dt,
+          fmt(delta),
+          `${j.residual.toExponential(2)}${j.exact ? "" : "!"}`,
           modelsOk ? "same" : "DIFF",
           ok ? "ok" : "FAIL",
         ].join("\t"),
@@ -174,21 +184,31 @@ try {
     const cDay = daily.daily.map(norm);
     for (const order of orders) {
       const hub = await hubReport({ dir, pricingFile: pricing, tz, order });
+      const legacy = await hubReport({
+        dir,
+        pricingFile: pricing,
+        tz,
+        order,
+        legacyCacheWrites: true,
+      });
       console.log(`\n=== timezone ${tz}  arrival order ${order}  tolerance ${tolerance}% ===`);
       compare(
         "per session: ccusage session vs hub GET /history/sessions",
         cSess,
         hub.sessions.map((s) => normHub(s, s.session_id)),
+        legacy.sessions.map((s) => normHub(s, s.session_id)),
       );
       compare(
         "per session: ccusage session vs hub GET /sessions/:id/cost",
         cSess,
         Object.entries(hub.sessionCost).map(([id, s]) => normHub(s, id)),
+        Object.entries(legacy.sessionCost).map(([id, s]) => normHub(s, id)),
       );
       compare(
         "per day: ccusage daily vs hub GET /history/daily",
         cDay,
         hub.days.map((d) => normHub(d, d.date)),
+        legacy.days.map((d) => normHub(d, d.date)),
       );
     }
     expected[tz] = { sessions: cSess, days: cDay };

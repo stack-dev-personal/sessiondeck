@@ -39,6 +39,14 @@ const UsageLineSchema = z.object({
       cache_creation_input_tokens: tokens.optional(),
       cache_read_input_tokens: tokens.optional(),
       speed: z.enum(["standard", "fast"]).optional(),
+      // TTL split of the cache writes; an unexpected shape is ignored, not a reason to skip the line.
+      cache_creation: z
+        .object({
+          ephemeral_1h_input_tokens: tokens.optional(),
+          ephemeral_5m_input_tokens: tokens.optional(),
+        })
+        .optional()
+        .catch(undefined),
     }),
     model: z.string().min(1).optional(),
     id: z.string().min(1).optional(),
@@ -137,6 +145,9 @@ interface Entry {
   output: number;
   cacheCreation: number;
   cacheRead: number;
+  /** TTL split of cacheCreation; undefined when the row has none. */
+  cache1h: number | undefined;
+  cache5m: number | undefined;
   costUSD: number | undefined;
   tokenTotal: number;
   hasSpeed: boolean;
@@ -144,6 +155,8 @@ interface Entry {
   // Read-time caches, valid for the table / formatter they were computed with.
   pricedBy: PricingTable | undefined;
   priced: number;
+  /** Model name when this row had tokens but no price (and no costUSD), else undefined. */
+  unpriced: string | undefined;
   dayBy: DayFmt | undefined;
   day: string;
 }
@@ -163,6 +176,8 @@ export interface UsageSummary extends TokenStats {
   /** First-seen order, `<synthetic>` excluded (ccusage modelsUsed). */
   models: string[];
   model_breakdowns: ModelBreakdown[];
+  /** Models seen with tokens but no pricing entry; their cost counted as 0. Additive field. */
+  unpricedModels: string[];
 }
 export interface SessionUsage extends UsageSummary {
   session_id: string;
@@ -193,10 +208,12 @@ function add(s: TokenStats, e: Entry, cost: number): void {
 class Summary {
   readonly totals = emptyStats();
   readonly byModel = new Map<string, TokenStats>();
+  private readonly unpriced = new Set<string>();
   /** Earliest (file, line) each model was seen at: models list in ccusage's file order, not ingest order. */
   private readonly firstAt = new Map<string, { file: string; line: number }>();
   add(e: Entry, cost: number): void {
     add(this.totals, e, cost);
+    if (e.unpriced !== undefined) this.unpriced.add(e.unpriced);
     if (e.displayModel === "<synthetic>") return;
     const name = e.displayModel ?? "unknown";
     if (e.displayModel !== undefined) {
@@ -228,6 +245,7 @@ class Summary {
       model_breakdowns: [...this.byModel]
         .map(([model, s]) => ({ model, ...s }))
         .sort((a, b) => b.cost_usd - a.cost_usd),
+      unpricedModels: [...this.unpriced].sort(),
     };
   }
 }
@@ -283,6 +301,9 @@ export class UsageCollector {
    */
   private readonly projects = new Map<string, string | null>();
   private ver = 0;
+
+  /** @param onUnpriced called each time a row is priced and its model has no pricing entry. */
+  constructor(private readonly onUnpriced?: (model: string) => void) {}
 
   /** Bumps whenever a row changes what any read would return. */
   get version(): number {
@@ -350,6 +371,8 @@ export class UsageCollector {
       output: u.output_tokens,
       cacheCreation: u.cache_creation_input_tokens ?? 0,
       cacheRead: u.cache_read_input_tokens ?? 0,
+      cache1h: u.cache_creation?.ephemeral_1h_input_tokens,
+      cache5m: u.cache_creation?.ephemeral_5m_input_tokens,
       // Cost mode "auto": costUSD when present, else priced from tokens at read time.
       costUSD: d.costUSD,
       tokenTotal,
@@ -357,6 +380,7 @@ export class UsageCollector {
       version: d.version,
       pricedBy: undefined,
       priced: 0,
+      unpriced: undefined,
       dayBy: undefined,
       day: "",
     };
@@ -382,11 +406,22 @@ export class UsageCollector {
             output_tokens: e.output,
             cache_creation_input_tokens: e.cacheCreation,
             cache_read_input_tokens: e.cacheRead,
+            cache_creation_1h_tokens: e.cache1h,
+            cache_creation_5m_tokens: e.cache5m,
           },
           e.model,
           e.speed,
         );
       e.pricedBy = pricing;
+      e.unpriced =
+        e.costUSD === undefined &&
+        e.model !== undefined &&
+        e.model !== "<synthetic>" &&
+        e.tokenTotal > 0 &&
+        !pricing.isPriced(e.model)
+          ? e.model
+          : undefined;
+      if (e.unpriced !== undefined) this.onUnpriced?.(e.unpriced);
     }
     return e.priced;
   }
