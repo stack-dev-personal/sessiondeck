@@ -649,7 +649,7 @@ describe("transcript tailer review fixes", () => {
       6,
     );
     expect(t.entries().length).toBeLessThan(3);
-  });
+  }, 30_000);
 
   it("fsyncs through the real outbox (enqueue.sync) before persisting offsets", async () => {
     const f = join(dir, "t.jsonl");

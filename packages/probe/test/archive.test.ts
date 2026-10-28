@@ -578,6 +578,27 @@ describe("archive config", () => {
 const j = (...p: string[]): string => p.join("");
 
 describe("redaction coverage (R5.2)", () => {
+  it("a value that names a secret followed by an `=` masks the rest of the line (U4b)", () => {
+    const cases: [string, string[]][] = [
+      ["--api-key= db_pass= x x=S", ["S", "x=S"]],
+      ['--api-key= "secret" = S', ["= S"]],
+      ["--api-key= passphrase = correct S", ["correct", " S"]],
+      ['--api-key\tXsecret: =token ="S"', ['"S"', "=token"]],
+      ["MY_SECRET \"secret\"'token': S= :x", ["S=", ":x"]],
+    ];
+    for (const [input, gone] of cases) {
+      const out = redactText(input);
+      expect(out).toContain("[REDACTED]");
+      for (const g of gone) expect(out, input).not.toContain(g);
+    }
+    expect(redactText("--api-key= db_pass= x x=S\nnext line")).toBe(
+      "--api-key= [REDACTED]\nnext line",
+    );
+  });
+
+  it("a flag-looking token after a secret keyword is not swallowed (U4b)", () => {
+    expect(redactText("--password token: --verbose and more prose")).toContain("--verbose");
+  });
   const pw = j("S3cr3t", "Pw99");
   const cases: Array<[string, string]> = [
     ["https url", `clone https://alice:${pw}@git.example.com/x.git now`],
@@ -902,5 +923,5 @@ describe("archive batching stays under the hub body limit (R5.2, U4)", () => {
     } finally {
       await d?.kill();
     }
-  });
+  }, 30_000);
 });

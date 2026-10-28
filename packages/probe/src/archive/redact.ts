@@ -112,18 +112,29 @@ const UPPER_ENV = new RegExp(
 // together with the value that follows it, so nothing is left behind either way.
 const NEXT_ASSIGN = new RegExp(`^["']?${NAME_SRC}\\b["']?[ \\t]*[=:]`, "i");
 const BARE_NAME = new RegExp(`^${NAME_SRC}$`, "i");
-const TAIL_VALUE = new RegExp(`^[ \\t]*(?:${VALUE})`);
+const TAIL_VALUE = new RegExp(`^[ \\t]*(?!-)(?:${VALUE})`);
 const TAIL_AFTER_SEP = new RegExp(`^[ \\t]*[:=][ \\t]*(?:${VALUE})?`);
+const QUOTE_CHARS = /["'`\u2018\u2019\u201C\u201D]/g;
+const EOL = -1;
 
-/** How many chars after the matched value are still part of the secret (0 for an ordinary value). */
+/**
+ * How many chars after the matched value are still part of the secret (0 for an ordinary value),
+ * or EOL when the rest of the line must go (the value names a secret and an `=` follows it).
+ */
 function extraSecretLength(v: string, rest: string): number {
-  if (/^["'`\u2018\u2019\u201C\u201D]/.test(v)) return 0;
-  if (NEXT_ASSIGN.test(v)) {
-    if (/[=:]$/.test(v)) return TAIL_VALUE.exec(rest)?.[0].length ?? 0;
-    return 0; // `name=value` is one token, already masked whole
+  const core = v.replace(QUOTE_CHARS, "");
+  const assign = NEXT_ASSIGN.exec(core);
+  const next = assign !== null;
+  if (!next && !BARE_NAME.test(core)) return 0;
+  if (assign?.[0].endsWith("=")) return EOL; // `name=value`: ENV_LINE masked the rest of the line
+  if (/^[ \t]*=/.test(rest)) return EOL;
+  if (next) {
+    if (!/:$/.test(core)) return 0;
+    const t = TAIL_VALUE.exec(rest)?.[0] ?? "";
+    return /=$/.test(t) ? EOL : t.length;
   }
-  if (BARE_NAME.test(v)) return TAIL_AFTER_SEP.exec(rest)?.[0].length ?? 0; // `token :X`
-  return 0;
+  const t = TAIL_AFTER_SEP.exec(rest)?.[0] ?? ""; // `token :X`
+  return /=$/.test(t) ? EOL : t.length;
 }
 
 function maskCli(
@@ -139,7 +150,10 @@ function maskCli(
     const end = m.index + m[0].length;
     const extra = m[0].endsWith(REDACTED) ? 0 : extraSecretLength(v, s.slice(end, end + 1100));
     out += s.slice(pos, m.index) + head + REDACTED;
-    pos = end + extra;
+    if (extra === EOL) {
+      const nl = s.indexOf("\n", end);
+      pos = nl < 0 ? s.length : nl;
+    } else pos = end + extra;
     re.lastIndex = pos;
   }
   return out + s.slice(pos);
