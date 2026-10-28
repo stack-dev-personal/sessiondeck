@@ -139,3 +139,38 @@ Command: `pnpm -F @sessiondeck/hub load --rate 1000 --duration 60 --batch 100 --
 | orchestrator 3 | dbb1e33 | 11.34 | 22.54 | 36.80 | 54.74 | FAIL |
 
 `git log 0e321fe..HEAD -- packages/hub packages/contract` is empty and hub's resolved dependencies are identical, so there is no regression versus 0e321fe; the failures are host contention. Earlier clean-host runs in this file passed (p95 10.91 to 12.89 ms). Verdict for FIX-5: R2.4 fail on this host, needs-laptop-confirmation. Raw: /state/1/gate/FIX-5/verify-load-HEAD.txt, f3-load-*.log.
+
+## U2 fix iteration 1 (R2.12 against R2.4 and R2.9)
+
+Date 2026-10-28, branch p2/headless-metrics. Machine: Windows 11 native (not WSL, not a container), node v24.19.0 (the hub requires >=22.6), the laptop at about 96% total CPU from Docker Desktop and other sprint containers throughout (ten containers up, Task Manager busy). These are not quiet-host numbers. The claim is no regression versus the baseline under the same load, not an absolute R2.4 pass: every run below exceeds 20 ms, before and after.
+
+Harness change (commit 625883f, same for both columns): `scripts/synth-spool.ts` transcript envelopes are now real assistant rows (text block, unique `message.id`, model, `usage`, `gitBranch`), and odd-numbered sessions are headless (no statusline). Before, the lines were `{n,text}`, so neither the deriver, the usage index nor `CostFiller` ran in `load` or `bench-replay`. Now each 100-envelope batch carries about 5 transcript envelopes of 5 usage rows.
+
+### R2.4 ingest load
+
+Command: `cd packages/hub && node scripts/load-ingest.mjs --rate 1000 --duration 60` (batch 100, 5 s warm-up, 659 batches measured, in-process Fastify plus SQLite WAL, client in the same process). Three runs per column, sequential, nothing else of mine running. "Before" is the source at 625883f (`git checkout 625883f -- packages/hub/src`), "after" is HEAD of this fix. Both columns measured back to back in one session.
+
+| Column | Run | p50 ms | p95 ms | p99 ms | max ms | failures |
+|---|---|---|---|---|---|---|
+| before (first set) | 1 | 156.61 | 433.10 | 570.94 | 890.56 | 0 |
+| before (first set) | 2 | 138.67 | 262.94 | 321.76 | 554.29 | 0 |
+| before (first set) | 3 | 168.52 | 625.48 | 851.14 | 1053.62 | 0 |
+| before (rerun, adjacent to after) | 1 | 99.13 | 326.77 | 602.10 | 826.40 | 0 |
+| before (rerun, adjacent to after) | 2 | 85.63 | 6596.39 | 8142.92 | 8740.65 | 0 |
+| before (rerun, adjacent to after) | 3 | 831.32 | 3587.56 | 4300.90 | 4699.48 | 0 |
+| after | 1 | 29.63 | 162.93 | 342.05 | 626.40 | 0 |
+| after | 2 | 26.92 | 106.92 | 237.28 | 513.88 | 0 |
+| after | 3 | 29.80 | 141.31 | 1392.64 | 1792.24 | 0 |
+
+Result: median p50 27 to 30 ms after against 86 to 832 ms before; median p95 141 ms after against 327 to 433 ms before (worst before 6.6 s). No regression; the debounce and the per-session yield remove the per-batch usage refresh and re-sum from the request path. R2.4 itself (p95 < 20 ms) is NOT demonstrated here: it needs a quiet host (laptop confirmation still outstanding, as in FIX-5). An intermediate set (patch 1 only, before the final code) gave p95 299, 688, 174 ms with a second harness process possibly overlapping; discarded.
+
+### R2.9 replay
+
+Command: `cd packages/hub && node scripts/bench-replay.mjs --dir /tmp/sd-2-S8d-bench4` (1,020,000 events, 300 sessions, 2 hosts; 5% of envelopes are transcript envelopes with usage rows; half of the sessions are headless and so need the usage index at replay).
+
+| Column | replay elapsed | events/s | peak RSS | exceptions |
+|---|---|---|---|---|
+| before (625883f source, new synth) | 52,892 ms | 19,285 | 333.5 MB | 0 |
+| after (HEAD) | 53,576 ms | 19,038 | 339.0 MB | 0 |
+
+Result: PASS (< 60 s) with a thin margin on a loaded host; unchanged by this iteration (the scan bound does not bite on the synthetic sessions). The earlier 12.7 s figure (HEAD d02c41e, Linux, no transcript-derived work, idle host) is not comparable: the replay now also builds the usage index and re-derives every session, and the host is busy. A quiet-host re-run is advisable before closing R2.9. Compaction in the same run: 528,150 events, p99 batch 92.56 ms, max batch 204.73 ms.

@@ -224,6 +224,8 @@ Cost is asynchronous. Nothing is priced in the ingest transaction. After a batch
 
 Replay and retention. `hub replay` folds the events, then re-derives every session from the stored lines with the same functions (`derive/replay-figures.ts`), so the result equals the ingest-time snapshot. The usage index is built once, and only when some session has no statusline cost. `hub replay` prices with the table `serve` uses (`HUB_PRICING_FILE`, else the refreshed cache next to the database, else the bundled list), so a replayed `cost.usd` equals `GET /sessions/:id/cost`. Compaction baselines hold events-only state; replay re-derives over them.
 
+Known gap. A Stop or SessionStart hook cannot displace a transcript-filled message or model, even when the hook is newer than the transcript row (for example the probe's transcript tailer stalls while hooks keep flowing). Letting the newer one win needs a per-field timestamp that survives restart and replay; the snapshot has no place for it (contract change, not made here).
+
 Keys are (session_id, agent_id) throughout so the subagent figures (R2.13) can reuse the deriver.
 
 ## Replay and retention
