@@ -19,6 +19,13 @@ export interface DeriverLog {
 }
 
 const PAGE = 200;
+/**
+ * A rebuild reads at most this many of the newest stored lines. A session with no git branch (run
+ * outside a repository) or no text-bearing assistant row never completes, and without a bound its
+ * first ingest after a restart would page the whole transcript inside the ingest transaction.
+ * Replay rebuilds through the same function, so the bound never makes it differ from ingest.
+ */
+export const REBUILD_MAX_LINES = 2000;
 const CACHE_MAX = 2000;
 
 export class TranscriptDeriver {
@@ -60,13 +67,16 @@ export class TranscriptDeriver {
     let acc = EMPTY_FIGURES;
     let malformed = 0;
     let before = Number.MAX_SAFE_INTEGER;
-    for (;;) {
-      const page = this.store.listMainLinesBefore(sessionId, before, PAGE);
+    let scanned = 0;
+    while (scanned < REBUILD_MAX_LINES) {
+      const limit = Math.min(PAGE, REBUILD_MAX_LINES - scanned);
+      const page = this.store.listMainLinesBefore(sessionId, before, limit);
       if (page.length === 0) break;
+      scanned += page.length;
       const r: FoldResult = foldBackward(acc, page);
       acc = r.figures;
       malformed += r.malformed;
-      if (isComplete(acc) || page.length < PAGE) break;
+      if (isComplete(acc) || page.length < limit) break;
       before = (page[page.length - 1] as { line_no: number }).line_no;
     }
     this.report(sessionId, malformed);
