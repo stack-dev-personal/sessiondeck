@@ -204,6 +204,50 @@ R2.5 gate: `pnpm -F @sessiondeck/hub ws:harness` (in-process hub) or `HUB_URL=..
 - `HUB_ALLOWED_ORIGINS` is empty by default: a browser Origin is not checked, and only the token blocks cross-site WebSocket hijacking. When Cloudflare Access (or any other front) puts the hub on a public name in Phase 7, set `HUB_ALLOWED_ORIGINS` to the web UI origin(s), for example `https://deck.example.com`.
 - Request logs never contain the Authorization header or query strings.
 
+## Transcript-derived figures
+
+R2.12. Headless  sessions send hooks and transcript lines but no statusline, so the snapshot would keep model, context, cost, git branch and last message empty. The hub fills them from the session's main transcript lines (agent_id '') and records where each came from in  ( or ; a key is absent until filled; effort has none, it stays null).
+
+| Field | From the transcript | Notes |
+|-------|--------------------|-------|
+| model | last assistant row's  | id and display_name both the id;  rows are skipped |
+| context.input | last assistant row's usage: input + cache_creation + cache_read tokens | window and used_pct stay null: the pricing table's public API does not expose max_input_tokens, and windows are never hard-coded |
+| cost.usd | lifetime transcript-priced cost, the same figure as  (all agents) | filled after the batch commits, see below |
+| git.branch | latest non-empty  of any row | |
+| last_assistant_message | last non-empty assistant text block | capped at 2000 chars with the contract's truncation (mirrored in , equality tested) |
+
+Rules. A statusline value always wins: a statusline payload that sets a field sets its source to  and later transcript values never overwrite it; if a transcript filled the field first, the statusline overwrites it and the source flips (a statusline context object replaces transcript tokens wholesale). The Stop and SessionStart hooks cannot displace a transcript-filled message or model, so ingest order never changes the result.
+
+Incremental. The ingest transaction folds only the batch's fresh main-transcript lines onto a per-session cache entry (; newest line_no plus the four figures). A cache miss (restart), a line not newer than the newest seen (out of order) or a rolled-back batch rebuilds the entry by scanning the stored lines backwards until every figure is found. Lines that look like assistant rows but do not parse are skipped and counted in one warn line per scan. A transcript never creates a session: lines that arrive before SessionStart are stored, and the figures are derived when the session is created (in the same batch).
+
+Cost is asynchronous. Pricing is not done in the ingest transaction. After a batch commits,  marks sessions whose lines carried  (or that have no cost yet), coalesces them per tick, refreshes the usage index, reads the same memoized figure the cost route serves, writes the snapshot in its own short transaction and emits it on the ingest  event, so WS clients get an ordinary  delta. A failure is logged () and retried by the next transcript batch. The pending set is the only state and loses nothing on restart.
+
+Replay and retention.  folds the events, then re-derives every session from the stored lines with the same functions (), so the result equals the ingest-time snapshot. The usage index is built once, and only when some session has no statusline cost. Replay prices with the bundled table ( overrides it); a configured  is not read by the CLI. Compaction baselines hold events-only state; replay re-derives over them.
+
+Keys are (session_id, agent_id) throughout so the subagent figures (R2.13) can reuse the deriver.
+
+## Transcript-derived figures
+
+R2.12. Headless `claude -p` sessions send hooks and transcript lines but no statusline, so the snapshot would keep model, context, cost, git branch and last message empty. The hub fills them from the session's main transcript lines (agent_id '') and records where each came from in `snapshot.sources` (`statusline` or `transcript`; a key is absent until filled; effort has none and stays null).
+
+| Field | From the transcript | Notes |
+|-------|--------------------|-------|
+| model | last assistant row's `message.model` | id and display_name are both the id; `<synthetic>` rows are skipped |
+| context.input | last assistant row's usage: input + cache_creation + cache_read tokens | window and used_pct stay null: the pricing table's public API does not expose max_input_tokens, and windows are never hard-coded |
+| cost.usd | lifetime transcript-priced cost, the same figure as `GET /sessions/:id/cost` (all agents) | filled after the batch commits, see below |
+| git.branch | latest non-empty `gitBranch` of any row | |
+| last_assistant_message | last non-empty assistant text block | capped at 2000 chars with the contract's truncation (mirrored in `derive/apply.ts`, equality tested) |
+
+Rules. A statusline value always wins. A statusline payload that sets a field sets its source to `statusline`, and later transcript values never overwrite it. If a transcript filled the field first, the statusline overwrites it and the source flips (a statusline context object replaces transcript tokens wholesale). The Stop and SessionStart hooks cannot displace a transcript-filled message or model, so ingest order never changes the result.
+
+Incremental. The ingest transaction folds only the batch's fresh main-transcript lines onto a per-session cache entry (`derive/deriver.ts`: newest line_no plus the four figures). A cache miss (restart), a line not newer than the newest seen (out of order) or a rolled-back batch rebuilds the entry by scanning the stored lines backwards until every figure is found. Lines that look like assistant rows but do not parse are skipped and counted in one warn line per scan. A transcript never creates a session: lines that arrive before SessionStart are stored, and the figures are derived when the session is created (in the same batch).
+
+Cost is asynchronous. Nothing is priced in the ingest transaction. After a batch commits, `CostFiller` marks sessions whose lines carried `"usage":{` (or that have no cost yet), coalesces them per tick, refreshes the usage index, reads the same memoized figure the cost route serves, writes the snapshot in its own short transaction and emits it on the ingest `batch` event, so WS clients get an ordinary `session` delta. A failure is logged (`cost fill failed`) and retried by the next transcript batch. The pending set is the only state and loses nothing on restart.
+
+Replay and retention. `hub replay` folds the events, then re-derives every session from the stored lines with the same functions (`derive/replay-figures.ts`), so the result equals the ingest-time snapshot. The usage index is built once, and only when some session has no statusline cost. Replay prices with the bundled table (`ReplayOptions.pricing` overrides it); the CLI does not read `HUB_PRICING_FILE`. Compaction baselines hold events-only state; replay re-derives over them.
+
+Keys are (session_id, agent_id) throughout so the subagent figures (R2.13) can reuse the deriver.
+
 ## Replay and retention
 
 Snapshots (`sessions`, `statusline_samples`) are materialized on ingest. Everything derived can be rebuilt from the stored events, and old events are folded away so the database does not grow without bound.

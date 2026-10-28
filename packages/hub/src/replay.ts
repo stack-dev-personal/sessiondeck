@@ -11,6 +11,9 @@
 // serving hub's lease is fresh.
 import type { Envelope, HostOs, SessionSnapshot } from "@sessiondeck/contract";
 import type { EventRow, SampleRow, Store } from "./db/store.ts";
+import { rederiveFromTranscripts } from "./derive/replay-figures.ts";
+import { bundledTable } from "./pricing/loader.ts";
+import type { PricingTable } from "./pricing/pricing.ts";
 import { MemSessions, SnapshotEngine, type SessionSource } from "./ingest/engine.ts";
 import { rowOf, type Logger } from "./ingest/ingestor.ts";
 
@@ -120,6 +123,8 @@ export interface ReplayOptions {
    * replay (a pruned sample must not come back from a retained statusline event).
    */
   sampleWindow?: { minTs: number; maxTs: number };
+  /** Price list for the transcript-derived cost (R2.12); defaults to the bundled table. */
+  pricing?: PricingTable;
   /** Called after every page of events, inside the transaction (tests use it to interleave). */
   onProgress?: (eventsSoFar: number) => void;
 }
@@ -156,6 +161,9 @@ export function replay(store: Store, log: Logger, opts: ReplayOptions): ReplayRe
       opts.onProgress?.(events);
       if (rows.length < PAGE) break;
     }
+    // R2.12: transcript figures and cost are not events; re-derive them from the stored lines.
+    const derived = rederiveFromTranscripts(store, log, mem.map, opts.pricing ?? bundledTable());
+    for (const [id, sn] of derived) mem.map.set(id, sn);
     store.deleteAllSessions();
     for (const sn of mem.map.values()) store.upsertSession(rowOf(sn));
     return {
