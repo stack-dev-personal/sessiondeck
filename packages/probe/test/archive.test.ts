@@ -506,12 +506,25 @@ describe("redaction coverage (R5.2)", () => {
     ["next line value", `token:\n  ${pw}\nrest`],
     ["camel apiKey", `apiKey: ${pw}`],
     ["access token", `accessToken=${pw}`],
+    ["empty-user url", `redis://:${pw}@redis:6379`],
+    ["at in url password", `postgres://app:${j("p@ss", "/w0rd")}${pw}@db/x`],
+    ["folded scalar", `secret: >-\n  folded ${pw}\nnext: 1`],
+    ["literal scalar", `secret: |\n  line1 ${pw}\n\n  line2 ${pw}\nnext: 1`],
+    ["curl -u", `curl -u admin:${pw} https://x`],
+    ["--password sep", `run --password ${pw} --verbose`],
+    ["--token=", `run --token=${pw}`],
+    ["--api-key", `run --api-key ${pw}`],
+    ["set PGPASSWORD", `set PGPASSWORD ${pw}`],
   ];
   it.each(cases)("masks %s", (_n, input) => {
     const out = redactText(input);
     expect(out).not.toContain(pw);
     expect(out).not.toMatch(/A1b2C3d4E5f6G7h8|dXNlcjpw|aaaaaaaaaaaa/);
     expect(out).toContain("[REDACTED]");
+  });
+  it("keeps structure around block scalars and flags", () => {
+    expect(redactText("secret: |\n  a\n  b\nnext: 1")).toBe("secret: [REDACTED]\nnext: 1");
+    expect(redactText("run --password x --verbose")).toBe("run --password [REDACTED] --verbose");
   });
   it("keeps the user and host of a credentialed url", () => {
     expect(redactText(`postgres://app:${pw}@prod-db:5432/x`)).toBe(
@@ -526,6 +539,8 @@ describe("redaction coverage (R5.2)", () => {
       "a basic understanding of the password reset flow",
       "see https://example.com:8080/path and ssh://git@host/repo",
       "Passing arguments: none",
+      "the password was rotated; pass --token-count 5 and -u later",
+      "PASSWORD RESET and TOKEN LIMIT are words",
     ]) {
       expect(redactText(t), t).toBe(t);
     }
