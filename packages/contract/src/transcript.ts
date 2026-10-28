@@ -40,6 +40,11 @@ export interface ToolCall {
   id: string;
   name: string;
   input: unknown;
+  /**
+   * True when the normalizer cut anything from `input` (long strings, deep or large structures). The input is
+   * then partial: consumers must not render a diff, patch or command from it as if it were complete.
+   */
+  inputTruncated?: true;
   /** Paired from the matching tool_result block; absent while the call is pending. */
   result?: ToolResult;
   /** Present for Agent/Task calls whose subagent transcript was supplied. */

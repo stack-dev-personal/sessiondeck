@@ -11,8 +11,10 @@
 //
 // Pure function. No Node-only APIs: the web package imports this file.
 
+import { TRUNCATION_MARKER, truncate } from "./limits";
 import type {
   MessageSegment,
+  ToolCall,
   SubagentThread,
   SystemInfoData,
   TokenUsage,
@@ -61,11 +63,34 @@ export interface RowKindCounts {
 function isObj(x: unknown): x is Row {
   return typeof x === "object" && x !== null && !Array.isArray(x);
 }
+/** Copies a string capped at `max` UTF-16 units (marker included, surrogate-safe); anything else is undefined. */
+function cap(x: unknown, max: number): string | undefined {
+  return typeof x === "string" ? truncate(x, max) : undefined;
+}
+/** Short text field (levels, names, paths, labels): capped at FIELD_MAX. */
 function str(x: unknown): string | undefined {
+  return cap(x, FIELD_MAX);
+}
+/** Identifier (uuid, tool id, agent id): capped at ID_MAX. */
+function idOf(x: unknown): string | undefined {
+  return cap(x, ID_MAX);
+}
+/**
+ * Message body text (prompt, assistant text, tool result, notice content). Uncapped on purpose: each body is
+ * copied to exactly one output place, so the output stays linear in the input; the caller enforces the byte cap.
+ */
+function body(x: unknown): string | undefined {
   return typeof x === "string" ? x : undefined;
 }
 function num(x: unknown): number | undefined {
   return typeof x === "number" && Number.isFinite(x) ? x : undefined;
+}
+function bool(x: unknown): boolean | undefined {
+  return typeof x === "boolean" ? x : undefined;
+}
+/** A string (capped), finite number or boolean from an untrusted field; objects and arrays become undefined. */
+function scalar(x: unknown, max = FIELD_MAX): string | number | boolean | undefined {
+  return typeof x === "string" ? truncate(x, max) : (num(x) ?? bool(x));
 }
 
 // Bounds for everything that reaches the output from untrusted rows (security review).
@@ -75,8 +100,13 @@ const RAW_DEPTH_MAX = 4;
 const RAW_KEYS_MAX = 40;
 const RAW_ITEMS_MAX = 20;
 const KEY_MAX = 200;
+const ID_MAX = 200;
+const FIELD_MAX = 1024;
+const META_TEXT_MAX = 200;
 const INPUT_BYTES_MAX = 64 * 1024;
 const INPUT_DEPTH_MAX = 8;
+/** Every container and every scalar costs at least this much of a budget, so empty ones count. */
+const NODE_COST = 8;
 const RESULT_JSON_MAX = 20000;
 const KIND_LABEL_MAX = 100;
 const MAX_SUBAGENT_DEPTH = 8;
@@ -90,21 +120,22 @@ const MAX_SUBAGENT_MESSAGES = 200_000;
 export function capRaw(value: unknown): unknown {
   const budget = { left: RAW_ROW_MAX };
   const walk = (v: unknown, depth: number): unknown => {
-    if (budget.left <= 0) return "[truncated]";
+    if (budget.left <= 0) return TRUNCATION_MARKER;
     if (typeof v === "string") {
-      const cut = v.length > RAW_STRING_MAX ? `${v.slice(0, RAW_STRING_MAX)}[truncated]` : v;
-      budget.left -= cut.length;
+      const cut = truncate(v, RAW_STRING_MAX);
+      budget.left -= Math.max(cut.length, NODE_COST);
       return cut;
     }
     if (v === null || typeof v === "number" || typeof v === "boolean") {
-      budget.left -= 8;
+      budget.left -= NODE_COST;
       return v;
     }
     if (typeof v !== "object") {
-      budget.left -= 8;
-      return String(v);
+      budget.left -= NODE_COST;
+      return truncate(String(v), KEY_MAX);
     }
     if (depth >= RAW_DEPTH_MAX) return Array.isArray(v) ? "[array]" : "[object]";
+    budget.left -= NODE_COST;
     if (Array.isArray(v)) {
       const arr: unknown[] = [];
       for (const x of v.slice(0, RAW_ITEMS_MAX)) arr.push(walk(x, depth + 1));
@@ -121,7 +152,7 @@ export function capRaw(value: unknown): unknown {
       }
       const shown = k.length > KEY_MAX ? `${k.slice(0, KEY_MAX)}~${i}` : k;
       i++;
-      budget.left -= shown.length;
+      budget.left -= Math.max(shown.length, NODE_COST);
       o[shown] = walk((v as Record<string, unknown>)[k], depth + 1);
     }
     if (keys.length > RAW_KEYS_MAX) o["[truncated]"] = `${keys.length - RAW_KEYS_MAX} more keys`;
@@ -135,29 +166,45 @@ export function capRaw(value: unknown): unknown {
 }
 
 /**
- * Structure-keeping copy of a tool_use input: depth at most 8, about 64 KB of strings and keys in total.
- * Real inputs under the limit come back unchanged in shape. Never throws.
+ * Structure-keeping copy of a tool_use input: depth at most 8, about 64 KB of strings, keys and nodes in
+ * total (empty containers and empty strings count). `truncated` is true when anything was cut; the copy then
+ * must not be rendered as a faithful diff or command. Real inputs under the limit come back unchanged in
+ * shape. Arrays only ever hold what the input held (no marker elements). Never throws.
  */
-export function limitInput(value: unknown): unknown {
-  const budget = { left: INPUT_BYTES_MAX };
+export function limitInputChecked(value: unknown): { value: unknown; truncated: boolean } {
+  const st = { left: INPUT_BYTES_MAX, cut: false };
   const walk = (v: unknown, depth: number): unknown => {
     if (typeof v === "string") {
-      if (budget.left <= 0) return "[truncated]";
-      const cut = v.length > budget.left ? `${v.slice(0, budget.left)}[truncated]` : v;
-      budget.left -= v.length;
-      return cut;
+      if (st.left <= 0) {
+        st.cut = true;
+        return TRUNCATION_MARKER;
+      }
+      let out = v;
+      if (v.length > st.left) {
+        st.cut = true;
+        out = truncate(v, st.left);
+      }
+      st.left -= Math.max(v.length, NODE_COST);
+      return out;
     }
     if (v === null || typeof v === "number" || typeof v === "boolean") {
-      budget.left -= 8;
+      st.left -= NODE_COST;
       return v;
     }
-    if (typeof v !== "object") return v === undefined ? undefined : String(v);
-    if (depth >= INPUT_DEPTH_MAX) return Array.isArray(v) ? "[array]" : "[object]";
+    if (typeof v !== "object") {
+      st.left -= NODE_COST;
+      return v === undefined ? undefined : truncate(String(v), KEY_MAX);
+    }
+    if (depth >= INPUT_DEPTH_MAX) {
+      st.cut = true;
+      return Array.isArray(v) ? "[array]" : "[object]";
+    }
+    st.left -= NODE_COST;
     if (Array.isArray(v)) {
       const arr: unknown[] = [];
       for (let i = 0; i < v.length; i++) {
-        if (budget.left <= 0) {
-          arr.push(`[${v.length - i} more truncated]`);
+        if (st.left <= 0) {
+          st.cut = true;
           break;
         }
         arr.push(walk(v[i], depth + 1));
@@ -167,22 +214,32 @@ export function limitInput(value: unknown): unknown {
     const o: Record<string, unknown> = {};
     let i = 0;
     for (const k of Object.keys(v)) {
-      if (budget.left <= 0) {
-        o["[truncated]"] = "budget spent";
+      if (st.left <= 0) {
+        st.cut = true;
         break;
       }
-      const shown = k.length > KEY_MAX ? `${k.slice(0, KEY_MAX)}~${i}` : k;
+      let shown = k;
+      if (k.length > KEY_MAX) {
+        st.cut = true;
+        shown = `${k.slice(0, KEY_MAX)}~${i}`;
+      }
       i++;
-      budget.left -= shown.length;
+      st.left -= Math.max(shown.length, NODE_COST);
       o[shown] = walk((v as Record<string, unknown>)[k], depth + 1);
     }
     return o;
   };
   try {
-    return walk(value, 0);
+    const out = walk(value, 0);
+    return { value: out, truncated: st.cut };
   } catch {
-    return "[unreadable]";
+    return { value: "[unreadable]", truncated: true };
   }
+}
+
+/** limitInputChecked without the flag. */
+export function limitInput(value: unknown): unknown {
+  return limitInputChecked(value).value;
 }
 
 /** JSON-ish text of a value with depth and length bounds; never throws. */
@@ -212,8 +269,9 @@ function boundedJson(value: unknown): string {
     }
     for (const k of Object.keys(v)) {
       if (left <= 0) break;
-      left -= k.length + 3;
-      parts.push(`${JSON.stringify(k)}:${walk((v as Row)[k], depth + 1)}`);
+      const shown = k.length > left ? k.slice(0, Math.max(left, 0)) : k;
+      left -= shown.length + 3;
+      parts.push(`${JSON.stringify(shown)}:${walk((v as Row)[k], depth + 1)}`);
     }
     return `{${parts.join(",")}}`;
   };
@@ -367,10 +425,17 @@ const DEFS: readonly KindDef[] = [
     doc: "Compaction divider; parentUuid is null, logicalParentUuid points back into the earlier history.",
     build: (row, _att, base) => {
       const cm = isObj(row.compactMetadata) ? row.compactMetadata : {};
-      const compact: Record<string, unknown> = {};
-      for (const k of ["trigger", "preTokens", "postTokens", "durationMs"]) {
-        if (cm[k] !== undefined) compact[k] = cm[k];
-      }
+      // Two independent small copies: one for the info segment, one for the message metadata.
+      const copy = (): Record<string, unknown> => {
+        const c: Record<string, unknown> = {};
+        const trigger = cap(cm.trigger, KIND_LABEL_MAX);
+        if (trigger !== undefined) c.trigger = trigger;
+        for (const k of ["preTokens", "postTokens", "durationMs"]) {
+          const n = num(cm[k]);
+          if (n !== undefined) c[k] = n;
+        }
+        return c;
+      };
       return systemMessage(
         base,
         "compact_boundary",
@@ -379,22 +444,26 @@ const DEFS: readonly KindDef[] = [
             type: "system_info",
             info: {
               subtype: "compact_boundary",
-              message: str(row.content) ?? "Conversation compacted",
-              data: compact,
+              message: body(row.content) ?? "Conversation compacted",
+              data: copy(),
             },
           },
         ],
-        { divider: true, compact },
+        { divider: true, compact: copy() },
       );
     },
   },
-  sys("system:away_summary", "Recap shown when the user returns.", (r) => str(r.content) ?? ""),
-  sys("system:informational", "Notice such as a usage-limit message.", (r) => str(r.content) ?? ""),
+  sys("system:away_summary", "Recap shown when the user returns.", (r) => body(r.content) ?? ""),
+  sys(
+    "system:informational",
+    "Notice such as a usage-limit message.",
+    (r) => body(r.content) ?? "",
+  ),
   sys(
     "system:scheduled_task_fire",
     "A scheduled task started.",
-    (r) => str(r.content) ?? "Scheduled task",
-    (r) => ({ taskId: r.taskId, cron: r.cron }),
+    (r) => body(r.content) ?? "Scheduled task",
+    (r) => ({ taskId: scalar(r.taskId, ID_MAX), cron: scalar(r.cron, ID_MAX) }),
   ),
   sys(
     "system:stop_hook_summary",
@@ -404,7 +473,10 @@ const DEFS: readonly KindDef[] = [
       const errs = Array.isArray(r.hookErrors) ? r.hookErrors.length : 0;
       return `${n} stop hook${n === 1 ? "" : "s"} ran${errs > 0 ? `, ${errs} error${errs === 1 ? "" : "s"}` : ""}`;
     },
-    (r) => ({ preventedContinuation: r.preventedContinuation, stopReason: r.stopReason }),
+    (r) => ({
+      preventedContinuation: bool(r.preventedContinuation),
+      stopReason: scalar(r.stopReason),
+    }),
   ),
   {
     kind: "system:api_error",
@@ -413,7 +485,7 @@ const DEFS: readonly KindDef[] = [
     build: (row, _att, base) => {
       const e = isObj(row.error) ? row.error : {};
       const parts: string[] = [];
-      const formatted = str(e.formatted);
+      const formatted = body(e.formatted);
       if (formatted) parts.push(formatted);
       const attempt = num(row.retryAttempt);
       const max = num(row.maxRetries);
@@ -423,7 +495,7 @@ const DEFS: readonly KindDef[] = [
       const ms = num(row.retryInMs);
       if (ms !== undefined) parts.push(`in ${ms} ms`);
       const error: { message: string; details?: string } = {
-        message: str(e.message) ?? "API error",
+        message: body(e.message) ?? "API error",
       };
       if (parts.length > 0) error.details = parts.join("; ");
       return systemMessage(base, "api_error", [{ type: "error", error }]);
@@ -436,35 +508,36 @@ const DEFS: readonly KindDef[] = [
     "attachment:hook_success",
     "A hook finished successfully.",
     (_r, a) =>
-      `Hook ${hookName(a)} succeeded${num(a.durationMs) !== undefined ? ` (${String(a.durationMs)} ms)` : ""}`,
-    (_r, a) => ({ hookEvent: a.hookEvent, command: a.command }),
+      `Hook ${hookName(a)} succeeded${num(a.durationMs) !== undefined ? ` (${String(num(a.durationMs))} ms)` : ""}`,
+    (_r, a) => ({ hookEvent: scalar(a.hookEvent), command: scalar(a.command, RAW_STRING_MAX) }),
   ),
   sys(
     "attachment:hook_additional_context",
     "Context a hook injected into the session.",
-    (_r, a) => str(a.content) ?? `Hook ${hookName(a)} added context`,
-    (_r, a) => ({ hookEvent: a.hookEvent }),
+    (_r, a) => body(a.content) ?? `Hook ${hookName(a)} added context`,
+    (_r, a) => ({ hookEvent: scalar(a.hookEvent) }),
   ),
   sys(
     "attachment:hook_cancelled",
     "A hook was cancelled or timed out.",
     (_r, a) =>
-      `Hook ${hookName(a)} cancelled${a.timedOut === true ? ` (timed out after ${String(a.timeoutMs)} ms)` : ""}`,
-    (_r, a) => ({ hookEvent: a.hookEvent, command: a.command }),
+      `Hook ${hookName(a)} cancelled${a.timedOut === true ? ` (timed out after ${String(num(a.timeoutMs) ?? "?")} ms)` : ""}`,
+    (_r, a) => ({ hookEvent: scalar(a.hookEvent), command: scalar(a.command, RAW_STRING_MAX) }),
   ),
   sys(
     "attachment:hook_non_blocking_error",
     "A hook failed without blocking.",
-    (_r, a) => `Hook ${hookName(a)} failed (exit ${String(a.exitCode)})`,
-    (_r, a) => ({ hookEvent: a.hookEvent, stderr: a.stderr }),
+    (_r, a) =>
+      `Hook ${hookName(a)} failed (exit ${String(scalar(a.exitCode, KIND_LABEL_MAX) ?? "?")})`,
+    (_r, a) => ({ hookEvent: scalar(a.hookEvent), stderr: scalar(a.stderr, RAW_STRING_MAX) }),
   ),
   {
     kind: "attachment:queued_command",
     disposition: "conversation",
     doc: "A prompt queued while a turn ran, delivered to the model.",
     build: (_row, a, base) => {
-      const prompt = str(a.prompt) ?? "";
-      const kind = isObj(a.origin) ? str(a.origin.kind) : undefined;
+      const prompt = body(a.prompt) ?? "";
+      const kind = isObj(a.origin) ? cap(a.origin.kind, KIND_LABEL_MAX) : undefined;
       const human = kind === undefined || kind === "human";
       const segments: MessageSegment[] =
         prompt.trim() === "" ? [] : [{ type: "text", content: prompt }];
@@ -503,20 +576,23 @@ const DEFS: readonly KindDef[] = [
   ),
   sys("attachment:invoked_skills", "Skills re-attached after compaction.", (_r, a) => {
     const list = Array.isArray(a.skills)
-      ? a.skills.map((s) => (isObj(s) ? str(s.name) : undefined)).filter((s) => s)
+      ? a.skills
+          .slice(0, 100)
+          .map((s) => (isObj(s) ? cap(s.name, ID_MAX) : undefined))
+          .filter((s) => s)
       : [];
     return `Skills re-attached: ${list.join(", ")}`;
   }),
   sys(
     "attachment:read_truncation_notice",
     "A Read result was only a partial view.",
-    (_r, a) => str(a.banner) ?? "Read truncated",
+    (_r, a) => body(a.banner) ?? "Read truncated",
   ),
   sys(
     "attachment:plan_mode_exit",
     "Plan mode ended.",
     () => "Exited plan mode",
-    (_r, a) => ({ planExists: a.planExists }),
+    (_r, a) => ({ planExists: bool(a.planExists) }),
   ),
   sys(
     "attachment:ultra_effort_enter",
@@ -566,6 +642,13 @@ const DEFS: readonly KindDef[] = [
   internal("queue-operation", "Prompt queue enqueue/dequeue log."),
   internal("tools-used", "Tools used so far."),
 ];
+
+/** At most RAW_KEYS_MAX key names, each cut to KEY_MAX. */
+function keyNames(o: Row): string[] {
+  return Object.keys(o)
+    .slice(0, RAW_KEYS_MAX)
+    .map((k) => truncate(k, KEY_MAX));
+}
 
 const DEF_BY_KIND: ReadonlyMap<string, KindDef> = new Map(DEFS.map((d) => [d.kind, d]));
 
@@ -628,11 +711,11 @@ function isPromptRow(row: Row): boolean {
   if (row.type === "attachment") {
     const a = isObj(row.attachment) ? row.attachment : {};
     if (a.type !== "queued_command") return false;
-    const kind = isObj(a.origin) ? str(a.origin.kind) : undefined;
+    const kind = isObj(a.origin) ? cap(a.origin.kind, KIND_LABEL_MAX) : undefined;
     return kind === undefined || kind === "human";
   }
   if (row.type !== "user" || row.isMeta === true || row.isCompactSummary === true) return false;
-  const origin = isObj(row.origin) ? str(row.origin.kind) : undefined;
+  const origin = isObj(row.origin) ? body(row.origin.kind) : undefined;
   if (origin !== undefined && origin !== "human") return false;
   const m = isObj(row.message) ? row.message : {};
   const c = m.content;
@@ -648,7 +731,7 @@ function supersededItems(items: Item[]): Set<number> {
   for (const n of nodes) byUuid.set(n.row?.uuid as string, n);
   for (const n of nodes) {
     // compact_boundary has parentUuid null and links back only through logicalParentUuid.
-    const p = str(n.row?.parentUuid) ?? str(n.row?.logicalParentUuid);
+    const p = body(n.row?.parentUuid) ?? body(n.row?.logicalParentUuid);
     if (p === undefined) continue;
     const list = children.get(p);
     if (list) list.push(n);
@@ -657,7 +740,7 @@ function supersededItems(items: Item[]): Set<number> {
   let leaf: Item | undefined;
   for (const it of items) {
     if (it.row?.type !== "last-prompt") continue;
-    const target = str(it.row.leafUuid);
+    const target = body(it.row.leafUuid);
     if (target !== undefined && byUuid.has(target)) leaf = byUuid.get(target);
   }
   if (leaf === undefined) {
@@ -667,7 +750,7 @@ function supersededItems(items: Item[]): Set<number> {
   let cur: Item | undefined = leaf;
   while (cur?.row && !onPath.has(cur.row.uuid as string)) {
     onPath.add(cur.row.uuid as string);
-    const next = str(cur.row.parentUuid) ?? str(cur.row.logicalParentUuid);
+    const next = body(cur.row.parentUuid) ?? body(cur.row.logicalParentUuid);
     cur = next === undefined ? undefined : byUuid.get(next);
   }
   const dropped = new Set<number>();
@@ -696,14 +779,32 @@ function supersededItems(items: Item[]): Set<number> {
 
 interface Ctx {
   sub: Map<string, Item[]>;
-  meta: NonNullable<NormalizeOptions["subagentMeta"]>;
+  meta: Map<string, MetaInfo>;
   metaByToolUse: Map<string, string>;
   /** Agents already expanded once; later references get subagentRef. */
   used: Set<string>;
   /** Agents spawned on a dropped branch; not orphans. */
   abandoned: Set<string>;
+  /** Agents that got a truncation placeholder instead of a thread; later references link to it. */
+  placed: Set<string>;
   /** Messages emitted into subagent threads so far. */
   subMessages: number;
+  /** Agent/Task calls waiting for their thread; drained breadth first (shallow calls expand first). */
+  queue: PendingSpawn[];
+}
+
+interface PendingSpawn {
+  call: ToolCall;
+  aid: string;
+  reported: Row | undefined;
+  depth: number;
+}
+
+/** Meta fields after capping; the only form of options.subagentMeta the rest of the code sees. */
+interface MetaInfo {
+  toolUseId?: string;
+  agentType?: string;
+  description?: string;
 }
 
 interface ThreadResult {
@@ -732,7 +833,7 @@ function usageOf(x: unknown): TokenUsage | undefined {
 }
 
 function rawSegment(label: string, data: unknown): MessageSegment {
-  return { type: "raw", label: label.slice(0, 300), data: capRaw(data) };
+  return { type: "raw", label: truncate(label, 300), data: capRaw(data) };
 }
 
 function rawMessage(
@@ -749,7 +850,7 @@ function rawMessage(
 }
 
 const PERSISTED =
-  /^<persisted-output>\s*Output too large \(([^)]*)\)\.\s*Full output saved to:\s*([^\n]{1,512})/;
+  /^<persisted-output>\s*Output too large \(([^)]{0,100})\)\.\s*Full output saved to:\s*([^\n]{1,512})/;
 
 function flattenResultContent(c: unknown): string {
   if (typeof c === "string") return c;
@@ -757,7 +858,8 @@ function flattenResultContent(c: unknown): string {
   return c
     .map((b) => {
       if (isObj(b) && b.type === "text" && typeof b.text === "string") return b.text;
-      if (isObj(b) && b.type === "tool_reference") return `[tool: ${str(b.tool_name) ?? "?"}]`;
+      if (isObj(b) && b.type === "tool_reference")
+        return `[tool: ${cap(b.tool_name, ID_MAX) ?? "?"}]`;
       return boundedJson(b);
     })
     .join("\n");
@@ -778,9 +880,9 @@ function buildToolResult(block: Row, row: Row): ToolResult {
     result.content = content;
     result.truncation = truncation;
   }
-  const denial = str(row.toolDenialKind);
+  const denial = cap(row.toolDenialKind, KIND_LABEL_MAX);
   if (denial !== undefined) result.denial = denial;
-  const ts = str(row.timestamp);
+  const ts = cap(row.timestamp, KIND_LABEL_MAX);
   if (ts !== undefined) result.timestamp = ts;
   return result;
 }
@@ -798,21 +900,24 @@ function segmentOfBlock(b: unknown): MessageSegment | null {
   if (!isObj(b)) return rawSegment("content block: non-object", b);
   switch (b.type) {
     case "text": {
-      const t = str(b.text)?.trim();
+      const t = body(b.text)?.trim();
       return t ? { type: "text", content: t } : null;
     }
     case "thinking": {
-      const t = (str(b.thinking) ?? str(b.content) ?? str(b.text))?.trim();
+      const t = (body(b.thinking) ?? body(b.content) ?? body(b.text))?.trim();
       return t ? { type: "thinking", content: t } : null;
     }
     case "redacted_thinking":
       return null;
     case "tool_use": {
-      const id = str(b.id);
-      const name = str(b.name);
+      const id = idOf(b.id);
+      const name = cap(b.name, ID_MAX);
       if (id === undefined || name === undefined)
         return rawSegment("content block: malformed tool_use", b);
-      return { type: "tool_call", tool: { id, name, input: limitInput(b.input) } };
+      const lim = limitInputChecked(b.input);
+      const tool: ToolCall = { id, name, input: lim.value };
+      if (lim.truncated) tool.inputTruncated = true;
+      return { type: "tool_call", tool };
     }
     default:
       return rawSegment(`content block: ${typeof b.type === "string" ? b.type : "untyped"}`, b);
@@ -820,7 +925,7 @@ function segmentOfBlock(b: unknown): MessageSegment | null {
 }
 
 function userOrigin(row: Row): string | undefined {
-  return isObj(row.origin) ? str(row.origin.kind) : undefined;
+  return isObj(row.origin) ? cap(row.origin.kind, KIND_LABEL_MAX) : undefined;
 }
 
 function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMessage | null {
@@ -832,14 +937,14 @@ function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMe
   } else if (Array.isArray(c)) {
     for (const b of c) {
       if (isObj(b) && b.type === "tool_result") {
-        const id = str(b.tool_use_id);
+        const id = idOf(b.tool_use_id);
         if (id !== undefined && callIds.has(id)) continue; // paired onto its tool_call
         segments.push({
           type: "tool_result",
           result: { ...buildToolResult(b, row), toolCallId: id ?? "" },
         });
       } else if (isObj(b) && b.type === "text") {
-        const t = str(b.text);
+        const t = body(b.text);
         if (t !== undefined && t.trim() !== "") segments.push({ type: "text", content: t });
       } else {
         segments.push(
@@ -869,7 +974,7 @@ function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMe
   const metadata: UnifiedMessageMetadata = {};
   if (subtype !== undefined) metadata.systemSubtype = subtype;
   if (origin !== undefined) metadata.origin = origin;
-  const ps = str(row.promptSource);
+  const ps = cap(row.promptSource, KIND_LABEL_MAX);
   if (ps !== undefined) metadata.promptSource = ps;
   if (base.agent !== undefined) metadata.agent = base.agent;
   return {
@@ -885,14 +990,18 @@ function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMe
 function markAbandoned(row: Row | null, ctx: Ctx): void {
   if (!row) return;
   const tur = isObj(row.toolUseResult) ? row.toolUseResult : undefined;
-  const aid = tur ? str(tur.agentId) : undefined;
+  const aid = tur ? idOf(tur.agentId) : undefined;
   if (aid !== undefined) ctx.abandoned.add(aid);
   const m = isObj(row.message) ? row.message : {};
   if (!Array.isArray(m.content)) return;
   for (const b of m.content) {
     if (!isObj(b)) continue;
     const id =
-      b.type === "tool_use" ? str(b.id) : b.type === "tool_result" ? str(b.tool_use_id) : undefined;
+      b.type === "tool_use"
+        ? idOf(b.id)
+        : b.type === "tool_result"
+          ? idOf(b.tool_use_id)
+          : undefined;
     const mapped = id === undefined ? undefined : ctx.metaByToolUse.get(id);
     if (mapped !== undefined) ctx.abandoned.add(mapped);
   }
@@ -908,7 +1017,7 @@ function buildThread(
   const firstByUuid = new Map<string, Item>();
   const deduped: Item[] = [];
   for (const it of items) {
-    const u = it.row ? str(it.row.uuid) : undefined;
+    const u = it.row ? body(it.row.uuid) : undefined;
     if (u !== undefined) {
       const first = firstByUuid.get(u);
       if (first) {
@@ -937,7 +1046,8 @@ function buildThread(
     const m = isObj(row.message) ? row.message : {};
     if (row.type === "assistant" && Array.isArray(m.content)) {
       for (const b of m.content)
-        if (isObj(b) && b.type === "tool_use" && typeof b.id === "string") callIds.add(b.id);
+        if (isObj(b) && b.type === "tool_use" && typeof b.id === "string")
+          callIds.add(idOf(b.id) as string);
     }
   }
   for (const it of kept) {
@@ -947,6 +1057,7 @@ function buildThread(
     if (!Array.isArray(m.content)) continue;
     for (const b of m.content) {
       if (!isObj(b) || b.type !== "tool_result" || typeof b.tool_use_id !== "string") continue;
+      const resultId = idOf(b.tool_use_id) as string;
       const tur = isObj(row.toolUseResult) ? row.toolUseResult : undefined;
       let result: ToolResult;
       try {
@@ -955,12 +1066,12 @@ function buildThread(
         result = { content: "[unreadable tool result]", is_error: false };
       }
       const entry: { result: ToolResult; agentId?: string; reported?: Row } = { result };
-      const aid = tur ? str(tur.agentId) : undefined;
+      const aid = tur ? idOf(tur.agentId) : undefined;
       if (aid !== undefined && tur) {
         entry.agentId = aid;
         entry.reported = tur;
       }
-      results.set(b.tool_use_id, entry);
+      results.set(resultId, entry);
     }
   }
 
@@ -974,8 +1085,8 @@ function buildThread(
       if (it.sidechain) {
         out.push(
           rawMessage(
-            str(it.sidechain.uuid) ?? `${idPrefix}raw:${it.index}`,
-            str(it.sidechain.timestamp) ?? "",
+            idOf(it.sidechain.uuid) ?? `${idPrefix}raw:${it.index}`,
+            cap(it.sidechain.timestamp, KIND_LABEL_MAX) ?? "",
             "sidechain-no-agent",
             "sidechain row without agentId",
             it.sidechain,
@@ -984,7 +1095,7 @@ function buildThread(
         );
         continue;
       }
-      const text = typeof it.raw === "string" ? it.raw.slice(0, 2000) : it.raw;
+      const text = typeof it.raw === "string" ? truncate(it.raw, RAW_STRING_MAX) : it.raw;
       out.push(
         rawMessage(
           `${idPrefix}raw:${it.index}`,
@@ -999,10 +1110,10 @@ function buildThread(
     }
     const kind = rowKind(row);
     const def = DEF_BY_KIND.get(kind);
-    const uuid = str(row.uuid);
+    const uuid = idOf(row.uuid);
     const base: BuildBase = {
       id: uuid ?? `${idPrefix}raw:${it.index}`,
-      timestamp: str(row.timestamp) ?? "",
+      timestamp: cap(row.timestamp, KIND_LABEL_MAX) ?? "",
     };
     if (agentId !== undefined) base.agent = agentId;
     if (!def) {
@@ -1010,18 +1121,16 @@ function buildThread(
       const closed = kind.startsWith("attachment:") || kind.startsWith("system:");
       const data = closed
         ? {
-            keys: Object.keys(row).slice(0, RAW_KEYS_MAX),
-            ...(isObj(row.attachment)
-              ? { attachmentKeys: Object.keys(row.attachment).slice(0, RAW_KEYS_MAX) }
-              : {}),
+            keys: keyNames(row),
+            ...(isObj(row.attachment) ? { attachmentKeys: keyNames(row.attachment) } : {}),
           }
         : row;
       out.push(
         rawMessage(
           base.id,
           base.timestamp,
-          kind.slice(0, KIND_LABEL_MAX),
-          `unknown row type: ${kind.slice(0, KIND_LABEL_MAX)}`,
+          truncate(kind, KIND_LABEL_MAX),
+          `unknown row type: ${truncate(kind, KIND_LABEL_MAX)}`,
           data,
           agentId,
         ),
@@ -1041,7 +1150,7 @@ function buildThread(
         if (msg) out.push(msg);
       }
     } catch (err) {
-      const why = err instanceof Error ? err.message : String(err);
+      const why = truncate(err instanceof Error ? err.message : String(err), 200);
       out.push(
         rawMessage(
           base.id,
@@ -1086,12 +1195,8 @@ function buildThread(
       if (paired) call.result = paired.result;
       const aid = paired?.agentId ?? ctx.metaByToolUse.get(call.id);
       if (aid !== undefined && ctx.sub.has(aid)) {
-        if (ctx.used.has(aid)) {
-          call.subagentRef = aid; // already expanded elsewhere: link, not copy
-        } else {
-          const thread = buildSubagent(aid, call.input, paired?.reported, ctx, depth + 1);
-          if (thread) call.subagent = thread;
-        }
+        // Expanded breadth first after this thread is finished, so a shallow call wins over a deep one.
+        ctx.queue.push({ call, aid, reported: paired?.reported, depth: depth + 1 });
       }
     }
   }
@@ -1131,18 +1236,18 @@ function addAssistant(
 
   if (row.isApiErrorMessage === true) {
     const text = blocks
-      .map((b) => (isObj(b) ? str(b.text) : undefined))
+      .map((b) => (isObj(b) ? body(b.text) : undefined))
       .filter((t) => t)
       .join("\n");
-    const details = [str(row.apiError), str(row.error)].filter((t) => t).join(": ");
+    const details = [body(row.apiError), body(row.error)].filter((t) => t).join(": ");
     const error: { message: string; details?: string } = { message: text || "API error" };
     if (details) error.details = details;
     out.push(systemMessage(base, "api_error", [{ type: "error", error }]));
     return;
   }
 
-  const mid = str(m.id);
-  const rid = str(row.requestId) ?? str(m.requestId) ?? "";
+  const mid = idOf(m.id);
+  const rid = idOf(row.requestId) ?? idOf(m.requestId) ?? "";
   const key = mid === undefined ? `uuid:${base.id}` : `${mid}|${rid}`;
   let st = asm.get(key);
   if (!st) {
@@ -1164,7 +1269,7 @@ function addAssistant(
   const idx = num(row.apiBlockIndex);
   if (idx === undefined) {
     // A row without a block index carries the whole message so far: it replaces earlier content.
-    for (const k of [...st.blocks.keys()]) if (k.startsWith("r")) st.blocks.delete(k);
+    st.blocks.clear();
   }
   blocks.forEach((b, i) => {
     const bk = idx === undefined ? `r${i}` : `b${idx}:${i}`;
@@ -1174,7 +1279,7 @@ function addAssistant(
   });
 
   const md = st.msg.metadata as UnifiedMessageMetadata;
-  const model = str(m.model);
+  const model = cap(m.model, META_TEXT_MAX);
   if (model !== undefined) md.model = model;
   const usage = usageOf(m.usage);
   if (usage) {
@@ -1182,13 +1287,24 @@ function addAssistant(
     md.tokens = usage.output_tokens;
     usageByMsg.set(key, usage);
   }
-  const stop = str(m.stop_reason);
+  const stop = cap(m.stop_reason, KIND_LABEL_MAX);
   if (stop !== undefined) md.stopReason = stop;
   if (rid) md.requestId = rid;
   const think = num(row.thinkingDurationMs);
   if (think !== undefined) md.thinkingDurationMs = think;
 }
 
+function placeholderThread(agentId: string, why: string): ThreadResult {
+  return {
+    messages: [rawMessage(`${agentId}:truncated`, "", "truncated", why, {}, agentId)],
+    usage: ZERO_USAGE(),
+    contextTokens: 0,
+    assistantMessageCount: 0,
+    toolCallCount: 0,
+  };
+}
+
+/** Builds the thread for one agent. At most one thread or placeholder is ever built per agent. */
 function buildSubagent(
   agentId: string,
   callInput: unknown,
@@ -1197,28 +1313,23 @@ function buildSubagent(
   depth: number,
 ): SubagentThread | undefined {
   const items = ctx.sub.get(agentId);
-  if (!items || ctx.used.has(agentId)) return undefined;
-  const tooDeep = depth > MAX_SUBAGENT_DEPTH;
-  // A depth-truncated placeholder must not claim the agent: a shallower call can still get the thread.
-  if (!tooDeep) ctx.used.add(agentId);
+  if (!items || ctx.used.has(agentId) || ctx.placed.has(agentId)) return undefined;
   let t: ThreadResult;
-  if (tooDeep || ctx.subMessages > MAX_SUBAGENT_MESSAGES) {
-    const why =
-      depth > MAX_SUBAGENT_DEPTH
-        ? `truncated: subagent nesting deeper than ${MAX_SUBAGENT_DEPTH}`
-        : `truncated: more than ${MAX_SUBAGENT_MESSAGES} subagent messages`;
-    t = {
-      messages: [rawMessage(`${agentId}:truncated`, "", "truncated", why, {}, agentId)],
-      usage: ZERO_USAGE(),
-      contextTokens: 0,
-      assistantMessageCount: 0,
-      toolCallCount: 0,
-    };
+  if (depth > MAX_SUBAGENT_DEPTH) {
+    ctx.placed.add(agentId);
+    t = placeholderThread(agentId, `truncated: subagent nesting deeper than ${MAX_SUBAGENT_DEPTH}`);
+  } else if (ctx.subMessages > MAX_SUBAGENT_MESSAGES) {
+    ctx.placed.add(agentId);
+    t = placeholderThread(
+      agentId,
+      `truncated: more than ${MAX_SUBAGENT_MESSAGES} subagent messages`,
+    );
   } else {
+    ctx.used.add(agentId);
     t = buildThread(items, ctx, agentId, depth);
   }
   ctx.subMessages += t.messages.length;
-  const meta = ctx.meta[agentId] ?? {};
+  const meta = ctx.meta.get(agentId) ?? {};
   const input = isObj(callInput) ? callInput : {};
   const thread: SubagentThread = {
     agentId,
@@ -1228,13 +1339,16 @@ function buildSubagent(
     assistantMessageCount: t.assistantMessageCount,
     toolCallCount: t.toolCallCount,
   };
-  const agentType = meta.agentType ?? str(reportedRow?.agentType) ?? str(input.subagent_type);
+  const agentType =
+    meta.agentType ??
+    cap(reportedRow?.agentType, META_TEXT_MAX) ??
+    cap(input.subagent_type, META_TEXT_MAX);
   if (agentType !== undefined) thread.agentType = agentType;
-  const description = meta.description ?? str(input.description);
+  const description = meta.description ?? cap(input.description, META_TEXT_MAX);
   if (description !== undefined) thread.description = description;
   if (reportedRow) {
     const reported: NonNullable<SubagentThread["reported"]> = {};
-    const status = str(reportedRow.status);
+    const status = cap(reportedRow.status, KIND_LABEL_MAX);
     if (status !== undefined) reported.status = status;
     const tt = num(reportedRow.totalTokens);
     if (tt !== undefined) reported.totalTokens = tt;
@@ -1245,6 +1359,20 @@ function buildSubagent(
     thread.reported = reported;
   }
   return thread;
+}
+
+/** Resolves queued spawning calls first-in first-out; threads they build may queue more. */
+function drainQueue(ctx: Ctx): void {
+  for (let i = 0; i < ctx.queue.length; i++) {
+    const p = ctx.queue[i] as PendingSpawn;
+    if (ctx.used.has(p.aid) || ctx.placed.has(p.aid)) {
+      p.call.subagentRef = p.aid; // already expanded elsewhere: link, not copy
+      continue;
+    }
+    const thread = buildSubagent(p.aid, p.call.input, p.reported, ctx, p.depth);
+    if (thread) p.call.subagent = thread;
+  }
+  ctx.queue.length = 0;
 }
 
 /**
@@ -1260,14 +1388,16 @@ export function normalizeTranscript(
   options: NormalizeOptions = {},
 ): UnifiedMessage[] {
   const sub = new Map<string, Item[]>();
-  for (const [id, rows] of Object.entries(options.subagents ?? {})) sub.set(id, toItems(rows));
+  for (const [id, rows] of Object.entries(options.subagents ?? {})) {
+    sub.set(truncate(id, ID_MAX), toItems(rows));
+  }
 
   // isSidechain separation: sidechain rows in the main file go to their agent's thread.
   const main: Item[] = [];
   const side = new Map<string, Row[]>();
   for (const it of toItems(input)) {
     if (it.row?.isSidechain === true) {
-      const aid = str(it.row.agentId);
+      const aid = idOf(it.row.agentId);
       if (aid === undefined) {
         main.push({ index: main.length, row: null, sidechain: it.row });
       } else if (!sub.has(aid)) {
@@ -1281,24 +1411,39 @@ export function normalizeTranscript(
   }
   for (const [aid, rows] of side) sub.set(aid, toItems(rows));
 
-  const meta = options.subagentMeta ?? {};
+  const meta = new Map<string, MetaInfo>();
   const metaByToolUse = new Map<string, string>();
-  for (const [aid, m] of Object.entries(meta))
-    if (m.toolUseId !== undefined) metaByToolUse.set(m.toolUseId, aid);
+  for (const [key, m] of Object.entries(options.subagentMeta ?? {})) {
+    const aid = truncate(key, ID_MAX);
+    const info: MetaInfo = {};
+    const toolUseId = idOf(m?.toolUseId);
+    const agentType = cap(m?.agentType, META_TEXT_MAX);
+    const description = cap(m?.description, META_TEXT_MAX);
+    if (toolUseId !== undefined) {
+      info.toolUseId = toolUseId;
+      metaByToolUse.set(toolUseId, aid);
+    }
+    if (agentType !== undefined) info.agentType = agentType;
+    if (description !== undefined) info.description = description;
+    meta.set(aid, info);
+  }
   const ctx: Ctx = {
     sub,
     meta,
     metaByToolUse,
     used: new Set(),
     abandoned: new Set(),
+    placed: new Set(),
     subMessages: 0,
+    queue: [],
   };
 
   const messages = buildThread(main, ctx, undefined, 0).messages;
+  drainQueue(ctx);
 
   // Threads whose spawning call is not in the main list still show up.
   for (const aid of sub.keys()) {
-    if (ctx.used.has(aid) || ctx.abandoned.has(aid)) continue;
+    if (ctx.used.has(aid) || ctx.abandoned.has(aid) || ctx.placed.has(aid)) continue;
     const thread = buildSubagent(aid, {}, undefined, ctx, 1);
     if (!thread) continue;
     const first = thread.messages[0];
@@ -1314,6 +1459,7 @@ export function normalizeTranscript(
       ],
       metadata: { systemSubtype: "orphan_subagent", agent: aid },
     });
+    drainQueue(ctx);
   }
   return messages;
 }
