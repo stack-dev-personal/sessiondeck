@@ -28,8 +28,8 @@ export function indexSessionText(
   const phase = manualPhase !== null && manualPhase !== "" ? manualPhase : inferPhase(name, branch);
   const dir = str(snapshot["project_dir"]) || str(snapshot["cwd"]);
   const base = dir.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) ?? "";
-  const archive = (snapshot["archive"] ?? null) as { outcome?: unknown } | null;
-  const title = squash(name) || base || sessionId.slice(0, 8);
+  const archive = (snapshot["archive"] ?? null) as { outcome?: unknown; title?: unknown } | null;
+  const title = squash(name) || squash(str(archive?.title)) || base || sessionId.slice(0, 8);
   const body = [
     squash(str(snapshot["last_prompt"])),
     squash(str(snapshot["last_assistant_message"])),

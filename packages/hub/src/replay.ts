@@ -11,6 +11,7 @@
 // serving hub's lease is fresh.
 import type { Envelope, HostOs, SessionSnapshot } from "@sessiondeck/contract";
 import type { EventRow, SampleRow, Store } from "./db/store.ts";
+import { parseArchiveEnvelope } from "./ingest/archive.ts";
 import { MemSessions, SnapshotEngine, type SessionSource } from "./ingest/engine.ts";
 import { rowOf, type Logger } from "./ingest/ingestor.ts";
 
@@ -66,6 +67,23 @@ export function foldEvents(
       try {
         env = toEnvelope(row);
         engine.load(row.session_id);
+        if (row.kind === "archive") {
+          // Same rule as ingest: validated, no admit(), never the reducers. A stored event that
+          // fails validation (written by a hub that predates the check) is skipped, id only.
+          const parsed = parseArchiveEnvelope(env);
+          if (parsed === null) {
+            log.warn(
+              { envelope_id: row.id, reason: "invalid_archive" },
+              "stored archive event skipped",
+            );
+          } else if (engine.applyArchive(parsed) === "host_mismatch") {
+            log.warn(
+              { envelope_id: row.id, reason: "archive_host_mismatch" },
+              "stored archive event skipped",
+            );
+          }
+          continue;
+        }
         const sample = engine.reduceOne(env, row.session_id);
         if (sample !== null && onSample !== null) onSample(sample);
       } catch (err) {

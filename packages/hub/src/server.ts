@@ -185,6 +185,7 @@ export function buildServer(opts: {
   app.decorate("hub", {
     events: ingestor.events,
     reducerExceptionCount: () => ingestor.reducerExceptionCount(),
+    archiveRejectedCount: () => ingestor.archiveRejectedCount(),
   });
   registerIngest(app, {
     ingestor,
@@ -244,6 +245,8 @@ declare module "fastify" {
       /** Emits `batch` once per committed ingest batch (never for rejected or rolled-back ones). */
       events: HubEmitter;
       reducerExceptionCount(): number;
+      /** Archive envelopes refused since start (invalid payload or host mismatch). */
+      archiveRejectedCount(): number;
     };
   }
 }

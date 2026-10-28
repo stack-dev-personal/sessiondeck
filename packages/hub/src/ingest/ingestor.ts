@@ -1,7 +1,8 @@
-import { type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
+import { type ArchiveEnvelope, type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { EventEmitter } from "node:events";
 import type { SampleRow, SessionRow, Store, TranscriptLineRow } from "../db/store.ts";
+import { parseArchiveEnvelope, rowStateOf, type ArchivedSnapshot } from "./archive.ts";
 import { SnapshotEngine, type SessionSource } from "./engine.ts";
 import { parseTranscriptPayload } from "./reduce.ts";
 import { SIGNATURE_WINDOW_MS, computeEventSignature } from "./signature.ts";
@@ -39,6 +40,12 @@ export interface IngestResult {
    */
   expired: number;
   /**
+   * Archive envelopes refused for good (invalid payload, or a session_id that belongs to another
+   * host). Acknowledged like every other envelope of the batch (never retried), not stored, and
+   * the rest of the batch is unaffected. Reported to the sender only when above zero.
+   */
+  rejected: number;
+  /**
    * The batch's acknowledged max (D-S3-6): the highest seq among THIS batch's envelopes, each of
    * which was either stored or recognized as a duplicate; 0 for an empty batch. It is never a max
    * across time, so a hostile huge seq in one batch cannot appear in a later response. The probe
@@ -55,15 +62,20 @@ export interface IngestLimits {
 }
 
 export function rowOf(s: SessionSnapshot): SessionRow {
+  const a = s as ArchivedSnapshot;
   return {
     session_id: s.session_id,
     host: s.host,
     snapshot: JSON.stringify(s),
-    state: s.state,
+    // R5.3: an ended or exited session that has an archive entry is stored as `archived`.
+    state: rowStateOf(a),
     project_dir: s.project_dir,
     started_at: s.started_at,
     last_event_at: s.last_event_at,
-    ended_at: s.state === "ended" ? s.state_since : null,
+    ended_at:
+      s.state === "ended" || (s.state === "exited" && a.archive !== undefined)
+        ? s.state_since
+        : null,
   };
 }
 
@@ -97,6 +109,7 @@ class StoreSessions implements SessionSource {
 export class Ingestor {
   readonly events: HubEmitter = new EventEmitter<HubEvents>();
   private exceptions = 0;
+  private archiveRejects = 0;
 
   private readonly source: SessionSource;
 
@@ -111,6 +124,11 @@ export class Ingestor {
 
   reducerExceptionCount(): number {
     return this.exceptions;
+  }
+
+  /** Archive envelopes refused since start (invalid payload or host mismatch). */
+  archiveRejectedCount(): number {
+    return this.archiveRejects;
   }
 
   ingest(host: string, envelopes: readonly Envelope[]): IngestResult {
@@ -139,6 +157,7 @@ export class Ingestor {
         accepted: result.accepted,
         duplicates: result.duplicates,
         expired: result.expired,
+        ...(result.rejected > 0 ? { rejected: result.rejected } : {}),
         ms: Math.round((performance.now() - started) * 100) / 100,
       },
       "ingest batch",
@@ -153,6 +172,7 @@ export class Ingestor {
     let accepted = 0;
     let duplicates = 0;
     let expired = 0;
+    let rejected = 0;
     const known = store.getHost(host);
     // hosts.last_seq is observability only: the highest seq ever STORED. It is never returned.
     let storedMax = known?.last_seq ?? null;
@@ -165,10 +185,37 @@ export class Ingestor {
     // flushed after a long offline period still lands its cost data.
     const compactedBefore = store.getCompactionCut();
 
-    for (const env of envelopes) {
+    for (const raw of envelopes) {
+      let env = raw;
       // Stored or duplicate, every envelope of the batch is acknowledged.
       if (batchMax === null || env.seq > batchMax) batchMax = env.seq;
       os = env.os;
+
+      if (env.kind === "archive") {
+        // R5.2. Validated with the strict archive schema; only the parsed payload is ever stored.
+        const parsed = parseArchiveEnvelope(env);
+        if (parsed === null) {
+          rejected++;
+          this.archiveRejects++;
+          this.log.warn(
+            { envelope_id: env.id, reason: "invalid_archive" },
+            "archive envelope rejected",
+          );
+          continue;
+        }
+        // The merge key is (host, session_id): another host's session is never touched.
+        const existing = engine.load(parsed.session_id);
+        if (existing !== undefined && existing.host !== parsed.host) {
+          rejected++;
+          this.archiveRejects++;
+          this.log.warn(
+            { envelope_id: env.id, session_id: parsed.session_id, reason: "archive_host_mismatch" },
+            "archive envelope rejected",
+          );
+          continue;
+        }
+        env = parsed as unknown as Envelope;
+      }
 
       if (compactedBefore !== null && env.ts < compactedBefore) {
         if (env.kind !== "transcript" || env.session_id === null) {
@@ -218,6 +265,11 @@ export class Ingestor {
       if (storedMax === null || env.seq > storedMax) storedMax = env.seq;
       if (env.session_id === null || env.kind === "probe") continue;
 
+      if (env.kind === "archive") {
+        engine.applyArchive(env as unknown as ArchiveEnvelope);
+        continue;
+      }
+
       // Pure computation inside try; SQL effects happen after, outside it, so a SQL error aborts the batch.
       let sample: SampleRow | null = null;
       let lines: { line_no: number; raw: string }[] = [];
@@ -245,10 +297,16 @@ export class Ingestor {
     }
     for (const sn of engine.dirtySnapshots()) {
       store.upsertSession(rowOf(sn));
-      out.sessions.push(sn);
+      // An archived row that was not on the board before (new, or archived already) is not pushed;
+      // a live session that just became archived is, so the board sees it end.
+      const before = engine.before(sn.session_id) as ArchivedSnapshot | undefined;
+      const hidden =
+        rowStateOf(sn as ArchivedSnapshot) === "archived" &&
+        (before === undefined || rowStateOf(before) === "archived");
+      if (!hidden) out.sessions.push(sn);
     }
     out.transcripts.push(...transcripts.values());
-    return { accepted, duplicates, expired, last_seq: batchMax ?? 0 };
+    return { accepted, duplicates, expired, rejected, last_seq: batchMax ?? 0 };
   }
 
   /** Inserts parsed transcript lines (primary-key dedup) and records the fresh ones; returns how many were new. */

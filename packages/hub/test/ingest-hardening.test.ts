@@ -149,7 +149,8 @@ describe("indexes (migration 2)", () => {
     "SELECT 1 AS x FROM events WHERE session_id = ? AND ts > ? AND ts < ? AND signature = ? LIMIT 1";
   const SIG_NULL =
     "SELECT 1 AS x FROM events WHERE session_id IS NULL AND ts > ? AND ts < ? AND signature = ? LIMIT 1";
-  const OPEN = "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')";
+  const OPEN =
+    "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended') AND state <> 'archived'";
   const plan = (sql: string, ...args: unknown[]) =>
     (h.store.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as { detail: string }[]).map(
       (r) => r.detail,

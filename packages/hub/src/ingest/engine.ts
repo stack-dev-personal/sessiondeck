@@ -4,6 +4,7 @@
 // (ingest) and against an in-memory map (replay, compaction). Time comes only from envelope ts.
 import {
   createSnapshot,
+  type ArchiveEnvelope,
   reduce,
   reduceLiveness,
   supersedeSamePid,
@@ -11,6 +12,15 @@ import {
   type SessionSnapshot,
 } from "@sessiondeck/contract";
 import type { SampleRow } from "../db/store.ts";
+import {
+  archiveOnlySnapshot,
+  archiveRecordOf,
+  isArchiveOnly,
+  isOpenSnapshot,
+  sameArchive,
+  type ArchiveOutcome,
+  type ArchivedSnapshot,
+} from "./archive.ts";
 import { applyStatusLine, applySubagents, clampSnapshot } from "./reduce.ts";
 
 export interface EngineLogger {
@@ -36,14 +46,14 @@ export class MemSessions implements SessionSource {
   listOpenForHost(host: string, skip: (id: string) => boolean): SessionSnapshot[] {
     const out: SessionSnapshot[] = [];
     for (const s of this.map.values()) {
-      if (s.host === host && s.state !== "ended" && !skip(s.session_id)) out.push(s);
+      if (s.host === host && isOpenSnapshot(s) && !skip(s.session_id)) out.push(s);
     }
     return out;
   }
 
   countOpenForHost(host: string): number {
     let n = 0;
-    for (const s of this.map.values()) if (s.host === host && s.state !== "ended") n++;
+    for (const s of this.map.values()) if (s.host === host && isOpenSnapshot(s)) n++;
     return n;
   }
 }
@@ -78,6 +88,11 @@ export class SnapshotEngine {
       this.original.set(id, snap);
     }
     return this.cache.get(id);
+  }
+
+  /** The snapshot as first loaded in this run (before any change), if the session existed. */
+  before(id: string): SessionSnapshot | undefined {
+    return this.original.get(id);
   }
 
   /** Changed snapshots in first-change order. */
@@ -128,15 +143,15 @@ export class SnapshotEngine {
     // refuse at the same event, so a session that ends frees its slot and a revived one takes it.
     const n = this.openCount.get(snap.host);
     if (n !== undefined && old !== undefined) {
-      const wasOpen = old.state !== "ended";
-      const isOpen = snap.state !== "ended";
+      const wasOpen = isOpenSnapshot(old);
+      const isOpen = isOpenSnapshot(snap);
       if (wasOpen && !isOpen) this.openCount.set(snap.host, n - 1);
       else if (!wasOpen && isOpen) this.openCount.set(snap.host, n + 1);
     }
   }
 
   // Open-session cap per host: counted lazily, once per host per engine.
-  private admit(h: string): boolean {
+  private admit(h: string, take = true): boolean {
     const n = this.openCount.get(h) ?? this.source.countOpenForHost(h);
     if (n >= this.maxOpenSessionsPerHost) {
       if (!this.capLogged.has(h)) {
@@ -146,7 +161,7 @@ export class SnapshotEngine {
       this.openCount.set(h, n);
       return false;
     }
-    this.openCount.set(h, n + 1);
+    this.openCount.set(h, take ? n + 1 : n);
     return true;
   }
 
@@ -172,10 +187,58 @@ export class SnapshotEngine {
     });
   }
 
+  /**
+   * R5.3. Attaches a validated archive envelope to the session row identified by its session_id
+   * (host must match; the caller checks first so a mismatch is not stored). Never calls admit():
+   * an archive creates an `archived` row, which does not count against the open-session cap.
+   * Live fields are kept; a live session stays live; an older source.mtime_ms never replaces a
+   * newer one; an identical record changes nothing (no dirty snapshot, so no row write, WS delta
+   * or search re-index).
+   */
+  applyArchive(env: ArchiveEnvelope): ArchiveOutcome {
+    const prev = this.load(env.session_id) as ArchivedSnapshot | undefined;
+    if (prev !== undefined && prev.host !== env.host) return "host_mismatch";
+    const rec = archiveRecordOf(env.payload);
+    if (prev === undefined) {
+      this.set(archiveOnlySnapshot(env, rec));
+      return "created";
+    }
+    const old = prev.archive;
+    if (old !== undefined) {
+      if (rec.source.mtime_ms < old.source.mtime_ms) return "stale";
+      if (sameArchive(old, rec)) return "unchanged";
+    }
+    // Still archive-only (no live event yet): the synthetic fields follow the new capture.
+    if (old !== undefined && isArchiveOnly(prev)) {
+      this.set(archiveOnlySnapshot(env, rec));
+      return "replaced";
+    }
+    this.set({ ...prev, archive: rec } as SessionSnapshot);
+    return old === undefined ? "merged" : "replaced";
+  }
+
   /** Reduces one non-transcript envelope into the cache; returns the statusline sample, if any. */
   reduceOne(env: Envelope, sessionId: string): SampleRow | null {
-    const prev = this.load(sessionId);
+    // Archive envelopes go through applyArchive; they never reach the reducers or admit().
+    if (env.kind === "archive") return null;
+    let prev = this.load(sessionId) as ArchivedSnapshot | undefined;
     if (prev === undefined && !this.admit(env.host)) return null;
+    // R5.3: the first live event for a session known only from its capture. The synthetic ended
+    // snapshot is not a live history (the reducer would refuse most events on an ended session), so
+    // the live fields start fresh from this event and the archive record stays attached. set()
+    // takes the open slot when the result is live; a refused slot leaves the archive-only row.
+    if (prev !== undefined && isArchiveOnly(prev) && prev.host === env.host) {
+      if (!this.admit(env.host, false)) return null;
+      prev = {
+        ...createSnapshot({
+          session_id: sessionId,
+          host: env.host,
+          cwd: cwdOf(env.payload),
+          ts: env.ts,
+        }),
+        archive: prev.archive as NonNullable<typeof prev.archive>,
+      };
+    }
     const fresh = (): SessionSnapshot =>
       createSnapshot({
         session_id: sessionId,
