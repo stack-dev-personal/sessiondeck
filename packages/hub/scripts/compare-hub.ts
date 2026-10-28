@@ -207,6 +207,40 @@ export async function hubReport(opts: {
 
 const TIER = 200_000;
 
+/** Marginal tiering written out here: first 200k at the base rate, the rest at the above rate. */
+function marginal(n: number, base: number | undefined, above: number | undefined): number {
+  if (n <= 0) return 0;
+  const lo = Math.min(n, TIER) * (base ?? 0);
+  const hiRate = above ?? base ?? 0;
+  return n > TIER && above !== undefined ? lo + (n - TIER) * hiRate : n * (base ?? 0);
+}
+
+/**
+ * Expected extra cost of pricing h one-hour tokens at the 1-hour rate instead of the 5-minute rate:
+ * h/all x (tiered(all, 1h rates) - tiered(all, 5m rates)), all = max(cc, h + f). No 1-hour rate
+ * derivable (no field and no input rate) means 0.
+ */
+export function oneHourDelta(p: ModelPricing, cc: number, h: number, f: number): number {
+  if (h <= 0) return 0;
+  const all = Math.max(cc, h + f);
+  const r1b =
+    p.cache_creation_input_token_cost_above_1hr ??
+    (p.input_cost_per_token !== undefined ? 2 * p.input_cost_per_token : undefined);
+  if (r1b === undefined) return 0;
+  const r1a =
+    p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
+    (p.input_cost_per_token_above_200k_tokens !== undefined
+      ? 2 * p.input_cost_per_token_above_200k_tokens
+      : undefined);
+  const at1h = marginal(all, r1b, r1a);
+  const at5m = marginal(
+    all,
+    p.cache_creation_input_token_cost,
+    p.cache_creation_input_token_cost_above_200k_tokens,
+  );
+  return (h / all) * (at1h - at5m);
+}
+
 export interface IndependentDelta {
   bySession: Record<string, number>;
   byDay: Record<string, number>;
@@ -254,19 +288,8 @@ export function independentDelta(opts: {
         const p: ModelPricing | null =
           d.costUSD === undefined && d.message.model ? table.lookup(d.message.model) : null;
         if (p !== null && h > 0) {
-          // Independent of the hub's formula: h x (1-hour rate - 5-minute rate), per token, with
-          // each tier taken directly (writes tiered as one quantity at the 200k threshold).
-          const all = Math.max(cc, h + (u.cache_creation?.ephemeral_5m_input_tokens ?? 0));
-          const hi = all > TIER;
-          const r5 = hi
-            ? (p.cache_creation_input_token_cost_above_200k_tokens ?? 0)
-            : (p.cache_creation_input_token_cost ?? 0);
-          const r1 = hi
-            ? (p.cache_creation_input_token_cost_above_1hr_above_200k_tokens ??
-              2 * (p.input_cost_per_token_above_200k_tokens ?? 0))
-            : (p.cache_creation_input_token_cost_above_1hr ?? 2 * (p.input_cost_per_token ?? 0));
           const fast = u.speed === "fast" ? (p.provider_specific_entry?.fast ?? 1) : 1;
-          delta = h * (r1 - r5) * fast;
+          delta = oneHourDelta(p, cc, h, u.cache_creation?.ephemeral_5m_input_tokens ?? 0) * fast;
         }
         const row: Best = {
           session,
