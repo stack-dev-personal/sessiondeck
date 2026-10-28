@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_9>",
+  "description": "Verify synthetic hook payload fields",
+  "toolUseId": "toolu_0121juEawNhuuJbfSe2D4FPk",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}
