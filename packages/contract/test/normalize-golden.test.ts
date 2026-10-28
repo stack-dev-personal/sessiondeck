@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeTranscript } from "../src/normalize";
@@ -17,6 +18,7 @@ describe("normalize golden (R4.1)", () => {
   });
 
   it.each(fixtureNames().map((n) => [n]))("%s matches its golden file", async (name) => {
+    expect(existsSync(join(GOLDEN_DIR, `${name}.json`)), `golden ${name}.json missing`).toBe(true);
     const fx = loadTranscript(name);
     const messages = normalizeTranscript(fx.main, optionsOf(fx));
     await expect(goldenText(messages)).toMatchFileSnapshot(join(GOLDEN_DIR, `${name}.json`));

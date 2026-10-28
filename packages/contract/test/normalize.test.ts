@@ -669,3 +669,244 @@ describe("compaction boundaries", () => {
     }
   });
 });
+
+// ---- review fixes (iteration 1) --------------------------------------------------------------------------
+const lastPrompt = (leafUuid: string) => ({ type: "last-prompt", lastPrompt: "x", leafUuid });
+const queued = (uuid: string, parent: string | null, prompt: string) => ({
+  type: "attachment",
+  uuid,
+  parentUuid: parent,
+  isSidechain: false,
+  timestamp: ts(),
+  attachment: { type: "queued_command", prompt },
+});
+const compactBoundary = (uuid: string, logicalParent: string) => ({
+  type: "system",
+  subtype: "compact_boundary",
+  uuid,
+  parentUuid: null,
+  logicalParentUuid: logicalParent,
+  isSidechain: false,
+  timestamp: ts(),
+  content: "Conversation compacted",
+  compactMetadata: { trigger: "auto" },
+});
+
+describe("review fixes: branch choice", () => {
+  it("last-prompt leafUuid wins over the file-order leaf (background agent append)", () => {
+    const rows = [
+      user("u0", null, "root"),
+      user("p1", "u0", "original prompt"),
+      asst("a1", "p1", "m1", [text("answer one")]),
+      user("p2", "u0", "edited prompt"),
+      asst("a2", "p2", "m2", [text("answer two")]),
+      // a background agent finished later and appended under the abandoned branch
+      user("bg", "a1", "<task-notification>done", { isMeta: true }),
+      lastPrompt("a2"),
+    ];
+    const t = allTexts(normalizeTranscript(rows));
+    expect(t).toContain("edited prompt");
+    expect(t).toContain("answer two");
+    expect(t).not.toContain("original prompt");
+    expect(t).not.toContain("answer one");
+    // without the pointer the old heuristic applies
+    const guessed = allTexts(normalizeTranscript(rows.slice(0, -1)));
+    expect(guessed).toContain("original prompt");
+  });
+
+  it("ignores a last-prompt whose leaf is not in the file", () => {
+    const rows = [
+      user("u0", null, "root"),
+      user("p1", "u0", "first"),
+      user("p2", "u0", "second"),
+      lastPrompt("missing"),
+    ];
+    const t = allTexts(normalizeTranscript(rows));
+    expect(t).toContain("second");
+    expect(t).not.toContain("first");
+  });
+
+  it("a fork across a compaction drops the compacted tail of the losing branch", () => {
+    const rows = [
+      user("u0", null, "root"),
+      user("p1", "u0", "old prompt"),
+      asst("a1", "p1", "m1", [text("old answer")]),
+      compactBoundary("cb", "a1"),
+      user("sum", "cb", "summary of old", { isCompactSummary: true }),
+      asst("a2", "sum", "m2", [text("old after compaction")]),
+      user("p2", "u0", "new prompt"),
+      asst("a3", "p2", "m3", [text("new answer")]),
+      lastPrompt("a3"),
+    ];
+    const ms = normalizeTranscript(rows);
+    const t = allTexts(ms);
+    expect(t).toEqual(expect.arrayContaining(["root", "new prompt", "new answer"]));
+    for (const gone of ["old prompt", "old answer", "summary of old", "old after compaction"])
+      expect(t).not.toContain(gone);
+    expect(ms.some((m) => m.metadata?.divider === true)).toBe(false);
+  });
+
+  it("a queued_command prompt counts as a prompt in fork detection", () => {
+    const rows = [
+      user("u0", null, "root"),
+      queued("q1", "u0", "queued first"),
+      asst("a1", "q1", "m1", [text("first answer")]),
+      queued("q2", "u0", "queued second"),
+      asst("a2", "q2", "m2", [text("second answer")]),
+    ];
+    const t = allTexts(normalizeTranscript(rows));
+    expect(t).toContain("queued second");
+    expect(t).toContain("second answer");
+    expect(t).not.toContain("queued first");
+    expect(t).not.toContain("first answer");
+  });
+});
+
+describe("review fixes: subagents and sidechains", () => {
+  const agentRows = (aid: string, extra: object[] = []) => [
+    { ...user(`${aid}-u`, null, "sub task"), isSidechain: true, agentId: aid },
+    ...extra,
+  ];
+
+  it("a subagent spawned on a losing branch is not rendered as an orphan", () => {
+    const rows = [
+      user("u0", null, "root"),
+      user("p1", "u0", "original"),
+      asst("a1", "p1", "m1", [toolUse("tA", "Agent", { description: "d" })]),
+      user("r1", "a1", [toolResult("tA", "done")], { toolUseResult: { agentId: "ag1" } }),
+      user("p2", "u0", "edited"),
+      asst("a2", "p2", "m2", [text("fine")]),
+      lastPrompt("a2"),
+    ];
+    const ms = normalizeTranscript(rows, { subagents: { ag1: agentRows("ag1") } });
+    expect(ms.some((m) => m.metadata?.systemSubtype === "orphan_subagent")).toBe(false);
+    // by tool_use id through the meta file
+    const ms2 = normalizeTranscript(rows, {
+      subagents: { ag9: agentRows("ag9") },
+      subagentMeta: { ag9: { toolUseId: "tA" } },
+    });
+    expect(ms2.some((m) => m.metadata?.systemSubtype === "orphan_subagent")).toBe(false);
+    // a genuinely unreferenced thread is still shown
+    const ms3 = normalizeTranscript(rows, { subagents: { lonely: agentRows("lonely") } });
+    expect(ms3.some((m) => m.metadata?.systemSubtype === "orphan_subagent")).toBe(true);
+  });
+
+  it("sidechain rows without an agentId render as raw messages", () => {
+    const rows = [user("u0", null, "root"), { ...user("s1", "u0", "mystery"), isSidechain: true }];
+    const ms = normalizeTranscript(rows);
+    const raws = ms.flatMap((m) => m.segments.filter((s) => s.type === "raw"));
+    expect(raws).toHaveLength(1);
+    expect(raws[0]).toMatchObject({ label: "sidechain row without agentId" });
+  });
+});
+
+describe("review fixes: hostile input bounds", () => {
+  it("fan-out of repeated agent references completes fast with bounded output", () => {
+    const levels = 10;
+    const reps = 4;
+    const subagents: Record<string, unknown[]> = {};
+    const callsTo = (prefix: string, target: string) => {
+      const rows: unknown[] = [];
+      let parent: string | null = null;
+      for (let k = 0; k < reps; k++) {
+        rows.push(
+          asst(`${prefix}a${k}`, parent, `${prefix}m${k}`, [toolUse(`${prefix}t${k}`, "Agent")]),
+        );
+        rows.push(
+          user(`${prefix}r${k}`, `${prefix}a${k}`, [toolResult(`${prefix}t${k}`, "ok")], {
+            toolUseResult: { agentId: target },
+          }),
+        );
+        parent = `${prefix}r${k}`;
+      }
+      return rows;
+    };
+    for (let i = 0; i < levels; i++) {
+      subagents[`ag${i}`] = callsTo(`s${i}`, `ag${i + 1}`).map((r) => ({
+        ...(r as object),
+        isSidechain: true,
+        agentId: `ag${i}`,
+      }));
+    }
+    const main = callsTo("main", "ag0");
+    const t0 = Date.now();
+    const ms = normalizeTranscript(main, { subagents });
+    expect(Date.now() - t0).toBeLessThan(1000);
+    const json = JSON.stringify(ms);
+    expect(json.length).toBeLessThan(500_000);
+    const all = deepCalls(ms);
+    expect(all.some((c) => c.subagentRef !== undefined)).toBe(true);
+    expect(all.filter((c) => c.subagent?.agentId === "ag0")).toHaveLength(1);
+    expect(json).toContain("truncated: subagent nesting deeper than");
+  });
+
+  it("deeply nested tool_result content does not throw", () => {
+    let deep: unknown = "leaf";
+    for (let i = 0; i < 200_000; i++) deep = [deep];
+    const rows = [
+      user("u0", null, "root"),
+      asst("a1", "u0", "m1", [toolUse("t1")]),
+      user("r1", "a1", [toolResult("t1", [deep])]),
+      user("r2", "r1", [toolResult("unpaired", [deep])]),
+      { type: "future-kind", uuid: "f1", parentUuid: "r2", deep },
+    ];
+    let ms: UnifiedMessage[] = [];
+    expect(() => {
+      ms = normalizeTranscript(rows);
+    }).not.toThrow();
+    expect(ms.length).toBeGreaterThan(0);
+    expect(JSON.stringify(ms).length).toBeLessThan(200_000);
+  });
+
+  it("caps an oversized unknown row", () => {
+    const big = "x".repeat(5_000_000);
+    const rows = [
+      { type: "future-kind", uuid: "f1", parentUuid: null, blob: big, more: [big, big] },
+    ];
+    const ms = normalizeTranscript(rows);
+    const size = JSON.stringify(ms).length;
+    expect(size).toBeLessThan(20_000);
+    expect(ms[0]?.segments[0]).toMatchObject({ type: "raw" });
+  });
+
+  it("unknown attachment and system kinds fail closed (key names only)", () => {
+    const rows = [
+      {
+        type: "attachment",
+        uuid: "x1",
+        parentUuid: null,
+        attachment: { type: "new_att", apiKey: "SECRET-TOKEN-1" },
+      },
+      { type: "attachment", uuid: "x2", parentUuid: "x1", attachment: "SECRET-TOKEN-2" },
+      {
+        type: "system",
+        subtype: "new_sub",
+        uuid: "x3",
+        parentUuid: "x2",
+        password: "SECRET-TOKEN-3",
+      },
+    ];
+    const ms = normalizeTranscript(rows);
+    expect(ms).toHaveLength(3);
+    const json = JSON.stringify(ms);
+    expect(json).not.toContain("SECRET-TOKEN");
+    expect(json).toContain("unknown row type: attachment:new_att");
+    expect(json).toContain("apiKey");
+  });
+
+  it("bounds the persisted-output path", () => {
+    const long = "p".repeat(5000);
+    const rows = [
+      user("u0", null, [
+        toolResult(
+          "t",
+          `<persisted-output>\nOutput too large (1KB). Full output saved to: ${long}\n`,
+        ),
+      ]),
+    ];
+    const seg = normalizeTranscript(rows)[0]?.segments[0];
+    expect(
+      seg?.type === "tool_result" && (seg.result.truncation?.path?.length ?? 0),
+    ).toBeLessThanOrEqual(512);
+  });
+});

@@ -68,11 +68,109 @@ function num(x: unknown): number | undefined {
   return typeof x === "number" && Number.isFinite(x) ? x : undefined;
 }
 
+// Bounds for everything that reaches the output from untrusted rows (security review).
+const RAW_STRING_MAX = 2048;
+const RAW_ROW_MAX = 16384;
+const RAW_DEPTH_MAX = 4;
+const RAW_KEYS_MAX = 40;
+const RAW_ITEMS_MAX = 20;
+const RESULT_JSON_MAX = 20000;
+const KIND_LABEL_MAX = 100;
+const MAX_SUBAGENT_DEPTH = 8;
+const MAX_THREAD_ROWS = 100_000;
+const MAX_SUBAGENT_MESSAGES = 200_000;
+
+/**
+ * Bounded copy of an untrusted value: keys and types kept, strings cut to 2 KB, at most 16 KB per row,
+ * depth limited. Never throws, never recurses deeper than RAW_DEPTH_MAX.
+ */
+export function capRaw(value: unknown): unknown {
+  const budget = { left: RAW_ROW_MAX };
+  const walk = (v: unknown, depth: number): unknown => {
+    if (budget.left <= 0) return "[truncated]";
+    if (typeof v === "string") {
+      const cut = v.length > RAW_STRING_MAX ? `${v.slice(0, RAW_STRING_MAX)}[truncated]` : v;
+      budget.left -= cut.length;
+      return cut;
+    }
+    if (v === null || typeof v === "number" || typeof v === "boolean") {
+      budget.left -= 8;
+      return v;
+    }
+    if (typeof v !== "object") {
+      budget.left -= 8;
+      return String(v);
+    }
+    if (depth >= RAW_DEPTH_MAX) return Array.isArray(v) ? "[array]" : "[object]";
+    if (Array.isArray(v)) {
+      const arr: unknown[] = [];
+      for (const x of v.slice(0, RAW_ITEMS_MAX)) arr.push(walk(x, depth + 1));
+      if (v.length > RAW_ITEMS_MAX) arr.push(`[${v.length - RAW_ITEMS_MAX} more truncated]`);
+      return arr;
+    }
+    const o: Record<string, unknown> = {};
+    const keys = Object.keys(v);
+    for (const k of keys.slice(0, RAW_KEYS_MAX)) {
+      budget.left -= k.length;
+      o[k] = walk((v as Record<string, unknown>)[k], depth + 1);
+    }
+    if (keys.length > RAW_KEYS_MAX) o["[truncated]"] = `${keys.length - RAW_KEYS_MAX} more keys`;
+    return o;
+  };
+  try {
+    return walk(value, 0);
+  } catch {
+    return "[unreadable]";
+  }
+}
+
+/** JSON-ish text of a value with depth and length bounds; never throws. */
+function boundedJson(value: unknown): string {
+  let left = RESULT_JSON_MAX;
+  const walk = (v: unknown, depth: number): string => {
+    if (left <= 0) return "";
+    if (typeof v === "string") {
+      const s = JSON.stringify(v.length > left ? v.slice(0, left) : v);
+      left -= s.length;
+      return s;
+    }
+    if (v === null || typeof v !== "object") {
+      const s = String(v);
+      left -= s.length;
+      return s;
+    }
+    if (depth >= 8) return Array.isArray(v) ? "[...]" : "{...}";
+    const parts: string[] = [];
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        if (left <= 0) break;
+        parts.push(walk(x, depth + 1));
+        left -= 1;
+      }
+      return `[${parts.join(",")}]`;
+    }
+    for (const k of Object.keys(v)) {
+      if (left <= 0) break;
+      left -= k.length + 3;
+      parts.push(`${JSON.stringify(k)}:${walk((v as Row)[k], depth + 1)}`);
+    }
+    return `{${parts.join(",")}}`;
+  };
+  try {
+    const out = walk(value, 0);
+    return left <= 0 ? `${out}[truncated]` : out;
+  } catch {
+    return "[unreadable]";
+  }
+}
+
 interface Item {
   index: number;
   /** null when the input was not a JSON object; `raw` then holds what was seen. */
   row: Row | null;
   raw?: unknown;
+  /** A main-file sidechain row with no agentId; rendered as a capped raw message. */
+  sidechain?: Row;
 }
 
 /** Splits JSONL text into rows; a line that does not parse is kept as the string itself. */
@@ -454,13 +552,24 @@ export function countRowKinds(
 //    under the same parent (04-compaction: two "continue, resume." rows under one turn_duration row). The
 //    branch on the path from the latest leaf to the root is kept; the sibling prompts and everything beneath
 //    them are dropped.
-//  - The latest leaf is the last chained row in file order that no row names as parent.
+//  - The kept leaf is the one Claude Code resumes from: the leafUuid of the last last-prompt row that names a
+//    row present in the file. Only when there is none, the last chained row in file order that no row names as
+//    parent (a guess: a background agent finishing later appends under an old branch).
+//  - A losing branch is followed through parentUuid and logicalParentUuid edges, so a compaction that happened
+//    on it is dropped together with its divider, summary and everything after.
+//  - A queued_command attachment with human origin counts as a prompt row.
 //  - Compaction: system compact_boundary has parentUuid null and logicalParentUuid naming the last row before
 //    compaction, so the path walk continues through logicalParentUuid and the earlier history stays visible
 //    above the divider. Fixtures 02, 03 and 04 confirm the pre-compaction rows lie on that path.
 // ---------------------------------------------------------------------------------------------------------
 
 function isPromptRow(row: Row): boolean {
+  if (row.type === "attachment") {
+    const a = isObj(row.attachment) ? row.attachment : {};
+    if (a.type !== "queued_command") return false;
+    const kind = isObj(a.origin) ? str(a.origin.kind) : undefined;
+    return kind === undefined || kind === "human";
+  }
   if (row.type !== "user" || row.isMeta === true || row.isCompactSummary === true) return false;
   const origin = isObj(row.origin) ? str(row.origin.kind) : undefined;
   if (origin !== undefined && origin !== "human") return false;
@@ -477,14 +586,22 @@ function supersededItems(items: Item[]): Set<number> {
   const children = new Map<string, Item[]>();
   for (const n of nodes) byUuid.set(n.row?.uuid as string, n);
   for (const n of nodes) {
-    const p = str(n.row?.parentUuid);
+    // compact_boundary has parentUuid null and links back only through logicalParentUuid.
+    const p = str(n.row?.parentUuid) ?? str(n.row?.logicalParentUuid);
     if (p === undefined) continue;
     const list = children.get(p);
     if (list) list.push(n);
     else children.set(p, [n]);
   }
   let leaf: Item | undefined;
-  for (const n of nodes) if (!children.has(n.row?.uuid as string)) leaf = n;
+  for (const it of items) {
+    if (it.row?.type !== "last-prompt") continue;
+    const target = str(it.row.leafUuid);
+    if (target !== undefined && byUuid.has(target)) leaf = byUuid.get(target);
+  }
+  if (leaf === undefined) {
+    for (const n of nodes) if (!children.has(n.row?.uuid as string)) leaf = n;
+  }
   const onPath = new Set<string>();
   let cur: Item | undefined = leaf;
   while (cur?.row && !onPath.has(cur.row.uuid as string)) {
@@ -520,7 +637,12 @@ interface Ctx {
   sub: Map<string, Item[]>;
   meta: NonNullable<NormalizeOptions["subagentMeta"]>;
   metaByToolUse: Map<string, string>;
+  /** Agents already expanded once; later references get subagentRef. */
   used: Set<string>;
+  /** Agents spawned on a dropped branch; not orphans. */
+  abandoned: Set<string>;
+  /** Messages emitted into subagent threads so far. */
+  subMessages: number;
 }
 
 interface ThreadResult {
@@ -548,6 +670,10 @@ function usageOf(x: unknown): TokenUsage | undefined {
   };
 }
 
+function rawSegment(label: string, data: unknown): MessageSegment {
+  return { type: "raw", label: label.slice(0, 300), data: capRaw(data) };
+}
+
 function rawMessage(
   id: string,
   timestamp: string,
@@ -558,20 +684,20 @@ function rawMessage(
 ): UnifiedMessage {
   const metadata: UnifiedMessageMetadata = { systemSubtype: "raw", rawType: kind };
   if (agent !== undefined) metadata.agent = agent;
-  return { id, role: "system", timestamp, segments: [{ type: "raw", label, data }], metadata };
+  return { id, role: "system", timestamp, segments: [rawSegment(label, data)], metadata };
 }
 
 const PERSISTED =
-  /^<persisted-output>\s*Output too large \(([^)]*)\)\.\s*Full output saved to:\s*([^\n]*)/;
+  /^<persisted-output>\s*Output too large \(([^)]*)\)\.\s*Full output saved to:\s*([^\n]{1,512})/;
 
 function flattenResultContent(c: unknown): string {
   if (typeof c === "string") return c;
-  if (!Array.isArray(c)) return c === undefined || c === null ? "" : JSON.stringify(c);
+  if (!Array.isArray(c)) return c === undefined || c === null ? "" : boundedJson(c);
   return c
     .map((b) => {
       if (isObj(b) && b.type === "text" && typeof b.text === "string") return b.text;
       if (isObj(b) && b.type === "tool_reference") return `[tool: ${str(b.tool_name) ?? "?"}]`;
-      return JSON.stringify(b);
+      return boundedJson(b);
     })
     .join("\n");
 }
@@ -608,7 +734,7 @@ interface AsmState {
 }
 
 function segmentOfBlock(b: unknown): MessageSegment | null {
-  if (!isObj(b)) return { type: "raw", label: "content block: non-object", data: b };
+  if (!isObj(b)) return rawSegment("content block: non-object", b);
   switch (b.type) {
     case "text": {
       const t = str(b.text)?.trim();
@@ -624,15 +750,11 @@ function segmentOfBlock(b: unknown): MessageSegment | null {
       const id = str(b.id);
       const name = str(b.name);
       if (id === undefined || name === undefined)
-        return { type: "raw", label: "content block: malformed tool_use", data: b };
+        return rawSegment("content block: malformed tool_use", b);
       return { type: "tool_call", tool: { id, name, input: b.input } };
     }
     default:
-      return {
-        type: "raw",
-        label: `content block: ${typeof b.type === "string" ? b.type : "untyped"}`,
-        data: b,
-      };
+      return rawSegment(`content block: ${typeof b.type === "string" ? b.type : "untyped"}`, b);
   }
 }
 
@@ -659,15 +781,16 @@ function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMe
         const t = str(b.text);
         if (t !== undefined && t.trim() !== "") segments.push({ type: "text", content: t });
       } else {
-        segments.push({
-          type: "raw",
-          label: `content block: ${isObj(b) && typeof b.type === "string" ? b.type : "untyped"}`,
-          data: b,
-        });
+        segments.push(
+          rawSegment(
+            `content block: ${isObj(b) && typeof b.type === "string" ? b.type : "untyped"}`,
+            b,
+          ),
+        );
       }
     }
   } else {
-    segments.push({ type: "raw", label: "user content of unexpected shape", data: c });
+    segments.push(rawSegment("user content of unexpected shape", c));
   }
   if (segments.length === 0) return null;
 
@@ -697,11 +820,28 @@ function userMessage(row: Row, base: BuildBase, callIds: Set<string>): UnifiedMe
   };
 }
 
+/** Notes the subagents spawned on a dropped branch so they are not rendered as orphans. */
+function markAbandoned(row: Row | null, ctx: Ctx): void {
+  if (!row) return;
+  const tur = isObj(row.toolUseResult) ? row.toolUseResult : undefined;
+  const aid = tur ? str(tur.agentId) : undefined;
+  if (aid !== undefined) ctx.abandoned.add(aid);
+  const m = isObj(row.message) ? row.message : {};
+  if (!Array.isArray(m.content)) return;
+  for (const b of m.content) {
+    if (!isObj(b)) continue;
+    const id =
+      b.type === "tool_use" ? str(b.id) : b.type === "tool_result" ? str(b.tool_use_id) : undefined;
+    const mapped = id === undefined ? undefined : ctx.metaByToolUse.get(id);
+    if (mapped !== undefined) ctx.abandoned.add(mapped);
+  }
+}
+
 function buildThread(
   items: Item[],
   ctx: Ctx,
   agentId: string | undefined,
-  active: Set<string>,
+  depth: number,
 ): ThreadResult {
   // Same uuid twice (a re-sent line): first position, last content.
   const firstByUuid = new Map<string, Item>();
@@ -719,7 +859,13 @@ function buildThread(
     deduped.push(it);
   }
   const dropped = supersededItems(deduped);
-  const kept = deduped.filter((it) => !dropped.has(it.index));
+  let kept = deduped.filter((it) => !dropped.has(it.index));
+  for (const it of deduped) if (dropped.has(it.index)) markAbandoned(it.row, ctx);
+  let rowsTruncated = false;
+  if (kept.length > MAX_THREAD_ROWS) {
+    kept = kept.slice(0, MAX_THREAD_ROWS);
+    rowsTruncated = true;
+  }
 
   const idPrefix = agentId === undefined ? "" : `${agentId}:`;
   const callIds = new Set<string>();
@@ -741,9 +887,13 @@ function buildThread(
     for (const b of m.content) {
       if (!isObj(b) || b.type !== "tool_result" || typeof b.tool_use_id !== "string") continue;
       const tur = isObj(row.toolUseResult) ? row.toolUseResult : undefined;
-      const entry: { result: ToolResult; agentId?: string; reported?: Row } = {
-        result: buildToolResult(b, row),
-      };
+      let result: ToolResult;
+      try {
+        result = buildToolResult(b, row);
+      } catch {
+        result = { content: "[unreadable tool result]", is_error: false };
+      }
+      const entry: { result: ToolResult; agentId?: string; reported?: Row } = { result };
       const aid = tur ? str(tur.agentId) : undefined;
       if (aid !== undefined && tur) {
         entry.agentId = aid;
@@ -760,6 +910,19 @@ function buildThread(
   for (const it of kept) {
     const row = it.row;
     if (row === null) {
+      if (it.sidechain) {
+        out.push(
+          rawMessage(
+            str(it.sidechain.uuid) ?? `${idPrefix}raw:${it.index}`,
+            str(it.sidechain.timestamp) ?? "",
+            "sidechain-no-agent",
+            "sidechain row without agentId",
+            it.sidechain,
+            agentId,
+          ),
+        );
+        continue;
+      }
       const text = typeof it.raw === "string" ? it.raw.slice(0, 2000) : it.raw;
       out.push(
         rawMessage(
@@ -782,8 +945,25 @@ function buildThread(
     };
     if (agentId !== undefined) base.agent = agentId;
     if (!def) {
+      // attachment:* and system:* kinds fail closed: key names only, never the values.
+      const closed = kind.startsWith("attachment:") || kind.startsWith("system:");
+      const data = closed
+        ? {
+            keys: Object.keys(row).slice(0, RAW_KEYS_MAX),
+            ...(isObj(row.attachment)
+              ? { attachmentKeys: Object.keys(row.attachment).slice(0, RAW_KEYS_MAX) }
+              : {}),
+          }
+        : row;
       out.push(
-        rawMessage(base.id, base.timestamp, kind, `unknown row type: ${kind}`, row, agentId),
+        rawMessage(
+          base.id,
+          base.timestamp,
+          kind.slice(0, KIND_LABEL_MAX),
+          `unknown row type: ${kind.slice(0, KIND_LABEL_MAX)}`,
+          data,
+          agentId,
+        ),
       );
       continue;
     }
@@ -814,6 +994,19 @@ function buildThread(
     }
   }
 
+  if (rowsTruncated) {
+    out.push(
+      rawMessage(
+        `${idPrefix}truncated:rows`,
+        "",
+        "truncated",
+        `truncated: more than ${MAX_THREAD_ROWS} rows in this thread`,
+        { limit: MAX_THREAD_ROWS },
+        agentId,
+      ),
+    );
+  }
+
   // Finish assistant messages, pair results and nest subagent threads.
   let toolCallCount = 0;
   for (const st of asm.values()) {
@@ -827,9 +1020,13 @@ function buildThread(
       const paired = results.get(call.id);
       if (paired) call.result = paired.result;
       const aid = paired?.agentId ?? ctx.metaByToolUse.get(call.id);
-      if (aid !== undefined) {
-        const thread = buildSubagent(aid, call.input, paired?.reported, ctx, active);
-        if (thread) call.subagent = thread;
+      if (aid !== undefined && ctx.sub.has(aid)) {
+        if (ctx.used.has(aid)) {
+          call.subagentRef = aid; // already expanded elsewhere: link, not copy
+        } else {
+          const thread = buildSubagent(aid, call.input, paired?.reported, ctx, depth + 1);
+          if (thread) call.subagent = thread;
+        }
       }
     }
   }
@@ -932,14 +1129,28 @@ function buildSubagent(
   callInput: unknown,
   reportedRow: Row | undefined,
   ctx: Ctx,
-  active: Set<string>,
+  depth: number,
 ): SubagentThread | undefined {
   const items = ctx.sub.get(agentId);
-  if (!items || active.has(agentId)) return undefined;
+  if (!items || ctx.used.has(agentId)) return undefined;
   ctx.used.add(agentId);
-  active.add(agentId);
-  const t = buildThread(items, ctx, agentId, active);
-  active.delete(agentId);
+  let t: ThreadResult;
+  if (depth > MAX_SUBAGENT_DEPTH || ctx.subMessages > MAX_SUBAGENT_MESSAGES) {
+    const why =
+      depth > MAX_SUBAGENT_DEPTH
+        ? `truncated: subagent nesting deeper than ${MAX_SUBAGENT_DEPTH}`
+        : `truncated: more than ${MAX_SUBAGENT_MESSAGES} subagent messages`;
+    t = {
+      messages: [rawMessage(`${agentId}:truncated`, "", "truncated", why, {}, agentId)],
+      usage: ZERO_USAGE(),
+      contextTokens: 0,
+      assistantMessageCount: 0,
+      toolCallCount: 0,
+    };
+  } else {
+    t = buildThread(items, ctx, agentId, depth);
+  }
+  ctx.subMessages += t.messages.length;
   const meta = ctx.meta[agentId] ?? {};
   const input = isObj(callInput) ? callInput : {};
   const thread: SubagentThread = {
@@ -987,7 +1198,9 @@ export function normalizeTranscript(
   for (const it of toItems(input)) {
     if (it.row?.isSidechain === true) {
       const aid = str(it.row.agentId);
-      if (aid !== undefined && !sub.has(aid)) {
+      if (aid === undefined) {
+        main.push({ index: main.length, row: null, sidechain: it.row });
+      } else if (!sub.has(aid)) {
         const list = side.get(aid);
         if (list) list.push(it.row);
         else side.set(aid, [it.row]);
@@ -1002,14 +1215,21 @@ export function normalizeTranscript(
   const metaByToolUse = new Map<string, string>();
   for (const [aid, m] of Object.entries(meta))
     if (m.toolUseId !== undefined) metaByToolUse.set(m.toolUseId, aid);
-  const ctx: Ctx = { sub, meta, metaByToolUse, used: new Set() };
+  const ctx: Ctx = {
+    sub,
+    meta,
+    metaByToolUse,
+    used: new Set(),
+    abandoned: new Set(),
+    subMessages: 0,
+  };
 
-  const messages = buildThread(main, ctx, undefined, new Set()).messages;
+  const messages = buildThread(main, ctx, undefined, 0).messages;
 
   // Threads whose spawning call is not in the main list still show up.
   for (const aid of sub.keys()) {
-    if (ctx.used.has(aid)) continue;
-    const thread = buildSubagent(aid, {}, undefined, ctx, new Set());
+    if (ctx.used.has(aid) || ctx.abandoned.has(aid)) continue;
+    const thread = buildSubagent(aid, {}, undefined, ctx, 1);
     if (!thread) continue;
     const first = thread.messages[0];
     messages.push({

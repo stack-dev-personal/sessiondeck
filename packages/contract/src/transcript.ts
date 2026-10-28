@@ -44,12 +44,15 @@ export interface ToolCall {
   result?: ToolResult;
   /** Present for Agent/Task calls whose subagent transcript was supplied. */
   subagent?: SubagentThread;
+  /** Agent id of a thread already expanded under an earlier call; a link, not a copy. */
+  subagentRef?: string;
 }
 
 export interface ToolResult {
   content: string;
   is_error: boolean;
   /** Set when the transcript holds only a pointer to a large output stored on the laptop. */
+  /** `path` is display-only text lifted from the transcript (at most 512 chars); never an action target. */
   truncation?: { sizeLabel?: string; path?: string };
   /** Why the tool call was denied (permission-rule, user-rejected, ...). */
   denial?: string;
@@ -77,6 +80,11 @@ export interface UnifiedMessageMetadata {
   [key: string]: unknown;
 }
 
+/**
+ * Rendering contract for consumers: `text`, `thinking` and `raw` segment content and tool results are
+ * untrusted text. Render markdown with raw HTML disabled and a link scheme allow-list; render raw data and
+ * tool results as plain text (React text nodes or a pre element), never as HTML.
+ */
 export type MessageSegment =
   | { type: "text"; content: string }
   | { type: "tool_call"; tool: ToolCall }
