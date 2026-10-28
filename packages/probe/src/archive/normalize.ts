@@ -184,8 +184,9 @@ export function normalizeCapture(input: NormalizeInput): NormalizeResult {
     project_dir: text(
       d["project_dir"] !== undefined && d["project_dir"] !== null ? d["project_dir"] : d["cwd"],
       ARCHIVE_MAX_PROJECT_DIR,
+      true,
     ),
-    branch: text(d["branch"], ARCHIVE_MAX_BRANCH),
+    branch: text(d["branch"], ARCHIVE_MAX_BRANCH, true),
     tools_used: tools(d["tools_used"]),
     commits: list(d["commits"]),
     prs: list(d["prs"]),

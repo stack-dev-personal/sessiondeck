@@ -14,6 +14,10 @@ export interface ProbeConfig {
   allowInsecureHub?: boolean;
   /** Vault archive import (Phase 5): read-only roots scanned by the daemon. */
   archive?: ArchiveConfig;
+  /** Set when the `archive` block did not validate: the importer is off, everything else works. */
+  archiveError?: string;
+  /** The unvalidated `archive` block, kept so a rewrite (probe install) preserves it unchanged. */
+  archiveRaw?: unknown;
 }
 
 export interface ArchiveConfig {
@@ -107,7 +111,15 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   if (typeof r["hubUrl"] === "string") cfg.hubUrl = r["hubUrl"];
   if (typeof r["token"] === "string") cfg.token = r["token"];
   if (r["allowInsecureHub"] === true) cfg.allowInsecureHub = true;
-  if (r["archive"] !== undefined) cfg.archive = validateArchiveConfig(r["archive"]);
+  if (r["archive"] !== undefined) {
+    // Optional Phase 5 block: a bad one only disables the importer, never hook forwarding.
+    try {
+      cfg.archive = validateArchiveConfig(r["archive"]);
+    } catch (e) {
+      cfg.archiveError = e instanceof Error ? e.message : String(e);
+      cfg.archiveRaw = r["archive"];
+    }
+  }
   return cfg;
 }
 
@@ -250,6 +262,7 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void>
   body["host"] = cfg.host;
   if (cfg.allowInsecureHub === true) body["allowInsecureHub"] = true;
   if (cfg.archive !== undefined) body["archive"] = cfg.archive;
+  else if (cfg.archiveRaw !== undefined) body["archive"] = cfg.archiveRaw;
   await writeFileAtomic(path, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
     beforeWrite: async (tmp) => {
@@ -260,5 +273,7 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void>
 
 /** Config for display: the token is never shown. */
 export function maskedConfig(cfg: ProbeConfig): Record<string, unknown> {
-  return { ...cfg, token: cfg.token ? "********" : null };
+  const shown: Record<string, unknown> = { ...cfg, token: cfg.token ? "********" : null };
+  delete shown["archiveRaw"];
+  return shown;
 }

@@ -1,11 +1,11 @@
 // Vault archive scanner and incremental index (R5.2). Read-only: it lists
 // `<root>/projects/*/sessions/*.md` and `<root>/harness/*/sessions/*.md`, ships one `archive`
-// envelope per changed file and remembers (mtime_ms, size) per file in a state file. Unchanged
+// envelope per changed file and remembers (mtime_ms, ctime_ms, size) per file in a state file. Unchanged
 // files are only stat'ed. An index entry is written only after the envelope was enqueued, so a
 // crash re-ships rather than loses.
 import { constants as fsc } from "node:fs";
-import { lstat, open, readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, open, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { join, sep } from "node:path";
 import { ArchiveEnvelopeSchema, isSafeRelPath } from "@sessiondeck/contract";
 import { writeFileAtomic } from "../install/atomic.ts";
 import { buildEnvelope } from "../envelope.ts";
@@ -21,7 +21,7 @@ export interface ArchiveRoot {
 }
 
 type ScanSkip =
-  SkipReason | "root_missing" | "symlink" | "not_regular" | "too_large" | "read_error";
+  SkipReason | "root_missing" | "symlink" | "raced" | "not_regular" | "too_large" | "read_error";
 
 export interface ScanStats {
   scanned: number;
@@ -37,6 +37,8 @@ export interface ScanStats {
 
 interface IndexEntry {
   mtime_ms: number;
+  /** Also compared: FAT/exFAT mtime granularity (2 s) misses same-size edits. */
+  ctime_ms: number;
   size: number;
   session_id: string | null;
   /** Set for files that were read and skipped, so an unchanged bad file is not re-read. */
@@ -58,6 +60,8 @@ export interface ImporterOptions {
   maxFileBytes?: number;
   /** Polled between files; true stops issuing work (the scan finishes what is in flight). */
   shouldStop?: () => boolean;
+  /** Flushes the outbox before the index is saved; defaults to `enqueue.sync` when present. */
+  syncOutbox?: () => void;
 }
 
 interface Candidate {
@@ -65,6 +69,8 @@ interface Candidate {
   rootLabel: string;
   rel: string;
   abs: string;
+  /** realpath of the configured root, resolved once per scan. */
+  realRoot: string;
 }
 
 /** Runs fn over items with at most `limit` in flight. */
@@ -77,6 +83,14 @@ async function pool<T>(items: T[], limit: number, fn: (t: T) => Promise<void>): 
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/** True when `p` (a realpath) is `root` or below it; case-insensitive on Windows. */
+function insideRoot(p: string, root: string): boolean {
+  const fold = (x: string): string => (process.platform === "win32" ? x.toLowerCase() : x);
+  const a = fold(p);
+  const r = fold(root);
+  return a === r || a.startsWith(r.endsWith(sep) ? r : r + sep);
 }
 
 const isEnoent = (e: unknown): boolean =>
@@ -95,7 +109,7 @@ export class ArchiveImporter {
 
   private async loadIndex(): Promise<IndexFile> {
     if (this.index) return this.index;
-    let entries: Record<string, IndexEntry> = {};
+    let entries = Object.create(null) as Record<string, IndexEntry>; // no __proto__ surprises
     try {
       const raw = JSON.parse(await readFile(this.o.statePath, "utf8")) as unknown;
       if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
@@ -107,10 +121,12 @@ export class ArchiveImporter {
               x !== null &&
               typeof x === "object" &&
               Number.isSafeInteger(x.mtime_ms) &&
+              Number.isSafeInteger(x.ctime_ms) &&
               Number.isSafeInteger(x.size)
             ) {
               entries[k] = {
                 mtime_ms: x.mtime_ms as number,
+                ctime_ms: x.ctime_ms as number,
                 size: x.size as number,
                 session_id: typeof x.session_id === "string" ? x.session_id : null,
                 ...(typeof x.skip === "string" ? { skip: x.skip } : {}),
@@ -120,7 +136,7 @@ export class ArchiveImporter {
         }
       }
     } catch {
-      entries = {}; // missing or corrupt: everything is re-shipped, which is safe (idempotent hub)
+      entries = Object.create(null) as Record<string, IndexEntry>; // missing or corrupt: everything is re-shipped, which is safe (idempotent hub)
     }
     this.index = { v: 1, entries };
     return this.index;
@@ -135,22 +151,28 @@ export class ArchiveImporter {
     const present = new Set<string>();
     const kindOk = new Map<string, Set<string>>(); // kind -> names listed
     const sessionsOk = new Set<string>(); // "kind/x" whose sessions dir was listed (or is absent)
-    let rootExists = true;
+    // The configured root is the user's choice and may itself be a symlink or junction: resolve it
+    // once with stat semantics. Everything below it must be a real directory or file.
+    let realRoot = "";
     try {
-      const st = await lstat(root.path);
-      if (!st.isDirectory()) rootExists = false;
+      if ((await stat(root.path)).isDirectory()) realRoot = await realpath(root.path);
     } catch {
-      rootExists = false;
+      realRoot = "";
     }
-    if (!rootExists) {
+    if (realRoot === "") {
       this.o.log?.("warn", `archive root ${root.label} is not a directory; skipped`);
       skipped("root_missing");
       return { files, present, goneOk: () => false };
     }
     for (const kind of ["projects", "harness"] as const) {
+      const kindDir = join(root.path, kind);
       let xs: import("node:fs").Dirent[];
       try {
-        xs = await readdir(join(root.path, kind), { withFileTypes: true });
+        if ((await lstat(kindDir)).isSymbolicLink()) {
+          skipped("symlink");
+          continue;
+        }
+        xs = await readdir(kindDir, { withFileTypes: true });
       } catch (e) {
         if (isEnoent(e)) kindOk.set(kind, new Set());
         continue;
@@ -159,10 +181,19 @@ export class ArchiveImporter {
       kindOk.set(kind, names);
       for (const x of xs) {
         names.add(x.name);
+        if (x.isSymbolicLink()) {
+          skipped("symlink");
+          continue;
+        }
         if (!x.isDirectory()) continue;
+        const sessDir = join(kindDir, x.name, "sessions");
         let fs: import("node:fs").Dirent[];
         try {
-          fs = await readdir(join(root.path, kind, x.name, "sessions"), { withFileTypes: true });
+          if ((await lstat(sessDir)).isSymbolicLink()) {
+            skipped("symlink");
+            continue;
+          }
+          fs = await readdir(sessDir, { withFileTypes: true });
           sessionsOk.add(`${kind}/${x.name}`);
         } catch (e) {
           if (isEnoent(e)) sessionsOk.add(`${kind}/${x.name}`);
@@ -175,18 +206,13 @@ export class ArchiveImporter {
             skipped("bad_rel_path");
             continue;
           }
+          const key = `${root.label}:${rel}`;
+          present.add(key);
           if (f.isSymbolicLink()) {
             skipped("symlink");
             continue;
           }
-          const key = `${root.label}:${rel}`;
-          present.add(key);
-          files.push({
-            key,
-            rootLabel: root.label,
-            rel,
-            abs: join(root.path, kind, x.name, "sessions", f.name),
-          });
+          files.push({ key, rootLabel: root.label, rel, abs: join(sessDir, f.name), realRoot });
         }
       }
     }
@@ -249,23 +275,40 @@ export class ArchiveImporter {
       if (st.size > maxBytes) return skip("too_large");
       const mtime = Math.floor(st.mtimeMs);
       const prev = index.entries[c.key];
-      if (prev && prev.mtime_ms === mtime && prev.size === st.size) {
+      const ctime = Math.floor(st.ctimeMs);
+      if (prev && prev.mtime_ms === mtime && prev.ctime_ms === ctime && prev.size === st.size) {
         if (prev.skip) skip(prev.skip);
         else stats.unchanged += 1;
         return;
       }
       let buf: Buffer;
       let rmtime = mtime;
+      let rctime = ctime;
       let rsize = st.size;
       try {
         const fh = await open(c.abs, fsc.O_RDONLY | (fsc.O_NOFOLLOW ?? 0));
         try {
           const fst = await fh.stat();
           if (!fst.isFile()) return skip("not_regular");
+          // Where inodes are meaningful, the opened file must be the one that was lstat'ed
+          // (O_NOFOLLOW does not exist on Windows).
+          if (st.ino !== 0 && fst.ino !== 0 && (st.ino !== fst.ino || st.dev !== fst.dev)) {
+            return skip("raced"); // replaced between lstat and open: next scan retries
+          }
+          if (!insideRoot(await realpath(c.abs), c.realRoot)) return skip("symlink");
           if (fst.size > maxBytes) return skip("too_large");
           rmtime = Math.floor(fst.mtimeMs);
+          rctime = Math.floor(fst.ctimeMs);
           rsize = fst.size;
-          buf = await fh.readFile();
+          // Read at most maxBytes + 1 so a growing file cannot exhaust memory.
+          const chunk = Buffer.allocUnsafe(maxBytes + 1);
+          let n = 0;
+          while (n < chunk.length) {
+            const { bytesRead } = await fh.read(chunk, n, chunk.length - n, n);
+            if (bytesRead === 0) break;
+            n += bytesRead;
+          }
+          buf = chunk.subarray(0, n);
         } finally {
           await fh.close();
         }
@@ -285,6 +328,7 @@ export class ArchiveImporter {
         skip(res.reason);
         index.entries[c.key] = {
           mtime_ms: rmtime,
+          ctime_ms: rctime,
           size: rsize,
           session_id: null,
           skip: res.reason,
@@ -304,6 +348,7 @@ export class ArchiveImporter {
         skip("invalid_payload");
         index.entries[c.key] = {
           mtime_ms: rmtime,
+          ctime_ms: rctime,
           size: rsize,
           session_id: null,
           skip: "invalid_payload",
@@ -322,7 +367,12 @@ export class ArchiveImporter {
         );
         return;
       }
-      index.entries[c.key] = { mtime_ms: rmtime, size: rsize, session_id: res.payload.session_id };
+      index.entries[c.key] = {
+        mtime_ms: rmtime,
+        ctime_ms: rctime,
+        size: rsize,
+        session_id: res.payload.session_id,
+      };
       dirty = true;
       stats.shipped += 1;
     });
@@ -348,6 +398,8 @@ export class ArchiveImporter {
 
     if (dirty) {
       try {
+        // The index must never get ahead of the outbox lines it covers (power loss).
+        (this.o.syncOutbox ?? (this.o.enqueue as { sync?: () => void }).sync)?.();
         await writeFileAtomic(this.o.statePath, JSON.stringify(index), { mode: 0o600 });
       } catch (e) {
         this.o.log?.(

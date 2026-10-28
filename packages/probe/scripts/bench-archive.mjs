@@ -1,6 +1,6 @@
 // Archive importer bench (R5.2): 293 harness files must import in under 10 s. Builds a temp vault
 // by replicating the 20 fixture captures with fresh session_ids, runs the real importer with an
-// in-memory enqueue and prints three runs (full, unchanged, 5 touched). Exit 1 on FAIL.
+// real file outbox (append + fsync) in a temp dir and prints three runs (full, unchanged, 5 touched). Exit 1 on FAIL.
 //   node scripts/bench-archive.mjs        (Node 22.18+ runs the .ts sources directly)
 import {
   mkdirSync,
@@ -22,7 +22,12 @@ import { pathToFileURL } from "node:url";
 const bundleDir = mkdtempSync(join(tmpdir(), "sd-bench-archive-bundle-"));
 await build({
   absWorkingDir: join(dirname(fileURLToPath(import.meta.url)), ".."),
-  entryPoints: ["src/archive/importer.ts"],
+  stdin: {
+    contents:
+      'export * from "./src/archive/importer.ts"; export { createOutbox } from "./src/daemon/outbox.ts";',
+    resolveDir: join(dirname(fileURLToPath(import.meta.url)), ".."),
+    loader: "ts",
+  },
   outfile: join(bundleDir, "importer.mjs"),
   bundle: true,
   format: "esm",
@@ -30,7 +35,9 @@ await build({
   target: "node22",
   logLevel: "warning",
 });
-const { ArchiveImporter } = await import(pathToFileURL(join(bundleDir, "importer.mjs")).href);
+const { ArchiveImporter, createOutbox } = await import(
+  pathToFileURL(join(bundleDir, "importer.mjs")).href
+);
 
 const LIMIT_MS = 10_000;
 const here = dirname(fileURLToPath(import.meta.url));
@@ -70,12 +77,12 @@ async function bench(count, replicate) {
     writeFileSync(p, text);
     paths.push(p);
   }
-  const lines = [];
+  const outbox = createOutbox(join(dir, "home", "daemon", "outbox"));
   const imp = new ArchiveImporter({
     roots: [{ label: "bench", path: join(dir, "vault") }],
     statePath: join(dir, "home", "archive-index.json"),
     host: "bench",
-    enqueue: (l) => void lines.push(l),
+    enqueue: outbox,
   });
   const out = [];
   const r1 = await imp.scan();

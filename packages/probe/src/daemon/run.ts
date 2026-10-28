@@ -19,7 +19,12 @@ export async function runDaemon(argv: string[]): Promise<void> {
   // The archive importer is configured once at start (restart the daemon to change it). A config
   // that does not validate is reported and the importer stays off; hook forwarding is unaffected.
   const archive = await readConfig(probeConfigFile(home)).then(
-    (c) => c?.archive,
+    (c) => {
+      if (c?.archiveError) {
+        process.stderr.write(`sessiondeck archive import off: ${c.archiveError}\n`);
+      }
+      return c?.archive;
+    },
     (e: unknown) => {
       process.stderr.write(
         `sessiondeck archive import off: ${e instanceof Error ? e.message : String(e)}\n`,

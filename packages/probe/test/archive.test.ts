@@ -9,6 +9,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +19,11 @@ import { ArchiveImporter } from "../src/archive/importer.ts";
 import { normalizeCapture } from "../src/archive/normalize.ts";
 import { redactText } from "../src/archive/redact.ts";
 import { ArchiveComponent } from "../src/daemon/archive.ts";
+import { defaultComponents } from "../src/daemon/components.ts";
+import { startDaemon } from "../src/daemon/index.ts";
+import { buildEnvelope } from "../src/envelope.ts";
+import { spoolDir } from "../src/paths.ts";
+import { appendSpoolLines } from "../src/spool-writer.ts";
 import {
   ConfigError,
   readConfig,
@@ -188,9 +194,7 @@ describe("redaction", () => {
   });
 
   it("masks bearer tokens, PEM blocks and env-style lines", () => {
-    expect(redactText("Authorization: Bearer abc123def456ghi")).toBe(
-      "Authorization: Bearer [REDACTED]",
-    );
+    expect(redactText("Authorization: Bearer abc123def456ghi")).toBe("Authorization: [REDACTED]");
     const pem =
       "-----BEGIN RSA PRIVATE" + " KEY-----\nMIIB\nabc\n-----END RSA PRIVATE" + " KEY-----";
     expect(redactText(`k:\n${pem}\ndone`)).toBe("k:\n[REDACTED]\ndone");
@@ -468,6 +472,255 @@ describe("archive config", () => {
       p,
       JSON.stringify({ host: "h", archive: { roots: [{ label: "x", path: "rel" }] } }),
     );
-    await expect(readConfig(p)).rejects.toThrow(/absolute/);
+    // An invalid block no longer fails the read: hub settings survive, the importer is off, and
+    // the raw block is kept so a rewrite does not delete it.
+    const bad = await readConfig(p);
+    expect(bad?.host).toBe("h");
+    expect(bad?.archive).toBeUndefined();
+    expect(bad?.archiveError).toMatch(/absolute/);
+    await writeConfig(p, bad!);
+    expect((JSON.parse(await readFile(p, "utf8")) as { archive: unknown }).archive).toEqual({
+      roots: [{ label: "x", path: "rel" }],
+    });
+  });
+});
+
+// Secrets are assembled at runtime so scanners do not flag literals in this file.
+const j = (...p: string[]): string => p.join("");
+
+describe("redaction coverage (R5.2)", () => {
+  const pw = j("S3cr3t", "Pw99");
+  const cases: Array<[string, string]> = [
+    ["https url", `clone https://alice:${pw}@git.example.com/x.git now`],
+    ["postgres url", `fixed DATABASE_URL postgres://app:${pw}@prod-db:5432/x`],
+    ["srv url", `mongodb+srv://u:${pw}@cluster0.example.net/db`],
+    ["basic auth", `Authorization: Basic ${j("dXNlcjpw", "YXNzd29yZA==")}`],
+    ["stripe live", `key ${j("sk_", "live_", "A1b2C3d4E5f6G7h8")}`],
+    ["stripe restricted", `key ${j("rk_", "live_", "A1b2C3d4E5f6G7h8")}`],
+    ["google key", `key ${j("AI", "zaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6")}`],
+    ["npm token", `//registry/:_authToken=${j("npm", "_", "a".repeat(36))}`],
+    ["gitlab pat", `token ${j("glpat", "-", "A1b2C3d4E5f6G7h8I9j0")}`],
+    ["db_pass", `db_pass=${pw}`],
+    ["pwd key", `PWD: ${pw}`],
+    ["json password", `{"password": "${pw}"}`],
+    ["next line value", `token:\n  ${pw}\nrest`],
+    ["camel apiKey", `apiKey: ${pw}`],
+    ["access token", `accessToken=${pw}`],
+  ];
+  it.each(cases)("masks %s", (_n, input) => {
+    const out = redactText(input);
+    expect(out).not.toContain(pw);
+    expect(out).not.toMatch(/A1b2C3d4E5f6G7h8|dXNlcjpw|aaaaaaaaaaaa/);
+    expect(out).toContain("[REDACTED]");
+  });
+  it("keeps the user and host of a credentialed url", () => {
+    expect(redactText(`postgres://app:${pw}@prod-db:5432/x`)).toBe(
+      "postgres://app:[REDACTED]@prod-db:5432/x",
+    );
+  });
+  it("leaves ordinary prose and plain urls alone", () => {
+    for (const t of [
+      "tokens: 1200 in, 300 out",
+      "the secretary: Bob joined",
+      "bypass: the cache; compass: north",
+      "a basic understanding of the password reset flow",
+      "see https://example.com:8080/path and ssh://git@host/repo",
+      "Passing arguments: none",
+    ]) {
+      expect(redactText(t), t).toBe(t);
+    }
+  });
+});
+
+describe("importer hardening (R5.2)", () => {
+  async function linkOrSkip(target: string, at: string): Promise<boolean> {
+    try {
+      await symlink(target, at, "junction");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("refuses a sessions directory that is a link and never ships outside the vault", async () => {
+    const { root, state } = await setup();
+    const outside = join(await tmp(), "outside");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "x.md"), "---\nsession_id: outside-1\n---\nleak");
+    await rm(join(root, "projects/sessiondeck/sessions"), { recursive: true });
+    if (!(await linkOrSkip(outside, join(root, "projects/sessiondeck/sessions")))) return;
+    const s = sink();
+    const r = await importer(root, state, s).scan();
+    expect(r.skipped["symlink"]).toBe(1);
+    expect(s.lines.map((l) => l.session_id)).not.toContain("outside-1");
+  });
+
+  it("refuses linked project directories and counts them", async () => {
+    const { root, state } = await setup();
+    const outside = join(await tmp(), "p");
+    await mkdir(join(outside, "sessions"), { recursive: true });
+    await writeFile(join(outside, "sessions/x.md"), "---\nsession_id: outside-2\n---\nleak");
+    if (!(await linkOrSkip(outside, join(root, "projects/linked")))) return;
+    const s = sink();
+    const r = await importer(root, state, s).scan();
+    expect(r.skipped["symlink"]).toBe(1);
+    expect(s.lines.map((l) => l.session_id)).not.toContain("outside-2");
+  });
+
+  it("accepts a configured root that is itself a link", async () => {
+    const { root, state } = await setup();
+    const link = join(await tmp(), "vault-link");
+    if (!(await linkOrSkip(root, link))) return;
+    const s = sink();
+    const r = await importer(link, state, s).scan();
+    expect(r.shipped).toBe(22);
+    expect(r.skipped["root_missing"]).toBeUndefined();
+  });
+
+  it("does not let a __proto__ index key touch prototypes", async () => {
+    const { root, state } = await setup();
+    await mkdir(join(state, ".."), { recursive: true });
+    await writeFile(
+      state,
+      '{"v":1,"entries":{"__proto__":{"mtime_ms":1,"ctime_ms":1,"size":1,"session_id":null}}}',
+    );
+    const s = sink();
+    const r = await importer(root, state, s).scan();
+    expect(r.shipped).toBe(22);
+    expect(({} as Record<string, unknown>)["mtime_ms"]).toBeUndefined();
+  });
+
+  it("re-ships a same-size edit whose mtime was restored (ctime changed)", async () => {
+    const { root, state } = await setup();
+    const s = sink();
+    const imp = importer(root, state, s);
+    await imp.scan();
+    const f = join(root, "harness/agentic-harness/sessions/2026-09-01-0900-probe-spool.md");
+    const st = await (await import("node:fs/promises")).stat(f);
+    const text = await readFile(f, "utf8");
+    const i = text.lastIndexOf("e");
+    await new Promise((r) => setTimeout(r, 20));
+    await writeFile(f, `${text.slice(0, i)}E${text.slice(i + 1)}`);
+    await utimes(f, st.atime, st.mtime);
+    expect((await imp.scan()).shipped).toBe(1);
+  });
+
+  it("does not read more than the cap from a file", async () => {
+    const { root, state } = await setup();
+    const dir = join(root, "harness/agentic-harness/sessions");
+    await writeFile(join(dir, "huge.md"), `---\nsession_id: h\n---\n${"x".repeat(5000)}`);
+    const s = sink();
+    const r = await importer(root, state, s, { maxFileBytes: 4000 }).scan();
+    expect(r.skipped["too_large"]).toBeGreaterThanOrEqual(1);
+    expect(s.lines.map((l) => l.session_id)).not.toContain("h");
+  });
+
+  it("writes no index entry until the enqueue resolved, and syncs the outbox first", async () => {
+    const { root, state } = await setup();
+    const events: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const enq = Object.assign(
+      async (l: SpoolLine): Promise<void> => {
+        events.push("enqueue");
+        await gate;
+        void l;
+      },
+      {
+        sync: (): void => {
+          events.push(existsSync(state) ? "sync-after-index" : "sync");
+        },
+      },
+    );
+    const imp = importer(root, state, sink(), { enqueue: enq, concurrency: 22 });
+    const p = imp.scan();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(state)).toBe(false); // everything still pending
+    release();
+    const r = await p;
+    expect(r.shipped).toBe(22);
+    expect(events.filter((e) => e === "sync")).toHaveLength(1);
+    expect(events).not.toContain("sync-after-index");
+    expect(existsSync(state)).toBe(true);
+  });
+
+  it("stops issuing work when shouldStop turns true mid-scan and resumes later", async () => {
+    const { root, state } = await setup();
+    const s = sink();
+    let stop = false;
+    const imp = importer(root, state, s, {
+      concurrency: 1,
+      shouldStop: () => stop,
+      enqueue: (l) => {
+        s.lines.push(l);
+        if (s.lines.length === 5) stop = true;
+      },
+    });
+    const r1 = await imp.scan();
+    expect(r1.shipped).toBe(5);
+    stop = false;
+    const r2 = await imp.scan();
+    expect(r2.shipped).toBe(17);
+    expect(new Set(s.lines.map((l) => l.session_id)).size).toBe(22);
+  });
+});
+
+describe("invalid archive config does not stop hook forwarding (R1, R5.2)", () => {
+  it("delivers a spooled hook envelope while probe.json has a bad archive block", async () => {
+    const home = await tmp();
+    await writeFile(
+      join(home, "probe.json"),
+      JSON.stringify({
+        host: "h",
+        hubUrl: "http://127.0.0.1:9",
+        token: "tok",
+        archive: { roots: [{ label: "v", path: "vault" }], intervalSec: 10 },
+      }),
+    );
+    const got: unknown[] = [];
+    const f = (async (_u: unknown, init?: RequestInit) => {
+      got.push(...(JSON.parse(String(init?.body)) as { envelopes: unknown[] }).envelopes);
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const d = await startDaemon({
+      home,
+      fetch: f,
+      pollMs: 5,
+      batchMs: 20,
+      heartbeatMs: 0,
+      rng: () => 0,
+    });
+    try {
+      appendSpoolLines(spoolDir(home), [
+        buildEnvelope({
+          kind: "hook",
+          host: "h",
+          session_id: "s1",
+          hook_event_name: "Stop",
+          payload: {},
+          ts: Date.now(),
+        }),
+      ]);
+      const end = Date.now() + 5000;
+      while (Date.now() < end && got.length === 0) await new Promise((r) => setTimeout(r, 10));
+      expect(got.length).toBeGreaterThanOrEqual(1);
+      expect(readFileSync(join(home, "daemon", "daemon.log"), "utf8")).toContain(
+        "archive import off",
+      );
+    } finally {
+      await d?.kill();
+    }
+  });
+});
+
+describe("defaultComponents archive wiring", () => {
+  it("adds the archive component only when roots are configured", async () => {
+    const home = await tmp();
+    const env = { CLAUDE_CONFIG_DIR: join(home, "claude") };
+    const names = (a?: Parameters<typeof defaultComponents>[2]): string[] =>
+      defaultComponents(home, env, a).map((c) => c.name);
+    expect(names()).not.toContain("archive");
+    expect(names({ roots: [] })).not.toContain("archive");
+    expect(names({ roots: [{ label: "v", path: join(home, "v") }] })).toContain("archive");
   });
 });
