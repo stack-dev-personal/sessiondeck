@@ -596,8 +596,25 @@ describe("redaction coverage (R5.2)", () => {
     );
   });
 
-  it("a flag-looking token after a secret keyword is not swallowed (U4b)", () => {
-    expect(redactText("--password token: --verbose and more prose")).toContain("--verbose");
+  it("a dash-led token after a `name:` value is masked (safe failure, U4b)", () => {
+    expect(redactText("--password token: --verbose and more prose")).not.toContain("--verbose");
+    expect(redactText("--api-key token: -Hunter2Zq9")).not.toContain("Hunter2Zq9");
+  });
+  const dashLeads = ["-S", "--S", "-S=", '-"S"', "-'S"];
+  const nameVals = ["token:", "secret:", "db_pass:", '"token":', "token :"];
+  const slots = ["--api-key", "--password", "MY_API_KEY"];
+  it("no dash-led secret survives after a name value (U4b)", () => {
+    for (const sl of slots)
+      for (const nv of nameVals)
+        for (const d of dashLeads) {
+          const input = `${sl} ${nv} ${d.replace(/S/, "Hunter2Zq9")}`;
+          expect(redactText(input), input).not.toContain("Hunter2Zq9");
+        }
+  });
+  it("keeps the CR of a CRLF line when masking to end of line (U4b)", () => {
+    expect(redactText("--api-key= db_pass= x x=S\r\nnext line")).toBe(
+      "--api-key= [REDACTED]\r\nnext line",
+    );
   });
   const pw = j("S3cr3t", "Pw99");
   const cases: Array<[string, string]> = [

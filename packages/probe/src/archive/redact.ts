@@ -112,7 +112,7 @@ const UPPER_ENV = new RegExp(
 // together with the value that follows it, so nothing is left behind either way.
 const NEXT_ASSIGN = new RegExp(`^["']?${NAME_SRC}\\b["']?[ \\t]*[=:]`, "i");
 const BARE_NAME = new RegExp(`^${NAME_SRC}$`, "i");
-const TAIL_VALUE = new RegExp(`^[ \\t]*(?!-)(?:${VALUE})`);
+const TAIL_VALUE = new RegExp(`^[ \\t]*(?:${VALUE})`);
 const TAIL_AFTER_SEP = new RegExp(`^[ \\t]*[:=][ \\t]*(?:${VALUE})?`);
 const QUOTE_CHARS = /["'`\u2018\u2019\u201C\u201D]/g;
 const EOL = -1;
@@ -152,7 +152,7 @@ function maskCli(
     out += s.slice(pos, m.index) + head + REDACTED;
     if (extra === EOL) {
       const nl = s.indexOf("\n", end);
-      pos = nl < 0 ? s.length : nl;
+      pos = nl < 0 ? s.length : s[nl - 1] === "\r" ? nl - 1 : nl;
     } else pos = end + extra;
     re.lastIndex = pos;
   }
