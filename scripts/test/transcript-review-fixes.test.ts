@@ -29,27 +29,34 @@ const VOCAB = " ";
 
 describe("git literal gate", () => {
   it("lists every empty git source and none when all three answer", () => {
-    expect(discoverLiterals([], VOCAB, noGit).gitMissing).toEqual([
+    expect(discoverLiterals([], VOCAB, noGit, host).gitMissing).toEqual([
       "git user.email",
       "git user.name",
       "origin owner",
     ]);
-    expect(discoverLiterals([], VOCAB, fullGit).gitMissing).toEqual([]);
+    expect(discoverLiterals([], VOCAB, fullGit, host).gitMissing).toEqual([]);
   });
 
   it("reports one empty source on its own", () => {
     const git = (a: string[]): string => (a[1] === "user.name" ? "" : fullGit(a));
-    expect(discoverLiterals([], VOCAB, git).gitMissing).toEqual(["git user.name"]);
+    expect(discoverLiterals([], VOCAB, git, host).gitMissing).toEqual(["git user.name"]);
   });
 
   it("treats an email without an address shape or an origin that is not a host URL as empty", () => {
     const git = (a: string[]): string =>
       a[1] === "user.email" ? "not an address" : a[0] === "remote" ? "/local/path" : fullGit(a);
-    expect(discoverLiterals([], VOCAB, git).gitMissing).toEqual(["git user.email", "origin owner"]);
+    expect(discoverLiterals([], VOCAB, git, host).gitMissing).toEqual([
+      "git user.email",
+      "origin owner",
+    ]);
   });
 
   it("still sweeps the git name when the lookup works", () => {
-    expect(discoverLiterals([], VOCAB, fullGit).accounts).toContain("Quillbert");
+    expect(discoverLiterals([], VOCAB, fullGit, host).accounts).toContain("Quillbert");
+  });
+
+  it("collects the machine name as an account", () => {
+    expect(discoverLiterals([], VOCAB, fullGit, () => "quillhost").accounts).toContain("quillhost");
   });
 
   it("builds a message naming the sources, and none when opted out or nothing is missing", () => {

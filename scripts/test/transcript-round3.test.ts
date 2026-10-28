@@ -9,6 +9,7 @@ import {
 } from "../lib/transcript-scrub-private.mjs";
 
 const P = "<HOME>/projects/<PROJECT_A>";
+const host = (): string => "synthbox";
 
 describe("private in-repo paths count as outside", () => {
   it.each([
@@ -71,15 +72,15 @@ describe("git user.name with only short words", () => {
       })[a.join(" ")] ?? "";
 
   it("counts a set name as present", () => {
-    expect(discoverLiterals([], " ", git("Al Wu")).gitMissing).toEqual([]);
+    expect(discoverLiterals([], " ", git("Al Wu"), host).gitMissing).toEqual([]);
   });
 
   it("still reports an unset name", () => {
-    expect(discoverLiterals([], " ", git("")).gitMissing).toEqual(["git user.name"]);
+    expect(discoverLiterals([], " ", git(""), host).gitMissing).toEqual(["git user.name"]);
   });
 
   it("sweeps the long words of a name that has some", () => {
-    expect(discoverLiterals([], " ", git("Al Quillbert")).accounts).toContain("Quillbert");
+    expect(discoverLiterals([], " ", git("Al Quillbert"), host).accounts).toContain("Quillbert");
   });
 });
 
