@@ -9,6 +9,8 @@ export const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]*[A-Za-z]/;
 export const HOME_SHAPES = [
   /(?:^|[^A-Za-z0-9])(?:[A-Za-z]:|\/(?:mnt\/)?[A-Za-z])?[\\/]+(?:users|home)[\\/]+[^\s<\\/"]/i,
   /[A-Za-z]--users-[^\s<-]/i,
+  // a drive letter and a home folder whose separators were lost: C:Users<name>...
+  /(?<![A-Za-z0-9])[A-Za-z]:(?:users|home)[A-Za-z]/i,
 ];
 export const TOKEN_IN_TEXT =
   /(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|gho_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,}|AKIA[A-Z0-9]{12,}|xox[a-z]-[A-Za-z0-9-]{8,}|Bearer [A-Za-z0-9._-]{8,}|(?:npm|sbp|glpat|hf)_[A-Za-z0-9_-]{8,}|sb_(?:secret|publishable)_[A-Za-z0-9_-]{8,}|cf(?:ut|at|k)_[A-Za-z0-9]{20,}|[a-z][a-z0-9+.-]*:\/\/[^\s:@/'"`]+:[^\s@/'"`]+@)/;

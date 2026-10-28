@@ -17,6 +17,7 @@ import {
   primeContext,
 } from "./transcript-leak-structure.mjs";
 import { countDenyHits } from "./transcript-deny-list.mjs";
+import { countUnmappedMcpNames } from "./transcript-leak-mcp.mjs";
 import { deriveRawSets } from "./transcript-leak-raw.mjs";
 import { searchGroups } from "./transcript-leak-search.mjs";
 
@@ -119,6 +120,8 @@ export function transcriptLeakCheck(dir, opts = {}) {
     }
     if (EMAIL.test(text.replace(/<EMAIL>/g, ""))) hit("transcript-email");
     if (TOKEN_IN_TEXT.test(text)) hit("transcript-token-prefix");
+    const mcpNames = countUnmappedMcpNames(text);
+    if (mcpNames > 0) hit("transcript-mcp-tool-name", mcpNames);
     const isJson = /\.jsonl?$/.test(file);
     // camelCase key names are long and mixed-case by nature; known ones are not token runs.
     const haystack = isJson ? withoutKnownKeys(text) : text;

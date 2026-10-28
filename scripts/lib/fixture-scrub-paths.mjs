@@ -20,6 +20,7 @@ export const STRUCT = new Set([
   "tool-results",
   "node_modules",
   ".git",
+  ".sprint",
   "tmp",
   "var",
   "home",

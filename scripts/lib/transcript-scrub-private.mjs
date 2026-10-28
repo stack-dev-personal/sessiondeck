@@ -6,6 +6,11 @@
 //   2. a tool_result whose tool_use read, searched or wrote such a path (or ran a shell command that
 //      names one) has its output dropped, in the block and in the row's toolUseResult
 //   3. hook output and skill listings in attachments are configuration, not conversation: dropped
+//   4. the rendered[] copy of such an attachment (outside path, hook, skill listing) is dropped too,
+//      and in message text the block after "Contents of <outside path>", after a hook label
+//      ("SessionStart hook additional context:") and after "Result of calling the X tool:" of a
+//      private "Called the X tool" is cut down to its label
+//   5. the gitignored .sprint/ folder counts as outside the project
 
 /** Fields that name a file or directory next to the content they describe. */
 export const PATH_SIBLINGS = [
@@ -37,9 +42,11 @@ export const PRIVATE_CONTENT_KEYS = new Set([
 
 const PROJECT_A = /^<HOME>\/projects\/<PROJECT_A>(?:\/|$)/;
 const ANY_ROOT = /^(?:<HOME>|<ROOT>)(?:\/|$)/;
+/** The gitignored sprint folder (decisions, conductor log, handoff, env file): never public. */
+const SPRINT_DIR = /^(?:<HOME>\/projects\/<PROJECT_A>\/|\.\/)?\.sprint(?:\/|$)/;
 /** A shell command naming the user-level folder, another home path, or the GitHub API for an account. */
-const PRIVATE_COMMAND =
-  /(?:~|\$HOME|<HOME>)\/\.claude\b|<HOME>\/(?!projects\/<PROJECT_A>)|\bgh\s+(?:api|repo)\b/;
+export const PRIVATE_COMMAND =
+  /(?:~|\$HOME|<HOME>)\/\.claude\b|<HOME>\/(?!projects\/<PROJECT_A>)|(?<![A-Za-z0-9])\.sprint\b|\bgh\s+(?:api|repo)\b/;
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
 
@@ -50,6 +57,7 @@ const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
  */
 export function isOutsideProject(mapped) {
   if (mapped.startsWith("~") || mapped.startsWith("$HOME")) return true;
+  if (SPRINT_DIR.test(mapped)) return true;
   return ANY_ROOT.test(mapped) && !PROJECT_A.test(mapped);
 }
 
@@ -82,7 +90,11 @@ const CUT_HOME = new RegExp(
  * judges whole commands; the leak check only sees the cut text, so it drops that dangling start.
  * @param {string} cmd
  */
-const uncut = (cmd) => (CUT_MARK.test(cmd) ? cmd.replace(CUT_MARK, "").replace(CUT_HOME, "") : cmd);
+const uncut = (/** @type {string} */ cmd) =>
+  CUT_MARK.test(cmd) ? cmd.replace(CUT_MARK, "").replace(CUT_HOME, "") : cmd;
+
+/** Drops a dangling cut-off start of this project's own root from the end of a cut command. @param {string} cmd */
+export const stripCutHome = (cmd) => cmd.replace(CUT_HOME, "");
 
 /**
  * Whether a tool_use touches something outside this project. Takes scrubbed (placeholder) values.
@@ -148,4 +160,33 @@ export function countMcpNames(text) {
   let n = 0;
   for (const m of text.matchAll(MCP_PHRASE)) if (!MCP_PROSE.has((m[2] ?? "").toLowerCase())) n += 1;
   return n;
+}
+
+/**
+ * Whether an attachment names a path outside the project: its own path field, the path of its
+ * content object, or the path of any entry of a file list.
+ * @param {unknown} att the attachment object @param {(path: string) => boolean} isOutside
+ */
+export function attachmentTouchesOutside(att, isOutside) {
+  if (att === null || typeof att !== "object") return false;
+  const a = /** @type {Record<string, unknown>} */ (att);
+  /** @param {unknown} o */
+  const check = (o) => {
+    if (o === null || typeof o !== "object") return false;
+    const p = siblingPath(/** @type {Record<string, unknown>} */ (o));
+    return p !== undefined && isOutside(p);
+  };
+  if (check(a) || check(a.content)) return true;
+  return Object.values(a).some((v) => Array.isArray(v) && v.some(check));
+}
+
+/**
+ * Whether the rendered[] copy of an attachment row must be dropped: the attachment holds hook
+ * output or a skill listing, or it names a path outside the project.
+ * @param {unknown} att @param {(path: string) => boolean} isOutside
+ */
+export function dropsRendered(att, isOutside) {
+  if (att === null || typeof att !== "object") return false;
+  const a = /** @type {Record<string, unknown>} */ (att);
+  return attachmentDropKeys(a).size > 0 || attachmentTouchesOutside(a, isOutside);
 }

@@ -6,6 +6,7 @@
 import { FREE_MAX } from "./transcript-scrub-rules.mjs";
 import { BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
 import { DENY_PLACEHOLDER } from "./transcript-deny-list.mjs";
+import { cutPrivateText } from "./transcript-scrub-cuts.mjs";
 import { mapMcpPhrase } from "./transcript-scrub-private.mjs";
 
 const RUN = String.raw`[^\s"'\`<>|*?(){}\[\],;]*`;
@@ -21,9 +22,12 @@ const ABS_PATH = new RegExp(
     String.raw`(?<![A-Za-z0-9_.:/\\~$-])\/(?=[A-Za-z0-9._@-]+\/)${RUN}`,
     // no lookbehind: the folder name can be glued to the word before it once separators are lost
     String.raw`[A-Za-z]--Users-[A-Za-z0-9._-]+`,
+    // a drive letter and a home folder with the separators lost ("C:Users<name>..."): nothing to keep
+    String.raw`(?<![A-Za-z0-9])[A-Za-z]:(?:[Uu][Ss][Ee][Rr][Ss]|[Hh][Oo][Mm][Ee])(?=[A-Za-z])${RUN}`,
   ].join("|"),
   "g",
 );
+const WORD_CHAR = /[A-Za-z0-9]/;
 const ENCODED = /^[A-Za-z]--Users-/;
 const PATH_TAIL = /(?::\d+){1,2}$|[.:!]+$/;
 
@@ -144,7 +148,7 @@ export class TextScrubber {
    * @param {string} input
    */
   scrub(input) {
-    let s = input.replace(ABS_PATH, (m) => this.#absolute(m));
+    let s = cutPrivateText(input.replace(ABS_PATH, (m) => this.#absolute(m)));
     s = s.replace(MCP_TOOL, (m) => this.mapper.mapTool(m, BUILTIN_TOOLS));
     for (const re of TOKENS) s = s.replace(re, "<REDACTED>");
     s = s.replace(RUN_32, (run) => (looksLikeSecret(run) ? "<REDACTED>" : run));
@@ -160,16 +164,40 @@ export class TextScrubber {
     if (this.emailRe) s = s.replace(this.emailRe, "<EMAIL>");
     s = s.replace(EMAIL, "<EMAIL>");
     if (this.accountRe) s = s.replace(this.accountRe, "<ACCOUNT>");
-    if (this.userRe) s = s.replace(this.userRe, "<ACCOUNT>");
+    if (this.userRe) s = this.#sweepWords(s, this.userRe);
     if (this.folderRe) s = s.replace(this.folderRe, "<DIR>");
-    if (this.fragmentRe) {
-      s = s.replace(this.fragmentRe, () => {
-        this.fragmentHits += 1;
-        return "<ACCOUNT>";
-      });
-    }
+    if (this.fragmentRe) s = this.#sweepWords(s, this.fragmentRe);
     if (this.denyRe) s = s.replace(this.denyRe, DENY_PLACEHOLDER);
     return s;
+  }
+
+  /**
+   * Replaces every word (a run of letters and digits) that contains a match of `re` with
+   * <ACCOUNT>. The whole word goes, so the letters around the placeholder cannot reveal which
+   * piece was removed.
+   * @param {string} s @param {RegExp} re global, case-insensitive substring pattern
+   */
+  #sweepWords(s, re) {
+    /** @type {[number, number][]} */
+    const spans = [];
+    for (const m of s.matchAll(re)) {
+      let from = m.index ?? 0;
+      let to = from + m[0].length;
+      while (from > 0 && WORD_CHAR.test(s[from - 1] ?? "")) from -= 1;
+      while (to < s.length && WORD_CHAR.test(s[to] ?? "")) to += 1;
+      const last = spans[spans.length - 1];
+      if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+      else spans.push([from, to]);
+    }
+    if (spans.length === 0) return s;
+    if (re === this.fragmentRe) this.fragmentHits += spans.length;
+    let out = "";
+    let at = 0;
+    for (const [from, to] of spans) {
+      out += `${s.slice(at, from)}<ACCOUNT>`;
+      at = to;
+    }
+    return out + s.slice(at);
   }
 
   /** Whether a value contains a deny-list word (rejects enum-shaped values). @param {string} v */

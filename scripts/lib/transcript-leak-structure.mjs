@@ -10,8 +10,16 @@ import { TEXT_KEY, TRANSCRIPT_KEYS } from "./fixture-keys.mjs";
 import { STRUCT } from "./fixture-scrub-paths.mjs";
 import { isStructuralHookName } from "./transcript-scrub-hookname.mjs";
 import {
+  calledOutside,
+  isCalled,
+  isCutRemainder,
+  isResult,
+  privateTextFinding,
+} from "./transcript-scrub-cuts.mjs";
+import {
   attachmentDropKeys,
   countMcpNames,
+  dropsRendered,
   hasContent,
   isOutsideProject,
   isPrivateToolUse,
@@ -105,7 +113,8 @@ function ruleFinding(rule, v) {
 function freeFinding(v) {
   const body = v.replace(TRUNCATED, "");
   if (body.length > FREE_MAX) return "transcript-free-text-over-120";
-  return countMcpNames(body) > 0 ? "transcript-mcp-name-in-text" : null;
+  if (countMcpNames(body) > 0) return "transcript-mcp-name-in-text";
+  return privateTextFinding(v);
 }
 
 /** @param {string} key @param {boolean} userKeyed @param {boolean} modelKeyed */
@@ -187,8 +196,10 @@ const isDroppedOk = (v) => !hasContent(v) || (typeof v === "string" && BLOB.test
  * Category when this key must be a BLOB here under the private-content rules, else null.
  * @param {string} key @param {Record<string, unknown>} obj @param {string} path @param {Context} ctx
  * @param {boolean} privateSibling @param {ReadonlySet<string> | null} attachmentDrops
+ * @param {boolean} dropRendered the row's rendered[] copy repeats private attachment content
  */
-function mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops) {
+function mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops, dropRendered) {
+  if (dropRendered && key === "rendered") return "transcript-private-content-not-blob";
   if (privateSibling && PRIVATE_CONTENT_KEYS.has(key)) return "transcript-private-content-not-blob";
   if (attachmentDrops?.has(key)) return "transcript-dropped-key-not-blob";
   if (ctx.rowPrivate && path === "" && key === "toolUseResult") {
@@ -213,9 +224,40 @@ function visit(v, path, hit, ctx) {
     const category = transcriptStringFinding(v, path);
     if (category !== null) hit(category);
   } else if (Array.isArray(v)) {
-    for (const el of v) visit(el, `${path}[]`, hit, ctx);
+    visitArray(v, path, hit, ctx);
   } else if (v !== null && typeof v === "object") {
     visitObject(/** @type {Record<string, unknown>} */ (v), path, hit, ctx);
+  }
+}
+
+/** Text of a text block or rendered[] entry, or undefined. @param {unknown} el */
+function textOf(el) {
+  if (el === null || typeof el !== "object") return undefined;
+  const o = /** @type {Record<string, unknown>} */ (el);
+  if (typeof o.text === "string") return o.text;
+  return typeof o.content === "string" ? o.content : undefined;
+}
+
+/**
+ * Elements are checked one by one. A "Result of calling the X tool:" block that follows a
+ * "Called the X tool" block naming a private path must be cut down to its label.
+ * @param {unknown[]} arr @param {string} path @param {(c: string) => void} hit @param {Context} ctx
+ */
+function visitArray(arr, path, hit, ctx) {
+  let pending = false;
+  for (const el of arr) {
+    visit(el, `${path}[]`, hit, ctx);
+    const t = textOf(el)?.replace(TRUNCATED, "");
+    if (t === undefined) continue;
+    if (isCalled(t)) {
+      pending = calledOutside(t);
+    } else if (pending && isResult(t)) {
+      pending = false;
+      const label = /Result of calling the \w+ tool:/.exec(t);
+      if (label && !isCutRemainder(t.slice(label.index + label[0].length))) {
+        hit("transcript-private-text-not-cut");
+      }
+    }
   }
 }
 
@@ -223,6 +265,7 @@ function visit(v, path, hit, ctx) {
 function visitObject(obj, path, hit, ctx) {
   const attachmentDrops = path === "attachment" ? attachmentDropKeys(obj) : null;
   const privateSibling = outsideSibling(obj);
+  const dropRendered = path === "" && dropsRendered(obj.attachment, isOutsideProject);
   const last = leafOf(path).replace(/\[\]$/, "");
   const userKeyed = USER_KEYED.has(last);
   const modelKeyed = MODEL_KEYED.has(last);
@@ -233,7 +276,7 @@ function visitObject(obj, path, hit, ctx) {
     const seg =
       bad !== null && !userKeyed && !modelKeyed ? UNKNOWN_SEGMENT : placeholderKey ? "<key>" : key;
     const childPath = path === "" ? seg : `${path}.${seg}`;
-    const forced = mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops);
+    const forced = mustBeBlob(key, obj, path, ctx, privateSibling, attachmentDrops, dropRendered);
     if (forced !== null) {
       if (!isDroppedOk(child)) hit(forced);
       continue;

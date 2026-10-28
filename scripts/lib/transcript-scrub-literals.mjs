@@ -9,6 +9,20 @@ import { deriveMcpServers, deriveRepos } from "./transcript-scrub-names.mjs";
 const HOME_USER = /(?:^|[\\/])(?:Users|home)[\\/]+([^\\/\s"']+)|[A-Za-z]--Users-([A-Za-z0-9._]+)/g;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 const MIN_LITERAL = 4;
+/**
+ * Shape of a literal that is swept from free text: one handle (letters, digits and . _ @ + -), no
+ * spaces, at most 40 characters. A value of any other shape is a sentence or a blob that happened
+ * to sit in an account field; sweeping it would cut ordinary words and its leftovers would show
+ * which letters were removed.
+ */
+const HANDLE = /^[A-Za-z0-9][A-Za-z0-9._@+-]{2,39}$/;
+/** A plain address: a single at-sign, no spaces, at most 100 characters. */
+const ADDRESS = /^[^\s@]{1,64}@[^\s@]{1,63}$/;
+
+/** @param {string} v */
+export const isHandle = (v) => HANDLE.test(v);
+/** @param {string} v */
+export const isAddress = (v) => v.length <= 100 && ADDRESS.test(v);
 const PATH_FIELDS = new Set([
   "cwd",
   "workingDirectory",
@@ -25,6 +39,13 @@ const PATH_FIELDS = new Set([
 ]);
 /** Path words after a home prefix that are layout, not a person. */
 const LAYOUT = new Set(["public", "default", "shared", "all", "guest"]);
+
+/** The words of a person's name that have the shape of a handle. @param {string} name */
+function nameWords(name) {
+  if (isHandle(name)) return [name];
+  if (name.length > 80) return [];
+  return name.split(/\s+/).filter((w) => isHandle(w) && w.length >= MIN_LITERAL);
+}
 
 /** @param {string[]} args @returns {string} */
 function git(args) {
@@ -56,6 +77,10 @@ export function discoverLiterals(rows, vocabulary) {
   const accounts = new Set();
   /** Addresses that belong to the account itself; only their local parts are swept as names. */
   const own = new Set();
+  /** @param {string} v */
+  const addHandle = (v) => {
+    if (isHandle(v)) accounts.add(v);
+  };
   /** @param {unknown} v @param {string} key */
   const walk = (v, key) => {
     if (typeof v === "string") {
@@ -63,18 +88,18 @@ export function discoverLiterals(rows, vocabulary) {
       if (PATH_FIELDS.has(key)) {
         for (const m of v.matchAll(HOME_USER)) {
           const name = m[1] ?? m[2];
-          if (name && !LAYOUT.has(name.toLowerCase())) users.add(name);
+          if (name && isHandle(name) && !LAYOUT.has(name.toLowerCase())) users.add(name);
         }
       }
-      for (const m of v.matchAll(EMAIL)) emails.add(m[0]);
-      if (key === "userEmail") {
+      for (const m of v.matchAll(EMAIL)) if (isAddress(m[0])) emails.add(m[0]);
+      if (key === "userEmail" && isAddress(v)) {
         emails.add(v);
         own.add(v);
       }
-      if (key === "prRepository") for (const o of ownersIn(`github.com/${v}`)) accounts.add(o);
-      if (key === "prUrl") for (const o of ownersIn(v)) accounts.add(o);
+      if (key === "prRepository") for (const o of ownersIn(`github.com/${v}`)) addHandle(o);
+      if (key === "prUrl") for (const o of ownersIn(v)) addHandle(o);
       if (key === "organizationUuid" || key === "organizationName" || key === "owner")
-        accounts.add(v);
+        if (isHandle(v)) accounts.add(v);
     } else if (Array.isArray(v)) {
       for (const el of v) walk(el, key);
     } else if (v !== null && typeof v === "object") {
@@ -85,19 +110,20 @@ export function discoverLiterals(rows, vocabulary) {
   for (const row of all) walk(row, "");
 
   const gitEmail = git(["config", "user.email"]);
-  if (gitEmail) {
+  if (gitEmail && isAddress(gitEmail)) {
     emails.add(gitEmail);
     own.add(gitEmail);
   }
-  for (const n of [git(["config", "user.name"])]) if (n) accounts.add(n);
-  for (const o of ownersIn(git(["remote", "get-url", "origin"]))) accounts.add(o);
+  // The git name is a person's name: swept whole when it is one handle, otherwise word by word.
+  for (const n of nameWords(git(["config", "user.name"]))) accounts.add(n);
+  for (const o of ownersIn(git(["remote", "get-url", "origin"]))) addHandle(o);
   for (const e of own) {
     const local = e.split("@")[0] ?? "";
     if (local.length >= MIN_LITERAL) accounts.add(local);
     const letters = local.replace(/[\d._+-]+$/, "");
     if (letters.length >= MIN_LITERAL) accounts.add(letters);
   }
-  accounts.add(hostname()); // the machine name usually embeds the user name
+  addHandle(hostname()); // the machine name usually embeds the user name
   const keep = (/** @type {Set<string>} */ s) => [...s].filter((x) => x.length >= 3).sort();
   const accountList = keep(accounts).filter((x) => x.length >= MIN_LITERAL);
   const userList = keep(users);

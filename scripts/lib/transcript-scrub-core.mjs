@@ -17,8 +17,10 @@ import {
   SPECIAL,
   USER_KEYED,
 } from "./transcript-scrub-rules.mjs";
+import { calledOutside, cutResult, isCalled, isResult } from "./transcript-scrub-cuts.mjs";
 import {
   attachmentDropKeys,
+  dropsRendered,
   hasContent,
   isOutsideProject,
   isPrivateToolUse,
@@ -36,6 +38,15 @@ const UNKNOWN_SEGMENT = "<unknown>";
 export const THINKING_PLACEHOLDER = "<REDACTED-THINKING>";
 
 const text = (/** @type {number} */ n) => `<TEXT ${n}>`;
+const CALL_HEAD = /Called the \w+ tool with|Result of calling the \w+ tool/;
+
+/** Key holding the text of a text block or a rendered[] entry, or undefined. @param {unknown} el */
+function textKeyOf(el) {
+  if (el === null || typeof el !== "object") return undefined;
+  const o = /** @type {Record<string, unknown>} */ (el);
+  if (typeof o.text === "string") return "text";
+  return typeof o.content === "string" ? "content" : undefined;
+}
 
 export class TranscriptScrubber {
   /** @param {{ mapper?: Mapper, literals?: import("./transcript-scrub-text.mjs").Literals }} [opts] */
@@ -92,13 +103,17 @@ export class TranscriptScrubber {
     return out;
   }
 
-  /** Whether the object's own path field points outside this project. @param {Record<string, unknown>} obj */
-  #outsideSibling(obj) {
-    const raw = siblingPath(obj);
-    if (raw === undefined) return false;
+  /** Whether a raw path points outside this project. @param {string} raw */
+  #isOutsideRaw(raw) {
     if (raw.startsWith("~")) return true;
     const mapped = this.mapper.mapPath(raw, "auto");
     return mapped !== null && isOutsideProject(mapped);
+  }
+
+  /** Whether the object's own path field points outside this project. @param {Record<string, unknown>} obj */
+  #outsideSibling(obj) {
+    const raw = siblingPath(obj);
+    return raw !== undefined && this.#isOutsideRaw(raw);
   }
 
   /** Scrubs one parsed row (or meta object). @param {unknown} row @returns {unknown} */
@@ -119,11 +134,37 @@ export class TranscriptScrubber {
   /** @param {unknown} value @param {string} path @returns {unknown} */
   value(value, path) {
     if (typeof value === "string") return this.#string(value, path);
-    if (Array.isArray(value)) return value.map((el) => this.value(el, `${path}[]`));
+    if (Array.isArray(value)) return this.#array(value, path);
     if (value !== null && typeof value === "object") {
       return this.#object(/** @type {Record<string, unknown>} */ (value), path);
     }
     return value; // numbers, booleans and null carry structure only
+  }
+
+  /**
+   * Scrubs the elements of an array. Text blocks come in pairs: "Called the X tool with the
+   * following input: {...}" and then "Result of calling the X tool: ...". When the call named a
+   * private path or command, the result block is cut down to its label.
+   * @param {unknown[]} arr @param {string} path
+   */
+  #array(arr, path) {
+    let pending = false;
+    return arr.map((el) => {
+      const out = this.value(el, `${path}[]`);
+      const key = textKeyOf(el);
+      if (key === undefined) return out;
+      const raw = /** @type {string} */ (/** @type {any} */ (el)[key]);
+      if (!CALL_HEAD.test(raw.slice(0, 200))) return out;
+      const full = this.text.scrub(raw);
+      if (isCalled(full)) {
+        pending = calledOutside(full);
+      } else if (pending && isResult(full)) {
+        pending = false;
+        const o = /** @type {Record<string, unknown>} */ (out);
+        return { ...o, [key]: cutResult(String(o[key]), raw.length) };
+      }
+      return out;
+    });
   }
 
   /** @param {string} v @param {string} path */
@@ -212,6 +253,7 @@ export class TranscriptScrubber {
     const type = obj.type;
     const attachmentDrops = path === "attachment" ? attachmentDropKeys(obj) : null;
     const privateSibling = this.#outsideSibling(obj);
+    const dropRendered = path === "" && dropsRendered(obj.attachment, (p) => this.#isOutsideRaw(p));
     /** @type {Record<string, unknown>} */
     const out = {};
     const used = new Set();
@@ -235,7 +277,7 @@ export class TranscriptScrubber {
       used.add(outKey);
       const child = obj[key];
       const childPath = path === "" ? seg : `${path}.${seg}`;
-      if (this.#forcedBlob(key, child, obj, path, privateSibling, attachmentDrops)) {
+      if (this.#forcedBlob(key, child, obj, path, privateSibling, attachmentDrops, dropRendered)) {
         out[outKey] = `<BLOB ${JSON.stringify(child).length}>`;
         this.dropped.set(`private:${key}`, (this.dropped.get(`private:${key}`) ?? 0) + 1);
         continue;
@@ -250,9 +292,11 @@ export class TranscriptScrubber {
    * project, output of a tool use that touched one, hook output and skill listings.
    * @param {string} key @param {unknown} v @param {Record<string, unknown>} obj @param {string} path
    * @param {boolean} privateSibling @param {ReadonlySet<string> | null} attachmentDrops
+   * @param {boolean} dropRendered the row's rendered[] copy repeats private attachment content
    */
-  #forcedBlob(key, v, obj, path, privateSibling, attachmentDrops) {
+  #forcedBlob(key, v, obj, path, privateSibling, attachmentDrops, dropRendered) {
     if (!hasContent(v)) return false;
+    if (dropRendered && key === "rendered") return true;
     if (privateSibling && PRIVATE_CONTENT_KEYS.has(key)) return true;
     if (attachmentDrops?.has(key)) return true;
     if (this.rowPrivate && path === "" && key === "toolUseResult") return true;
