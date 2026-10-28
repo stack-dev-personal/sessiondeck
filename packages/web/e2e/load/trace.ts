@@ -2,6 +2,8 @@
 
 export interface TraceEvent {
   ph: string;
+  /** Thread CPU time of a complete event, µs (absent in synthetic traces). */
+  tdur?: number;
   name: string;
   pid: number;
   tid: number;
@@ -285,7 +287,11 @@ export interface Drop {
   atMs: number;
   /** Length of the gap (raf-gap) or of the dropped frame (compositor), ms. */
   lengthMs: number;
-  /** Renderer main-thread work inside it, ms (union of events, so nesting counts once). */
+  /** Renderer main-thread work inside it by the clock on the wall, ms (union of events, nesting counts once). */
+  wallMs: number;
+  /** The same work as CPU time the thread actually ran (tdur), ms: time spent descheduled is not in it. */
+  cpuMs: number;
+  /** The figure the verdict uses: cpuMs (basis "cpu") or wallMs (basis "wall"). */
   workMs: number;
   byKind: Record<WorkKind, number>;
   /** workMs >= the threshold: the page's own work filled the gap. */
@@ -306,8 +312,15 @@ export interface Drop {
  */
 export function attributeDrops(
   events: TraceEvent[],
-  opts: { window?: [number, number] | null; factor?: number; appWorkMs?: number } = {},
+  opts: {
+    window?: [number, number] | null;
+    factor?: number;
+    appWorkMs?: number;
+    /** What "work" means: CPU time the thread ran (default) or wall time. */
+    basis?: "cpu" | "wall";
+  } = {},
 ) {
+  const basis = opts.basis ?? "cpu";
   const factor = opts.factor ?? 1.5;
   const limitUs = (opts.appWorkMs ?? APP_WORK_MS) * 1000;
   const mains = mainThreadKeys(events);
@@ -318,19 +331,36 @@ export function attributeDrops(
 
   const work = main
     .filter((e) => workKind(e.name) !== undefined && (e.dur ?? 0) > 0)
-    .map((e) => ({ a: e.ts, b: e.ts + (e.dur ?? 0), kind: workKind(e.name)! }));
+    .map((e) => ({
+      a: e.ts,
+      b: e.ts + (e.dur ?? 0),
+      // Share of the event's wall time the thread was running (1 when the trace has no tdur).
+      ratio: e.tdur === undefined ? 1 : Math.min(1, e.tdur / (e.dur ?? 1)),
+      kind: workKind(e.name)!,
+    }))
+    .sort((x, y) => x.a - y.a || y.b - x.b);
   const inside = (a: number, b: number) => {
     const by: Record<WorkKind, [number, number][]> = { script: [], layout: [], paint: [], gc: [] };
     const all: [number, number][] = [];
+    // CPU time: sweep the events in start order; an event nested in an earlier one adds nothing.
+    let cpuUs = 0;
+    let covered = -Infinity;
     for (const w of work) {
       if (w.b <= a || w.a >= b) continue;
       const iv: [number, number] = [Math.max(w.a, a), Math.min(w.b, b)];
       by[w.kind].push(iv);
       all.push(iv);
+      const from = Math.max(iv[0], covered);
+      if (iv[1] > from) cpuUs += (iv[1] - from) * w.ratio;
+      covered = Math.max(covered, iv[1]);
     }
     const ms = (iv: [number, number][]) => r2(unionLength(iv) / 1000);
+    const wallMs = ms(all);
+    const cpuMs = r2(cpuUs / 1000);
     return {
-      workMs: ms(all),
+      wallMs,
+      cpuMs,
+      workMs: basis === "cpu" ? cpuMs : wallMs,
       byKind: { script: ms(by.script), layout: ms(by.layout), paint: ms(by.paint), gc: ms(by.gc) },
     };
   };

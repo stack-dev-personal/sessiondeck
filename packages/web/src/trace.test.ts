@@ -208,6 +208,29 @@ describe("attributeDrops (R6.4)", () => {
     expect(r.drops[0]!.byKind).toMatchObject({ layout: 3, paint: 3, gc: 2 });
   });
 
+  it("CPU time, not wall time: a descheduled 12 ms Paint with 1 ms of CPU is the host's", () => {
+    const base = 1_000_000 + 19 * V;
+    const ev = [
+      meta,
+      ...frames(60, [20]),
+      { ...x("LocalFrameView::RunPaintLifecyclePhase", base + 300, 12_000), tdur: 1000 },
+    ];
+    const cpu = attributeDrops(ev);
+    expect(cpu.appDrops).toBe(0);
+    expect(cpu.drops[0]!.wallMs).toBeCloseTo(12.2, 1); // plus the 0.2 ms frame callback
+    expect(cpu.drops[0]!.cpuMs).toBeCloseTo(1.2, 1);
+    expect(cpu.drops[0]!.workMs).toBe(cpu.drops[0]!.cpuMs);
+    const wall = attributeDrops(ev, { basis: "wall" });
+    expect(wall.appDrops).toBe(1);
+    // A busy thread (tdur ~ dur) is the app's on either basis.
+    const busy = [
+      meta,
+      ...frames(60, [20]),
+      { ...x("FunctionCall", base + 300, 10_000), tdur: 9_800 },
+    ];
+    expect(attributeDrops(busy).appDrops).toBe(1);
+  });
+
   it("7 ms of work in the gap stays under the 8 ms line", () => {
     const ev = [meta, ...frames(60, [20]), x("FunctionCall", 1_000_000 + 19 * V + 300, 7000)];
     const r = attributeDrops(ev);
