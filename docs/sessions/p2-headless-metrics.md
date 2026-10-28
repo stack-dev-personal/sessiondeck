@@ -9,7 +9,7 @@
 ## Task list
 
 - [x] U1 contract: snapshot field-source markers and subagent figure fields (R2.12, R2.13 schema part) - sd-executor-contract
-- [ ] U2 hub: transcript-derived session fields + WS deltas (R2.12) - sd-executor-hub, after U1
+- [x] U2 hub: transcript-derived session fields + WS deltas (R2.12) - sd-executor-hub, after U1
 - [ ] U3 hub: subagent figures from subagent transcript lines (R2.13) + recorded headless replay test + live-shape harness - sd-executor-hub, after U2
 - [ ] U4 web: "from transcript" labels, "API-equivalent" cost, Playwright screenshots (R3.16) - sd-executor-web, after U1
 - [ ] Close: full suite, verifier over all IDs, rebase/merge sprint branch, PR to sprint/2-content
@@ -29,4 +29,15 @@
 - Review 1: merge with 3 MINOR (unnamed subagent source union, no figures_source test, no subagent effort field); fixed in 6136baa. Review 2: no findings, verdict merge.
 - Verification deferred to U3: the contract part alone does not meet R2.12/R2.13; sd-verifier runs once the hub fills the fields.
 
+### U2 hub session figures (R2.12)
+- Executor sd-executor-hub; commits 647d4c5, bc8f33a, 0c67214. New packages/hub/src/derive/*; edits to ingestor, engine, reduce, replay, server, store; goldens gain sources keys only (55 lines, 2 files).
+- Review 1: fix-then-merge. 4 MAJOR (cost fill refresh on ingest path can trigger full usage-index rebuild; load harness has no usage rows so R2.4 unproven and no debounce; replay prices with bundled table not the serve pricing; replay budget R2.9 untimed with usage rows), 6 MINOR (hook message displaced forever, unbounded backward rebuild, closed re-check after await, duplicated HUB.md section, weak last-message test, live-shape harness missing: moved to U3). Sent back for fix iteration 1.
+- Fix iteration 1: commits 625883f, 9fcb98c, 48e87c0, d1407ee, 220c624 (debounced cost fill, deferred index rebuild, replay uses serve pricing, bounded rebuild scan, exact tests, HUB-BENCH rows). Executor run took about 2 h 12 min, mostly load and replay benches on a loaded host.
+- Review 2: verdict merge, 5 MINOR. Replay-vs-ingest divergence from the 2000-line cap and the per-flush sessions scan are folded into U3 (same executor, cheap). The rest are deferred below.
+- Verifier (6064aa5): 6 pass, 0 fail, 1 unverifiable (used % clause; no window data, see decision), live-shape harness pending in U3. R2.12 partial until U3.
+
 ## Deferred findings
+
+- packages/hub/src/ingest/engine.ts keepTranscriptFigures: once a transcript fills last_assistant_message or model, a later Stop/SessionStart hook never replaces it, so a stalled transcript tailer leaves an old message showing. Fix needs a per-field timestamp or a hook source value in the contract (SnapshotSources). Owner: a follow-up contract+hub unit after S7 merges. Documented in docs/HUB.md Known gap.
+- packages/hub/src/derive/cost-filler.ts:136: the index rebuild waits for 2 s of quiet ingest, capped at 60 s; with steady interactive statusline traffic the wait usually runs out, delaying headless cost fills up to 60 s once per new interactive project. Real fix is per-session rebuild inside packages/hub/src/usage (S7 territory).
+- docs/HUB-BENCH.md: R2.4 (p95 < 20 ms) not met before or after this branch on the loaded laptop (no regression: after is faster); R2.9 replay 53.6 s vs 60 s budget at ~96% host CPU. Both need a quiet-host run before closing R2.4/R2.9 for the record.
