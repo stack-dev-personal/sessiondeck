@@ -17,7 +17,8 @@
 // Prints evidence lines (files=, wall_ms=, shipped_run1=, shipped_run2=, shipped_touch=, rows=,
 // merged_live_first=, merged_archive_first=, backlog_regress=) and `RESULT pass|fail`; exit 1 on fail.
 //   node scripts/harness-archive-hub.mjs        (needs docker; builds the hub image)
-// Env: INT_PREFIX (sd-3-S9b-), INT_NETWORK (sprint-3_default), INT_SKIP_BUILD=1 to reuse the image,
+// Env: INT_STRICT_BACKLOG=1 turns backlog_regress into a failed check (default informational),
+// INT_PREFIX (sd-3-S9b-), INT_NETWORK (sprint-3_default), INT_SKIP_BUILD=1 to reuse the image,
 // INT_KEEP_IMAGE=1 to keep it, INT_PUBLISH_PORT to reach the hub on 127.0.0.1:<port> instead of by
 // container name on INT_NETWORK.
 //
@@ -285,6 +286,12 @@ async function main() {
     statePath: join(home, "daemon", "archive-index.json"),
     initialDelayMs: 24 * 3600 * 1000, // scans are triggered by the harness, never by the timer
   });
+  let archiveCtx;
+  const origStart = archive.start.bind(archive);
+  archive.start = (ctx) => {
+    archiveCtx = ctx;
+    return origStart(ctx);
+  };
   daemon = await probe.startDaemon({
     home,
     config: { hubUrl: base, token: TOKEN, host: HOST, allowInsecureHub: true },
@@ -352,6 +359,41 @@ async function main() {
     `changed=${changed.length}`,
   );
   check("b: row count unchanged", rows3.length === files.length);
+
+  // ---- b2) hub-side idempotence: a lost index re-ships every capture; the hub must not change
+  const evCount = async (id) =>
+    ((await get(`/sessions/${id}/events?limit=1000`))?.events ?? []).length;
+  const snapshotHub = async (rows) => ({
+    states: rows.map((r) => JSON.stringify(rowState(r.session_id))),
+    events: await Promise.all(rows.map((r) => evCount(r.session_id))),
+  });
+  const before = await snapshotHub(rows3);
+  const archive2 = new probe.ArchiveComponent({
+    config: { roots: [{ label: "vault", path: vault }], intervalSec: 3600 },
+    statePath: join(home, "daemon", "archive-index-fresh.json"),
+    initialDelayMs: 24 * 3600 * 1000,
+  });
+  archive2.start(archiveCtx);
+  const s4 = await archive2.runOnce();
+  await sleep(3000);
+  const rows4 = (await archivedRows()).sort((a, b) => a.session_id.localeCompare(b.session_id));
+  const after = await snapshotHub(rows4);
+  await archive2.stop();
+  check(
+    "b2: fresh index re-ships every capture",
+    s4.shipped === files.length,
+    `shipped=${s4.shipped}`,
+  );
+  check(
+    "b2: hub rows byte-identical after re-ship",
+    JSON.stringify(rows3) === JSON.stringify(rows4),
+  );
+  check("b2: row states unchanged", JSON.stringify(before.states) === JSON.stringify(after.states));
+  check(
+    "b2: event counts unchanged",
+    JSON.stringify(before.events) === JSON.stringify(after.events),
+    `events=${after.events.reduce((a, b) => a + b, 0)}`,
+  );
 
   // ---- c) merge, live first
   const now = Date.now();
@@ -559,7 +601,7 @@ async function main() {
     `records=${occB} cwd=${snapB?.cwd} state=${JSON.stringify(stateB)} snapshot.state=${snapB?.state}`,
   );
 
-  // Re-ship of the same capture after the merge must not change the record (idempotent by mtime).
+  // Rescan with the persisted index after the merges: nothing changed on disk, so nothing ships.
   const sC = await archive.runOnce();
   check("c: rescan after merges ships 0", sC.shipped === 0, `shipped=${sC.shipped}`);
 
@@ -570,6 +612,10 @@ async function main() {
   console.log(
     `merged_live_first=${mergedLiveFirst} merged_archive_first=${mergedArchiveFirst} backlog_regress=${backlogRegress || lateRegress} backlog_regress_older_than_live=${backlogRegress} backlog_regress_late=${lateRegress} rows_after_merges=${total}`,
   );
+  if (process.env.INT_STRICT_BACKLOG === "1") {
+    check("d: backlog envelope older than live end keeps the archived state", !backlogRegress);
+    check("d2: backlog envelope past the live end keeps the archived state", !lateRegress);
+  }
   return checks.every((c) => c.ok) && files.length >= 20;
 }
 

@@ -104,6 +104,13 @@ const UPPER_ENV = new RegExp(
 // ENV_LINE pass below handles it, so the earlier passes must leave it alone.
 const NEXT_ASSIGN = new RegExp(`^["']?${NAME_SRC}\\b["']?[ \\t]*[=:]`, "i");
 
+// Only an unquoted `name:` (nothing after it) or `name=value` is the next assignment. Quoted
+// values and `name:value` tokens are real values and are masked whole.
+const isNextAssign = (v: string): boolean => {
+  if (/^["']/.test(v) || !NEXT_ASSIGN.test(v)) return false;
+  return /[=:]$/.test(v) || /^[^:=]*=/.test(v);
+};
+
 /** Replaces secrets in text with [REDACTED]. Pure and total. */
 export function redactText(text: string): string {
   let s = text.length > MAX_REDACT_INPUT ? text.slice(0, MAX_REDACT_INPUT) : text;
@@ -115,12 +122,12 @@ export function redactText(text: string): string {
   s = s.replace(CLI_USER, (_m, f: string, sp: string) => `${f}${sp}${REDACTED}`);
   s = s.replace(CLI_FLAG, (m: string, f: string, sep: string) => {
     const v = m.slice(f.length + sep.length);
-    return m.endsWith(REDACTED) || (!sep.includes("=") && NEXT_ASSIGN.test(v))
+    return m.endsWith(REDACTED) || (!sep.includes("=") && isNextAssign(v))
       ? m
       : `${f}${sep}${REDACTED}`;
   });
   s = s.replace(UPPER_ENV, (m: string, n: string, sp: string, v: string) =>
-    m.endsWith(REDACTED) || NEXT_ASSIGN.test(v) ? m : `${n}${sp}${REDACTED}`,
+    m.endsWith(REDACTED) || isNextAssign(v) ? m : `${n}${sp}${REDACTED}`,
   );
   s = s.replace(ENV_LINE, (m: string, name: string, rest: string) => {
     const sep = rest[0] as string;

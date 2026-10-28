@@ -15,10 +15,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArchiveEnvelopeSchema, ArchivePayloadSchema } from "@sessiondeck/contract";
 import { parseFrontmatter } from "../src/archive/frontmatter.ts";
-import { ArchiveImporter } from "../src/archive/importer.ts";
+import { ArchiveImporter, archiveEnvelopeId } from "../src/archive/importer.ts";
 import { normalizeCapture } from "../src/archive/normalize.ts";
 import { redactText } from "../src/archive/redact.ts";
 import { ArchiveComponent } from "../src/daemon/archive.ts";
+import { MAX_BODY_BYTES } from "../src/daemon/forwarder.ts";
 import { defaultComponents } from "../src/daemon/components.ts";
 import { startDaemon } from "../src/daemon/index.ts";
 import { buildEnvelope } from "../src/envelope.ts";
@@ -213,6 +214,22 @@ describe("redaction", () => {
     expect(redactText("--token api_key=hunter2")).toBe("--token api_key=[REDACTED]");
     expect(redactText("PGPASSWORD hunter2")).toBe("PGPASSWORD [REDACTED]");
     expect(redactText("--password hunter2")).toBe("--password [REDACTED]");
+  });
+
+  it("archive envelope ids are deterministic per capture content (review iteration 1)", () => {
+    const p = { source: { mtime_ms: 1_790_000_000_000 }, title: "a" };
+    const id = archiveEnvelopeId(p);
+    expect(id).toMatch(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
+    expect(archiveEnvelopeId({ ...p })).toBe(id);
+    expect(archiveEnvelopeId({ ...p, title: "b" })).not.toBe(id);
+  });
+
+  it("quoted and name:value CLI values are masked whole (review iteration 1)", () => {
+    expect(redactText('--password "pass: correct horse battery"')).toBe("--password [REDACTED]");
+    expect(redactText('--password "token: abc def"')).toBe("--password [REDACTED]");
+    expect(redactText('MY_TOKEN "apikey: hunter2 hunter3"')).toBe("MY_TOKEN [REDACTED]");
+    expect(redactText("--password token:Hunter2xyz")).toBe("--password [REDACTED]");
+    expect(redactText("--password token:Hunter2xyz")).not.toContain("Hunter2xyz");
   });
 
   it("block scalar heads accept a comment, a YAML tag and a quoted key (U2 LOW)", () => {
@@ -834,6 +851,7 @@ describe("archive batching stays under the hub body limit (R5.2, U4)", () => {
       expect(got).toBeGreaterThanOrEqual(lines.length);
       expect(sizes.length).toBeGreaterThan(1);
       expect(Math.max(...sizes)).toBeLessThan(1024 * 1024);
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(MAX_BODY_BYTES);
     } finally {
       await d?.kill();
     }
