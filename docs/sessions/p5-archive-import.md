@@ -80,3 +80,13 @@
 - MINOR redact.ts:112 TAIL_VALUE lacks (?!-), over-masks a following flag: U4b.
 - MINOR load-sensitive 5 s timeouts: archive.test.ts:833, transcript.test.ts:631, daemon-review1 "R1.5 byte budget", daemon lock acquireLock: U4b.
 - LOW `mentions --token in prose` masks `in` (pre-existing): accepted.
+
+### U4b probe follow-up (sd-executor-probe)
+- f36c187: EOL mask after secret-named `=` shapes; TAIL_VALUE (?!-); 30 s timeouts on load-sensitive tests. Reviewer merge; security Gate pass + MEDIUM ((?!-) leaked dash-led secrets).
+- 4d8e0f7 + 546801e (iteration 2): (?!-) removed (masking a following --flag is the safe failure, D-S9b-6); `name:tail=` masks to EOL; CRLF \r kept. Differential: 0 regressions vs f00fd4e and 3aab4af (dash 322,560; diff 1,153,152 cases); ReDoS worst 12.4 ms.
+- Iteration 3 review: reviewer `merge`; security `Gate: pass`. Probe 432 pass / 1 skip.
+- Status: done.
+
+## Deferred findings (U4b)
+- LOW (security) 1,044 pre-existing leak shapes in all baselines: second word after masked flag value, dash-led or Unicode-dash values, glued short flags (`mysql -pSECRET`). Owned by S7 / Phase 4 redaction corpus.
+- MINOR redact.ts:91-95,157 unclosed-quote VALUE eats \r (no leak, CRLF -> LF on that line): follow-up.
