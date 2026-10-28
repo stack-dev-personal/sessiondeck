@@ -16,6 +16,7 @@ import {
 } from "@sessiondeck/contract";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { format, resolveConfig } from "prettier";
 import type { SampleRow } from "../src/db/store.ts";
 import { applyStatusLine, applySubagents, parseTranscriptPayload } from "../src/ingest/reduce.ts";
 import { HUB_ROOT, SEQUENCES, type Seq } from "../test/support/sequences.ts";
@@ -108,9 +109,17 @@ export function oracle(seq: Seq): Golden {
 if (process.argv[1] !== undefined && path.basename(process.argv[1]) === "gen-golden.mjs") {
   const dir = path.resolve(HUB_ROOT, "test/golden");
   mkdirSync(dir, { recursive: true });
+  // Format with the repo's prettier config so `prettier --check .` (CI) stays clean after regeneration.
+  const file = (name: string) => path.join(dir, `${name}.json`);
   for (const make of SEQUENCES) {
     const seq = make();
-    writeFileSync(path.join(dir, `${seq.name}.json`), `${JSON.stringify(oracle(seq), null, 2)}\n`);
+    const target = file(seq.name);
+    const options = (await resolveConfig(target)) ?? {};
+    const text = await format(JSON.stringify(oracle(seq), null, 2), {
+      ...options,
+      filepath: target,
+    });
+    writeFileSync(target, text);
     console.log(`wrote ${seq.name}: ${seq.envelopes.length} envelopes`);
   }
 }
