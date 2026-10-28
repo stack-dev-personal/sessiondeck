@@ -22,7 +22,8 @@ import { ArchiveComponent } from "../src/daemon/archive.ts";
 import { defaultComponents } from "../src/daemon/components.ts";
 import { startDaemon } from "../src/daemon/index.ts";
 import { buildEnvelope } from "../src/envelope.ts";
-import { spoolDir } from "../src/paths.ts";
+import { outboxDir, spoolDir } from "../src/paths.ts";
+import { createOutbox } from "../src/daemon/outbox.ts";
 import { appendSpoolLines } from "../src/spool-writer.ts";
 import {
   ConfigError,
@@ -204,6 +205,30 @@ describe("redaction", () => {
     expect(redactText('{"client_secret": "abc def"}')).toBe('{"client_secret": [REDACTED]}');
     expect(redactText("AUTH_TOKEN=a\nOTHER=b")).toBe("AUTH_TOKEN=[REDACTED]\nOTHER=b");
     expect(redactText("plain text, nothing here")).toBe("plain text, nothing here");
+  });
+
+  it("pass ordering: CLI flags and UPPER_ENV do not consume the next assignment (U2 LOW)", () => {
+    expect(redactText("run --password = hunter2")).toBe("run --password = [REDACTED]");
+    expect(redactText("X_TOKEN api_key: hunter2")).toBe("X_TOKEN api_key: [REDACTED]");
+    expect(redactText("--token api_key=hunter2")).toBe("--token api_key=[REDACTED]");
+    expect(redactText("PGPASSWORD hunter2")).toBe("PGPASSWORD [REDACTED]");
+    expect(redactText("--password hunter2")).toBe("--password [REDACTED]");
+  });
+
+  it("block scalar heads accept a comment, a YAML tag and a quoted key (U2 LOW)", () => {
+    for (const head of [
+      "password: | # keep secret",
+      "password: !!str |",
+      "password: &a !tag >-  # c",
+      '"password": |',
+      "- 'api_key': |+2",
+    ]) {
+      const out = redactText(`top\n${head}\n  line1\n  line2\nnext: ok`);
+      expect(out).not.toContain("line1");
+      expect(out).not.toContain("line2");
+      expect(out).toContain("[REDACTED]");
+      expect(out.endsWith("\nnext: ok")).toBe(true);
+    }
   });
 
   it("is fast on adversarial input", () => {
@@ -737,5 +762,80 @@ describe("defaultComponents archive wiring", () => {
     expect(names()).not.toContain("archive");
     expect(names({ roots: [] })).not.toContain("archive");
     expect(names({ roots: [{ label: "v", path: join(home, "v") }] })).toContain("archive");
+  });
+});
+
+describe("archive batching stays under the hub body limit (R5.2, U4)", () => {
+  it("many max-size archive envelopes are posted in bodies under 1 MiB", async () => {
+    const home = await tmp();
+    const worst = '"'.repeat(200); // 2 bytes per char once JSON-escaped
+    const mk = (i: number) => {
+      const payload = {
+        source: {
+          root_label: "v",
+          rel_path: `projects/p/sessions/${String(i).padStart(3, "0")}.md`,
+          mtime_ms: 1,
+          size: 1,
+        },
+        schema_version: 1,
+        session_id: `s-${i}`,
+        collection: "projects/p",
+        title: '"'.repeat(300),
+        date: "2026-01-01",
+        started_at: "2026-01-01T00:00:00Z",
+        ended_at: "2026-01-01T01:00:00Z",
+        duration_s: 3600,
+        project_dir: '"'.repeat(1024),
+        branch: '"'.repeat(255),
+        tools_used: Array.from({ length: 100 }, (_, k) => ({
+          name: `${"t".repeat(90)}${k}`,
+          count: 1,
+        })),
+        commits: Array.from({ length: 50 }, () => worst),
+        prs: Array.from({ length: 50 }, () => worst),
+        outcome: '"'.repeat(16384),
+        outcome_truncated: true,
+      };
+      return buildEnvelope({
+        kind: "archive",
+        host: "h",
+        session_id: `s-${i}`,
+        payload,
+        ts: Date.now(),
+      });
+    };
+    const lines = Array.from({ length: 60 }, (_, i) => mk(i));
+    for (const l of lines) {
+      expect(ArchiveEnvelopeSchema.safeParse({ ...l, seq: 0 }).success).toBe(true);
+    }
+    const sizes: number[] = [];
+    let got = 0;
+    const f = (async (_u: unknown, init?: RequestInit) => {
+      const body = String(init?.body);
+      sizes.push(Buffer.byteLength(body));
+      got += (JSON.parse(body) as { envelopes: unknown[] }).envelopes.length;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const d = await startDaemon({
+      home,
+      config: { hubUrl: "http://127.0.0.1:9", token: "tok", host: "h" },
+      fetch: f,
+      pollMs: 5,
+      batchMs: 20,
+      heartbeatMs: 0,
+      rng: () => 0,
+      components: [],
+    });
+    try {
+      const put = createOutbox(outboxDir(home));
+      for (const l of lines) put(l);
+      const end = Date.now() + 15000;
+      while (Date.now() < end && got < lines.length) await new Promise((r) => setTimeout(r, 20));
+      expect(got).toBeGreaterThanOrEqual(lines.length);
+      expect(sizes.length).toBeGreaterThan(1);
+      expect(Math.max(...sizes)).toBeLessThan(1024 * 1024);
+    } finally {
+      await d?.kill();
+    }
   });
 });

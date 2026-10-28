@@ -55,13 +55,13 @@ const NAME_SRC = `(?:[A-Za-z0-9_.-]{0,64}(?:${LONG_KEYWORDS})|(?:[A-Za-z0-9_.-]{
 
 // `key: |` / `key: >-` header line (optionally a YAML list item or quoted key).
 const BLOCK_HEAD = new RegExp(
-  `^([ \\t]*(?:-[ \\t]+)?)(${NAME_SRC}\\b["']?[ \\t]*:[ \\t]*)[|>][+-]?[0-9]?[ \\t]*\\r?$`,
+  `^([ \\t]*(?:-[ \\t]+)?)(["']?${NAME_SRC}\\b["']?[ \\t]*:[ \\t]*(?:[!&][^\\s]*[ \\t]+)*)[|>][+-]?[0-9]?[ \\t]*(?:#.*)?\\r?$`,
   "i",
 );
 
 /** Masks YAML block/folded scalars under a secret key: the header keeps its key, the body is dropped. */
 function maskBlockScalars(text: string): string {
-  if (!/[|>][+-]?[0-9]?[ \t]*\r?(?:\n|$)/.test(text)) return text;
+  if (!/[|>][+-]?[0-9]?[ \t]*(?:#|\r?(?:\n|$))/.test(text)) return text;
   const lines = text.split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
@@ -87,15 +87,22 @@ function maskBlockScalars(text: string): string {
 // CLI forms: `-u user:pass`, `--password value` / `--token=value`, and `PGPASSWORD value`
 // (UPPERCASE env-like name with a prefix, then a space, then the value).
 const VALUE = `(?:"[^"\\n]{1,512}"|'[^'\\n]{1,512}'|[^\\s"'][^\\s]{0,512})`;
-const CLI_USER = new RegExp(`(?<!\\S)(-u|--user)([ \\t]+)(?:["']?[^\\s:"']{1,128}:[^\\s]{1,512})`, "g");
+const CLI_USER = new RegExp(
+  `(?<!\\S)(-u|--user)([ \\t]+)(?:["']?[^\\s:"']{1,128}:[^\\s]{1,512})`,
+  "g",
+);
 const CLI_FLAG = new RegExp(
-  `(?<!\\S)(--[a-z0-9-]{0,32}?(?:password|passwd|passphrase|token|secret|api-?key|credentials?)(?:-key)?)(=|[ \\t]+)(?!-)${VALUE}`,
+  `(?<!\\S)(--[a-z0-9-]{0,32}?(?:password|passwd|passphrase|token|secret|api-?key|credentials?)(?:-key)?)([ \\t]*=[ \\t]*|[ \\t]+)(?!-)${VALUE}`,
   "gi",
 );
 const UPPER_ENV = new RegExp(
-  `(?<![A-Za-z0-9_.-])([A-Z0-9_]{1,64}(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY))([ \\t]+)(?![=:])${VALUE}`,
+  `(?<![A-Za-z0-9_.-])([A-Z0-9_]{1,64}(?:SECRET|TOKEN|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY))([ \\t]+)(?![=:])(${VALUE})`,
   "g",
 );
+
+// A value that is itself `secret_name:` / `secret_name=` is the next assignment, not a value; the
+// ENV_LINE pass below handles it, so the earlier passes must leave it alone.
+const NEXT_ASSIGN = new RegExp(`^["']?${NAME_SRC}\\b["']?[ \\t]*[=:]`, "i");
 
 /** Replaces secrets in text with [REDACTED]. Pure and total. */
 export function redactText(text: string): string {
@@ -106,11 +113,14 @@ export function redactText(text: string): string {
   s = s.replace(BEARER, (_m, b: string, sp: string) => `${b}${sp}${REDACTED}`);
   s = maskBlockScalars(s);
   s = s.replace(CLI_USER, (_m, f: string, sp: string) => `${f}${sp}${REDACTED}`);
-  s = s.replace(CLI_FLAG, (m: string, f: string, sep: string) =>
-    m.endsWith(REDACTED) ? m : `${f}${sep}${REDACTED}`,
-  );
-  s = s.replace(UPPER_ENV, (m: string, n: string, sp: string) =>
-    m.endsWith(REDACTED) ? m : `${n}${sp}${REDACTED}`,
+  s = s.replace(CLI_FLAG, (m: string, f: string, sep: string) => {
+    const v = m.slice(f.length + sep.length);
+    return m.endsWith(REDACTED) || (!sep.includes("=") && NEXT_ASSIGN.test(v))
+      ? m
+      : `${f}${sep}${REDACTED}`;
+  });
+  s = s.replace(UPPER_ENV, (m: string, n: string, sp: string, v: string) =>
+    m.endsWith(REDACTED) || NEXT_ASSIGN.test(v) ? m : `${n}${sp}${REDACTED}`,
   );
   s = s.replace(ENV_LINE, (m: string, name: string, rest: string) => {
     const sep = rest[0] as string;
