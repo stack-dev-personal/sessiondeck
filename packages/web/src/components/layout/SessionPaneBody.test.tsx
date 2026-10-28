@@ -108,6 +108,28 @@ describe("SessionPaneBody (R6.4)", () => {
     expect(lists()).toHaveLength(2);
   });
 
+  it("a pane assigned after the first render is observed and unmounts its list off screen (R6.6)", () => {
+    useLayout.setState({
+      spec: {
+        version: 1,
+        id: "solo-x",
+        name: "x",
+        root: { kind: "pane", id: "p1", type: "session" },
+      },
+    });
+    render(<Live />);
+    expect(document.querySelector('[data-unassigned="true"]')).not.toBeNull();
+    act(() => useLayout.getState().assign("p1", "A"));
+    expect(lists()).toHaveLength(1);
+    const target = document.querySelector('[data-pane-id="p1"] [data-testid="session-body"]')!;
+    const io = ios.find((x) => x.el === target);
+    expect(io, "an observer exists for the pane").toBeDefined();
+    act(() => io!.cb([{ isIntersecting: false }]));
+    expect(lists()).toHaveLength(0);
+    act(() => io!.cb([{ isIntersecting: true }]));
+    expect(lists()).toHaveLength(1);
+  });
+
   it("leaving the route unmounts every list and observer", () => {
     useLayout.setState({ spec: spec(false) });
     const { unmount } = render(<Live />);
