@@ -41,3 +41,8 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 - 2026-10-28 PostToolUseFailure on a spawn tool marks the pending list ambiguous rather than removing an entry (unknown is acceptable, wrong-but-known is not).
 - 2026-10-28 Stored subagent rows are normalized through contract readSubagentRows (one function for write and read).
 - 2026-10-28 Blocked on the attribution design after three review iterations; recommended option A (conservative window rule).
+
+## Resume 2026-10-28 (after answer)
+### Decisions made
+- 2026-10-28 Answer to /state/2/questions/S8b.md (conductor, under the user's standing rules): option A, conservative window rule. A parent link is "known" only if every spawn queued between two moments when the pending queue was empty came from one context; any mix, failure, or cap drop in that window marks every start in that window "unlinked". Also apply the MINOR (failed Agent call marks ambiguous only when new Set(pending).size > 1) and both security LOWs (dedupe rows by agent_id keeping the first; cap at SUBAGENT_ROWS_MAX before normalizing). One more fix and review round; if the reviewer still finds a wrong-but-known case, switch the hook path to option B (unlinked until S7 transcript links) and record it, without asking again.
+- 2026-10-28 Decision 28 (no Fable row, no estimates in the usage widget) confirmed applied: handoff c14d298, phase doc R3.12 and R3.13. U4 drops the Fable item.
