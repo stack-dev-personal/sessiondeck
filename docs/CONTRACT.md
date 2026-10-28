@@ -143,6 +143,15 @@ These behaviors are not confirmed by a capture (synthetic payloads, or cases the
 - `packages/contract/fixtures/<Event>/*.json`: scrubbed, committed. `<Event>` is the hook event name, plus `statusLine/` and `subagentStatusLine/`.
 - `packages/contract/fixtures/settings/`: settings-merge test input, not payloads.
 
+## Figure sources (R2.12, R2.13)
+
+Headless `claude -p` sessions send hooks but no statusline payloads, so the hub fills model, context, cost, git branch and last assistant message from stored transcript lines. Two optional fields say where a figure came from, so the board can label it:
+
+- `SessionSnapshot.sources?: { model?, context?, cost?, git_branch?, last_assistant_message? }`, each `"statusline" | "transcript"`. An absent key means the field is not filled yet. `createSnapshot()` never sets `sources`; the hub does. There is no `effort` key: effort is filled only by statusline or an explicit statement (decision 28).
+- `SubagentSnapshot.figures_source?: "subagent_statusline" | "transcript"` covers tokens, model and context_window.
+
+Rule: statusline wins when present. `mergeSource(sources, key, src)` returns a new object and keeps an existing `"statusline"` entry when `"transcript"` arrives. `isFigureSource` is the type guard; `FIGURE_SOURCES` lists the values.
+
 ## Units
 
 `Window.resets_at` and `prompt_cache.expires_at` are epoch milliseconds in the snapshot and epoch seconds in the statusLine payload. Convert with `epochSecondsToMs` (`src/statusline.ts`).
