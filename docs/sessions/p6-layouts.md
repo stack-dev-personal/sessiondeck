@@ -70,3 +70,11 @@
 ## Relaunch 2 2026-10-27
 - The sprint container stopped again at 2026-10-27T20:43Z (second container restart, not a session fault). Worktree at 3fe6b60; the only uncommitted change was this log's U5 and relaunch-1 sections. U5 commits since relaunch 1: 934f6ce, 3fe6b60. No answer file; no docs/HANDOFF-*.md.
 - Resumed: executor confirms U5 state, then U5 review and verification as usual, then U6 close.
+
+## Relaunch 3 2026-10-28
+- The sprint container stopped at 2026-10-27T21:18Z (account usage limit), the third external restart. Worktree clean at 18b522a. No answer file; no docs/HANDOFF-*.md.
+- Resumed: executor state check, then U5 review and verification, then U6 close.
+- Stray untracked items in the main clone /work (not committed, not deleted, outside the worktree):
+  - .s10out1, .s10out2, .s10out3: output dirs of three R6.4 trace runs on 2026-10-27 (six-pane PNGs, trace json/json.gz, summary json).
+  - .tmp-screens-S10, s10shots: earlier R3.x screenshot copies (R3.2, R3.4, R3.5) from a baseline-regeneration check.
+  - diag-S10.mjs: ad-hoc Playwright diagnostic that logs transitionend events at 6 sessions x 20 updates/s (reduced motion).
