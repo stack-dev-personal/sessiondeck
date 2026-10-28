@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { AGENT_ID_MAX_CHARS, SUBAGENT_ROWS_MAX } from "../src/limits";
-import { readTracking } from "../src/tracking";
+import { readTracking } from "../src/index";
 import { reduce } from "../src/state";
 import type { SessionSnapshot } from "../src/snapshot";
 import { readSubagentRow, readSubagentRows } from "../src/snapshot";

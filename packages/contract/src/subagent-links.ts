@@ -2,7 +2,7 @@ import { SUBAGENT_ROWS_MAX } from "./limits";
 import type { SubagentSnapshot } from "./snapshot";
 
 /** True when following parent links up from `start` reaches `target` (bounded, so damaged data cannot hang it). */
-export function reachesAgent(
+function reachesAgent(
   rows: readonly SubagentSnapshot[],
   start: string | null,
   target: string,
