@@ -10,7 +10,7 @@
 
 | Unit | Requirements | Executor | Blocked by | State |
 |------|--------------|----------|-----------|-------|
-| U1 normalizer (contract/normalize.ts, golden tests) | R4.1, R4.2, R4.3 | sd-executor-hub | none | pending |
+| U1 normalizer (contract/normalize.ts, golden tests) | R4.1, R4.2, R4.3 | sd-executor-hub | none | done (6375ca8) |
 | U2 redaction filter, corpora, probe.json rules | R4.7 | sd-executor-probe | none | pending |
 | U3 pricing 1h/5m cache-write split, unpriced models | R2.10 | sd-executor-hub | none | done (563e177) |
 | U4 hub transcript API (normalized, ?after=) and WS transcript deltas | R4.1, R4.4 (hub side) | sd-executor-hub | U1 | pending |
@@ -44,6 +44,18 @@
 - Review 3: merge. Verifier (563e177): R2.10 amended pass, 7/7 points; hub 309 tests; ccusage PASS with
   delta 0.002250 residual 0 on the one 1h row. Evidence: docs/VERIFY-P2.md, /state/2/screens/S7/R2.10-ccusage-compare.txt.
 
+### U1 normalizer (R4.1-R4.3)
+- Borrow sources fetched by the orchestrator to /tmp/sd-s7-refs (Crystal @1e18e0b MIT, vibe-kanban @7c38070 Apache-2.0;
+  licenses checked against the borrow map). Executor commits bc0daae, 9b28d86, 62fdd05: 57 row kinds, 0 unknown in fixtures.
+- R4.2: pure leaf-walk drops tool_results (one row per content block, parallel results); pruning is limited to forks
+  between real prompts, leaf from last-prompt.leafUuid. One real fork in 04-compaction. Reviewer accepted.
+- Review 1: reviewer fix-then-merge (leaf choice, fork across compaction, orphaned losing-branch agents, minors);
+  security fail (HIGH subagent fan-out 87 MB; MEDIUM stringify throw; MEDIUM uncapped raw fallback). Fix b43b3e6.
+- Review 2: reviewer merge; security fail (HIGH shared tool_use id 641x; MEDIUM deep tool_use.input). Fix 8965ebb.
+- Review 3: reviewer merge; security fail (HIGH placeholder meta amplification 274x; MEDIUM builder fields). Fix 3b41766
+  (systematic: bounded copiers everywhere, no duplicated input-derived values, adversarial test file, inputTruncated).
+- Review 4: reviewer merge; security pass-with-notes. Verifier 6375ca8: R4.1, R4.2, R4.3 pass; goldens in CI (job check).
+
 ## Decisions made
 
 - 2026-10-28 resume: R2.10 expanded by the conductor (decision 25): exact model match, fast factor, thinking tokens,
@@ -55,6 +67,15 @@
 - The planning doc note for R2.10 (phase-2-hub.md) is written by sd-executor-hub inside U3 (single dated note).
 
 ## Deferred findings
+
+- U1 security MEDIUM (non-blocking): normalize.ts:769 stack.push(...children) throws on a losing branch with >~150k
+  children; folded into U4 (hub executor) together with the hub input byte cap and catching normalizer errors.
+- U1 security LOW: limits.ts truncate short-max branch can leave a lone high surrogate (contract executor; not in U4 paths).
+- U1 security LOW: callIds include tool_use ids never rendered, so a crafted row hides a real tool_result.
+- U1 reviewer MINOR: shallowest-first expansion can give a nested agent's thread to a main-thread SendMessage (no fixture shape).
+- U1 reviewer MINOR: idOf cap can collide two >200-char ids (adversarial only).
+- U1 security LOW for U2: hook attachment command/stderr must be covered by probe redaction (R4.7).
+- U1 security LOW for web (S8): render text/thinking as markdown with raw HTML disabled; raw and tool results as text.
 
 - U3 (non-blocking): harness oneHourDelta mirrors the hub's proportional rule; "mixed h and f" test could pin a hand
   value (0.36). Dead fallback in hiRate (compare-hub.ts:213). No test for the 5m-above-200k-without-1h-above asymmetry.
