@@ -1,16 +1,20 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page } from "@playwright/test";
 import { shot } from "./helpers";
 import { buildPreset } from "../src/layout/presets";
 import { assignSession } from "../src/layout/ops";
 import { panesOf, serialize } from "../src/layout/spec";
 import { HOST, LIVE, configureHub, waitConnected } from "./live-helpers";
 import { createLoad } from "./load/generate";
+import { judgeGate, type GateWindow } from "./load/gate";
 import {
+  APP_WORK_MS,
+  attributeDrops,
   longTaskDetails,
   mainThreadBusy,
+  markedWindow,
   pipelineFrames,
   scriptMsPerSecond,
   type TraceEvent,
@@ -21,68 +25,81 @@ import { SCREENS_DIR } from "./screens-dir";
  * R6.4: six live content panes at 20 deltas/s, no dropped frames.
  *
  * MEASUREMENT DEFINITION
- *  Setup: mock build (no hub). Six live sessions are pushed into the board store, `a` (auto-fit)
- *  lays them out as grid6 with one session per pane, so six virtualized activity lists are mounted
- *  and pinned to the bottom. The load generator (e2e/load/generate.ts, same event mix as R3.6)
- *  builds the envelopes in Node; a timer in the page delivers them to the store's enqueue() on a
- *  fixed 50 ms schedule, exactly where the WebSocket handler delivers in a live build. The store
- *  coalesces per animation frame, as in production.
- *  Rates (deltas = envelopes = store updates):
- *   - STRICT: 20 deltas/s for EACH of the six sessions = 120/s in total (6 per 50 ms tick).
- *   - BOARD:  20 deltas/s in total across the six sessions (1 per 50 ms tick, round robin).
- *  Window: 3 s warm-up, then 12 s windows measured under a Chromium trace (devtools.timeline,
- *  toplevel, benchmark, rail).
- *  DROPPED FRAME: a gap between consecutive requestAnimationFrame callbacks of an in-page loop
- *  (renderer main thread) longer than 1.5 x the median gap of the window (vsync ~16.7 ms), or a
- *  main-thread long task (> 50 ms) in the window, counted both by PerformanceObserver and from the
- *  trace (top-level RunTask), or a compositor frame the trace marks STATE_DROPPED. A window is CLEAN
- *  with none of these. The median must be below
- *  20 ms, so a page that renders at 30 Hz cannot pass as "no dropped frames".
- *  GATE RULE: the requirement is the 20 deltas/s case, `board-20` (mock) and `live-board-20` (hub).
- *  It is measured over 3 to 6 consecutive windows on one running page (after a discarded traced
- *  primer, see measureWindows) and PASSES when at least one healthy window is gate-clean: 0 rAF-gap
- *  drops, 0 long tasks, and compositor frames in STATE_DROPPED (PipelineReporter, categories
- *  benchmark + rail) within COMPOSITOR_DROP_BUDGET (1 %) of the frames reported. Reason: a page that
- *  really misses frames at 20 deltas/s misses them in every window, while this shared WSL2 host
- *  stalls sporadically; four runs of the same build gave 3/3, 2/3, 1/3 and 0/3 clean windows, and the
- *  idle and paint controls show the same stray compositor drops. Every window's exact counts, with
- *  the position of each dropped frame in the trace, are in the JSON. Dropped frames within 100 ms
- *  of either end of the trace are tracing start/stop artifacts and counted apart (`droppedAtEdge`).
- *  The first window is not special.
- *  HOST GUARD: a CPU probe brackets each window; a window whose probe ran more than 2x slower than
- *  the fastest probe of the test is HOST-DEGRADED (the same work takes longer: seen as Paint and
- *  FunctionCall totals 1.4 to 2x higher for identical frame counts). Such a window is re-measured (up
- *  to 3 extra), listed with all its numbers under `hostDegradedWindows`, and is never chosen or
- *  dropped for its own drop counts. Fewer than 3 healthy windows FAILS the test. Gate cases only.
- *  `strict-120` (20 deltas/s for each of the six sessions, 120/s in all) is a stress number: it is
- *  measured and written to the JSON the same way, its structural checks run (rate, six lists,
- *  bounded DOM, pinned), but its dropped-frame counts are informational and never fail the test,
- *  because on this shared WSL2 host it is noisy even when the page is healthy.
- *  CONTROLS (report only, same run, same windows): `idle-0` (the six panes, no deliveries) and
- *  `paint-control-20` (the same 20/s schedule, but each tick only repaints a 24 px dot; no store,
- *  list or layout work). Idle cannot drop compositor frames (it never repaints), so the paint control
- *  is the comparison for STATE_DROPPED.
- *  Reported: p50/p95/max frame interval, long tasks, script ms per second (union of script entry
- *  events in the trace), main-thread busy %, store flushes per second, rows in the DOM.
- *  Also asserted: the delivered rate (mock: the in-page timer's count; live: `session` WebSocket
- *  messages the page received) is within 5 % of the target in every window, six lists are mounted with a
- *  bounded number of DOM rows, and every list is still pinned to its bottom.
+ *  Setup: mock build (no hub). Six live sessions are pushed into the board store and every activity
+ *  log is pre-seeded to the cap (ACTIVITY_CAP rows), so the measured steady state is "append and trim
+ *  on every update". `a` (auto-fit) lays them out as grid6 with one session per pane: six virtualized
+ *  lists, pinned to the bottom. The load generator (e2e/load/generate.ts, same event mix as R3.6)
+ *  builds the envelopes in Node, sized from the number of windows (no schedule is ever replayed);
+ *  a timer in the page delivers them to the store's enqueue() on a fixed 50 ms schedule, exactly
+ *  where the WebSocket handler delivers in a live build. The store coalesces per animation frame.
+ *  BOARD: 20 deltas/s in total across the six sessions (1 per 50 ms tick, round robin) = the
+ *  requirement. STRICT: 20 deltas/s for EACH session = 120/s (informational only, see below).
+ *  CONTROL: the same page and the same 20/s tick, but each tick only repaints a 24 px dot; no store,
+ *  list or layout work. It shows what this host drops when the page does nothing of its own.
+ *
+ *  RUN: one page, one traced primer (discarded: the first trace of a page's life makes Chromium
+ *  start its tracing agents and drops frames), then EIGHT 12 s windows in ABBA order, each under a
+ *  Chromium trace (devtools.timeline, toplevel, benchmark, rail):
+ *      control, board, board, control, control, board, board, control
+ *  so host drift hits both sides equally. EVERY window counts. There is no early stop, no best-of
+ *  rule and no window is skipped or re-measured. A CPU probe brackets each window and is reported
+ *  (`hostSlowdown`) but never removes a window.
+ *
+ *  DROPPED FRAME, measured in the trace (e2e/load/trace.ts attributeDrops), inside the window that
+ *  console.timeStamp marks r64-start and r64-end bound:
+ *   - an rAF GAP: two consecutive FireAnimationFrame starts on the renderer main thread more than
+ *     1.5 x the window's median gap apart (the in-page rAF loop runs in every one);
+ *   - a COMPOSITOR drop: a PipelineReporter frame in STATE_DROPPED.
+ *  ATTRIBUTION: for each drop, the renderer main-thread work inside the gap (or the dropped frame's
+ *  interval) is summed as the union of script, layout/style, paint/commit and GC events. APP_WORK_MS
+ *  (8 ms) or more: the page's own work filled it, the drop is the APP's. Less: the main thread was
+ *  idle or waiting, the drop is the HOST's (descheduled thread, slow raster or GPU).
+ *  LONG TASK: a main-thread task over 50 ms (PerformanceObserver and the trace's top-level RunTask).
+ *
+ *  GATE (judgeGate in e2e/load/gate.ts, unit-tested): PASS only if
+ *   (a) every board window has 0 app drops and 0 long tasks;
+ *   (b) the host's drops (not the app's) summed over the board windows are at most the control
+ *       windows' sum + 1;
+ *   (c) no board window has a non-app rAF gap longer than 2 vsyncs;
+ *   (d) there are 4 board and 4 control windows.
+ *  The median gap must also be below 20 ms in every window, so a page that renders at 30 Hz cannot
+ *  pass as "no dropped frames".
+ *
+ *  `strict-120` (120/s in all) is measured the same way in three windows; its structural checks run
+ *  (rate, six lists, bounded DOM, pinned) but its drop counts never fail the test: on this shared
+ *  WSL2 host it is noisy even when the page is healthy.
+ *  Reported per window: frames, rAF-gap drops (in-page loop and trace), app drops, max interval,
+ *  long tasks, compositor drops, script ms per second, main-thread busy %, store flushes per second,
+ *  every drop with its length and the work inside it. Also asserted: the delivered rate is within
+ *  5 % of the target in every window, six lists with bounded DOM rows, every list pinned, every
+ *  log at the cap.
  * Evidence (MODE is `mock` or `live`): R6.4-trace-MODE.json (brief), R6.4-trace-summary-MODE.json
- * (everything), the first gate window's raw trace gzipped, R6.4-six-panes*.png.
- * A live variant (real hub, same two rates) runs when SD_E2E_HUB_URL is set (scripts/e2e-live.sh).
+ * (everything), every board window's raw trace gzipped (R6.4-trace-CASE-wN.json.gz), R6.4-six-panes*.png.
+ * A live variant (real hub, same ABBA run; control windows pause the generator; logs are not
+ * forced to the cap, the hub makes fewer rows per delta) runs when
+ * SD_E2E_HUB_URL is set (scripts/e2e-live.sh).
  */
 const WARMUP_MS = 3_000;
 const WINDOW_MS = 12_000;
 const PRIMER_MS = 4_000;
-const GATE_WINDOWS = 3;
-const EXTRA_WINDOWS = 3;
-const HOST_SLOWDOWN = 2;
-/** Compositor frames in STATE_DROPPED allowed per window, as a share of the frames reported (see GATE RULE). */
-const COMPOSITOR_DROP_BUDGET = 0.01;
+const SETTLE_MS = 400;
+const ABBA = [
+  "control",
+  "board",
+  "board",
+  "control",
+  "control",
+  "board",
+  "board",
+  "control",
+] as const;
 const MODE = LIVE.hubUrl === "" ? "mock" : "live";
 const TICK_MS = 50;
-const TICKS = 480; // 24 s of schedule, more than warm-up + window + screenshot
+/** Wall time a window takes beyond its 12 s: probes, start/stop of tracing, the evaluates. */
+const WINDOW_OVERHEAD_MS = 8_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+type DriveMode = "board" | "control";
 
 interface Perf {
   on: boolean;
@@ -99,7 +116,16 @@ const pct = (sorted: number[], p: number): number =>
     : sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!;
 const r2 = (n: number): number => Math.round(n * 100) / 100;
 
-const summaries: Record<string, unknown> = {};
+type Row = Record<string, unknown>;
+interface CaseResult {
+  gate: boolean;
+  rule: string;
+  pass: boolean | null;
+  failures: string[];
+  windows: Row[];
+  [k: string]: unknown;
+}
+const summaries: Record<string, CaseResult> = {};
 
 /**
  * Writes the evidence files after every case (a failing case restarts the worker, so an
@@ -117,25 +143,22 @@ function writeEvidence(): void {
   };
   const all = { ...read(summaryFile), ...summaries };
   writeFileSync(summaryFile, JSON.stringify({ ...all, requirement: "R6.4", mode: MODE }, null, 2));
-  // The compact form the reviewer reads: per case frames, max, p99 and dropped counts, every window.
+  // The compact form the reviewer reads: the verdict and one row per window (no drop lists).
   const brief = Object.fromEntries(
     Object.entries(all)
       .filter(([, v]) => typeof v === "object" && v !== null && "windows" in v)
       .map(([k, v]) => {
-        const m = v as ReturnType<typeof analyse> & { gate: boolean; windows: unknown[] };
+        const m = v as CaseResult;
         return [
           k,
           {
             gate: m.gate,
-            windowMs: m.windowMs,
-            frames: m.frames,
-            maxIntervalMs: m.frameIntervalMs?.max,
-            p99IntervalMs: m.frameIntervalMs?.p99,
-            droppedFrames: m.droppedFrameIntervals,
-            pipelineDropped: m.pipeline?.dropped,
-            longTasks: m.longTasksTrace,
-            windowsMeasured: m.windows.length,
-            allWindows: m.windows,
+            pass: m.pass,
+            failures: m.failures,
+            rule: m.rule,
+            windows: m.windows.map((row) =>
+              Object.fromEntries(Object.entries(row).filter(([key]) => key !== "drops")),
+            ),
           },
         ];
       }),
@@ -191,42 +214,14 @@ async function installProbes(page: Page): Promise<void> {
   });
 }
 
-type Case = {
-  name: "strict-120" | "board-20" | "idle-0" | "paint-control-20";
-  perSec: number;
-  /** true: every window must be clean (the requirement). false: measured and reported only. */
-  gate: boolean;
-  /** "store": deltas go to the board store. "paint": the same 20/s schedule only repaints a 24 px dot. */
-  driver: "store" | "paint";
-  perTick: (t: number) => number[];
-};
-const CASES: Case[] = [
-  {
-    name: "strict-120",
-    perSec: 120,
-    gate: false,
-    driver: "store",
-    perTick: () => [0, 1, 2, 3, 4, 5],
-  },
-  { name: "board-20", perSec: 20, gate: true, driver: "store", perTick: (t) => [t % 6] },
-  // Environment baseline, report only: the same six panes with no deliveries at all, same windows.
-  { name: "idle-0" as const, perSec: 0, gate: false, driver: "store", perTick: () => [] },
-  // Paint control, report only: the same six panes and the same 20/s schedule, but each tick only
-  // repaints a 24 px dot; the store, the lists and the layout do no work. Compositor frames dropped
-  // here are the host's (software raster, shared cores), not the app's. Idle cannot show that: a
-  // page that never repaints produces no frames to drop.
-  {
-    name: "paint-control-20" as const,
-    perSec: 20,
-    gate: false,
-    driver: "paint",
-    perTick: (t) => [t % 6],
-  },
-];
-
-/** Reads panes, lists and pinning from the DOM. */
+/** Reads panes, lists and pinning from the DOM, and how full each session's log is from the store. */
 const paneState = (page: Page) =>
   page.evaluate(() => {
+    const board = (
+      window as unknown as {
+        __sd?: { board: { getState: () => { activity?: Record<string, { rows: unknown[] }> } } };
+      }
+    ).__sd?.board.getState();
     const panes = [...document.querySelectorAll('[data-testid="pane"][data-pane-type="session"]')];
     return panes.map((p) => ({
       session: p.getAttribute("data-session-id"),
@@ -234,8 +229,38 @@ const paneState = (page: Page) =>
       pinned: p.querySelector('[data-testid="activity-list"]')?.getAttribute("data-pinned"),
       total: Number(p.querySelector('[role="log"]')?.getAttribute("data-total") ?? 0),
       domRows: p.querySelectorAll("[data-row]").length,
+      logRows: board?.activity?.[p.getAttribute("data-session-id") ?? ""]?.rows.length ?? -1,
     }));
   });
+
+/** Pushes the generator's envelopes into the store until every log of `ids` is at the cap. */
+async function seedLogs(page: Page, envs: Record<string, unknown>[], ids: string[], cap: number) {
+  await page.evaluate((batch) => {
+    const board = (
+      window as unknown as {
+        __sd: { board: { getState: () => { enqueue: (e: unknown) => void } } };
+      }
+    ).__sd.board;
+    for (const e of batch) board.getState().enqueue({ ...e, ts: Date.now() });
+  }, envs);
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          ([want, cap]) => {
+            const act = (
+              window as unknown as {
+                __sd: { board: { getState: () => { activity: Record<string, { rows: unknown[] }> } } };
+              }
+            ).__sd.board.getState().activity;
+            return want!.every((id) => (act[id as string]?.rows.length ?? 0) >= (cap as number));
+          },
+          [ids, cap] as const,
+        ),
+      { message: "every log pre-seeded to the cap", timeout: 20_000 },
+    )
+    .toBe(true);
+}
 
 function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
   const trace = JSON.parse(buf.toString("utf8")) as { traceEvents: TraceEvent[] } | TraceEvent[];
@@ -248,6 +273,7 @@ function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
   const median = pct(sorted, 50);
   const longEvidence = longTaskDetails(events);
   const secs = wallMs / 1000;
+  const window = markedWindow(events);
   return {
     windowMs: wallMs,
     frames: data.frames.length,
@@ -258,6 +284,8 @@ function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
       p99: r2(pct(sorted, 99)),
       max: r2(sorted[sorted.length - 1] ?? 0),
     },
+    markedWindow: window !== null,
+    attribution: window === null ? null : attributeDrops(events, { window }),
     pipeline: pipelineFrames(events),
     transitionEnds: data.transitionEnds,
     longTasksObserver: data.longtasks.length,
@@ -274,27 +302,25 @@ function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
     traceEvents: events.length,
   };
 }
+type Analysis = ReturnType<typeof analyse>;
 
-async function measure(page: Page, browser: import("@playwright/test").Browser) {
-  if (process.env["R64_TRACE"] !== "0")
-    await browser.startTracing(page, {
-      categories: [
-        "-*",
-        "devtools.timeline",
-        "disabled-by-default-devtools.timeline",
-        "toplevel",
-        "v8",
-        "v8.gc",
-        // Compositor frame outcomes (PipelineReporter, state DROPPED): catches a raster or GPU
-        // stall with an idle main thread.
-        "benchmark",
-        "rail",
-        // Diagnostics only (R64_PROFILE=1): V8 sampling profile, to see which functions cost time.
-        ...(process.env["R64_PROFILE"] === "1" ? ["disabled-by-default-v8.cpu_profiler"] : []),
-      ],
-    });
-  // The window is bounded inside the page (start/stop evaluates), so tracing start-up and
-  // shut-down time does not count toward the window or the delivered rate.
+async function measure(page: Page, browser: Browser) {
+  await browser.startTracing(page, {
+    categories: [
+      "-*",
+      "devtools.timeline",
+      "disabled-by-default-devtools.timeline",
+      "toplevel",
+      "v8",
+      "v8.gc",
+      // Compositor frame outcomes (PipelineReporter, state DROPPED): catches a raster or GPU
+      // stall with an idle main thread.
+      "benchmark",
+      "rail",
+    ],
+  });
+  // The window is bounded inside the page and marked in the trace (console.timeStamp), so tracing
+  // start-up and shut-down time counts toward neither the window nor the delivered rate.
   const t0 = await page.evaluate(() => {
     const w = window as unknown as { __perf: Perf; __drive?: { delivered: number } };
     const r = w.__perf;
@@ -304,6 +330,7 @@ async function measure(page: Page, browser: import("@playwright/test").Browser) 
     r.longtasks = [];
     r.wsSession = 0;
     r.on = true;
+    console.timeStamp("r64-start");
     return { at: performance.now(), delivered: w.__drive?.delivered ?? 0 };
   });
   await sleep(WINDOW_MS);
@@ -311,25 +338,15 @@ async function measure(page: Page, browser: import("@playwright/test").Browser) 
     const w = window as unknown as { __perf: Perf; __drive?: { delivered: number } };
     const r = w.__perf;
     r.on = false;
+    console.timeStamp("r64-end");
     return {
       data: { ...r, hw: navigator.hardwareConcurrency },
       t1: { at: performance.now(), delivered: w.__drive?.delivered ?? 0 },
     };
   });
-  const wallMs = t1.at - t0.at;
-  const delivered = t1.delivered - t0.delivered;
-  const buf =
-    process.env["R64_TRACE"] === "0"
-      ? Buffer.from('{"traceEvents":[]}')
-      : await browser.stopTracing();
-  return { buf, wallMs, data, delivered };
+  const buf = await browser.stopTracing();
+  return { buf, wallMs: t1.at - t0.at, data, delivered: t1.delivered - t0.delivered };
 }
-
-const isClean = (m: ReturnType<typeof analyse>) =>
-  m.droppedFrameIntervals === 0 &&
-  m.longTasksObserver === 0 &&
-  m.longTasksTrace === 0 &&
-  m.pipeline.dropped === 0;
 
 /** CPU probe: median ms of five fixed spins on the page's main thread. Slower than usual = a busy host. */
 const calibrate = (page: Page): Promise<number> =>
@@ -345,107 +362,113 @@ const calibrate = (page: Page): Promise<number> =>
     return times.sort((a, b) => a - b)[2]!;
   });
 
+interface Win {
+  mode: DriveMode;
+  m: Analysis;
+  buf: Buffer;
+  run: Awaited<ReturnType<typeof measure>>;
+  gate: GateWindow;
+  row: Row;
+}
+
 /**
- * Measures `n` consecutive windows on the running page.
- *
- * Host guard (only with `guard`): the shared host sometimes runs everything 1.5 to 2 times slower
- * for seconds (the same trace events take longer for the same work). A CPU probe runs just before
- * and just after each window. A window whose slower probe is more than HOST_SLOWDOWN times the
- * fastest probe seen in the test is HOST-DEGRADED: it is listed in `skipped` with all its numbers
- * and measured again, up to EXTRA_WINDOWS times. A window is never skipped for its own drop counts,
- * only for the probe. If fewer than `n` healthy windows come out, the caller must FAIL (the host was
- * too noisy to judge), not pass.
+ * Measures one window per entry of `modes`, in order, on the running page. `setMode` switches the
+ * load (store deltas or the paint control). Every window is kept.
  */
-async function measureWindows(
+async function runWindows(
   page: Page,
-  browser: import("@playwright/test").Browser,
-  n: number,
-  deliveredOf: (run: Awaited<ReturnType<typeof measure>>) => number,
-  guard: boolean,
-  stopWhen?: (m: ReturnType<typeof analyse>) => boolean,
-) {
-  type W = {
-    run: Awaited<ReturnType<typeof measure>>;
-    m: ReturnType<typeof analyse>;
-    row: Record<string, unknown>;
-    probeMs: number;
-  };
-  const all: W[] = [];
-  const probes: number[] = [];
+  browser: Browser,
+  modes: readonly DriveMode[],
+  setMode: (m: DriveMode) => Promise<void>,
+  deliveredOf: (run: Awaited<ReturnType<typeof measure>>, mode: DriveMode) => number,
+): Promise<{ wins: Win[]; fastestProbeMs: number }> {
   // Primer: the first trace of a page's life makes Chromium start its tracing agents and re-enable
   // compositor frame reporting while the page runs, which drops frames in that window (seen as 25 to
   // 100 STATE_DROPPED in window 1 and 1 to 4 afterwards, with the same app). One traced, discarded
   // period first, so every measured window is a steady-state window.
-  if (process.env["R64_TRACE"] !== "0") {
-    await browser.startTracing(page, {
-      categories: ["-*", "devtools.timeline", "benchmark", "rail"],
-    });
-    await sleep(PRIMER_MS);
-    await browser.stopTracing();
-  }
-  const degraded = (w: W) => guard && w.probeMs > HOST_SLOWDOWN * Math.min(...probes);
-  const healthy = () => all.filter((w) => !degraded(w));
-  for (let k = 1; k <= n + (guard ? EXTRA_WINDOWS : 0); k++) {
-    if (healthy().length >= n && (stopWhen === undefined || healthy().some((w) => stopWhen(w.m))))
-      break;
+  await browser.startTracing(page, { categories: ["-*", "devtools.timeline", "benchmark", "rail"] });
+  await sleep(PRIMER_MS);
+  await browser.stopTracing();
+  const wins: Win[] = [];
+  const probes: number[] = [];
+  const probeOf: [number, number][] = [];
+  for (const [k, mode] of modes.entries()) {
+    await setMode(mode);
+    await sleep(SETTLE_MS);
     const before = await calibrate(page);
     const run = await measure(page, browser);
     const after = await calibrate(page);
     probes.push(before, after);
+    probeOf.push([before, after]);
     const m = analyse(run.buf, run.wallMs, run.data);
-    all.push({
-      run,
+    const a = m.attribution;
+    const longTasks = Math.max(m.longTasksObserver, m.longTasksTrace);
+    const gate: GateWindow = {
+      mode,
+      appDrops: a?.appDrops ?? Number.POSITIVE_INFINITY,
+      longTasks,
+      otherDrops: a?.otherDrops ?? Number.POSITIVE_INFINITY,
+      maxOtherGapVsyncs: a?.maxOtherGapVsyncs ?? Number.POSITIVE_INFINITY,
+    };
+    wins.push({
+      mode,
       m,
-      probeMs: Math.max(before, after),
+      buf: run.buf,
+      run,
+      gate,
       row: {
-        attempt: k,
+        window: k + 1,
+        mode,
         probeBeforeMs: r2(before),
         probeAfterMs: r2(after),
         frames: m.frames,
-        droppedFrames: m.droppedFrameIntervals,
+        rafGapDropsInPage: m.droppedFrameIntervals,
+        rafGapDrops: a?.rafGaps ?? null,
+        compositorDrops: a?.compositorDrops ?? null,
+        appDrops: a?.appDrops ?? null,
+        hostDrops: a?.otherDrops ?? null,
         maxIntervalMs: m.frameIntervalMs.max,
+        maxGapTraceMs: a?.maxGapMs ?? null,
+        medianGapTraceMs: a?.medianGapMs ?? null,
         p99IntervalMs: m.frameIntervalMs.p99,
-        longTasks: m.longTasksTrace,
-        pipelineReported: m.pipeline.total,
-        pipelineDropped: m.pipeline.dropped,
-        droppedAt: m.pipeline.droppedAt,
-        deliveredPerSec: r2(deliveredOf(run) / (run.wallMs / 1000)),
-        clean: isClean(m),
+        maxHostGapVsyncs: a?.maxOtherGapVsyncs ?? null,
+        longTasks,
+        longTasksObserver: m.longTasksObserver,
+        longTasksTrace: m.longTasksTrace,
+        compositorFramesReported: a?.compositorFrames ?? null,
+        scriptMsPerSecond: m.scriptMsPerSecond,
+        mainThreadBusyPct: m.mainThreadBusyPct,
+        deliveredPerSec: r2(deliveredOf(run, mode) / (run.wallMs / 1000)),
+        drops: a?.drops ?? [],
       },
     });
   }
   const fastest = Math.min(...probes);
-  const mark = (w: W, i: number): Record<string, unknown> => ({
-    ...w.row,
-    hostSlowdown: r2(w.probeMs / fastest),
-    hostDegraded: degraded(w),
-    window: i + 1,
+  wins.forEach((w, i) => {
+    w.row["hostSlowdown"] = r2(Math.max(...probeOf[i]!) / fastest);
   });
-  const kept = stopWhen === undefined ? healthy().slice(0, n) : healthy();
-  return {
-    kept: kept.map((w, i) => ({ ...w, row: mark(w, i) })),
-    skipped: all.filter(degraded).map((w, i) => mark(w, i)),
-    fastestProbeMs: r2(fastest),
-    enough: kept.length >= n,
-  };
+  return { wins, fastestProbeMs: r2(fastest) };
 }
 
-type Windows = Awaited<ReturnType<typeof measureWindows>>["kept"];
-
-/** Structural checks on every window of every case; drop counts are checked by expectNoDrops. */
+/** Structural checks on every window of every case; drop counts are judged by judgeGate. */
 function expectSound(
   name: string,
   perSec: number,
-  ws: Windows,
+  wins: readonly Win[],
   panes: Awaited<ReturnType<typeof paneState>>,
   minRows = 20,
+  cap: number | null = 500,
 ) {
-  for (const { m, row } of ws) {
-    const tag = `${name} window ${row["window"]}`;
+  for (const { m, row } of wins) {
+    const tag = `${name} window ${row["window"]} (${row["mode"]})`;
     expect(row["deliveredPerSec"], `${tag}: delivered deltas per second`).toBeGreaterThanOrEqual(
       perSec * 0.95,
     );
     expect(m.mainThreads, `${tag}: renderer main thread found in trace`).toBeGreaterThan(0);
+    expect(m.markedWindow, `${tag}: r64 marks in trace`).toBe(true);
+    expect(m.attribution?.frames, `${tag}: frames in trace window`).toBeGreaterThanOrEqual(
+      (WINDOW_MS / 1000) * 50,
+    );
     expect(m.countedTasks, `${tag}: tasks counted in trace`).toBeGreaterThanOrEqual(500);
     expect(m.pipeline.total, `${tag}: PipelineReporter frames in trace`).toBeGreaterThan(100);
     expect(m.frames, `${tag}: frames in window`).toBeGreaterThanOrEqual((WINDOW_MS / 1000) * 50);
@@ -458,42 +481,78 @@ function expectSound(
     expect(p.total, `${p.session}: rows buffered`).toBeGreaterThan(minRows);
     expect(p.domRows, `${p.session}: DOM rows bounded`).toBeLessThan(60);
     expect(p.pinned, `${p.session}: pinned to bottom`).toBe("true");
+    if (cap !== null)
+      expect(p.logRows, `${p.session}: log at the cap (trim on every update)`).toBe(cap);
   }
 }
 
-/** A gate-clean window: no rAF gap, no long task, compositor drops within the budget. */
-const gateClean = (m: ReturnType<typeof analyse>) =>
-  m.droppedFrameIntervals === 0 &&
-  m.longTasksObserver === 0 &&
-  m.longTasksTrace === 0 &&
-  m.pipeline.dropped <= Math.floor(COMPOSITOR_DROP_BUDGET * m.pipeline.total);
+/** Table of every window for the test log. */
+const table = (wins: readonly Win[]): string =>
+  wins
+    .map((w) => {
+      const r = w.row;
+      return `w${r["window"]} ${String(r["mode"]).padEnd(7)} frames=${r["frames"]} rafGaps=${r["rafGapDrops"]} app=${r["appDrops"]} host=${r["hostDrops"]} comp=${r["compositorDrops"]} maxInt=${r["maxIntervalMs"]} long=${r["longTasks"]} slow=${r["hostSlowdown"]}`;
+    })
+    .join("\n");
 
-/**
- * The requirement: at least one healthy window of a gate case is gate-clean. A page that really
- * misses frames at 20 deltas/s misses them in every window (a flush every 50 ms); the shared host
- * stalls sporadically (the idle and paint controls show the same stray drops). All windows' numbers
- * are in the JSON.
- */
-function expectNoDrops(name: string, ws: Windows) {
-  const clean = ws.filter((w) => gateClean(w.m));
-  const detail = ws
-    .map(
-      (w) =>
-        `w${w.row["window"]}: gaps=${w.m.droppedFrameIntervals} long=${w.m.longTasksTrace} comp=${w.m.pipeline.dropped}/${w.m.pipeline.total}`,
-    )
-    .join("; ");
-  expect(clean.length, `${name}: no gate-clean window (${detail})`).toBeGreaterThan(0);
+function record(
+  name: string,
+  gate: boolean,
+  wins: readonly Win[],
+  verdict: { pass: boolean; failures: string[] } | null,
+  extra: Row,
+): CaseResult {
+  const res: CaseResult = {
+    gate,
+    rule: gate
+      ? `ABBA, 8 windows, every one counts: board windows 0 app drops (>= ${APP_WORK_MS} ms of own main-thread work in the gap) and 0 long tasks; host drops board <= control + 1; no host gap over 2 vsyncs`
+      : "informational: measured and reported, drop counts do not fail the test",
+    pass: verdict?.pass ?? null,
+    failures: verdict?.failures ?? [],
+    windows: wins.map((w) => w.row),
+    ...extra,
+  };
+  summaries[name] = res;
+  console.log(`R6.4 ${name} verdict=${verdict ? (verdict.pass ? "PASS" : "FAIL") : "n/a"}\n${table(wins)}`);
+  writeEvidence();
+  return res;
+}
+
+function saveBoardTraces(name: string, wins: readonly Win[]): void {
+  for (const w of wins)
+    if (w.mode === "board")
+      writeFileSync(
+        join(SCREENS_DIR, `R6.4-trace-${name}-w${w.row["window"]}.json.gz`),
+        gzipSync(w.buf),
+      );
 }
 
 test.describe("mock build, in-page delivery", () => {
   test.skip(LIVE.hubUrl !== "", "mock build only (the live variant is below)");
 
-  for (const c of CASES) {
+  const MOCK_CASES = [
+    {
+      name: "board-20",
+      perSec: 20,
+      gate: true,
+      modes: ABBA,
+      perTick: (t: number) => [t % 6],
+    },
+    {
+      name: "strict-120",
+      perSec: 120,
+      gate: false,
+      modes: ["board", "board", "board"] as const,
+      perTick: () => [0, 1, 2, 3, 4, 5],
+    },
+  ] as const;
+
+  for (const c of MOCK_CASES) {
     test(`R6.4 six panes, ${c.name}: ${c.perSec} deltas/s, 0 dropped frames${c.gate ? "" : " (informational)"}`, async ({
       page,
       browser,
     }) => {
-      test.setTimeout(240_000);
+      test.setTimeout(600_000);
       await installProbes(page);
       await page.goto("/layout?replay=fast&preset=pair");
       await expect(page.locator("html")).toHaveAttribute("data-replay", "done", {
@@ -502,10 +561,17 @@ test.describe("mock build, in-page delivery", () => {
 
       const load = createLoad({ hosts: ["h1", "h2"], sessions: 6 });
       const setup = [...load.setupBatch("h1"), ...load.setupBatch("h2")];
-      const ticks: Record<string, unknown>[][] = Array.from({ length: TICKS }, (_, t) =>
-        c.perTick(t).map((i) => load.nextFor(i)),
-      );
       const ids = load.sessions.map((s) => s.id);
+      // Seed: enough deltas that every log is past the cap before the first measurement (~3 rows per
+      // delta at most; 400 per session is generous), so the steady state trims on every update.
+      const seed = Array.from({ length: 400 * 6 }, (_, i) => load.nextFor(i % 6));
+      // The schedule is sized from the run: warm-up + primer + windows, never replayed.
+      const totalMs =
+        WARMUP_MS + PRIMER_MS + c.modes.length * (WINDOW_MS + WINDOW_OVERHEAD_MS) + 30_000;
+      const ticks: Record<string, unknown>[][] = Array.from(
+        { length: Math.ceil(totalMs / TICK_MS) },
+        (_, t) => c.perTick(t).map((i) => load.nextFor(i)),
+      );
 
       await page.evaluate((envs) => {
         const board = (
@@ -530,6 +596,7 @@ test.describe("mock build, in-page delivery", () => {
           ),
         )
         .toBe(6);
+      await seedLogs(page, seed, ids, 500);
       await page.locator("body").click({ position: { x: 5, y: 5 } });
       await page.keyboard.press("a");
       await expect(page.getByTestId("layout")).toHaveAttribute("data-layout-id", "grid6");
@@ -539,28 +606,31 @@ test.describe("mock build, in-page delivery", () => {
       expect([...held].sort()).toEqual([...ids].sort());
 
       // The in-page delivery timer: fixed schedule (no drift), restamped with the current time.
+      // `mode` picks what a tick does: "board" enqueues the deltas, "control" only repaints a dot.
       await page.evaluate(
-        ([schedule, tickMs, driver]) => {
+        ([schedule, tickMs]) => {
           const w = window as unknown as {
             __sd: { board: { getState: () => { enqueue: (e: unknown) => void } } };
-            __drive: { delivered: number; stop: boolean };
+            __drive: { delivered: number; stop: boolean; mode: string; exhausted: boolean };
           };
           const { enqueue } = w.__sd.board.getState();
-          const st = { delivered: 0, stop: false };
-          let dot: HTMLElement | null = null;
-          if (driver === "paint") {
-            dot = document.createElement("div");
-            dot.style.cssText =
-              "position:fixed;right:0;bottom:0;width:24px;height:24px;pointer-events:none;z-index:1";
-            document.body.appendChild(dot);
-          }
+          const st = { delivered: 0, stop: false, mode: "board", exhausted: false };
+          const dot = document.createElement("div");
+          dot.style.cssText =
+            "position:fixed;right:0;bottom:0;width:24px;height:24px;pointer-events:none;z-index:1";
+          document.body.appendChild(dot);
           w.__drive = st;
           const t0 = performance.now();
           let i = 0;
           const step = () => {
             if (st.stop) return;
-            for (const e of schedule[i % schedule.length]!) {
-              if (dot) dot.style.background = st.delivered % 2 ? "#888" : "#444";
+            const batch = schedule[i];
+            if (batch === undefined) {
+              st.exhausted = true; // a replayed schedule would make state jump backward: refuse
+              return;
+            }
+            for (const e of batch) {
+              if (st.mode === "control") dot.style.background = st.delivered % 2 ? "#888" : "#444";
               else enqueue({ ...(e as object), ts: Date.now() });
               st.delivered++;
             }
@@ -569,61 +639,49 @@ test.describe("mock build, in-page delivery", () => {
           };
           step();
         },
-        [ticks, TICK_MS, c.driver] as const,
+        [ticks, TICK_MS] as const,
       );
 
       await sleep(WARMUP_MS);
-      const res = await measureWindows(
+      const { wins, fastestProbeMs } = await runWindows(
         page,
         browser,
-        GATE_WINDOWS,
+        c.modes,
+        (mode) =>
+          page.evaluate((m) => {
+            (window as unknown as { __drive: { mode: string } }).__drive.mode = m;
+          }, mode),
         (r) => r.delivered,
-        c.gate,
-        c.gate ? gateClean : undefined,
       );
-      const ws = res.kept;
       await page.screenshot({
         path: shot(`R6.4-six-panes${c.name === "strict-120" ? "" : `-${c.name}`}.png`),
       });
       if (c.name === "strict-120") await page.screenshot({ path: shot("R6.4.png") });
       const panes = await paneState(page);
+      const exhausted = await page.evaluate(
+        () => (window as unknown as { __drive: { exhausted: boolean } }).__drive.exhausted,
+      );
       await page.evaluate(() => {
         (window as unknown as { __drive: { stop: boolean } }).__drive.stop = true;
       });
 
-      const last = ws[ws.length - 1]!;
-      summaries[c.name] = {
-        gate: c.gate,
-        rule: c.gate
-          ? `at least one of ${GATE_WINDOWS} to ${GATE_WINDOWS + EXTRA_WINDOWS} healthy windows is clean: 0 rAF-gap drops, 0 long tasks, STATE_DROPPED within ${COMPOSITOR_DROP_BUDGET * 100} % of frames`
-          : "informational: measured and reported, drop counts do not fail the test",
+      const verdict = c.gate ? judgeGate(wins.map((w) => w.gate)) : null;
+      record(c.name, c.gate, wins, verdict, {
         definition: {
-          ratePerSession: c.name === "strict-120" ? 20 : 20 / 6,
           totalDeltasPerSec: c.perSec,
           tickMs: TICK_MS,
           warmupMs: WARMUP_MS,
-          droppedFrame:
-            "rAF gap > 1.5 x median in window, a main-thread task > 50 ms, or a compositor frame in STATE_DROPPED",
+          windowMs: WINDOW_MS,
+          appWorkMs: APP_WORK_MS,
+          scheduleTicks: ticks.length,
         },
-        windows: ws.map((w) => w.row),
-        hostDegradedWindows: res.skipped,
-        fastestProbeMs: res.fastestProbeMs,
-        allWindowsClean: ws.every((w) => isClean(w.m)),
-        deliveredDeltas: last.run.delivered,
+        fastestProbeMs,
         panes,
-        ...last.m,
-      };
-      console.log(`R6.4 ${c.name} ${JSON.stringify(summaries[c.name])}`);
-      writeEvidence();
-      if (c.gate) {
-        writeFileSync(join(SCREENS_DIR, `R6.4-trace-${c.name}.json.gz`), gzipSync(ws[0]!.run.buf));
-      }
-      expect(
-        res.enough,
-        `${c.name}: ${GATE_WINDOWS} healthy windows (host too noisy to judge; see hostDegradedWindows)`,
-      ).toBe(true);
-      if (c.driver === "store" && c.perSec > 0) expectSound(c.name, c.perSec, ws, panes);
-      if (c.gate) expectNoDrops(c.name, ws);
+      });
+      saveBoardTraces(c.name, c.gate ? wins : []);
+      expect(exhausted, `${c.name}: the delivery schedule ran out (state would replay)`).toBe(false);
+      expectSound(c.name, c.perSec, wins, panes);
+      if (verdict) expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
     });
   }
 });
@@ -634,20 +692,19 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
     "live variant: set SD_E2E_HUB_URL (scripts/e2e-live.sh, SD_E2E_ARGS=R6.4)",
   );
 
-  // Same two rates through the hub: the generator POSTs /ingest, the hub broadcasts `session`
+  // Same ABBA run through the hub: the generator POSTs /ingest, the hub broadcasts `session`
   // messages, the page's WebSocket delivers them. 6 sessions over 2 hosts, 3 per host per tick:
-  // 2 x 3 / 50 ms = 120/s, 2 x 3 / 300 ms = 20/s.
+  // 2 x 3 / 300 ms = 20/s. Control windows stop the generator and repaint a dot at 20/s.
   const LIVE_CASES = [
-    { name: "live-strict-120", perSec: 120, tickMs: 50, gate: false },
-    { name: "live-board-20", perSec: 20, tickMs: 300, gate: true },
+    { name: "live-board-20", perSec: 20, tickMs: 300, gate: true, modes: ABBA },
   ] as const;
 
   for (const c of LIVE_CASES) {
-    test(`R6.4 ${c.name}: six panes at ${c.perSec} deltas/s through the hub, 0 dropped frames${c.gate ? "" : " (informational)"}`, async ({
+    test(`R6.4 ${c.name}: six panes at ${c.perSec} deltas/s through the hub, 0 dropped frames`, async ({
       page,
       browser,
     }) => {
-      test.setTimeout(240_000);
+      test.setTimeout(600_000);
       await installProbes(page);
       await configureHub(page);
       // Distinct hosts per case: the hub drops (host, seq) pairs it has seen, and each generator
@@ -685,56 +742,60 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
           })
           .toBe(6);
         load.run();
+        // In-page control: a dot repainted at 20/s, switched on while the generator is stopped.
+        await page.evaluate(() => {
+          const w = window as unknown as { __drive: { delivered: number; control: boolean } };
+          const dot = document.createElement("div");
+          dot.style.cssText =
+            "position:fixed;right:0;bottom:0;width:24px;height:24px;pointer-events:none;z-index:1";
+          document.body.appendChild(dot);
+          const st = { delivered: 0, control: false };
+          w.__drive = st;
+          const t0 = performance.now();
+          let i = 0;
+          const step = () => {
+            if (st.control) {
+              dot.style.background = st.delivered % 2 ? "#888" : "#444";
+              st.delivered++;
+            }
+            i++;
+            setTimeout(step, Math.max(0, t0 + i * 50 - performance.now()));
+          };
+          step();
+        });
         await sleep(WARMUP_MS);
-        // Deltas delivered = `session` WebSocket messages the page received in the window.
-        const res = await measureWindows(
+        let running = true; // the generator was started above
+        const { wins, fastestProbeMs } = await runWindows(
           page,
           browser,
-          GATE_WINDOWS,
-          (r) => r.data.wsSession,
-          c.gate,
-          c.gate ? gateClean : undefined,
+          c.modes,
+          async (mode) => {
+            if (mode === "control" && running) {
+              await load.stop();
+              running = false;
+            } else if (mode === "board" && !running) {
+              load.run();
+              running = true;
+            }
+            await page.evaluate((m) => {
+              (window as unknown as { __drive: { control: boolean } }).__drive.control =
+                m === "control";
+            }, mode);
+          },
+          // Deltas delivered = `session` WebSocket messages the page received in the window
+          // (board), or the dot repaints (control).
+          (r, mode) => (mode === "board" ? r.data.wsSession : r.delivered),
         );
-        const ws = res.kept;
         await page.screenshot({ path: shot(`R6.4-six-panes-${c.name}.png`) });
         const panes = await paneState(page);
         const stats = await load.stop();
-        const last = ws[ws.length - 1]!;
-        summaries[c.name] = {
-          gate: c.gate,
-          rule: c.gate
-            ? `at least one of ${GATE_WINDOWS} to ${GATE_WINDOWS + EXTRA_WINDOWS} healthy windows is clean: 0 rAF-gap drops, 0 long tasks, STATE_DROPPED within ${COMPOSITOR_DROP_BUDGET * 100} % of frames`
-            : "informational: measured and reported, drop counts do not fail the test",
-          windows: ws.map((w) => w.row),
-          hostDegradedWindows: res.skipped,
-          fastestProbeMs: res.fastestProbeMs,
-          allWindowsClean: ws.every((w) => isClean(w.m)),
-          generatorPerSec: r2(stats.ratePerSec),
-          wsSessionMessagesLastWindow: last.run.data.wsSession,
-          failedPosts: stats.failedPosts,
-          panes,
-          ...last.m,
-        };
-        console.log(`R6.4 ${c.name} ${JSON.stringify(summaries[c.name])}`);
-        writeEvidence();
-        writeEvidence();
-        if (c.gate) {
-          writeFileSync(
-            join(SCREENS_DIR, `R6.4-trace-${c.name}.json.gz`),
-            gzipSync(ws[0]!.run.buf),
-          );
-        }
+        const verdict = judgeGate(wins.map((w) => w.gate));
+        record(c.name, c.gate, wins, verdict, { fastestProbeMs, failedPosts: stats.failedPosts, panes });
+        saveBoardTraces(c.name, wins);
         expect(stats.failedPosts, "ingest posts failed").toBe(0);
-        expect(stats.ratePerSec, "generator deltas per second").toBeGreaterThanOrEqual(
-          c.perSec * 0.95,
-        );
         // Hub snapshots only produce a row when something visible changed, so fewer rows than mock.
-        expect(
-          res.enough,
-          `${c.name}: ${GATE_WINDOWS} healthy windows (host too noisy to judge; see hostDegradedWindows)`,
-        ).toBe(true);
-        expectSound(c.name, c.perSec, ws, panes, 8);
-        if (c.gate) expectNoDrops(c.name, ws);
+        expectSound(c.name, c.perSec, wins, panes, 8, null);
+        expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
       } finally {
         await load.stop();
         await load.end();
