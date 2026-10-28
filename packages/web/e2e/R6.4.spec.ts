@@ -51,9 +51,13 @@ import { SCREENS_DIR } from "./screens-dir";
  *     1.5 x the window's median gap apart (the in-page rAF loop runs in every one);
  *   - a COMPOSITOR drop: a PipelineReporter frame in STATE_DROPPED.
  *  ATTRIBUTION: for each drop, the renderer main-thread work inside the gap (or the dropped frame's
- *  interval) is summed as the union of script, layout/style, paint/commit and GC events. APP_WORK_MS
- *  (8 ms) or more: the page's own work filled it, the drop is the APP's. Less: the main thread was
- *  idle or waiting, the drop is the HOST's (descheduled thread, slow raster or GPU).
+ *  interval) is summed over script, layout/style, paint/commit and GC events. APP_WORK_MS (8 ms) or
+ *  more: the page's own work filled it, the drop is the APP's. Less: the main thread was idle or
+ *  waiting, the drop is the HOST's (descheduled thread, slow raster or GPU). "Work" is the CPU time
+ *  the thread ran (the trace's tdur), not the wall time of the events: on an oversubscribed host a
+ *  descheduled thread stretches the same Paint from 1 ms to 12 ms of wall time, which would make the
+ *  CONTROL windows (a 24 px dot, no app work) show app drops. The wall-time verdict is computed
+ *  the same way and written next to it (`verdictByWallTime`, `appDropsByWallTime`).
  *  LONG TASK: a main-thread task over 50 ms (PerformanceObserver and the trace's top-level RunTask).
  *
  *  GATE (judgeGate in e2e/load/gate.ts, unit-tested): PASS only if
@@ -286,6 +290,8 @@ function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
     },
     markedWindow: window !== null,
     attribution: window === null ? null : attributeDrops(events, { window }),
+    attributionWall:
+      window === null ? null : attributeDrops(events, { window, basis: "wall" }),
     pipeline: pipelineFrames(events),
     transitionEnds: data.transitionEnds,
     longTasksObserver: data.longtasks.length,
@@ -368,6 +374,7 @@ interface Win {
   buf: Buffer;
   run: Awaited<ReturnType<typeof measure>>;
   gate: GateWindow;
+  gateWall: GateWindow;
   row: Row;
 }
 
@@ -403,19 +410,21 @@ async function runWindows(
     const m = analyse(run.buf, run.wallMs, run.data);
     const a = m.attribution;
     const longTasks = Math.max(m.longTasksObserver, m.longTasksTrace);
-    const gate: GateWindow = {
+    const gateOf = (x: typeof a, long: number): GateWindow => ({
       mode,
-      appDrops: a?.appDrops ?? Number.POSITIVE_INFINITY,
-      longTasks,
-      otherDrops: a?.otherDrops ?? Number.POSITIVE_INFINITY,
-      maxOtherGapVsyncs: a?.maxOtherGapVsyncs ?? Number.POSITIVE_INFINITY,
-    };
+      appDrops: x?.appDrops ?? Number.POSITIVE_INFINITY,
+      longTasks: long,
+      otherDrops: x?.otherDrops ?? Number.POSITIVE_INFINITY,
+      maxOtherGapVsyncs: x?.maxOtherGapVsyncs ?? Number.POSITIVE_INFINITY,
+    });
+    const gate = gateOf(a, longTasks);
     wins.push({
       mode,
       m,
       buf: run.buf,
       run,
       gate,
+      gateWall: gateOf(m.attributionWall, longTasks),
       row: {
         window: k + 1,
         mode,
@@ -427,6 +436,8 @@ async function runWindows(
         compositorDrops: a?.compositorDrops ?? null,
         appDrops: a?.appDrops ?? null,
         hostDrops: a?.otherDrops ?? null,
+        appDropsByWallTime: m.attributionWall?.appDrops ?? null,
+        hostDropsByWallTime: m.attributionWall?.otherDrops ?? null,
         maxIntervalMs: m.frameIntervalMs.max,
         maxGapTraceMs: a?.maxGapMs ?? null,
         medianGapTraceMs: a?.medianGapMs ?? null,
@@ -667,6 +678,7 @@ test.describe("mock build, in-page delivery", () => {
 
       const verdict = c.gate ? judgeGate(wins.map((w) => w.gate)) : null;
       record(c.name, c.gate, wins, verdict, {
+        verdictByWallTime: c.gate ? judgeGate(wins.map((w) => w.gateWall)) : null,
         definition: {
           totalDeltasPerSec: c.perSec,
           tickMs: TICK_MS,
@@ -790,7 +802,9 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
         const panes = await paneState(page);
         const stats = await load.stop();
         const verdict = judgeGate(wins.map((w) => w.gate));
-        record(c.name, c.gate, wins, verdict, { fastestProbeMs, failedPosts: stats.failedPosts, panes });
+        record(c.name, c.gate, wins, verdict, {
+          verdictByWallTime: judgeGate(wins.map((w) => w.gateWall)),
+          fastestProbeMs, failedPosts: stats.failedPosts, panes });
         saveBoardTraces(c.name, wins);
         expect(stats.failedPosts, "ingest posts failed").toBe(0);
         // Hub snapshots only produce a row when something visible changed, so fewer rows than mock.
