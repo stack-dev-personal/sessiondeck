@@ -40,3 +40,11 @@
 - Commit 0c4962a. Tests 368 pass / 1 skip; bench 293 files run1 276 ms, run2 0 shipped.
 - Reviewer: fix-then-merge (BLOCKING invalid archive config stops forwarding; MAJOR outbox not synced before index write; MAJOR install/wiring untested; MAJOR junction root). Security: Gate fail (HIGH URL credential and connection string redaction gaps; MEDIUM intermediate symlink escape; MEDIUM config).
 - Decision D-S9b-4: the configured root may itself be a link (user chose it): resolve realpath once; every directory and file below must stay inside that realpath; intermediate links refused and counted. Resolves the reviewer/security disagreement.
+- Iteration 2 (de1237c): reviewer `merge` (no findings); security `Gate: pass` with 2 MEDIUM redaction gaps, fixed in a246a11 (iteration 3): security `Gate: pass`, LOWs only. Tests 405 pass / 1 skip; bench 293 files 521 ms through a real outbox.
+- Status: done (review), verification after U4.
+
+## Deferred findings (U2)
+- LOW redact.ts:91-93,108-121 pass ordering (CLI_FLAG/UPPER_ENV can consume ENV_LINE anchor: `--password = x`, `X_TOKEN api_key: x`): folded into U4.
+- LOW redact.ts:57-60 BLOCK_HEAD misses trailing comment, tag, leading-quote key: folded into U4.
+- LOW redact.ts:90-93 open-ended CLI credential forms (--user=u:p, -uuser:pass, --api_key, mysql -pSECRET): tracked gap for S7 (Phase 4 redaction absorbs archive redactor).
+- LOW importer.ts:298 open()/realpath TOCTOU window (0 leaks in 3000-flip race; attacker already has vault write): deferred.
