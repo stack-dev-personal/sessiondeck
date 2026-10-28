@@ -1,0 +1,10 @@
+{
+  "agentType": "<AGENT_4>",
+  "isBuiltIn": false,
+  "description": "U1 pin bun devDependency",
+  "toolUseId": "toolu_01Bz1V6c1XNApE7a64HK5uCT",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_4>",
+  "description": "U4 decisions docs and guard",
+  "toolUseId": "toolu_011tAdiqc7qrFUw7psUYWsaF",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

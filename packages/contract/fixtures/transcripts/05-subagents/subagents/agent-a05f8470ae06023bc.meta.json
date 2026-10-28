@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_11>",
+  "description": "Security gate on U1 fixtures",
+  "toolUseId": "toolu_01EeqentSSnt2PGS5mbUPHve",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}
