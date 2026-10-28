@@ -1,6 +1,7 @@
 import { AGENT_ID_MAX_CHARS, truncate } from "./limits";
 import { asRecord } from "./payload";
 import type { SessionState } from "./state";
+import { normalizeSubagentLinks } from "./subagent-links";
 
 /** One rate-limit window. resets_at is epoch ms (converted from the payload's seconds). */
 export interface Window {
@@ -160,6 +161,26 @@ export function readSubagentRow(row: unknown): SubagentSnapshot {
   return {
     ...raw,
     parent_agent_id: id,
-    parent_known: raw["parent_known"] === true,
+    parent_known: raw["parent_known"] === true && (parent === null || typeof parent === "string"),
   } as unknown as SubagentSnapshot;
+}
+
+/**
+ * A stored subagents value read defensively: [] for a non-array; elements that are not plain objects
+ * or lack a string agent_id are dropped; each row goes through readSubagentRow; then links are
+ * normalized over the whole list (a parent that is not in the list, or on a parent cycle, reads
+ * null / unknown). Same normalizer as the reducer's write path.
+ */
+export function readSubagentRows(raw: unknown): SubagentSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const rows = raw
+    .filter(
+      (r): r is Record<string, unknown> =>
+        typeof r === "object" &&
+        r !== null &&
+        !Array.isArray(r) &&
+        typeof (r as Record<string, unknown>)["agent_id"] === "string",
+    )
+    .map((r) => readSubagentRow(r));
+  return normalizeSubagentLinks(rows);
 }

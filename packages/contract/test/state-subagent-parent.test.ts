@@ -7,11 +7,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AGENT_ID_MAX_CHARS, PENDING_SPAWNS_MAX } from "../src/limits";
+import { AGENT_ID_MAX_CHARS, PENDING_SPAWNS_MAX, SUBAGENT_ROWS_MAX } from "../src/limits";
 import { readTracking } from "../src/tracking";
 import { reduce } from "../src/state";
 import type { SessionSnapshot } from "../src/snapshot";
-import { readSubagentRow } from "../src/snapshot";
+import { readSubagentRow, readSubagentRows } from "../src/snapshot";
 import { FIXTURES_DIR } from "./helpers";
 import { hook, snap } from "./state-helpers";
 
@@ -111,19 +111,73 @@ describe("subagent parent links", () => {
     expect(row(s, "A")?.parent_agent_id).toBeNull();
   });
 
-  it("a failed Agent call (PostToolUseFailure) drops its pending spawn", () => {
+  const failAgent = (s: SessionSnapshot, by: string | null): SessionSnapshot =>
+    reduce(
+      s,
+      hook(
+        "PostToolUseFailure",
+        { ...agentPre, hook_event_name: "PostToolUseFailure" },
+        (t += 1),
+        by === null ? {} : { agent_id: by },
+      ),
+    );
+  const stop = (s: SessionSnapshot, id: string): SessionSnapshot =>
+    reduce(s, hook("SubagentStop", { agent_id: id }, (t += 1), { agent_id: id }));
+
+  it("a failed Agent call keeps pending entries and marks the whole list unknown", () => {
     let s = start(spawn(snap("working"), null), "A");
     s = spawn(s, "A");
-    const fail = hook(
-      "PostToolUseFailure",
-      { ...agentPre, hook_event_name: "PostToolUseFailure" },
-      (t += 1),
-      { agent_id: "A" },
-    );
-    s = reduce(s, fail);
-    expect(s.tracking.pending_spawns).toBeUndefined();
-    s = start(spawn(s, null), "C");
-    expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: true });
+    s = failAgent(s, "A");
+    expect(s.tracking.pending_spawns).toEqual(["A"]);
+    expect(s.tracking.ambiguous_remaining).toBe(1);
+    s = start(s, "C");
+    expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("MAJOR: failure of an already-started spawn does not make a later start wrongly known", () => {
+    let s = start(spawn(snap("working"), null), "A"); // row A exists
+    s = spawn(s, null); // X
+    s = start(s, "X"); // X started, pending empty
+    s = spawn(s, null); // Y: [null]
+    s = spawn(s, "A"); // Z by A: [null, "A"]
+    s = failAgent(s, "X"); // X's own Agent call fails
+    expect(s.tracking.pending_spawns).toEqual([null, "A"]);
+    s = start(s, "Y");
+    expect(row(s, "Y")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    s = start(s, "Z");
+    expect(row(s, "Z")).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("MINOR: the 16-entry cap dropping entries marks the kept list unknown", () => {
+    let s = start(spawn(snap("working"), null), "A0");
+    s = spawn(s, "A0");
+    for (let i = 0; i < PENDING_SPAWNS_MAX; i += 1) s = spawn(s, null);
+    expect(s.tracking.pending_spawns).toHaveLength(PENDING_SPAWNS_MAX);
+    expect(s.tracking.ambiguous_remaining).toBe(PENDING_SPAWNS_MAX);
+    s = start(s, "K");
+    expect(row(s, "K")).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("SECURITY: evicting a parent row clears child links; a reused id cannot form a loop", () => {
+    let s = start(spawn(snap("working"), null), "A");
+    s = start(spawn(s, "A"), "B");
+    s = stop(s, "A");
+    for (let i = 0; i < SUBAGENT_ROWS_MAX - 1; i += 1) {
+      s = stop(start(spawn(s, null), `F${i}`), `F${i}`);
+    }
+    expect(row(s, "A")).toBeUndefined();
+    expect(row(s, "B")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    s = start(spawn(s, "B"), "A");
+    expect(row(s, "B")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(row(s, "A")).toMatchObject({ parent_agent_id: "B", parent_known: true });
+    // no cycle anywhere: every walk up ends
+    for (const r of s.subagents) {
+      let cur: string | null = r.agent_id;
+      for (let hops = 0; cur !== null; hops += 1) {
+        expect(hops).toBeLessThanOrEqual(SUBAGENT_ROWS_MAX);
+        cur = row(s, cur)?.parent_agent_id ?? null;
+      }
+    }
   });
 
   it("a failed non-spawn tool leaves pending spawns alone", () => {
@@ -213,5 +267,47 @@ describe("subagent parent links", () => {
     const t2 = readTracking({ pending_spawns: ["p".repeat(500), null], ambiguous_remaining: 9 });
     expect(t2.pending_spawns?.[0]).toHaveLength(AGENT_ID_MAX_CHARS);
     expect(t2.ambiguous_remaining).toBe(2);
+  });
+});
+
+describe("stored subagent rows", () => {
+  const base = { agent_type: "t", started_at: 1, ended_at: null, tokens: null };
+
+  it("MINOR: readSubagentRow does not keep parent_known for a non-string parent", () => {
+    const r = readSubagentRow({ agent_id: "b", parent_agent_id: 5, parent_known: true });
+    expect(r).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("readSubagentRows drops [], {}, null, 7 and non-array input", () => {
+    const good = { ...base, agent_id: "a" };
+    expect(readSubagentRows([[], {}, null, 7, good]).map((r) => r.agent_id)).toEqual(["a"]);
+    expect(readSubagentRows(null)).toEqual([]);
+    expect(readSubagentRows({ 0: good })).toEqual([]);
+    expect(readSubagentRows("x")).toEqual([]);
+  });
+
+  it("readSubagentRows clears links to missing parents and on cycles, keeps good links", () => {
+    const link = (id: string, p: string | null, known = true) => ({
+      ...base,
+      agent_id: id,
+      parent_agent_id: p,
+      parent_known: known,
+    });
+    const rows = readSubagentRows([
+      link("a", "b"),
+      link("b", "a"),
+      link("c", "a"),
+      link("d", "ghost"),
+      link("e", "e"),
+      link("f", null),
+      link("g", "f"),
+    ]);
+    const by = Object.fromEntries(rows.map((r) => [r.agent_id, r]));
+    for (const id of ["a", "b", "d", "e"]) {
+      expect(by[id]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    }
+    expect(by["c"]).toMatchObject({ parent_agent_id: "a", parent_known: true });
+    expect(by["f"]).toMatchObject({ parent_agent_id: null, parent_known: true });
+    expect(by["g"]).toMatchObject({ parent_agent_id: "f", parent_known: true });
   });
 });

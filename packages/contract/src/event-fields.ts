@@ -15,6 +15,7 @@ import {
 import type { PayloadRecord } from "./payload";
 import { agentIdOf, isSubagentEnvelope, readString } from "./payload";
 import type { SessionSnapshot, SubagentSnapshot } from "./snapshot";
+import { normalizeSubagentLinks, reachesAgent } from "./subagent-links";
 
 /** Fallbacks used when a documented field is missing or of the wrong type. */
 const UNKNOWN_END_REASON = "unknown";
@@ -97,15 +98,18 @@ function payloadAgentId(ctx: FieldContext): string | null {
   return id === null ? null : truncate(id, AGENT_ID_MAX_CHARS);
 }
 
-/** At most SUBAGENT_ROWS_MAX rows: the oldest ended rows go first, a running row only when all run. */
+/**
+ * At most SUBAGENT_ROWS_MAX rows: the oldest ended rows go first, a running row only when all run.
+ * Links that pointed at a dropped row are cleared (null / unknown) so none dangles.
+ */
 function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
   const excess = rows.length - SUBAGENT_ROWS_MAX;
-  if (excess <= 0) return [...rows];
+  if (excess <= 0) return normalizeSubagentLinks(rows);
   const indices = rows.map((_, i) => i);
   const ended = indices.filter((i) => rows[i]?.ended_at !== null);
   const running = indices.filter((i) => rows[i]?.ended_at === null);
   const dropped = new Set([...ended, ...running].slice(0, excess));
-  return rows.filter((_, i) => !dropped.has(i));
+  return normalizeSubagentLinks(rows.filter((_, i) => !dropped.has(i)));
 }
 
 const SPAWN_TOOLS: readonly string[] = ["Agent", "Task"];
@@ -144,21 +148,21 @@ function onPreToolUse(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   if (!spawnToolOf(ctx)) return s;
   const all = [...(s.tracking.pending_spawns ?? []), agentIdOf(ctx.e)];
   const dropped = Math.max(0, all.length - PENDING_SPAWNS_MAX);
-  return withPending(s, all.slice(dropped), Math.max(0, ambiguousOf(s) - dropped));
+  const kept = all.slice(dropped);
+  // Dropping entries loses which context they belonged to, so the kept list cannot be trusted.
+  return withPending(s, kept, dropped > 0 ? kept.length : ambiguousOf(s));
 }
 
 /**
- * A failed Agent or Task call never starts a subagent: drop one pending entry of the same context
- * (the oldest). Fixtures show PostToolUseFailure with tool_name; no fixture shows it for Agent, and
- * PermissionDenied has no fixture, so only PostToolUseFailure is handled.
+ * A failed Agent or Task call never starts a subagent, but which pending entry it belonged to cannot
+ * be told (the spawn may already have been consumed by a start). The entries stay and the whole
+ * pending list reads unknown. Fixtures show PostToolUseFailure with tool_name; no fixture shows it
+ * for Agent, and PermissionDenied has no fixture, so only PostToolUseFailure is handled.
  */
 function onPostToolUseFailure(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   if (!spawnToolOf(ctx)) return s;
   const pending = s.tracking.pending_spawns ?? [];
-  const idx = pending.indexOf(agentIdOf(ctx.e));
-  if (idx < 0) return s;
-  const rest = pending.filter((_, i) => i !== idx);
-  return withPending(s, rest, ambiguousOf(s) - (idx < ambiguousOf(s) ? 1 : 0));
+  return pending.length === 0 ? s : withPending(s, [...pending], pending.length);
 }
 
 /** A new prompt starts a new turn: spawn requests that never produced a SubagentStart are stale. */
@@ -199,7 +203,8 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
   const linkable =
     taken.known &&
     taken.parent !== agentId &&
-    (taken.parent === null || s.subagents.some((a) => a.agent_id === taken.parent));
+    (taken.parent === null || s.subagents.some((a) => a.agent_id === taken.parent)) &&
+    !reachesAgent(s.subagents, taken.parent, agentId);
   const agentType = readString(ctx.payload, "agent_type") ?? UNKNOWN_AGENT_TYPE;
   const row = {
     agent_id: agentId,
