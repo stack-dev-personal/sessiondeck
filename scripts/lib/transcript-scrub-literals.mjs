@@ -72,9 +72,10 @@ function ownersIn(url) {
  * @param {Iterable<unknown>} rows
  * @param {string} [vocabulary] lower-cased public text that exempts folder names (default: tracked repo files)
  * @param {GitLookup} [lookup] git runner (default: the real git); tests pass a stub
+ * @param {() => string} [host] machine name source (default: os.hostname); tests pass a stub
  * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[], gitMissing: string[] }} gitMissing names the git sources that gave nothing usable
  */
-export function discoverLiterals(rows, vocabulary, lookup = git) {
+export function discoverLiterals(rows, vocabulary, lookup = git, host = hostname) {
   const users = new Set();
   const emails = new Set();
   const accounts = new Set();
@@ -133,7 +134,7 @@ export function discoverLiterals(rows, vocabulary, lookup = git) {
     const letters = local.replace(/[\d._+-]+$/, "");
     if (letters.length >= MIN_LITERAL) accounts.add(letters);
   }
-  addHandle(hostname()); // the machine name usually embeds the user name
+  addHandle(host()); // the machine name usually embeds the user name
   const keep = (/** @type {Set<string>} */ s) => [...s].filter((x) => x.length >= 3).sort();
   const accountList = keep(accounts).filter((x) => x.length >= MIN_LITERAL);
   const userList = keep(users);

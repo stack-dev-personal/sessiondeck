@@ -11,6 +11,16 @@ afterEach(cleanupTempDirs);
 const UUID = "11111111-2222-4333-8444-555555555555";
 const NO_VOCAB = " ";
 
+/** Fixed synthetic git identity and host: the account-literal tests must not read the machine. */
+const FIXED_GIT = (args: string[]): string =>
+  ({
+    "config user.email": "dana.pellmore@corp.example",
+    "config user.name": "Dana Pellmore",
+    "remote get-url origin": "https://github.com/pellmore-labs/demo.git",
+  })[args.join(" ")] ?? "";
+const FIXED_HOST = (): string => "synthbox";
+const HERMETIC = { vocabulary: NO_VOCAB, git: FIXED_GIT, host: FIXED_HOST };
+
 /** A user row with one free-text content string. */
 const userRow = (content: string): Record<string, unknown> => ({
   type: "user",
@@ -149,7 +159,7 @@ describe("transcript leak check: account literals from raw", () => {
     for (const text of ["hi zorbo here", "ask Marigold later", "the wexford desk"]) {
       const r = transcriptLeakCheck(plant([userRow(text)]), {
         rawTranscripts,
-        vocabulary: NO_VOCAB,
+        ...HERMETIC,
       });
       expect(r.byCategory["transcript-account-name"], text).toBeGreaterThan(0);
       expect(r.literals.rawPresent).toBe(true);
@@ -161,7 +171,7 @@ describe("transcript leak check: account literals from raw", () => {
     const rawTranscripts = rawWith(rawRows);
     const r = transcriptLeakCheck(plant([userRow("work on plumbus today")]), {
       rawTranscripts,
-      vocabulary: NO_VOCAB,
+      ...HERMETIC,
     });
     expect(r.byCategory["transcript-folder-name"]).toBeGreaterThan(0);
   });
@@ -170,7 +180,7 @@ describe("transcript leak check: account literals from raw", () => {
     const rawTranscripts = rawWith(rawRows);
     const r = transcriptLeakCheck(plant([userRow("nothing personal")]), {
       rawTranscripts,
-      vocabulary: NO_VOCAB,
+      ...HERMETIC,
     });
     expect(r.byCategory).toEqual({});
     expect(JSON.stringify(r)).not.toMatch(/zorbo|marigold|wexford|plumbus/i);

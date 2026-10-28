@@ -46,6 +46,8 @@ describe("account name fragments", () => {
         },
       ],
       " ",
+      () => "",
+      () => "synthbox",
     );
     expect(lit.fragments).toEqual(expect.arrayContaining(["ottoline", "brackenridge"]));
   });

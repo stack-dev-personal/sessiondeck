@@ -107,6 +107,8 @@ describe("handle substrings", () => {
     const lit = discoverLiterals(
       [{ type: "attachment", attachment: { context: { userEmail: "emquuxling7@corp.example" } } }],
       " ",
+      () => "",
+      () => "synthbox",
     );
     expect(lit.fragments).toEqual(expect.arrayContaining(["quuxl", "uuxli"]));
   });

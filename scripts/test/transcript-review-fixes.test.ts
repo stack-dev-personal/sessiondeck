@@ -24,6 +24,7 @@ const FULL: Record<string, string> = {
 };
 const fullGit = (args: string[]): string => FULL[args.join(" ")] ?? "";
 const noGit = (): string => "";
+const host = (): string => "synthbox";
 const VOCAB = " ";
 
 describe("git literal gate", () => {
@@ -60,11 +61,11 @@ describe("git literal gate", () => {
   });
 
   it("carries the missing sources through the leak check's raw sets, only when raw/ exists", () => {
-    expect(deriveRawSets(null, VOCAB, noGit).gitMissing).toEqual([]);
+    expect(deriveRawSets(null, VOCAB, noGit, host).gitMissing).toEqual([]);
     const raw = makeTempDir();
     writeFileSync(join(raw, "a.jsonl"), `${JSON.stringify({ type: "user" })}\n`);
-    expect(deriveRawSets(raw, VOCAB, noGit).gitMissing).toHaveLength(3);
-    expect(deriveRawSets(raw, VOCAB, fullGit).gitMissing).toEqual([]);
+    expect(deriveRawSets(raw, VOCAB, noGit, host).gitMissing).toHaveLength(3);
+    expect(deriveRawSets(raw, VOCAB, fullGit, host).gitMissing).toEqual([]);
   });
 });
 
@@ -92,14 +93,14 @@ describe("runTranscripts guards", () => {
 
   it("returns 0 for a clean fixture", () => {
     const { raw, out } = rawWith([userRow("C:/Users/zed/projects/sessiondeck")]);
-    expect(runTranscripts(raw, out, { ownProject: "sessiondeck", git: fullGit })).toBe(0);
+    expect(runTranscripts(raw, out, { ownProject: "sessiondeck", git: fullGit, host })).toBe(0);
   });
 
   it("returns 1 and lists the key path when a row has an unlisted key", () => {
     const { raw, out } = rawWith([
       userRow("C:/Users/zed/projects/sessiondeck", { zzUnlistedKey: "v" }),
     ]);
-    const code = runTranscripts(raw, out, { ownProject: "sessiondeck", git: fullGit });
+    const code = runTranscripts(raw, out, { ownProject: "sessiondeck", git: fullGit, host });
     expect(code).toBe(1);
     const errors = vi.mocked(console.error).mock.calls.map((c) => String(c[0]));
     expect(errors.some((e) => e.startsWith("UNKNOWN KEY 01-synthetic "))).toBe(true);
@@ -109,7 +110,7 @@ describe("runTranscripts guards", () => {
 
   it("returns 1 before writing anything when a git lookup is empty", () => {
     const { raw, out } = rawWith([userRow("C:/Users/zed/projects/sessiondeck")]);
-    expect(runTranscripts(raw, out, { ownProject: "sessiondeck", git: noGit })).toBe(1);
+    expect(runTranscripts(raw, out, { ownProject: "sessiondeck", git: noGit, host })).toBe(1);
     expect(existsSync(join(out, "transcripts"))).toBe(false);
     const errors = vi
       .mocked(console.error)
@@ -120,7 +121,7 @@ describe("runTranscripts guards", () => {
 
   it("runs with empty git lookups when --no-git-literals is given, and says so", () => {
     const { raw, out } = rawWith([userRow("C:/Users/zed/projects/sessiondeck")]);
-    const opts = { ownProject: "sessiondeck", git: noGit, noGitLiterals: true };
+    const opts = { ownProject: "sessiondeck", git: noGit, host, noGitLiterals: true };
     expect(runTranscripts(raw, out, opts)).toBe(0);
     expect(existsSync(join(out, "transcripts", "01-synthetic", "session.jsonl"))).toBe(true);
     expect(vi.mocked(console.error).mock.calls.join("\n")).toContain("warning: git lookup empty");
@@ -128,8 +129,8 @@ describe("runTranscripts guards", () => {
 
   it("returns 1 when the own project folder is not a usable name", () => {
     const { raw, out } = rawWith([userRow("C:/Users/zed/projects/sessiondeck")]);
-    expect(runTranscripts(raw, out, { ownProject: "", git: fullGit })).toBe(1);
-    expect(runTranscripts(raw, out, { ownProject: "a b/c", git: fullGit })).toBe(1);
+    expect(runTranscripts(raw, out, { ownProject: "", git: fullGit, host })).toBe(1);
+    expect(runTranscripts(raw, out, { ownProject: "a b/c", git: fullGit, host })).toBe(1);
   });
 });
 

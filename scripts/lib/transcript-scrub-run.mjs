@@ -134,7 +134,7 @@ const statBytes = (p) => readFileSync(p).length;
 /**
  * Scrubs every fixture under <raw>/transcripts into <out>/transcripts.
  * @param {string} raw @param {string} out
- * @param {{ noGitLiterals?: boolean, ownProject?: string, git?: import("./transcript-scrub-literals.mjs").GitLookup }} [opts]
+ * @param {{ noGitLiterals?: boolean, ownProject?: string, git?: import("./transcript-scrub-literals.mjs").GitLookup, host?: () => string }} [opts]
  *   noGitLiterals: allow empty git lookups; ownProject: the repository's folder name (default: from
  *   git); git: git runner (tests)
  * @returns {number} exit code
@@ -157,7 +157,7 @@ export function runTranscripts(raw, out, opts = {}) {
     return 1;
   }
   const denyWords = loadDenyWords(raw);
-  const literals = { ...discoverLiterals(all, undefined, opts.git), denyWords };
+  const literals = { ...discoverLiterals(all, undefined, opts.git, opts.host), denyWords };
   const gitProblem = gitLiteralProblem(literals.gitMissing, opts.noGitLiterals === true);
   if (gitProblem !== null) {
     console.error(gitProblem);

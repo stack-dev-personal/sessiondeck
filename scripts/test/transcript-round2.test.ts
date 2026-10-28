@@ -199,6 +199,8 @@ describe("literal shapes", () => {
     const lit = discoverLiterals(
       [{ owner: junkOwner, organizationName: "another junk phrase", userEmail: junkEmail }],
       " ",
+      () => "",
+      () => "synthbox",
     );
     expect(lit.accounts).not.toContain(junkOwner);
     expect(lit.accounts).not.toContain("another junk phrase");
@@ -208,7 +210,12 @@ describe("literal shapes", () => {
   });
 
   it("still takes a handle-shaped owner", () => {
-    const lit = discoverLiterals([{ owner: "quillfeather-org" }], " ");
+    const lit = discoverLiterals(
+      [{ owner: "quillfeather-org" }],
+      " ",
+      () => "",
+      () => "synthbox",
+    );
     expect(lit.accounts).toContain("quillfeather-org");
   });
 });
