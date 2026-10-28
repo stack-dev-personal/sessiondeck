@@ -70,7 +70,7 @@ Placeholder vocabulary:
 |-------------|----------|
 | `<HOME>` | the user home directory, in every slash form and drive-letter case; output is always forward slashes |
 | `<ROOT>` | an absolute path outside the home directory |
-| `<PROJECT_A>`, `<PROJECT_B>`, ... | project directories (the segment after `projects/`, or the first directory under home), lettered in sorted order of the real names; the encoded folder under `.claude/projects/` and `AppData/Local/Temp/claude/` maps to the same letter as its cwd |
+| `<PROJECT_A>`, `<PROJECT_B>`, ... | project directories (the segment after `projects/`, or the first directory under home), lettered in sorted order of the real names (exception: in `transcripts/` this repository's own folder is always `<PROJECT_A>`, the others follow in sorted order); the encoded folder under `.claude/projects/` and `AppData/Local/Temp/claude/` maps to the same letter as its cwd |
 | `<DIR_n>`, `<FILE_n>` | other directory and file names, numbered by first use, same name gives same number; the file extension is kept |
 | `<TEXT n>` | any other string (prompts, messages, commands, tool inputs and outputs, titles, descriptions, branch names, repo names, session names); n is the original length |
 | `<AGENT_n>` | custom agent types and names (built-ins such as `general-purpose` stay) |
@@ -238,6 +238,19 @@ differences.
   Absolute paths of a worktree are treated as outside (over-cut on purpose). A shell command that
   names `.sprint`, the `.claude` folder, another home path, `gh api`, `gh repo`, the raw fixtures
   folder, `deny-words`, `probe.json` or an `.env` file makes its output private as well.
+- Time zones: IANA names (a known area such as `America` or `Europe` followed by `/City`), US and EU
+  abbreviations (EST, EDT, CST, CDT, MST, MDT, PST, PDT, ET, PT, CET, CEST, BST) after a time of day or
+  alone in parentheses, `UTC` or `GMT` with an offset (`UTC-5`) and long English zone names
+  become `<TZ>`. `UTC` by itself stays (row timestamps). The check reports a survivor as
+  `transcript-time-zone`.
+- Home-relative private paths: a path or shell command that climbs above the working directory
+  (`../../x`), names a home variable (`$env:USERPROFILE`, `$USERPROFILE`, `${HOME}`,
+  `%USERPROFILE%`, also APPDATA, LOCALAPPDATA, HOMEPATH), starts with `~/`, holds a `<ROOT>` path, or
+  names any `.claude` folder other than this repository's tracked `.claude/agents`, `skills`,
+  `hooks` and `settings.json` counts as outside the project, like the paths above.
+- A command that writes to a private path (`>`, `>>`, `tee`, `Set-Content`, `Add-Content`,
+  `Out-File`; a heredoc body is the typical case) is cut after the target path to `<BLOB n>`;
+  the check reports anything left after it as `transcript-private-text-not-cut`.
 - `rendered[]` of an attachment row (the text copy Claude Code keeps next to it) is dropped to
   `<BLOB n>` when the attachment names an outside path, is a hook row, or is a skill listing.
 - Label cuts in message text, in the scrub and in the check alike: the text after `Contents of

@@ -23,6 +23,7 @@ import {
   dropsRendered,
   hasContent,
   isOutsideProject,
+  isPrivateSpelling,
   isPrivateToolUse,
   PRIVATE_CONTENT_KEYS,
   siblingPath,
@@ -97,7 +98,8 @@ export class TranscriptScrubber {
     for (const k of ["file_path", "path", "notebook_path"]) {
       const v = inp[k];
       if (typeof v === "string")
-        out[k] = v.startsWith("~") ? v : (this.mapper.mapPath(v, "auto") ?? v);
+        out[k] =
+          v.startsWith("~") || isPrivateSpelling(v) ? v : (this.mapper.mapPath(v, "auto") ?? v);
     }
     if (typeof inp.command === "string") out.command = this.text.scrub(inp.command);
     return out;
@@ -105,7 +107,7 @@ export class TranscriptScrubber {
 
   /** Whether a raw path points outside this project. @param {string} raw */
   #isOutsideRaw(raw) {
-    if (raw.startsWith("~")) return true;
+    if (raw.startsWith("~") || isPrivateSpelling(raw)) return true;
     const mapped = this.mapper.mapPath(raw, "auto");
     return mapped !== null && isOutsideProject(mapped);
   }

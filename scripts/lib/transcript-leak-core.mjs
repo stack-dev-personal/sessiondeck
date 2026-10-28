@@ -19,6 +19,7 @@ import {
 import { countDenyHits } from "./transcript-deny-list.mjs";
 import { countUnmappedMcpNames } from "./transcript-leak-mcp.mjs";
 import { deriveRawSets } from "./transcript-leak-raw.mjs";
+import { hasZone } from "./transcript-scrub-zone.mjs";
 import { searchGroups } from "./transcript-leak-search.mjs";
 
 /** Encoded forms the shared HOME_SHAPES do not cover: %5C or %2F between the folder names. */
@@ -119,6 +120,7 @@ export function transcriptLeakCheck(dir, opts = {}) {
       hit("transcript-home-path-shape");
     }
     if (EMAIL.test(text.replace(/<EMAIL>/g, ""))) hit("transcript-email");
+    if (hasZone(text)) hit("transcript-time-zone");
     if (TOKEN_IN_TEXT.test(text)) hit("transcript-token-prefix");
     const mcpNames = countUnmappedMcpNames(text);
     if (mcpNames > 0) hit("transcript-mcp-tool-name", mcpNames);

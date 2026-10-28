@@ -8,6 +8,7 @@ import { BUILTIN_TOOLS } from "./fixture-allowlist.mjs";
 import { DENY_PLACEHOLDER } from "./transcript-deny-list.mjs";
 import { cutPrivateText } from "./transcript-scrub-cuts.mjs";
 import { mapMcpPhrase } from "./transcript-scrub-private.mjs";
+import { scrubZones } from "./transcript-scrub-zone.mjs";
 
 const RUN = String.raw`[^\s"'\`<>|*?(){}\[\],;]*`;
 const SEP = String.raw`(?:[\\/]|%5[Cc]|%2[Ff])`;
@@ -148,7 +149,7 @@ export class TextScrubber {
    * @param {string} input
    */
   scrub(input) {
-    let s = cutPrivateText(input.replace(ABS_PATH, (m) => this.#absolute(m)));
+    let s = cutPrivateText(scrubZones(input.replace(ABS_PATH, (m) => this.#absolute(m))));
     s = s.replace(MCP_TOOL, (m) => this.mapper.mapTool(m, BUILTIN_TOOLS));
     for (const re of TOKENS) s = s.replace(re, "<REDACTED>");
     s = s.replace(RUN_32, (run) => (looksLikeSecret(run) ? "<REDACTED>" : run));

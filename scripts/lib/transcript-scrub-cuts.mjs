@@ -6,7 +6,7 @@
 // file, "<Event> hook success: ..." and "SessionStart hook additional context: ..." for hooks, and
 // "Result of calling the X tool: ..." after a "Called the X tool with the following input: {...}"
 // that named a private path. Each block is cut down to its label plus "<BLOB n>".
-import { isOutsideProject, PRIVATE_COMMAND, stripCutHome } from "./transcript-scrub-private.mjs";
+import { isOutsideProject, isPrivateCommand, stripCutHome } from "./transcript-scrub-private.mjs";
 
 /** Where "Contents of <path>" names the file; the path ends at the first space or colon. */
 const CONTENTS_OF = /Contents of ([^\s:]+)(:*)/;
@@ -26,6 +26,46 @@ export const BLOB_AFTER_LABEL = ": <BLOB ";
 const outsidePath = (p) => p.startsWith("~") || p.startsWith("$HOME") || isOutsideProject(p);
 
 /**
+ * A write into a file: a redirect, tee, or a PowerShell write cmdlet, and the first word after it.
+ * A command that writes to a private file also carries that file's new content (a heredoc), so the
+ * text after the target is cut.
+ */
+const WRITE_TARGET =
+  /(?:(?<!<[A-Za-z][A-Za-z0-9_]*)>>?|\btee(?:[ \t]+-a)?|\b(?:Set-Content|Add-Content|Out-File)(?![\w-])(?:[ \t]+-(?:Path|FilePath|LiteralPath))?)[ \t]*(["']?)([^\s"'`;|&<>()]+)/g;
+
+/** Whether a write target is a private path. <ROOT> is not enough on its own (/dev/null is a target). @param {string} tok */
+const isPrivateTarget = (tok) => !tok.startsWith("<ROOT>") && outsidePath(tok);
+
+/**
+ * The first write whose target is private: where the target ends (closing quote included).
+ * @param {string} s @returns {number | null}
+ */
+function privateWriteEnd(s) {
+  for (const m of s.matchAll(WRITE_TARGET)) {
+    if (!isPrivateTarget(m[2] ?? "")) continue;
+    const end = (m.index ?? 0) + m[0].length;
+    return m[1] !== "" && s[end] === m[1] ? end + 1 : end;
+  }
+  return null;
+}
+
+/** Whether what follows a private write target is nothing, or only the cut marker. @param {string} rest */
+const writeRestOk = (rest) => {
+  const r = rest.replace(TRUNCATED, "");
+  return r.trim() === "" || " <BLOB ".startsWith(r) || isCutRemainder(r);
+};
+
+/**
+ * Cuts the text after the target of a write into a private file down to "<BLOB n>".
+ * @param {string} s text whose paths are already placeholders
+ */
+export function cutPrivateWrite(s) {
+  const end = privateWriteEnd(s);
+  if (end === null || writeRestOk(s.slice(end))) return s;
+  return `${s.slice(0, end)} <BLOB ${s.length - end}>`;
+}
+
+/**
  * Whether the text of a "Called the X tool with the following input: {...}" block names a path
  * outside the project or a shell command that touches one.
  * @param {string} text scrubbed text, possibly cut
@@ -41,7 +81,7 @@ export function calledOutside(text) {
   }
   for (const m of rest.matchAll(COMMAND_VALUE)) {
     const v = m[1] ?? "";
-    if (PRIVATE_COMMAND.test(m[2] === '"' ? v : stripCutHome(v))) return true;
+    if (isPrivateCommand(m[2] === '"' ? v : stripCutHome(v))) return true;
   }
   return false;
 }
@@ -101,7 +141,7 @@ export function cutPrivateText(s) {
   if (called && calledOutside(out.slice(called.index))) {
     out = cutResult(out, out.length, called.index);
   }
-  return out;
+  return cutPrivateWrite(out);
 }
 
 /** Whether the text after a label is nothing but the cut marker (or a cut-off piece of it). @param {string} rest */
@@ -126,6 +166,8 @@ export function privateTextFinding(text) {
   if (hook && !isCutRemainder(s.slice(hook.index + hook[0].length))) {
     return "transcript-hook-text-not-cut";
   }
+  const write = privateWriteEnd(s);
+  if (write !== null && !writeRestOk(s.slice(write))) return "transcript-private-text-not-cut";
   const called = CALLED.exec(s);
   if (called && calledOutside(s.slice(called.index))) {
     const res = RESULT.exec(s.slice(called.index));

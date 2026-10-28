@@ -10,6 +10,10 @@
 //      and in message text the block after "Contents of <outside path>", after a hook label
 //      ("SessionStart hook additional context:") and after "Result of calling the X tool:" of a
 //      private "Called the X tool" is cut down to its label
+//   6. relative paths that climb above the working directory, home variables (USERPROFILE, APPDATA,
+//      LOCALAPPDATA, HOMEPATH, HOMEDRIVE, HOME in bash, PowerShell and cmd syntax), ~ paths, <ROOT>
+//      paths in shell commands and any .claude segment other than this repo's own tracked
+//      .claude/agents, skills, hooks and settings.json count as outside
 //   5. the gitignored .sprint/ folder, raw capture folders, env files and probe.json count as
 //      outside the project (relative and <PROJECT_A>-rooted forms alike)
 
@@ -52,9 +56,78 @@ const SPRINT_DIR = /^(?:<HOME>\/projects\/<PROJECT_A>\/|\.\/)?\.sprint(?:\/|$)/;
  */
 const PRIVATE_IN_REPO =
   /^(?:<HOME>\/projects\/<PROJECT_A>\/|\.\/)?(?:(?:[^/]+\/)*raw(?:\/|$)|(?:[^/]+\/)*\.env[^/]*$|(?:[^/]+\/)*probe\.json$)/;
-/** A shell command naming the user-level folder, another home path, the GitHub API for an account, or a private in-repo file. */
-export const PRIVATE_COMMAND =
-  /(?:~|\$HOME|<HOME>)\/\.claude\b|<HOME>\/(?!projects\/<PROJECT_A>)|(?<![A-Za-z0-9])\.sprint\b|\bgh\s+(?:api|repo)\b|fixtures[\\/]+raw\b|deny-words|probe\.json|(?<![A-Za-z0-9])\.env(?![A-Za-z])/;
+const HOME_VARS = "USERPROFILE|APPDATA|LOCALAPPDATA|HOMEPATH|HOMEDRIVE|HOMESHARE|HOME";
+/** A home directory variable in PowerShell ($env:X), bash ($X, ${X}) or cmd (%X%) syntax. */
+export const HOME_VAR = new RegExp(
+  String.raw`\$env:(?:${HOME_VARS})(?![A-Za-z0-9_])|\$\{?(?:${HOME_VARS})\}?(?![A-Za-z0-9_])|%(?:${HOME_VARS})%`,
+  "i",
+);
+/** The only .claude folders in this repo that are tracked; any other .claude segment is private. */
+const CLAUDE_KEPT = String.raw`(?![\\/](?:agents|skills|hooks|settings\.json)(?![A-Za-z0-9_.-]))`;
+const CLAUDE_SEGMENT = new RegExp(String.raw`(?:^|/)\.claude(?![A-Za-z0-9_-])${CLAUDE_KEPT}`);
+const CLAUDE_IN_TEXT = String.raw`(?<![A-Za-z0-9_.-])\.claude(?![A-Za-z0-9_-])${CLAUDE_KEPT}`;
+
+/**
+ * Whether a relative path climbs above its starting folder (a ".." with nothing left to pop).
+ * @param {string} path
+ */
+export function climbsAbove(path) {
+  let depth = 0;
+  for (const seg of path.split(/[\\/]+/)) {
+    if (seg === "" || seg === ".") continue;
+    if (seg !== "..") depth += 1;
+    else if ((depth -= 1) < 0) return true;
+  }
+  return false;
+}
+
+const WORD_TOKEN = /[^\s"'`;|&<>()=,]+/g;
+const ABSOLUTE_START = /^(?:<|[A-Za-z]:|\/|~|\$|%)/;
+/** Whether any word of a shell command is a relative path that climbs above the cwd. @param {string} cmd */
+function commandClimbs(cmd) {
+  for (const m of cmd.matchAll(WORD_TOKEN)) {
+    const t = m[0];
+    if (t.includes("..") && !ABSOLUTE_START.test(t) && climbsAbove(t)) return true;
+  }
+  return false;
+}
+
+/**
+ * A shell command naming the user-level folder, another home path, a home variable, a <ROOT> path,
+ * a .claude folder that is not this repo's own, the GitHub API for an account, or a private in-repo
+ * file. Case-insensitive on purpose (over-cuts).
+ */
+export const PRIVATE_COMMAND = new RegExp(
+  [
+    String.raw`(?:~|\$HOME|<HOME>)\/\.claude\b`,
+    String.raw`<HOME>\/(?!projects\/<PROJECT_A>)`,
+    String.raw`(?<![A-Za-z0-9_.=-])~(?:[\\/]|(?=[\s"']|$))`,
+    HOME_VAR.source,
+    "<ROOT>",
+    CLAUDE_IN_TEXT,
+    String.raw`(?<![A-Za-z0-9])\.sprint\b`,
+    String.raw`\bgh\s+(?:api|repo)\b`,
+    String.raw`fixtures[\\/]+raw\b`,
+    "deny-words",
+    String.raw`probe\.json`,
+    String.raw`(?<![A-Za-z0-9])\.env(?![A-Za-z])`,
+  ].join("|"),
+  "i",
+);
+
+/** Whether a shell command touches something outside the project. @param {string} cmd */
+export const isPrivateCommand = (cmd) => PRIVATE_COMMAND.test(cmd) || commandClimbs(cmd);
+
+/**
+ * Whether a path is private by its own spelling, before any placeholder mapping: a home variable,
+ * a climb above the cwd, or a .claude segment that is not one of this repo's tracked folders.
+ * @param {string} path
+ */
+export function isPrivateSpelling(path) {
+  const n = path.replace(/\\/g, "/");
+  return HOME_VAR.test(path) || CLAUDE_SEGMENT.test(n) || climbsAbove(n);
+}
+
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
 
@@ -65,6 +138,7 @@ const PATH_INPUT_KEYS = ["file_path", "path", "notebook_path"];
  */
 export function isOutsideProject(mapped) {
   if (mapped.startsWith("~") || mapped.startsWith("$HOME")) return true;
+  if (isPrivateSpelling(mapped)) return true;
   if (SPRINT_DIR.test(mapped) || PRIVATE_IN_REPO.test(mapped.replace(/\\/g, "/"))) return true;
   return ANY_ROOT.test(mapped) && !PROJECT_A.test(mapped);
 }
@@ -116,7 +190,7 @@ export function isPrivateToolUse(name, input) {
     if (typeof v === "string" && isOutsideProject(v)) return true;
   }
   const cmd = inp.command;
-  return SHELL_TOOLS.has(name) && typeof cmd === "string" && PRIVATE_COMMAND.test(uncut(cmd));
+  return SHELL_TOOLS.has(name) && typeof cmd === "string" && isPrivateCommand(uncut(cmd));
 }
 
 /** Attachment keys that carry hook output or listings of user configuration. */
