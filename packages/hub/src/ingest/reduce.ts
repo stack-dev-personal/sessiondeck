@@ -3,7 +3,7 @@
 // reduce() / reduceLiveness(); this file never reimplements them. Time comes only from e.ts so a
 // replay reproduces the same snapshots.
 import {
-  readSubagentRow,
+  readSubagentRows,
   StatusLinePayloadSchema,
   epochSecondsToMs,
   normalizeRateLimitWindow,
@@ -231,11 +231,11 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
   const parsed = SubagentsPayloadSchema.safeParse(e.payload);
   if (!parsed.success) throw new Error("subagents payload does not match the expected shape");
   const byId = new Map(parsed.data.tasks.map((t) => [t.id, t]));
-  const subagents = prev.subagents.map((row) => {
+  const subagents = readSubagentRows(prev.subagents).map((row) => {
     const t = byId.get(row.agent_id);
-    if (t === undefined) return readSubagentRow(row);
+    if (t === undefined) return row;
     return {
-      ...readSubagentRow(row),
+      ...row,
       tokens: t.tokenCount === undefined ? row.tokens : finite(t.tokenCount),
       context_window:
         t.contextWindowSize === undefined ? row.context_window : finite(t.contextWindowSize),

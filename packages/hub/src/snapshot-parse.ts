@@ -1,4 +1,4 @@
-import { readSubagentRow, type SessionSnapshot } from "@sessiondeck/contract";
+import { readSubagentRows, type SessionSnapshot } from "@sessiondeck/contract";
 
 /**
  * The one way a stored snapshot JSON is parsed. Subagent rows stored before parent links existed
@@ -8,9 +8,6 @@ import { readSubagentRow, type SessionSnapshot } from "@sessiondeck/contract";
 export function parseStoredSnapshot(raw: string): SessionSnapshot {
   const s = JSON.parse(raw) as SessionSnapshot;
   if (typeof s !== "object" || s === null) return s;
-  const subs: unknown = s.subagents;
-  s.subagents = Array.isArray(subs)
-    ? subs.filter((x) => typeof x === "object" && x !== null).map(readSubagentRow)
-    : [];
+  s.subagents = readSubagentRows(s.subagents);
   return s;
 }

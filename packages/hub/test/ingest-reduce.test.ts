@@ -171,7 +171,7 @@ describe("subagents and transcript", () => {
       model: null,
     };
     seedSession(h.store, "bad1", {
-      subagents: [null, 7, good] as unknown as SessionSnapshot["subagents"],
+      subagents: [null, 7, [], {}, good] as unknown as SessionSnapshot["subagents"],
     });
     seedSession(h.store, "bad2", {
       subagents: "nope" as unknown as SessionSnapshot["subagents"],
@@ -184,6 +184,31 @@ describe("subagents and transcript", () => {
     const r2 = await h.app.inject({ method: "GET", url: "/sessions/bad2", headers: AUTH });
     expect(r2.statusCode).toBe(200);
     expect((r2.json() as SessionSnapshot).subagents).toEqual([]);
+  });
+
+  it("stored cyclic and dangling parent links read back as null / unknown", async () => {
+    const row = (id: string, parent: string) => ({
+      agent_id: id,
+      agent_type: "x",
+      started_at: 1,
+      ended_at: null,
+      tokens: 1,
+      context_window: 2,
+      model: null,
+      parent_agent_id: parent,
+      parent_known: true,
+    });
+    seedSession(h.store, "cyc1", {
+      subagents: [
+        row("A", "B"),
+        row("B", "A"),
+        row("C", "gone"),
+      ] as unknown as SessionSnapshot["subagents"],
+    });
+    const res = await h.app.inject({ method: "GET", url: "/sessions/cyc1", headers: AUTH });
+    const subs = (res.json() as SessionSnapshot).subagents;
+    expect(subs.map((r) => r.agent_id)).toEqual(["A", "B", "C"]);
+    for (const r of subs) expect(r).toMatchObject({ parent_agent_id: null, parent_known: false });
   });
 
   it("a stored subagent row without parent fields reads as parent null / unknown", async () => {
