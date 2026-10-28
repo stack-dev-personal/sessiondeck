@@ -66,3 +66,17 @@
 - LOW engine.ts applyArchive archive-only row pre-claims session_id for declared host; fix is host-bound tokens (Phase 7).
 - LOW bidi/C1 chars in archive text: render-time neutralization in U5.
 - Note: probe must keep each archive batch under 1 MiB total (hub 413): checked in U4.
+
+### U4 probe importer -> real hub harness (sd-executor-probe)
+- Commit e666e91: scripts/harness-archive-hub.mjs (real hub image in Docker, real daemon + ArchiveComponent), redaction LOWs from U2. Harness: files=22 wall_ms=278 shipped_run1=22 shipped_run2=0 shipped_touch=1 merged_live_first=true merged_archive_first=true backlog_regress=false.
+- Review iteration 1: reviewer fix-then-merge (MAJOR hub idempotence hollow since run 2 shipped 0; MINOR batch test vs 900 KiB; MINOR quoted NEXT_ASSIGN leak). Security Gate pass + MEDIUM quoted-value redaction regression.
+- Iteration 2 (e2a85b0): harness check b2 re-ships 22 from a fresh index; it caught duplicate events (44 vs 23), fixed with deterministic archive envelope id (ULID time = mtime, rest = SHA-256 of payload). Reviewer merge; security Gate pass + MEDIUM isNextAssign passthrough regression vs f00fd4e.
+- Iteration 3 (42a0575): redactor never returns a CLI/ENV match unchanged; backtick and typographic quotes; host mixed into id hash; flaky transcript test uses vi.waitFor. Reviewer `merge`; security `Gate: pass` (LOW only). Probe 427 pass / 1 skip; bench 293 files 1679 ms; harness RESULT pass.
+- Decision D-S9b-5: archive envelope ids are deterministic per (host, payload) so re-ships dedupe on the hub's events.id; no hub or contract change.
+- Status: done (review). Follow-up U4b for leftovers below.
+
+## Deferred findings (U4)
+- LOW (security) redact.ts:119-127 second secret later on the same line after `--flag= name = ...` shapes (528 of 1.15M grid cases): U4b.
+- MINOR redact.ts:112 TAIL_VALUE lacks (?!-), over-masks a following flag: U4b.
+- MINOR load-sensitive 5 s timeouts: archive.test.ts:833, transcript.test.ts:631, daemon-review1 "R1.5 byte budget", daemon lock acquireLock: U4b.
+- LOW `mentions --token in prose` masks `in` (pre-existing): accepted.
