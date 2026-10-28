@@ -170,6 +170,7 @@ export function buildServer(opts: {
     opts.config.timezone,
     (host, sessions) => ingestor.publish(host, sessions),
     app.log,
+    { ingestWaitMs: (quietMs) => activity.waitMs(quietMs) },
   );
   ingestor.events.on("batch", (b) => costFiller.onBatch(b));
   app.addHook("onClose", async () => costFiller.close());
