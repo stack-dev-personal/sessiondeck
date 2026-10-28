@@ -247,7 +247,7 @@ describe("subagents and transcript", () => {
     });
   });
 
-  it("nested spawn: a subagent started from subagent A has parent A (known)", async () => {
+  it("nested spawn: hook-built subagent rows are unlinked (parent null, not known)", async () => {
     const hook = (name: string, payload: Record<string, unknown>, agent_id?: string) =>
       mkEnv({
         hook_event_name: name,
@@ -266,9 +266,9 @@ describe("subagents and transcript", () => {
       await h.app.inject({ method: "GET", url: "/sessions/s1", headers: AUTH })
     ).json() as SessionSnapshot;
     const byId = Object.fromEntries(rest.subagents.map((r) => [r.agent_id, r]));
-    expect(byId["A"]).toMatchObject({ parent_agent_id: null, parent_known: true });
-    expect(byId["B"]).toMatchObject({ parent_agent_id: "A", parent_known: true });
-    expect(snap().subagents.find((r) => r.agent_id === "B")?.parent_agent_id).toBe("A");
+    expect(byId["A"]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(byId["B"]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(snap().subagents.find((r) => r.agent_id === "B")?.parent_agent_id).toBeNull();
   });
 
   it("transcript lines are stored raw, agent_id '' for the main session, re-sent lines ignored", async () => {
