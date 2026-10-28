@@ -10,6 +10,7 @@ import type { Store } from "./db/store.ts";
 import { Ingestor, type HubEmitter } from "./ingest/ingestor.ts";
 import { registerIngest } from "./ingest/route.ts";
 import { RateLimiter } from "./ingest/rate-limit.ts";
+import { CostFiller } from "./derive/cost-filler.ts";
 import { registerCost } from "./routes/cost.ts";
 import { registerRead } from "./routes/read.ts";
 import { PricingProvider, bundledTable } from "./pricing/loader.ts";
@@ -140,6 +141,7 @@ export function buildServer(opts: {
   app.decorate("hub", {
     events: ingestor.events,
     reducerExceptionCount: () => ingestor.reducerExceptionCount(),
+    costFillIdle: () => costFiller.idle(),
   });
   registerIngest(app, {
     ingestor,
@@ -158,12 +160,19 @@ export function buildServer(opts: {
     sanitize,
   });
   registerRead(app, opts.store, now);
-  registerCost(
-    app,
+  const pricing = opts.pricing ?? new PricingProvider(bundledTable());
+  const usage = registerCost(app, opts.store, pricing, opts.config.timezone);
+  // R2.12: transcript-priced cost for sessions without a statusline, filled after each commit.
+  const costFiller = new CostFiller(
     opts.store,
-    opts.pricing ?? new PricingProvider(bundledTable()),
+    usage,
+    pricing,
     opts.config.timezone,
+    (host, sessions) => ingestor.publish(host, sessions),
+    app.log,
   );
+  ingestor.events.on("batch", (b) => costFiller.onBatch(b));
+  app.addHook("onClose", async () => costFiller.close());
   registerStream(app, {
     store: opts.store,
     events: ingestor.events,
@@ -191,6 +200,8 @@ declare module "fastify" {
       /** Emits `batch` once per committed ingest batch (never for rejected or rolled-back ones). */
       events: HubEmitter;
       reducerExceptionCount(): number;
+      /** Resolves when the transcript cost fills requested so far have finished (tests, shutdown). */
+      costFillIdle(): Promise<void>;
     };
   }
 }
