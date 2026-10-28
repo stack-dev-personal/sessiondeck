@@ -3,7 +3,7 @@
  * Fixture leak gate (R0.7). Scans packages/contract/fixtures (raw/ excluded) and exits 1 with
  * counts per category and file when it finds a leak. It never prints a matched value.
  *
- *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>]
+ *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>] [--no-git-literals]
  *
  * transcripts/ gets its own text, structure and account-literal checks (lib/transcript-leak-*.mjs).
  * To prove the CI path locally, point --raw at a directory that does not exist; raw/ is never moved.
@@ -11,12 +11,16 @@
  * The default run also scans docs/CONTRACT.md with the text checks (not the payload structure check).
  *
  * With raw/ present the user name and project directory names are derived from it at run time;
- * without raw/ (CI) only the pattern and structure checks run (CI)
+ * without raw/ (CI) only the pattern and structure checks run (CI). With raw/ present the check also
+ * exits 1 when a git lookup behind the account names (user.email, user.name, origin owner) is
+ * empty, because the reduced literal set would let the same blind spot pass both gates;
+ * --no-git-literals allows it.
  */
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { FIXTURES_ROOT, RAW_ROOT } from "./lib/fixture-files.mjs";
 import { leakCheck } from "./lib/fixture-leak-core.mjs";
+import { gitLiteralProblem } from "./lib/transcript-scrub-own.mjs";
 
 const args = process.argv.slice(2);
 const rawIdx = args.indexOf("--raw");
@@ -68,5 +72,11 @@ if (r.transcripts) {
 }
 for (const [c, n] of Object.entries(r.byCategory).sort()) console.log(`  ${c}: ${n}`);
 for (const f of r.perFile.slice(0, 50)) console.log(`  ${f.file}: ${f.category} x${f.count}`);
-console.log(r.total === 0 ? "PASS: no leaks found" : `FAIL: ${r.total} finding(s)`);
-process.exit(r.total === 0 ? 0 : 1);
+const gitProblem = r.transcripts?.literals.rawPresent
+  ? gitLiteralProblem(r.transcripts.literals.gitMissing, args.includes("--no-git-literals"))
+  : null;
+if (gitProblem !== null) console.log(`FAIL: ${gitProblem}`);
+if (gitProblem === null || r.total > 0) {
+  console.log(r.total === 0 ? "PASS: no leaks found" : `FAIL: ${r.total} finding(s)`);
+}
+process.exit(r.total === 0 && gitProblem === null ? 0 : 1);

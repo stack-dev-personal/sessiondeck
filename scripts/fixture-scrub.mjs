@@ -6,7 +6,9 @@
  *
  * Defaults: --raw packages/contract/fixtures/raw, --out packages/contract/fixtures.
  * --transcripts: scrub raw/transcripts/<NN-slug>/ into <out>/transcripts/<NN-slug>/ instead of the
- * hook payloads (lib/transcript-scrub-*.mjs); the two modes never run together.
+ * hook payloads (lib/transcript-scrub-*.mjs); the two modes never run together. Exits 1 when a git
+ * lookup behind account-name discovery is empty (--no-git-literals allows it), and when the
+ * repository's own folder (--own-project <name>, default from git) is not <PROJECT_A>.
  * Output layout under --out:
  *   <Event>/NN-<slug>.json        hook payloads, one per distinct key-set/tool shape
  *   statusLine/NN-<tag>.json      20 samples;  subagentStatusLine/NN-<tag>.json  5 samples
@@ -94,7 +96,11 @@ function main() {
   if (!existsSync(raw)) throw new Error("raw directory not found");
   assertSafeOut(out, raw);
   if (process.argv.includes("--transcripts")) {
-    process.exitCode = runTranscripts(raw, out);
+    const own = arg("--own-project", "");
+    process.exitCode = runTranscripts(raw, out, {
+      noGitLiterals: process.argv.includes("--no-git-literals"),
+      ...(own === "" ? {} : { ownProject: own }),
+    });
     return;
   }
 

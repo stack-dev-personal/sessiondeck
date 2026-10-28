@@ -8,6 +8,12 @@ import { TranscriptScrubber } from "./transcript-scrub-core.mjs";
 import { discoverLiterals } from "./transcript-scrub-literals.mjs";
 import { renderReadme } from "./transcript-scrub-readme.mjs";
 import { loadDenyWords } from "./transcript-deny-list.mjs";
+import {
+  gitLiteralProblem,
+  isProjectName,
+  ownProjectName,
+  ownProjectProblem,
+} from "./transcript-scrub-own.mjs";
 
 const AGENT_FILE = /^agent-[A-Za-z0-9_-]{4,64}\.(?:jsonl|meta\.json)$/;
 const FIXTURE_DIR = /^\d{2}-[a-z0-9-]{1,40}$/;
@@ -60,8 +66,10 @@ function listFiles(dir) {
 /**
  * @param {string} rawDir @param {string} outDir @param {string} name
  * @param {import("./transcript-scrub-text.mjs").Literals} literals
+ * @param {string} [ownProject] this repository's folder name: seeded first so it is <PROJECT_A>
+ *   (the project the private-content rules treat as "inside"); throws if it is not
  */
-export function scrubFixture(rawDir, outDir, name, literals) {
+export function scrubFixture(rawDir, outDir, name, literals, ownProject) {
   const files = listFiles(rawDir);
   /** @type {Map<string, unknown[]>} */
   const parsed = new Map();
@@ -74,7 +82,12 @@ export function scrubFixture(rawDir, outDir, name, literals) {
       if (typeof (/** @type {any} */ (r)?.cwd) === "string") cwds.push(/** @type {any} */ (r).cwd);
   }
   const mapper = new Mapper();
+  if (ownProject !== undefined) mapper.seedProjects([`/home/u/projects/${ownProject}`]);
   mapper.seedProjects(cwds.sort());
+  if (ownProject !== undefined) {
+    const problem = ownProjectProblem(mapper.projects, ownProject);
+    if (problem !== null) throw new Error(problem);
+  }
   const scrubber = new TranscriptScrubber({ mapper, literals });
   scrubber.prime([...parsed.values()].flat());
   /** @type {import("./transcript-scrub-readme.mjs").FixtureStats} */
@@ -121,9 +134,12 @@ const statBytes = (p) => readFileSync(p).length;
 /**
  * Scrubs every fixture under <raw>/transcripts into <out>/transcripts.
  * @param {string} raw @param {string} out
+ * @param {{ noGitLiterals?: boolean, ownProject?: string, git?: import("./transcript-scrub-literals.mjs").GitLookup }} [opts]
+ *   noGitLiterals: allow empty git lookups; ownProject: the repository's folder name (default: from
+ *   git); git: git runner (tests)
  * @returns {number} exit code
  */
-export function runTranscripts(raw, out) {
+export function runTranscripts(raw, out, opts = {}) {
   const root = join(raw, "transcripts");
   if (!existsSync(root)) throw new Error("raw transcripts directory not found");
   const names = readdirSync(root)
@@ -135,15 +151,30 @@ export function runTranscripts(raw, out) {
       const p = join(root, n, f.rel);
       all.push(...(f.jsonl ? readRows(p) : [JSON.parse(readFileSync(p, "utf8"))]));
     }
+  const own = opts.ownProject ?? ownProjectName();
+  if (!isProjectName(own)) {
+    console.error("own project folder unknown: pass --own-project <folder name>");
+    return 1;
+  }
   const denyWords = loadDenyWords(raw);
-  const literals = { ...discoverLiterals(all), denyWords };
+  const literals = { ...discoverLiterals(all, undefined, opts.git), denyWords };
+  const gitProblem = gitLiteralProblem(literals.gitMissing, opts.noGitLiterals === true);
+  if (gitProblem !== null) {
+    console.error(gitProblem);
+    return 1;
+  }
+  if (literals.gitMissing.length > 0) {
+    console.error(
+      `warning: git lookup empty (${literals.gitMissing.join(", ")}); --no-git-literals given`,
+    );
+  }
   console.log(
     `literals: users ${literals.users.length}, emails ${literals.emails.length}, accounts ${literals.accounts.length}, fragments ${literals.fragments.length}, folders ${literals.folders.length}, mcp servers ${literals.mcpServers.length}, deny words ${denyWords.length}`,
   );
   let unknown = 0;
   let fragmentHits = 0;
   for (const n of names) {
-    const r = scrubFixture(join(root, n), join(out, "transcripts"), n, literals);
+    const r = scrubFixture(join(root, n), join(out, "transcripts"), n, literals, own);
     console.log(
       `${n}: rows ${r.st.rows}, files ${r.st.files}, src ${r.st.srcBytes}, out ${r.st.outBytes}, sha256 ${r.digest.slice(0, 16)}`,
     );

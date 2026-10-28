@@ -35,9 +35,10 @@ function readRows(file) {
 /**
  * @param {string | null} rawDir raw/transcripts, or null (CI)
  * @param {string} [vocabulary] lower-cased public text; defaults to the repository's tracked files
- * @returns {{ present: boolean, users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[] }}
+ * @param {import("./transcript-scrub-literals.mjs").GitLookup} [lookup] git runner (tests)
+ * @returns {{ present: boolean, users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[], gitMissing: string[] }}
  */
-export function deriveRawSets(rawDir, vocabulary) {
+export function deriveRawSets(rawDir, vocabulary, lookup) {
   const none = {
     present: false,
     users: [],
@@ -46,8 +47,9 @@ export function deriveRawSets(rawDir, vocabulary) {
     fragments: [],
     folders: [],
     mcpServers: [],
+    gitMissing: [],
   };
   if (rawDir === null || !existsSync(rawDir)) return none;
-  const lit = discoverLiterals(listJson(rawDir).flatMap(readRows), vocabulary);
+  const lit = discoverLiterals(listJson(rawDir).flatMap(readRows), vocabulary, lookup);
   return { present: true, ...lit };
 }

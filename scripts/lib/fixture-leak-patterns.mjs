@@ -1,6 +1,7 @@
 // Text patterns shared by the hook-fixture leak check (fixture-leak-core.mjs) and the transcript
-// leak check (transcript-leak-*.mjs). Moved out of fixture-leak-core.mjs unchanged, so both gates
-// run the same home-path, email and token rules. Matchers only; nothing here reports values.
+// leak check (transcript-leak-*.mjs), so both gates run the same home-path, email and token rules.
+// Started as a move out of fixture-leak-core.mjs; the transcript gate rounds since added the
+// glued-drive home shape and the extra token shapes (Supabase, Cloudflare, URL credentials). Matchers only; nothing here reports values.
 import { isToken } from "./fixture-scrub-core.mjs";
 
 export const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z0-9.-]*[A-Za-z]/;

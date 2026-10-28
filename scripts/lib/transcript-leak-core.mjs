@@ -93,13 +93,13 @@ function parseDocs(file, text) {
 
 /**
  * @param {string} dir the fixtures transcripts/ directory
- * @param {{ hook?: { users: string[], projects: string[], segments: string[], names: string[] } | null, rawTranscripts?: string | null, vocabulary?: string, denyWords?: string[] }} [opts] denyWords: the local deny-list (raw/deny-words.txt), checked as case-insensitive substrings in every file
- * @returns {{ files: number, rows: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { accounts: number, fragments: number, folders: number, hook: number, deny: number, rawPresent: boolean } }}
+ * @param {{ hook?: { users: string[], projects: string[], segments: string[], names: string[] } | null, rawTranscripts?: string | null, vocabulary?: string, denyWords?: string[], git?: import("./transcript-scrub-literals.mjs").GitLookup }} [opts] denyWords: the local deny-list (raw/deny-words.txt), checked as case-insensitive substrings in every file
+ * @returns {{ files: number, rows: number, byCategory: Record<string, number>, perFile: { file: string, category: string, count: number }[], literals: { accounts: number, fragments: number, folders: number, hook: number, deny: number, rawPresent: boolean, gitMissing: string[] } }}
  */
 export function transcriptLeakCheck(dir, opts = {}) {
   const hook = opts.hook ?? { users: [], projects: [], segments: [], names: [] };
   const deny = opts.denyWords ?? [];
-  const raw = deriveRawSets(opts.rawTranscripts ?? null, opts.vocabulary);
+  const raw = deriveRawSets(opts.rawTranscripts ?? null, opts.vocabulary, opts.git);
   const groups = buildGroups(hook, raw);
   /** @type {Record<string, number>} */
   const byCategory = {};
@@ -159,6 +159,7 @@ export function transcriptLeakCheck(dir, opts = {}) {
       hook: hook.users.length + hook.projects.length + hook.segments.length + hook.names.length,
       deny: deny.length,
       rawPresent: raw.present,
+      gitMissing: raw.gitMissing,
     },
   };
 }

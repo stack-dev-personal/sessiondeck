@@ -47,7 +47,9 @@ function nameWords(name) {
   return name.split(/\s+/).filter((w) => isHandle(w) && w.length >= MIN_LITERAL);
 }
 
-/** @param {string[]} args @returns {string} */
+/** @typedef {(args: string[]) => string} GitLookup */
+
+/** The real git runner; "" when git fails (the caller reports the empty source). @type {GitLookup} */
 function git(args) {
   try {
     return execFileSync("git", args, {
@@ -69,9 +71,10 @@ function ownersIn(url) {
  * Collects literals from parsed raw rows.
  * @param {Iterable<unknown>} rows
  * @param {string} [vocabulary] lower-cased public text that exempts folder names (default: tracked repo files)
- * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[] }}
+ * @param {GitLookup} [lookup] git runner (default: the real git); tests pass a stub
+ * @returns {{ users: string[], emails: string[], accounts: string[], fragments: string[], folders: string[], mcpServers: string[], gitMissing: string[] }} gitMissing names the git sources that gave nothing usable
  */
-export function discoverLiterals(rows, vocabulary) {
+export function discoverLiterals(rows, vocabulary, lookup = git) {
   const users = new Set();
   const emails = new Set();
   const accounts = new Set();
@@ -109,14 +112,20 @@ export function discoverLiterals(rows, vocabulary) {
   const all = [...rows];
   for (const row of all) walk(row, "");
 
-  const gitEmail = git(["config", "user.email"]);
+  /** @type {string[]} */
+  const gitMissing = [];
+  const gitEmail = lookup(["config", "user.email"]);
   if (gitEmail && isAddress(gitEmail)) {
     emails.add(gitEmail);
     own.add(gitEmail);
-  }
+  } else gitMissing.push("git user.email");
   // The git name is a person's name: swept whole when it is one handle, otherwise word by word.
-  for (const n of nameWords(git(["config", "user.name"]))) accounts.add(n);
-  for (const o of ownersIn(git(["remote", "get-url", "origin"]))) addHandle(o);
+  const nameParts = nameWords(lookup(["config", "user.name"]));
+  for (const n of nameParts) accounts.add(n);
+  if (nameParts.length === 0) gitMissing.push("git user.name");
+  const owners = ownersIn(lookup(["remote", "get-url", "origin"]));
+  for (const o of owners) addHandle(o);
+  if (owners.length === 0) gitMissing.push("origin owner");
   for (const e of own) {
     const local = e.split("@")[0] ?? "";
     if (local.length >= MIN_LITERAL) accounts.add(local);
@@ -141,5 +150,6 @@ export function discoverLiterals(rows, vocabulary) {
     // repository names from URLs, API paths and gh loops that are not public vocabulary.
     folders: [...new Set([...folders, ...repos])].sort(),
     mcpServers: deriveMcpServers(all),
+    gitMissing,
   };
 }

@@ -214,8 +214,12 @@ differences.
   Cloudflare token shapes, credentials inside URLs) become `<REDACTED>`. Emails become `<EMAIL>`.
 - Account, organization and git owner names become `<ACCOUNT>`. Names are discovered from the raw
   data at run time and held in memory only. Pieces of those names of 5 or more characters, and every
-  substring of 5 or more characters of each handle, are swept as case-insensitive substrings, inside
-  longer words too (ordinary words and schema words are exempt).
+  substring of 5 or more characters of each handle, are matched case-insensitively inside longer
+  words too (ordinary words and schema words are exempt), and the whole word that contains a match
+  becomes `<ACCOUNT>`, so no leftover letters show which part was removed. A discovered literal is
+  used only if it has the shape of a handle (one token of letters, digits and `. _ @ + -`, at most
+  40 characters) or, for emails, of a plain address; a sentence or blob found in an account field is
+  not swept.
 - Local deny-list: `raw/deny-words.txt` (gitignored with `raw/`; one word per line, `#` comments)
   holds words that must never survive (private repo names, health and school terms). The scrub
   replaces each, case-insensitively and inside words, with `<DENY>`; the leak check fails on any
@@ -226,6 +230,19 @@ differences.
   repo, a temp folder) has its `content`, `snippet`, diffs, `pattern` and similar fields dropped to
   `<BLOB n>`. The same goes for the output (result block and `toolUseResult`) of a tool use that read,
   searched or wrote such a path, or ran a shell command naming one (or `gh api`, `gh repo`).
+- Outside the project means: any `<HOME>` or `<ROOT>` path that is not under the session's own
+  project folder (`<PROJECT_A>`), the user-level `.claude` folder, and the gitignored `.sprint/`
+  folder. A shell command that names `.sprint`, the `.claude` folder, another home path, `gh api`
+  or `gh repo` makes its output private as well.
+- `rendered[]` of an attachment row (the text copy Claude Code keeps next to it) is dropped to
+  `<BLOB n>` when the attachment names an outside path, is a hook row, or is a skill listing.
+- Label cuts in message text, in the scrub and in the check alike: the text after `Contents of
+  <outside path>`, after a hook label (`<Event> hook success:`, `SessionStart hook additional
+  context:`) and after `Result of calling the X tool:` that follows a private `Called the X tool
+  with the following input` is cut to the label plus `<BLOB n>`.
+- Home paths whose separators were lost (`C:Users<name>...`) are scrubbed like the normal forms and
+  flagged by the check. Tool names of the form `mcp__<server>__<tool>` that were not mapped to
+  `<MCP_n>` are a leak-check category (`transcript-mcp-tool-name`).
 - MCP server names (from tool names and server lists in the raw data, and after the words "MCP
   server" in prose) become `<MCP_n>` in free text, with the same numbering as in tool names.
 - Repository names found in GitHub URLs, `repos/<owner>/<repo>` API paths, `--repo` flags and `gh`
@@ -265,11 +282,27 @@ node scripts/fixture-scrub.mjs --transcripts     # raw/transcripts/ -> transcrip
 node scripts/fixture-leak-check.mjs              # exit 0 and "transcript findings: 0"
 ```
 
+The scrub fails closed in two more ways, each exit 1 with a message that names the source, never a
+value:
+
+- Git lookups. Account names come partly from `git config user.email`, `git config user.name` and
+  the owner in the `origin` URL. If any of the three is empty (for example in a container without a
+  git identity) the scrub exits 1 before writing and prints which source was empty, because the
+  leak check derives the same set and could not catch what the scrub missed. The leak check applies
+  the same rule, but only when `raw/` is present, so CI is unaffected. `--no-git-literals` on either
+  command allows empty lookups (the scrub prints a warning).
+- Own project. `<PROJECT_A>` is the project the private-content rules treat as "inside". The scrub
+  seeds this repository's own folder name first, so it is always `<PROJECT_A>`, and exits 1 if it
+  cannot. The name defaults to the folder that holds the shared `.git` directory (the main checkout,
+  also from a worktree); pass `--own-project <folder name>` when git cannot tell, for example in a
+  container whose checkout folder has another name than the one in the raw `cwd` values.
+
 `raw/` (including `raw/transcripts/`) is gitignored, never read by tests and never committed. The
 leak check's raw-derived literal search and the deny-list check run only where `raw/` exists; CI runs
 the pattern and structure checks, which include: no live content next to a path outside the project,
-no live `addedBlocks`, `addedLines`, skill listing, hook output or private tool output, and no MCP
-server name after "MCP server" in free text. The leak check also scans this session's notes
+no live `addedBlocks`, `addedLines`, skill listing, hook output, `rendered[]` of such rows or private
+tool output, no private text after the label cuts above, no glued `C:Users...` path, and no MCP
+server name after "MCP server" in free text or unmapped `mcp__` tool name. The leak check also scans this session's notes
 (`docs/sessions/p0-transcript-fixtures.md`, `docs/research/2026-10-27-transcript-inventory.md`).
 
 ### Row-type coverage
