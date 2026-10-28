@@ -78,3 +78,7 @@
   - .s10out1, .s10out2, .s10out3: output dirs of three R6.4 trace runs on 2026-10-27 (six-pane PNGs, trace json/json.gz, summary json).
   - .tmp-screens-S10, s10shots: earlier R3.x screenshot copies (R3.2, R3.4, R3.5) from a baseline-regeneration check.
   - diag-S10.mjs: ad-hoc Playwright diagnostic that logs transitionend events at 6 sessions x 20 updates/s (reduced motion).
+
+## Relaunch 4 2026-10-28
+- The sprint container stopped at 2026-10-28T15:37Z (external stop; API retries were failing), the fourth external restart. Worktree at d394eeb with uncommitted U5 changes (about 50 minutes of a delegation): e2e/R6.4.spec.ts, e2e/load/trace.ts, PaneBodies.tsx, SessionPaneBody.test.tsx, store/activity.test.ts, store/board.ts, trace.test.ts. No answer file; no docs/HANDOFF-*.md. S9 is merged into origin/sprint/3-organize (73252da).
+- Resumed: web executor inspects the diff and keeps and finishes it or discards it, then U5 review and verification, then U6 close. Stray items in /work (.s10out1-3, .tmp-screens-S10, s10shots, diag-S10.mjs) stay uncommitted.
