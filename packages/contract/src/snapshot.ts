@@ -1,3 +1,5 @@
+import { AGENT_ID_MAX_CHARS, truncate } from "./limits";
+import { asRecord } from "./payload";
 import type { SessionState } from "./state";
 
 /** One rate-limit window. resets_at is epoch ms (converted from the payload's seconds). */
@@ -53,6 +55,11 @@ export interface Tracking {
    * Capped at PENDING_SPAWNS_MAX.
    */
   pending_spawns?: (string | null)[];
+  /**
+   * How many of the oldest pending_spawns belong to an already-ambiguous set: those starts read
+   * parent_known false. Omitted when zero.
+   */
+  ambiguous_remaining?: number;
 }
 
 /** Fresh empty tracking. New object on every call. */
@@ -146,8 +153,13 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
  * A subagent row with the parent fields filled in: rows stored before parent links existed read as
  * parent_agent_id null, parent_known false. Always a fresh object.
  */
-export function readSubagentRow(row: SubagentSnapshot): SubagentSnapshot {
-  const raw = row as Partial<SubagentSnapshot>;
-  const parent = typeof raw.parent_agent_id === "string" ? raw.parent_agent_id : null;
-  return { ...row, parent_agent_id: parent, parent_known: raw.parent_known === true };
+export function readSubagentRow(row: unknown): SubagentSnapshot {
+  const raw = asRecord(row);
+  const parent = raw["parent_agent_id"];
+  const id = typeof parent === "string" ? truncate(parent, AGENT_ID_MAX_CHARS) : null;
+  return {
+    ...raw,
+    parent_agent_id: id,
+    parent_known: raw["parent_known"] === true,
+  } as unknown as SubagentSnapshot;
 }

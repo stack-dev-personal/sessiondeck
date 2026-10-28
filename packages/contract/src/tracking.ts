@@ -1,4 +1,4 @@
-import { PENDING_SPAWNS_MAX, TOOL_NAME_MAX_CHARS, truncate } from "./limits";
+import { AGENT_ID_MAX_CHARS, PENDING_SPAWNS_MAX, TOOL_NAME_MAX_CHARS, truncate } from "./limits";
 import { asRecord, readString } from "./payload";
 import type { PermissionHolder, SessionSnapshot, Tracking } from "./snapshot";
 import { createTracking } from "./snapshot";
@@ -68,9 +68,15 @@ export function readTracking(value: unknown): Tracking {
   };
   const raw = record["pending_spawns"];
   const pending = Array.isArray(raw)
-    ? raw.filter((x): x is string | null => isStringOrNull(x)).slice(-PENDING_SPAWNS_MAX)
+    ? raw
+        .filter((x): x is string | null => isStringOrNull(x))
+        .map((x) => (x === null ? null : truncate(x, AGENT_ID_MAX_CHARS)))
+        .slice(-PENDING_SPAWNS_MAX)
     : [];
-  return pending.length === 0 ? base : { ...base, pending_spawns: pending };
+  if (pending.length === 0) return base;
+  const amb = record["ambiguous_remaining"];
+  const n = typeof amb === "number" && Number.isInteger(amb) ? Math.min(amb, pending.length) : 0;
+  return { ...base, pending_spawns: pending, ...(n > 0 ? { ambiguous_remaining: n } : {}) };
 }
 
 /** The snapshot with its tracking replaced by readTracking(tracking). */

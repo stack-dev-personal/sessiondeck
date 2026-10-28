@@ -110,50 +110,96 @@ function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
 
 const SPAWN_TOOLS: readonly string[] = ["Agent", "Task"];
 
-/** With pending set aside: the tracking with a spawn list (key omitted when empty). */
-function withPending(s: SessionSnapshot, pending: (string | null)[]): SessionSnapshot {
-  const { pending_spawns: _old, ...rest } = s.tracking;
-  void _old;
-  return { ...s, tracking: pending.length === 0 ? rest : { ...rest, pending_spawns: pending } };
+/** With the spawn bookkeeping replaced (keys omitted when empty or zero). */
+function withPending(
+  s: SessionSnapshot,
+  pending: (string | null)[],
+  ambiguous = 0,
+): SessionSnapshot {
+  const { pending_spawns: _p, ambiguous_remaining: _a, ...rest } = s.tracking;
+  void _p;
+  void _a;
+  const n = Math.min(ambiguous, pending.length);
+  return {
+    ...s,
+    tracking: {
+      ...rest,
+      ...(pending.length === 0 ? {} : { pending_spawns: pending }),
+      ...(n > 0 ? { ambiguous_remaining: n } : {}),
+    },
+  };
+}
+
+function ambiguousOf(s: SessionSnapshot): number {
+  return s.tracking.ambiguous_remaining ?? 0;
+}
+
+function spawnToolOf(ctx: FieldContext): boolean {
+  const tool = readString(ctx.payload, "tool_name");
+  return tool !== null && SPAWN_TOOLS.includes(tool);
 }
 
 /** PreToolUse of the Agent or Task tool: remember which context asked for a spawn. */
 function onPreToolUse(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
-  const tool = readString(ctx.payload, "tool_name");
-  if (tool === null || !SPAWN_TOOLS.includes(tool)) return s;
-  const pending = [...(s.tracking.pending_spawns ?? []), agentIdOf(ctx.e)];
-  return withPending(s, pending.slice(-PENDING_SPAWNS_MAX));
+  if (!spawnToolOf(ctx)) return s;
+  const all = [...(s.tracking.pending_spawns ?? []), agentIdOf(ctx.e)];
+  const dropped = Math.max(0, all.length - PENDING_SPAWNS_MAX);
+  return withPending(s, all.slice(dropped), Math.max(0, ambiguousOf(s) - dropped));
+}
+
+/**
+ * A failed Agent or Task call never starts a subagent: drop one pending entry of the same context
+ * (the oldest). Fixtures show PostToolUseFailure with tool_name; no fixture shows it for Agent, and
+ * PermissionDenied has no fixture, so only PostToolUseFailure is handled.
+ */
+function onPostToolUseFailure(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
+  if (!spawnToolOf(ctx)) return s;
+  const pending = s.tracking.pending_spawns ?? [];
+  const idx = pending.indexOf(agentIdOf(ctx.e));
+  if (idx < 0) return s;
+  const rest = pending.filter((_, i) => i !== idx);
+  return withPending(s, rest, ambiguousOf(s) - (idx < ambiguousOf(s) ? 1 : 0));
 }
 
 /** A new prompt starts a new turn: spawn requests that never produced a SubagentStart are stale. */
 function onPromptReset(s: SessionSnapshot): SessionSnapshot {
-  return s.tracking.pending_spawns === undefined ? s : withPending(s, []);
+  return s.tracking.pending_spawns === undefined && s.tracking.ambiguous_remaining === undefined
+    ? s
+    : withPending(s, []);
 }
 
 /**
  * Parent attribution. SubagentStart takes the oldest pending spawn. Exactly one spawning context
- * among the pending entries gives a known parent (null: main thread); none, or more than one
- * distinct context, gives parent_known false (the oldest entry is still consumed).
+ * among the pending entries gives a known parent (null: main thread). Anything else gives
+ * parent_known false, and then every entry left over from that ambiguous set also reads unknown
+ * (ambiguous_remaining counts them), since which start belongs to which context cannot be told.
  */
 function takeParent(s: SessionSnapshot): {
   parent: string | null;
   known: boolean;
   rest: (string | null)[];
+  ambiguous: number;
 } {
   const pending = s.tracking.pending_spawns ?? [];
-  if (pending.length === 0) return { parent: null, known: false, rest: [] };
-  const contexts = new Set(pending);
-  const oldest = pending[0] ?? null;
+  if (pending.length === 0) return { parent: null, known: false, rest: [], ambiguous: 0 };
   const rest = pending.slice(1);
-  return contexts.size === 1
-    ? { parent: oldest, known: true, rest }
-    : { parent: null, known: false, rest };
+  const carried = ambiguousOf(s);
+  if (carried > 0) return { parent: null, known: false, rest, ambiguous: carried - 1 };
+  if (new Set(pending).size === 1) {
+    return { parent: pending[0] ?? null, known: true, rest, ambiguous: 0 };
+  }
+  return { parent: null, known: false, rest, ambiguous: rest.length };
 }
 
 function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const agentId = payloadAgentId(ctx);
   if (agentId === null || s.subagents.some((a) => a.agent_id === agentId)) return s;
-  const { parent, known, rest } = takeParent(s);
+  const taken = takeParent(s);
+  // A link is kept only when it is the main thread or an existing row (no dangling or looping links).
+  const linkable =
+    taken.known &&
+    taken.parent !== agentId &&
+    (taken.parent === null || s.subagents.some((a) => a.agent_id === taken.parent));
   const agentType = readString(ctx.payload, "agent_type") ?? UNKNOWN_AGENT_TYPE;
   const row = {
     agent_id: agentId,
@@ -163,10 +209,13 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
     tokens: null,
     context_window: null,
     model: null,
-    parent_agent_id: parent === agentId ? null : parent,
-    parent_known: known && parent !== agentId,
+    parent_agent_id: linkable ? taken.parent : null,
+    parent_known: linkable,
   };
-  return { ...withPending(s, rest), subagents: capSubagents([...s.subagents, row]) };
+  return {
+    ...withPending(s, taken.rest, taken.ambiguous),
+    subagents: capSubagents([...s.subagents, row]),
+  };
 }
 
 function onSubagentStop(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
@@ -183,6 +232,7 @@ const FIELD_PATCHES: Readonly<Record<string, FieldPatch>> = {
   SessionStart: onSessionStart,
   UserPromptSubmit: (s, ctx) => onPromptReset(onUserPromptSubmit(s, ctx)),
   PreToolUse: onPreToolUse,
+  PostToolUseFailure: onPostToolUseFailure,
   Stop: onStop,
   SessionEnd: onSessionEnd,
   PostCompact: onPostCompact,

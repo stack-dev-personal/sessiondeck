@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PENDING_SPAWNS_MAX } from "../src/limits";
+import { AGENT_ID_MAX_CHARS, PENDING_SPAWNS_MAX } from "../src/limits";
 import { readTracking } from "../src/tracking";
 import { reduce } from "../src/state";
 import type { SessionSnapshot } from "../src/snapshot";
@@ -64,7 +64,7 @@ describe("subagent parent links", () => {
 
   it("the Task tool name counts as a spawn too", () => {
     const e = hook("PreToolUse", { ...agentPre, tool_name: "Task" }, 5_000, { agent_id: "A" });
-    const s = start(reduce(snap("working"), e), "B");
+    const s = start(reduce(start(spawn(snap("working"), null), "A"), e), "B");
     expect(row(s, "B")).toMatchObject({ parent_agent_id: "A", parent_known: true });
   });
 
@@ -80,8 +80,62 @@ describe("subagent parent links", () => {
     expect(s.tracking.pending_spawns).toHaveLength(1);
   });
 
+  it("after an ambiguous start, the next start of the leftover set is also unknown", () => {
+    // main spawns, then background A spawns; A's child B starts first, then main's child C.
+    let s = spawn(spawn(snap("working"), null), "A");
+    s = start(start(s, "B"), "C");
+    expect(row(s, "B")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(s.tracking.pending_spawns).toBeUndefined();
+    expect(s.tracking.ambiguous_remaining).toBeUndefined();
+  });
+
+  it("a spawn made after the ambiguous set starts clean once the set is drained", () => {
+    let s = spawn(spawn(snap("working"), null), "A");
+    s = start(start(s, "B"), "C");
+    s = start(spawn(s, null), "D");
+    expect(row(s, "D")).toMatchObject({ parent_agent_id: null, parent_known: true });
+  });
+
+  it("a parent that is not an existing row is recorded as null / unknown", () => {
+    const s = start(spawn(snap("working"), "GHOST"), "B");
+    expect(row(s, "B")).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("parent loops cannot form: A>B then B>A leaves the second link unknown", () => {
+    let s = start(spawn(snap("working"), "B"), "A"); // B is not a row yet: A unlinked
+    s = start(spawn(s, "A"), "B"); // A is a row: B parent A
+    expect(row(s, "A")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(row(s, "B")).toMatchObject({ parent_agent_id: "A", parent_known: true });
+    // no cycle: walking up from B ends
+    expect(row(s, "A")?.parent_agent_id).toBeNull();
+  });
+
+  it("a failed Agent call (PostToolUseFailure) drops its pending spawn", () => {
+    let s = start(spawn(snap("working"), null), "A");
+    s = spawn(s, "A");
+    const fail = hook(
+      "PostToolUseFailure",
+      { ...agentPre, hook_event_name: "PostToolUseFailure" },
+      (t += 1),
+      { agent_id: "A" },
+    );
+    s = reduce(s, fail);
+    expect(s.tracking.pending_spawns).toBeUndefined();
+    s = start(spawn(s, null), "C");
+    expect(row(s, "C")).toMatchObject({ parent_agent_id: null, parent_known: true });
+  });
+
+  it("a failed non-spawn tool leaves pending spawns alone", () => {
+    const s = reduce(
+      spawn(snap("working"), null),
+      hook("PostToolUseFailure", { tool_name: "Bash" }, (t += 1)),
+    );
+    expect(s.tracking.pending_spawns).toEqual([null]);
+  });
+
   it("parallel spawns from one context are all known", () => {
-    let s = spawn(spawn(snap("working"), "A"), "A");
+    let s = spawn(spawn(start(spawn(snap("working"), null), "A"), "A"), "A");
     s = start(start(s, "B"), "C");
     expect(row(s, "B")).toMatchObject({ parent_agent_id: "A", parent_known: true });
     expect(row(s, "C")).toMatchObject({ parent_agent_id: "A", parent_known: true });
@@ -142,5 +196,22 @@ describe("subagent parent links", () => {
     });
     const kept = readSubagentRow({ ...old, parent_agent_id: "P", parent_known: true });
     expect(kept).toMatchObject({ parent_agent_id: "P", parent_known: true });
+  });
+
+  it("readSubagentRow tolerates null and non-objects, and shortens long parent ids", () => {
+    expect(readSubagentRow(null)).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(readSubagentRow("x")).toMatchObject({ parent_agent_id: null, parent_known: false });
+    const long = readSubagentRow({
+      agent_id: "A",
+      parent_agent_id: "p".repeat(500),
+      parent_known: true,
+    });
+    expect(long.parent_agent_id).toHaveLength(AGENT_ID_MAX_CHARS);
+  });
+
+  it("readTracking shortens stored pending ids and keeps ambiguous_remaining in range", () => {
+    const t2 = readTracking({ pending_spawns: ["p".repeat(500), null], ambiguous_remaining: 9 });
+    expect(t2.pending_spawns?.[0]).toHaveLength(AGENT_ID_MAX_CHARS);
+    expect(t2.ambiguous_remaining).toBe(2);
   });
 });
