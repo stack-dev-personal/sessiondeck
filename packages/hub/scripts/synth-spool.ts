@@ -1,8 +1,10 @@
 // Shared envelope synthesizer for scripts/bench-replay.ts (R2.9) and scripts/load-ingest.mjs
 // (R2.4). Mix per session: 80% hook (the golden session's non-lifecycle hooks cycled in order),
-// 12% statusline (the captured statusLine fixtures cycled), 3% liveness, 5% transcript (5 lines
-// of 400-800 bytes each); every session has a SessionStart and a SessionEnd. Deterministic for a
-// given seed. See bench-replay.ts for the volume rationale.
+// 12% statusline (the captured statusLine fixtures cycled; odd-numbered sessions are headless and
+// send none, so the hub derives their figures and cost from the transcript, R2.12), 3% liveness,
+// 5% transcript (5 assistant rows of 400-800 bytes each, with usage, a unique message.id, model
+// and gitBranch, shaped like the 01-subagents fixture); every session has a SessionStart and a
+// SessionEnd. Deterministic for a given seed. See bench-replay.ts for the volume rationale.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
@@ -55,6 +57,32 @@ function fixtures(): NonNullable<typeof cache> {
   return cache;
 }
 
+/** One assistant transcript row with usage, the shape the deriver and the usage index parse. */
+function assistantRow(sid: string, n: number, ts: number, text: string, rand: () => number): string {
+  return JSON.stringify({
+    isSidechain: false,
+    message: {
+      model: "claude-opus-5-5",
+      id: `msg_${sid}_${n}`,
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text }],
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 2 + Math.floor(rand() * 10),
+        cache_creation_input_tokens: Math.floor(rand() * 3000),
+        cache_read_input_tokens: 20_000 + Math.floor(rand() * 60_000),
+        output_tokens: 50 + Math.floor(rand() * 900),
+      },
+    },
+    type: "assistant",
+    uuid: `u-${sid}-${n}`,
+    timestamp: new Date(ts).toISOString(),
+    sessionId: sid,
+    gitBranch: "bench/synth",
+  });
+}
+
 export interface SynthOptions {
   sessions: number;
   totalEvents: number;
@@ -84,6 +112,7 @@ export function* synthSessions(
     const sid = `${o.sidPrefix ?? "bench"}-${String(s).padStart(4, "0")}-${ulid(s + 1)
       .slice(-8)
       .toLowerCase()}`;
+    const headless = s % 2 === 1;
     let ts = o.t0 + Math.floor((s / o.sessions) * o.spanMs);
     const out: Envelope[] = [];
     const push = (kind: Envelope["kind"], payload: Rec, hook?: string): void => {
@@ -113,7 +142,7 @@ export function* synthSessions(
     while (out.length < perSession - 1) {
       step();
       const r = rand();
-      if (r < 0.12) {
+      if (r < 0.12 && !headless) {
         push("statusline", {
           ...(statuses[statusIdx++ % statuses.length] as Rec),
           session_id: sid,
@@ -124,7 +153,7 @@ export function* synthSessions(
       } else if (r < 0.2) {
         const lineNo = out.length * 5;
         const lines = Array.from({ length: 5 }, (_, k) =>
-          JSON.stringify({ n: lineNo + k, text: "x".repeat(400 + Math.floor(rand() * 400)) }),
+          assistantRow(sid, lineNo + k, ts, "x".repeat(400 + Math.floor(rand() * 400)), rand),
         );
         push("transcript", { start_line: lineNo, lines });
       } else {
