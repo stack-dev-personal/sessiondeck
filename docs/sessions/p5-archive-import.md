@@ -48,3 +48,21 @@
 - LOW redact.ts:57-60 BLOCK_HEAD misses trailing comment, tag, leading-quote key: folded into U4.
 - LOW redact.ts:90-93 open-ended CLI credential forms (--user=u:p, -uuser:pass, --api_key, mysql -pSECRET): tracked gap for S7 (Phase 4 redaction absorbs archive redactor).
 - LOW importer.ts:298 open()/realpath TOCTOU window (0 leaks in 3000-flip race; attacker already has vault write): deferred.
+
+## Relaunch 2026-10-28T20:03:02Z
+- Previous run ended without status: sprint container stopped 2026-10-28T15:37Z during API retries (external stop). No answer file. No docs/HANDOFF-*.md present.
+- Worktree had uncommitted U3-hub work on 84f5aaf (hub src: atlas/search.ts, db/store.ts, ingest/{engine,ingestor,route}.ts, replay.ts, server.ts; new ingest/archive.ts, test/archive.R5.3.test.ts). Hub executor inspects it against the U3 carried-forward items and finishes U3.
+
+### U3 hub archive merge (sd-executor-hub) - review iteration 1
+- Commit 21ecda1 (resumed uncommitted work kept; fixed ISO.exec lint trip, pinned SQL string in ingest-hardening test, added size-cap tests). Hub 446 tests pass; pnpm -r test green (contract 1145/1 skip, hub 446, probe 405/1 skip, scripts 324/3 skip, web 302).
+- Reviewer: `merge` (2 MINOR, 2 LOW). Security: `Gate: pass` (3 LOW).
+- Status: done (review), verification after U4.
+
+## Deferred findings (U3)
+- MINOR test/archive.R5.3.test.ts:488 restart test does not exercise retention compaction + replay of archive events (retention.ts:172 foldEvents): deferred, follow-up.
+- MINOR store.ts:366 cwdMoved extra SELECT + JSON.parse per upsert of rows with archive: perf follow-up.
+- LOW engine.ts:230 live backlog event older than capture end resets archived-only row to live until reaper: folded into U4 (probe flush order) check; hub fix deferred.
+- LOW store.ts:316 / store.ts:81-104 collection last-segment name match to existing project; vault:<collection> project per collection (token holder can create junk projects): accepted for single-user MVP.
+- LOW engine.ts applyArchive archive-only row pre-claims session_id for declared host; fix is host-bound tokens (Phase 7).
+- LOW bidi/C1 chars in archive text: render-time neutralization in U5.
+- Note: probe must keep each archive batch under 1 MiB total (hub 413): checked in U4.
