@@ -40,4 +40,15 @@ describe("useDisplayActivity timer", () => {
     expect(result.current[0]?.session.state).toBe("idle");
     expect(calls).toBeGreaterThan(0);
   });
+
+  it("a held card reports state_since from when it entered its group", () => {
+    const clock = () => T0 + 5_000;
+    const raw = snap("a", "idle", T0 + 4_000);
+    const { result } = renderHook(() => useDisplayActivity([raw], 120, clock));
+    expect(result.current[0]?.session.state).toBe("working");
+    expect(result.current[0]?.session.state_since).toBe(T0 + 4_000);
+    const old = snap("b", "idle", T0 - 20_000);
+    const r2 = renderHook(() => useDisplayActivity([old], 120, clock));
+    expect(r2.result.current[0]?.session.state_since).toBe(T0 - 20_000);
+  });
 });

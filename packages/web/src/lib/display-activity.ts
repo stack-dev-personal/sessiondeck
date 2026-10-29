@@ -29,6 +29,8 @@ export interface Tracked {
   groupSince: number;
   /** Start of the current uninterrupted idle run; null when not idle. */
   idleSince: number | null;
+  /** When a raw move into working, held as idle, may show; null when no such hold is active. */
+  wakeAt: number | null;
 }
 
 export type TrackedMap = ReadonlyMap<string, Tracked>;
@@ -49,12 +51,24 @@ export function stepDisplay(
   const raw = s.state;
   let displayState: SessionState = raw;
   let idleSince: number | null = null;
+  let wakeAt: number | null = null;
   if (raw === "idle" && prev === undefined) {
     // First sight (mount, reload, back from Settings): the idle run began at the hub's state_since.
-    if (now - s.state_since < graceMs) {
-      idleSince = s.state_since;
+    // Clamped so clock skew between hub and browser never holds longer than one grace period.
+    const since = Math.min(Math.max(s.state_since, now - graceMs), now);
+    if (now - since < graceMs) {
+      idleSince = since;
       displayState = "working";
     }
+  } else if (
+    (raw === "working" || raw === "starting") &&
+    prev !== undefined &&
+    prev.group === "idle" &&
+    now - prev.groupSince < graceMs
+  ) {
+    // A card changes group at most once per grace period: hold the move back into working.
+    displayState = "idle";
+    wakeAt = prev.groupSince + graceMs;
   } else if (raw === "idle" && prev !== undefined && prev.group !== "idle") {
     // Left working or waiting for idle: hold as working until the idle has lasted the grace.
     idleSince = prev.idleSince ?? now;
@@ -64,11 +78,11 @@ export function stepDisplay(
   }
   const group = groupOf(displayState);
   if (prev !== undefined && prev.group === group) {
-    return { displayState, group, groupSince: prev.groupSince, idleSince };
+    return { displayState, group, groupSince: prev.groupSince, idleSince, wakeAt };
   }
   // First sighting seeds the order from the hub's own state_since so a reload keeps a sane order.
   const groupSince = prev === undefined ? Math.min(s.state_since, now) : now;
-  return { displayState, group, groupSince, idleSince };
+  return { displayState, group, groupSince, idleSince, wakeAt };
 }
 
 /** Track every session; ids that vanished are dropped. Reuses the previous entry when unchanged. */
@@ -88,7 +102,8 @@ export function deriveDisplay(
         before.displayState === t.displayState &&
         before.group === t.group &&
         before.groupSince === t.groupSince &&
-        before.idleSince === t.idleSince
+        before.idleSince === t.idleSince &&
+        before.wakeAt === t.wakeAt
         ? before
         : t,
     );
@@ -100,6 +115,7 @@ export function deriveDisplay(
 export function nextDeadline(map: TrackedMap, graceMs: number): number | null {
   let min: number | null = null;
   for (const t of map.values()) {
+    if (t.wakeAt !== null && (min === null || t.wakeAt < min)) min = t.wakeAt;
     if (t.idleSince === null || t.displayState === "idle") continue;
     const at = t.idleSince + graceMs;
     if (min === null || at < min) min = at;

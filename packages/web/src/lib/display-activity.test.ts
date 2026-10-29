@@ -186,3 +186,62 @@ describe("clampGraceSec", () => {
     expect(new Set(run(120, steps).groups)).toEqual(new Set(["working"]));
   });
 });
+
+describe("idle to working hold and clock skew (R3.10)", () => {
+  it("working, Stop, auto-idle at 121, prompt at 122 stays idle until 241", () => {
+    const steps: Array<[number, SessionState]> = [
+      [0, "working"],
+      [1, "idle"],
+      [121, "idle"],
+      [122, "working"],
+      [200, "working"],
+      [240, "working"],
+      [241, "working"],
+    ];
+    const { groups, states } = run(120, steps);
+    expect(groups).toEqual(["working", "working", "idle", "idle", "idle", "idle", "working"]);
+    expect(states[3]).toBe("idle");
+    expect(changes(groups)).toBe(2);
+  });
+
+  it("the timer deadline fires the held move without another delta", () => {
+    const { map } = run(120, [
+      [0, "working"],
+      [1, "idle"],
+      [121, "idle"],
+      [122, "working"],
+    ]);
+    expect(nextDeadline(map, 120_000)).toBe(T0 + 241_000);
+    const later = deriveDisplay(map, [snap("a", "working", T0 + 122_000)], T0 + 241_000, 120_000);
+    expect(later.get("a")!.displayState).toBe("working");
+    expect(later.get("a")!.groupSince).toBe(T0 + 241_000);
+  });
+
+  it("a prompt after a full grace since the last group change moves at once", () => {
+    const { groups } = run(120, [
+      [0, "working"],
+      [1, "idle"],
+      [121, "idle"],
+      [300, "working"],
+    ]);
+    expect(groups[3]).toBe("working");
+  });
+
+  it("attention is never held after a move to idle", () => {
+    const { groups } = run(120, [
+      [0, "working"],
+      [1, "idle"],
+      [121, "idle"],
+      [125, "waiting_input"],
+    ]);
+    expect(groups[3]).toBe("attention");
+  });
+
+  it("clock skew: hub ahead holds at most one grace; browser ahead shows idle", () => {
+    const ahead = deriveDisplay(new Map(), [snap("a", "idle", T0 + 600_000)], T0, 120_000);
+    expect(ahead.get("a")!.displayState).toBe("working");
+    expect(nextDeadline(ahead, 120_000)).toBe(T0 + 120_000);
+    const behind = deriveDisplay(new Map(), [snap("a", "idle", T0 - 600_000)], T0, 120_000);
+    expect(behind.get("a")!.displayState).toBe("idle");
+  });
+});

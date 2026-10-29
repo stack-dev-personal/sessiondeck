@@ -44,7 +44,7 @@ export function useDisplayActivity(
       const session =
         hit && hit.raw === raw && hit.state === t.displayState
           ? hit.out
-          : { ...raw, state: t.displayState, state_detail: null };
+          : { ...raw, state: t.displayState, state_detail: null, state_since: t.groupSince };
       cache.set(raw.session_id, { raw, state: t.displayState, out: session });
       return { session, group: t.group };
     });
