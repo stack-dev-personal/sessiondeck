@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Reporter, TestCase, TestResult } from "@playwright/test/reporter";
 import { SCREENS_DIR } from "./screens-dir";
 
-/** Writes SCREENS_DIR/summary.json: per requirement, pass/fail and its screenshot files. */
+/** Writes SCREENS_DIR/summary-mock.json (or summary-live.json in live mode): per requirement, pass/fail and its screenshot files. */
 export default class SummaryReporter implements Reporter {
   private readonly results = new Map<string, { status: string; titles: string[] }>();
 
@@ -29,7 +29,7 @@ export default class SummaryReporter implements Reporter {
         screenshots: files.filter((f) => f.startsWith(id) && f.endsWith(".png")).sort(),
       }));
     writeFileSync(
-      join(SCREENS_DIR, "summary.json"),
+      join(SCREENS_DIR, process.env["SD_E2E_HUB_URL"] ? "summary-live.json" : "summary-mock.json"),
       JSON.stringify({ viewport: "1440x900", requirements }, null, 2),
     );
   }

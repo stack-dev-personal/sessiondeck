@@ -126,8 +126,8 @@ test("R5.3 live: merged and archived-only records, search opens the archived ses
   const drawer = page.getByTestId("detail-drawer");
   await expect(drawer).toHaveAttribute("data-session-id", merged);
   await expect(drawer.locator('[data-slot="archive-outcome"]')).toContainText(heron);
-  await expect(drawer).toContainText("Web shell scaffold");
-  await expect(drawer.getByText("Archived").first()).toBeVisible();
+  await expect(drawer.locator("header h2")).toHaveText("Web shell scaffold");
+  await expect(drawer.locator("header").getByText("Archived")).toBeVisible();
   await page.screenshot({ path: shot("R5.3-drawer.png") });
   await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);

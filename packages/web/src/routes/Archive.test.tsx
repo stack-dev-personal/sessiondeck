@@ -180,6 +180,24 @@ describe("ProjectView archived rows", () => {
     ).toHaveLength(1);
   });
 
+  it("worktree text is neutralized in the drawer and the project row", async () => {
+    const wtSession = archived(
+      "w1",
+      {},
+      { git: { branch: "main", worktree: `wt${RLO}x`, pr: null } },
+    );
+    mount(detail({ archived: [wtSession] }));
+    const list = await screen.findByTestId("archived-list");
+    const row = within(list).getByTestId("project-session");
+    expect(row.textContent).toContain("wt<U+202E>x");
+    expect(row.textContent).not.toContain(RLO);
+    await userEvent.click(within(row).getByRole("button", { name: /Spool compaction/ }));
+    const dlg = await screen.findByTestId("detail-drawer");
+    expect(dlg.textContent).toContain("wt<U+202E>x");
+    expect(dlg.textContent).not.toContain(RLO);
+    act(() => useUi.getState().closeSession());
+  });
+
   it("an archived row opens the drawer with the archive section", async () => {
     const only = archived("o1", { outcome: `kestrel ${RLO}done` });
     mount(detail({ archived: [only] }));
@@ -188,6 +206,9 @@ describe("ProjectView archived rows", () => {
     const dlg = await screen.findByTestId("detail-drawer");
     const out = within(dlg).getByText(/kestrel/);
     expect(out).toHaveTextContent("kestrel <U+202E>done");
+    const head = dlg.querySelector("header")!;
+    expect(head.querySelector("h2")).toHaveTextContent(/^Spool compaction$/);
+    expect(head).toHaveTextContent("Archived");
     act(() => useUi.getState().closeSession());
   });
 });
