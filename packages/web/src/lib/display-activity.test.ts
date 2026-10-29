@@ -244,4 +244,33 @@ describe("idle to working hold and clock skew (R3.10)", () => {
     const behind = deriveDisplay(new Map(), [snap("a", "idle", T0 - 600_000)], T0, 120_000);
     expect(behind.get("a")!.displayState).toBe("idle");
   });
+
+  it("a held card keeps the state it had: error then working inside the grace shows error", () => {
+    const { states, groups } = run(120, [
+      [0, "working"],
+      [1, "error"],
+      [6, "working"],
+      [60, "working"],
+      [121, "working"],
+    ]);
+    expect(states.slice(1, 4)).toEqual(["error", "error", "error"]);
+    expect(groups[2]).toBe("idle");
+    expect(states[4]).toBe("working");
+  });
+
+  it("a grace change mid-hold re-evaluates: shorter grace releases, zero releases at once", () => {
+    const { map: base } = run(120, [
+      [0, "working"],
+      [1, "idle"],
+      [121, "idle"],
+      [122, "working"],
+    ]);
+    expect(base.get("a")!.displayState).toBe("idle");
+    const wk = snap("a", "working", T0 + 122_000);
+    const at60 = deriveDisplay(base, [wk], T0 + 150_000, 60_000);
+    expect(at60.get("a")!.wakeAt).toBe(at60.get("a")!.groupSince + 60_000);
+    const at0 = deriveDisplay(at60, [wk], T0 + 150_000, 0);
+    expect(at0.get("a")!.displayState).toBe("working");
+    expect(at0.get("a")!.wakeAt).toBeNull();
+  });
 });

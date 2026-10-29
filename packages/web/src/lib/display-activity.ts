@@ -67,7 +67,7 @@ export function stepDisplay(
     now - prev.groupSince < graceMs
   ) {
     // A card changes group at most once per grace period: hold the move back into working.
-    displayState = "idle";
+    displayState = prev.displayState;
     wakeAt = prev.groupSince + graceMs;
   } else if (raw === "idle" && prev !== undefined && prev.group !== "idle") {
     // Left working or waiting for idle: hold as working until the idle has lasted the grace.
