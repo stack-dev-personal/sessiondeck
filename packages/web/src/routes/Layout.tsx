@@ -13,8 +13,7 @@ import {
 import { isPresetName, MAX_PROJECT_COLUMNS, type PresetName } from "../layout/presets";
 import { panesOf } from "../layout/spec";
 import { LAYOUT_KEYS, useShortcuts } from "../lib/keys";
-import { projectDirsByAttention } from "../lib/attention";
-import { useShallow } from "zustand/react/shallow";
+import { projectDirOf, projectDirsByAttention } from "../lib/attention";
 import { useBoard } from "../store/board";
 import { useLayout } from "../store/layout";
 import { useSaved } from "../store/saved";
@@ -28,22 +27,13 @@ import { useUi } from "../store/ui";
 export function Layout() {
   const spec = useLayout((s) => s.spec);
   const applyPreset = useLayout((s) => s.applyPreset);
-  // Derived lists, not the sessions map: a delta for one session changes the map but rarely these,
-  // so the layout, its panes and the header do not re-render on every update (R6.4).
-  const projects = useBoard(useShallow((s) => projectDirsByAttention(s.sessions)));
-  const liveProjects = useBoard(
-    useShallow((s) =>
-      projectDirsByAttention(
-        Object.fromEntries(Object.entries(s.sessions).filter(([, v]) => isLive(v))),
-      ),
-    ),
-  );
   const loaded = useBoard((s) => s.loaded);
   const [open, setOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const wanted = params.get("preset");
   const waiting = wanted === "by-project" && !loaded;
 
+  // Read at apply time, not subscribed: the project order changes on most deltas (R6.4).
   useEffect(() => {
     if (wanted === null) return;
     if (!isPresetName(wanted)) {
@@ -51,9 +41,9 @@ export function Layout() {
       return;
     }
     if (waiting) return;
-    applyPreset(wanted, projects);
+    applyPreset(wanted, projectDirsByAttention(useBoard.getState().sessions));
     setParams((p) => (p.delete("preset"), p), { replace: true });
-  }, [wanted, waiting, projects, applyPreset, setParams]);
+  }, [wanted, waiting, loaded, applyPreset, setParams]);
 
   const arrange = useCallback((mode: AutoFitMode) => {
     const all = Object.values(useBoard.getState().sessions);
@@ -104,15 +94,28 @@ export function Layout() {
   );
   // Count the projects that have no column, not a difference of totals: the session set can change
   // after the preset was applied, so a column may point at a project that is gone.
-  const shownDirs = new Set<string>();
-  for (const p of panesOf(spec)) if (p.projectDir !== undefined) shownDirs.add(p.projectDir);
+  const shownDirs = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of panesOf(spec)) if (p.projectDir !== undefined) set.add(p.projectDir);
+    return set;
+  }, [spec]);
   // Only projects with a live session are advertised, the same set "p" would give a column.
-  const hidden = liveProjects.filter((d) => !shownDirs.has(d)).length;
+  // A number, so a delta that moves no project in or out of view does not re-render the layout.
+  const byProject = spec.id === "by-project";
+  const hidden = useBoard((s) => {
+    if (!byProject) return 0;
+    const dirs = new Set<string>();
+    for (const v of Object.values(s.sessions)) if (isLive(v)) dirs.add(projectDirOf(v));
+    let n = 0;
+    for (const d of dirs) if (!shownDirs.has(d)) n++;
+    return n;
+  });
   // Only when the six panes were filled (by Arrange); a grid6 picked from the menu says nothing.
   const sessionPanes = panesOf(spec).filter((p) => p.type === "session");
   const filled = spec.id === "grid6" && sessionPanes.every((p) => p.sessionId !== undefined);
   const moreLive = useBoard((s) => (filled ? autoFitMore(Object.values(s.sessions)) : 0));
-  const pick = (name: PresetName) => applyPreset(name, projects);
+  const pick = (name: PresetName) =>
+    applyPreset(name, projectDirsByAttention(useBoard.getState().sessions));
 
   return (
     <div className="flex h-full flex-col" data-testid="layout-route">
