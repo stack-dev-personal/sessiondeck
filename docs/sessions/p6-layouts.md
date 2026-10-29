@@ -82,3 +82,8 @@
 ## Relaunch 4 2026-10-28
 - The sprint container stopped at 2026-10-28T15:37Z (external stop; API retries were failing), the fourth external restart. Worktree at d394eeb with uncommitted U5 changes (about 50 minutes of a delegation): e2e/R6.4.spec.ts, e2e/load/trace.ts, PaneBodies.tsx, SessionPaneBody.test.tsx, store/activity.test.ts, store/board.ts, trace.test.ts. No answer file; no docs/HANDOFF-*.md. S9 is merged into origin/sprint/3-organize (73252da).
 - Resumed: web executor inspects the diff and keeps and finishes it or discards it, then U5 review and verification, then U6 close. Stray items in /work (.s10out1-3, .tmp-screens-S10, s10shots, diag-S10.mjs) stay uncommitted.
+
+## Relaunch 5 2026-10-29
+- The sprint container stopped at 2026-10-28T23:31Z (external stop: orchestrator exited, sessions killed), the fifth external restart. Worktree clean at 3f5633c. No answer file; no docs/HANDOFF-*.md. origin/sprint/3-organize now at 7c5f3d4 (main 77a4fa1, PR #16 transcript fixtures merged in).
+- U5 state at stop: review iteration 1 fixed all 7 findings (f96ba58..616dccb); the attributed ABBA gate failed with 115-146 app-attributed drops per board window at the 500-row cap; iteration 2 fix commits 7fb61ac, 3f5633c landed. Iteration 2 of 3 continues.
+- Resumed: web executor confirms the fix against the gate, then U5 review, verification, U6 close. Stray untracked items in /work (.s10diag, .s10full, s10shots, diag-S10.mjs) stay uncommitted.
