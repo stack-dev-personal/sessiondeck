@@ -67,3 +67,16 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 - 2026-10-29 "At most one group change per grace period" applies both ways: idle to working shows idle until one grace since the last group change (the timer moves it). Attention is never held.
 - 2026-10-29 Waiting to idle shows working for the grace (spec says "continuously idle or waiting"); kept as specified.
 - 2026-10-29 First-sight idle start is clamped to min(max(state_since, now - grace), now), so hub/browser clock skew can never hold a card longer than one grace.
+
+### U3 popout (sd-executor-web): dd60c66, e7ae771, e5b82eb, 0362bcb, 84d8e15, 82b5022
+### U3b fast_mode (new unit; sd-executor-contract 2bfef4f, sd-executor-hub 5459b86)
+- Review iteration 1: fix-then-merge (MAJOR prototype-key hash crash `#session-toString`; MAJOR "Speed: n/a" although statusLine reports fast_mode; MINORs focus trap selector, history entry left behind on close, AgentCard vs SessionCard).
+- U3b added: statusLine fast_mode (optional, non-boolean reads null) to SessionSnapshot.fast_mode (boolean | null), hub applies it like effort, stored rows read null; hub goldens regenerated (fast_mode lines only).
+- Review iteration 2: merge (MINOR stale pushed flag); security pass on fast_mode ingest and hash input (LOW no hash length cap). Both fixed in 84d8e15.
+- Verifier first run FAIL (header state not asserted; raw hash cap unproven), test gaps closed in 82b5022 (mutation-checked); re-verify PASS on tests, screens pending U5. Web 280, hub 290, contract 1119/1 skip.
+
+### Decisions made
+- 2026-10-29 Subagent cards are AgentCard on the shared compact card shell (sd-card, data-density="compact", --card-compact-h), not SessionCard: subagents have no SessionSnapshot, and building one would invent session data. Risk: drift if Sprint 3 changes the compact card.
+- 2026-10-29 Popout header shows the raw contract state (truthful), while board cards show the display state (R3.10 hysteresis).
+- 2026-10-29 Speed shows "fast" / "standard" from statusLine fast_mode, "n/a" when never reported.
+- Gap (R3.11, restated): live hook data gives no nesting; all subagents show at the first level with an "unlinked" marker until S7 transcript links.
