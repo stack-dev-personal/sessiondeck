@@ -13,7 +13,9 @@
 //     per hook on average)
 // The floor in the work unit is 1,000,000 events across at least 2 hosts and 300 sessions.
 //
-//   node scripts/bench-replay.mjs [--dir /tmp/sd-1-S4-bench] [--events 1020000] [--sessions 300]
+//   node scripts/bench-replay.mjs [--dir /tmp/sd-1-S4-bench] [--events 1020000] [--sessions 300] [--stress]
+//   --stress: every 4th session is branchless and text-free, with subagent transcript lines
+//   (synth-spool.ts), to price the replay full scan.
 import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
 import path from "node:path";
@@ -54,6 +56,7 @@ function generate(): void {
     totalEvents: TOTAL_EVENTS,
     t0,
     spanMs: 29 * DAY_MS,
+    stress: args.includes("--stress"),
   })) {
     for (const e of out) payloadBytes += JSON.stringify(e.payload).length;
     for (let i = 0; i < out.length; i += 500) {

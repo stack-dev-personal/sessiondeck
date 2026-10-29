@@ -174,3 +174,17 @@ Command: `cd packages/hub && node scripts/bench-replay.mjs --dir /tmp/sd-2-S8d-b
 | after (HEAD) | 53,576 ms | 19,038 | 339.0 MB | 0 |
 
 Result: PASS (< 60 s) with a thin margin on a loaded host; unchanged by this iteration (the scan bound does not bite on the synthetic sessions). The earlier 12.7 s figure (HEAD d02c41e, Linux, no transcript-derived work, idle host) is not comparable: the replay now also builds the usage index and re-derives every session, and the host is busy. A quiet-host re-run is advisable before closing R2.9. Compaction in the same run: 528,150 events, p99 batch 92.56 ms, max batch 204.73 ms.
+
+## U3 fix iteration 1 (R2.9 stress mix)
+
+Date 2026-10-28, branch p2/headless-metrics, HEAD d682ff6 plus the bench-only synth change (replay full scan: sessions never complete, effort now part of the subagent completeness test). Machine: Windows 11 native, node v24.19.0, 20 containers up, total CPU 64 to 71% at start (not a quiet host).
+
+New option `--stress` on `bench-replay` and `load-ingest` (synth-spool `stress: true`): every 4th session (75 of 300) is branchless and text-free (assistant rows are tool_use only, no `gitBranch`), and every other transcript envelope of those sessions is a subagent transcript (agent_id of the golden SubagentStart, sidechain rows, no effort), so those sessions' main and subagent figures never complete and replay scans every stored line. The default mix is unchanged (same random sequence).
+
+Command: `cd packages/hub && node scripts/bench-replay.mjs --dir /tmp/sd-2-S8d-bench5 --stress` (same base args as the R2.9 row above: 1,020,000 events, 300 sessions, 2 hosts).
+
+| Column | replay elapsed | events/s | peak RSS | exceptions |
+|---|---|---|---|---|
+| stress mix, HEAD | 14,217 ms | 71,745 | 342.4 MB | 0 |
+
+Result: PASS (< 60 s). The earlier 53.6 s row was taken at about 96% CPU, this one at 64 to 71%, so the two are not comparable; no default-mix rerun was made (one run only, per the unit). The full scan is cheap: a `"gitBranch":` substring test skips the branch regex, and JSON parse happens only for lines containing `"type":"assistant"`. Compaction in the same run: 528,083 events, p99 batch 42.4 ms, max batch 332.08 ms. The R2.4 load bench with `--stress` (subagent lines inside the ingest transaction) is NOT run; the quiet-host run stays deferred.
