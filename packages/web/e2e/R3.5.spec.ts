@@ -1,22 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { openSettledBoard, shot } from "./helpers";
 
-const SECTIONS = [
-  "timeline",
-  "context",
-  "limits",
-  "subagents",
-  "tasks",
-  "prompt",
-  "assistant",
-  "git",
-  "raw",
-];
-
 const activeId = (page: Page) =>
   page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset["sessionId"] ?? null);
 
-test("R3.5 Enter opens the drawer, Esc closes it, focus returns to the same card", async ({
+test("R3.5 Enter opens the popout, Esc closes it, focus returns to the same card", async ({
   page,
 }) => {
   await openSettledBoard(page);
@@ -27,16 +15,13 @@ test("R3.5 Enter opens the drawer, Esc closes it, focus returns to the same card
   await page.keyboard.press("Enter");
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
-  const order = await dialog
-    .locator("[data-section]")
-    .evaluateAll((els) => els.map((e) => e.getAttribute("data-section")));
-  expect(order).toEqual(SECTIONS);
+  await expect(page.getByTestId("session-popout")).toHaveAttribute("data-session-id", firstId!);
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect(await activeId(page)).toBe(firstId);
 
-  // Mouse: click another card; the drawer opens; Esc returns focus to it.
+  // Mouse: click another card; the popout opens; Esc returns focus to it.
   const other = page.getByTestId("session-card").nth(3);
   const otherId = await other.getAttribute("data-session-id");
   expect(otherId).not.toBe(firstId);
@@ -47,44 +32,25 @@ test("R3.5 Enter opens the drawer, Esc closes it, focus returns to the same card
   expect(await activeId(page)).toBe(otherId);
 });
 
-test("R3.5 the drawer of the busiest session shows sparkline, timeline, subagents and limits", async ({
+test("R3.5 the popout of the busiest session shows header facts, subagents and the content slot", async ({
   page,
 }) => {
   await openSettledBoard(page);
   const card = page.locator('[data-testid="session-card"][data-session-id="mock-sessiondeck-3"]');
   await card.focus();
   await page.keyboard.press("Enter");
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByTestId("session-popout");
   await expect(dialog).toBeVisible();
+  await expect(dialog.locator('[data-slot="state"]').first()).not.toHaveText("");
+  for (const slot of ["model", "effort", "cost", "branch"]) {
+    await expect(dialog.locator(`[data-slot="${slot}"]`).first()).toBeVisible();
+  }
+  await expect(dialog.locator('[data-slot="content"]')).toHaveCount(1);
+  await expect(dialog.getByTestId("agent-rollup")).toContainText("Subagents (5)");
+  expect(await dialog.getByTestId("agent-card").count()).toBeGreaterThan(1);
 
-  const spark = dialog.locator('[data-section="context"]');
-  await expect(spark).toContainText(/latest \d+% · \d+ samples/);
-  const samples = Number(/(\d+) samples/.exec((await spark.textContent()) ?? "")?.[1]);
-  expect(samples).toBeGreaterThanOrEqual(2);
-  await expect(spark.locator("polyline")).toHaveCount(1);
-
-  expect(
-    await dialog.locator('[data-section="timeline"] [data-transition]').count(),
-  ).toBeGreaterThan(2);
-  expect(await dialog.locator('[data-section="subagents"] [data-agent]').count()).toBeGreaterThan(
-    1,
-  );
-  await expect(dialog.locator('[data-section="limits"]')).toContainText(/\d+%/);
-  await expect(dialog.locator('[data-section="tasks"]')).toContainText(/\d/);
-  const prompt = ((await dialog.locator('[data-section="prompt"]').textContent()) ?? "")
-    .replace("Last prompt", "")
-    .trim();
-  const reply = ((await dialog.locator('[data-section="assistant"]').textContent()) ?? "")
-    .replace("Last assistant message", "")
-    .trim();
-  expect(prompt).not.toMatch(/^n\/a$/);
-  expect(reply).not.toMatch(/^n\/a$/);
-  expect(prompt.length).toBeGreaterThan(0);
-  expect(reply.length).toBeGreaterThan(0);
-  expect(prompt).not.toBe(reply);
-
-  await page.screenshot({ path: shot("R3.5-drawer.png") });
-  await expect(page).toHaveScreenshot("R3.5-drawer.png");
+  await page.screenshot({ path: shot("R3.5-popout.png") });
+  await expect(page).toHaveScreenshot("R3.5-popout.png");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });

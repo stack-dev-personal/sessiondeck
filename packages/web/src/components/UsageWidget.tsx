@@ -217,7 +217,7 @@ export function UsageWidget() {
       data-collapsed={collapsed ? "true" : "false"}
       aria-label="Account usage"
       style={{ position: "fixed", left: pos.x, top: pos.y, width: w, height: h }}
-      className="z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-surface-2 p-s-2 text-sm text-fg"
+      className="z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-surface-1 p-s-2 text-sm text-fg"
     >
       <span id={hintId} className="sr-only">
         Arrow keys move, Shift for larger steps

@@ -146,14 +146,14 @@ for (const theme of ["dark", "light"] as const) {
     );
   });
 
-  test(`R3.7 live ${theme}: detail drawer control boundaries`, async ({ page }) => {
+  test(`R3.7 live ${theme}: session popout control boundaries`, async ({ page }) => {
     await setTheme(page, theme);
     await openSettledBoard(page);
     await page.locator('[data-testid="session-card"]').first().focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog")).toBeVisible();
     expect(await page.getByRole("dialog").getByRole("button").count()).toBeGreaterThan(0);
-    expect(await measureControlBorders(page), `${theme} drawer control boundaries`).toEqual([]);
+    expect(await measureControlBorders(page), `${theme} popout control boundaries`).toEqual([]);
   });
 }
 
@@ -205,6 +205,7 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
     outline: string;
     w: number;
     card: boolean;
+    widget: boolean;
   }[] = [];
   for (let i = 0; i < 40; i++) {
     await page.keyboard.press("Tab");
@@ -221,6 +222,7 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
         outline: `${cs.outlineStyle} ${cs.outlineColor}`,
         w: parseFloat(cs.outlineWidth),
         card: e.dataset["testid"] === "session-card",
+        widget: e.closest('[data-testid="usage-widget"]') !== null,
       };
     });
     if (st === null) break;
@@ -229,7 +231,11 @@ test("R3.7 live: keyboard walk, focus order after reorder, focus visible, shortc
   const cardStops = stops.filter((s) => s.card);
   expect(cardStops.length).toBe(8);
   // Visual order: header controls left to right, toolbar left to right, cards by row then column.
-  const nonCards = stops.filter((s) => !s.card);
+  // The floating usage widget (R3.12) is last in the DOM, so its two stops follow the grid.
+  const widgetStops = stops.filter((s) => s.widget);
+  expect(widgetStops.length).toBe(2); // move handle, collapse button
+  expect(stops.slice(-2).every((s) => s.widget)).toBe(true);
+  const nonCards = stops.filter((s) => !s.card && !s.widget);
   expect(nonCards.length).toBeGreaterThanOrEqual(6); // 2 links, 2 header buttons, 2 selects
   expect(stops.findIndex((s) => s.card)).toBe(nonCards.length); // controls precede the grid
   const rowOf = (s: { y: number }) => Math.round(s.y / 20);
@@ -431,7 +437,7 @@ test("R3.2 at 320 px a meter row going null to value moves no meter box", async 
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
   );
   const before = await boxes(id);
-  expect(before.map((b) => b.text)).toEqual(["n/a", "n/a", "n/a"]);
+  expect(before.map((b) => b.text)).toEqual(["n/a"]); // context only; 5h and 7d are in the widget (R3.12)
   const future = Date.now() + 3_600_000;
   await patch({
     ctx: { used_pct: 100, window: 1_000_000, input: 1, output: 1 },
@@ -445,8 +451,8 @@ test("R3.2 at 320 px a meter row going null to value moves no meter box", async 
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
   );
   const after = await boxes(id);
-  expect(after.map((b) => b.text?.slice(0, 4))).toEqual(["100%", "100%", "100%"]);
-  for (let i = 0; i < 3; i++) {
+  expect(after.map((b) => b.text?.slice(0, 4))).toEqual(["100%"]);
+  for (let i = 0; i < 1; i++) {
     const a = before[i]!;
     const b = after[i]!;
     expect({ x: b.x, y: b.y, w: b.w, h: b.h }, `${a.kind} meter box`).toEqual({

@@ -43,7 +43,7 @@ test("R3.8 mock build runs the full board with no network beyond the preview ser
   await expect(page.getByTestId("connection")).toContainText("mock");
   await fullShot(page, "R3.8.png", { baseline: true });
 
-  // The rest of the app stays offline too: the drawer, /settings and /dev/cards.
+  // The rest of the app stays offline too: the popout, /settings and /dev/cards.
   await page.getByTestId("session-card").first().click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Escape");
