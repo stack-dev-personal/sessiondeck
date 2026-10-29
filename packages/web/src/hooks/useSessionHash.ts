@@ -4,9 +4,9 @@ import { useUi } from "../store/ui";
 
 const PREFIX = "#session-";
 /** The contract sets no session_id cap; ids are UUID-like, so 256 is generous. */
-const MAX_ID_CHARS = 256;
+export const MAX_ID_CHARS = 256;
 
-function parse(hash: string): string | null {
+export function parse(hash: string): string | null {
   if (!hash.startsWith(PREFIX) || hash.length === PREFIX.length) return null;
   // Raw length first so an oversized value is never decoded.
   if (hash.length - PREFIX.length > MAX_ID_CHARS * 9) return null;

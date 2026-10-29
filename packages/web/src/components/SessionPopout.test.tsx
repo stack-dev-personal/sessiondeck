@@ -7,6 +7,8 @@ import { App } from "../App";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 import { SessionPopout } from "./SessionPopout";
+import { MAX_ID_CHARS, parse } from "../hooks/useSessionHash";
+import { STATE_VOCAB } from "../lib/state-vocab";
 
 const NOW = Date.now();
 
@@ -57,6 +59,28 @@ beforeEach(() => {
     exceeds200k: {},
     history: {},
     connection: "mock",
+  });
+});
+
+describe("header state", () => {
+  it.each(["working", "waiting_permission"] as const)(
+    "shows glyph and word for %s, not color alone",
+    async (state) => {
+      useBoard.setState({
+        sessions: { ...useBoard.getState().sessions, a: snap("a", { state }) },
+      });
+      mount();
+      await userEvent.click(card("a"));
+      const dlg = screen.getByRole("dialog", { name: "name-a" });
+      const slot = dlg.querySelector('[data-slot="state"]')!;
+      expect(slot).toHaveTextContent(STATE_VOCAB[state].label);
+      expect(slot.parentElement).toHaveTextContent(STATE_VOCAB[state].glyph);
+    },
+  );
+
+  it("the two states read differently", () => {
+    expect(STATE_VOCAB.working.label).not.toBe(STATE_VOCAB.waiting_permission.label);
+    expect(STATE_VOCAB.working.glyph).not.toBe(STATE_VOCAB.waiting_permission.glyph);
   });
 });
 
@@ -269,8 +293,23 @@ describe("#session-<id> hash", () => {
     window.history.replaceState(null, "", `/#session-${long}`);
     mount();
     expect(screen.queryByRole("dialog")).toBeNull();
-    window.history.replaceState(null, "", `/#session-${"%41".repeat(5000)}`);
-    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("an over-long decoded id is rejected (decoded cap)", () => {
+    expect(parse(`#session-${"x".repeat(MAX_ID_CHARS)}`)).toBe("x".repeat(MAX_ID_CHARS));
+    expect(parse(`#session-${"x".repeat(MAX_ID_CHARS + 1)}`)).toBeNull();
+    // Short raw, long decoded: only the decoded check can reject this.
+    expect(parse(`#session-${"%41".repeat(MAX_ID_CHARS + 1)}`)).toBeNull();
+  });
+
+  it("an over-long raw hash is rejected before decodeURIComponent runs (raw cap)", () => {
+    const spy = vi.spyOn(globalThis, "decodeURIComponent");
+    expect(parse(`#session-${"%41".repeat(5000)}`)).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+    // Sanity: a normal hash does decode, so the spy is live.
+    expect(parse("#session-%41")).toBe("A");
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
   });
 
   it("removing the hash (Back) closes", async () => {
