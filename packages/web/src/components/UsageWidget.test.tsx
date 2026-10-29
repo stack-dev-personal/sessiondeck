@@ -1,7 +1,7 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
-import { pickFreshestRateLimits } from "../hooks/useAccountUsage";
+import { pickFreshestRateLimits, useAccountUsage } from "../hooks/useAccountUsage";
 import { STORAGE_KEYS } from "../lib/storage";
 import { useBoard } from "../store/board";
 import {
@@ -75,6 +75,61 @@ describe("pickFreshestRateLimits", () => {
     expect(got).toEqual(fresh);
     expect(pickFreshestRateLimits({ c: snap("c") })).toBeNull();
     expect(pickFreshestRateLimits({})).toBeNull();
+  });
+});
+
+describe("captured_at", () => {
+  it("is the larger of the two winning values, and 0 is a value, not absence", () => {
+    const got = pickFreshestRateLimits({
+      a: snap("a", {
+        five_hour: { used_pct: 1, resets_at: NOW },
+        seven_day: null,
+        captured_at: 0,
+      }),
+    });
+    expect(got?.captured_at).toBe(0);
+    const two = pickFreshestRateLimits({
+      a: snap("a", { five_hour: { used_pct: 1, resets_at: NOW }, captured_at: 7 }),
+      b: snap("b", { seven_day: { used_pct: 2, resets_at: NOW }, captured_at: 9 }),
+    });
+    expect(two?.captured_at).toBe(9);
+  });
+
+  it("is null only when neither winning window has one", () => {
+    const got = pickFreshestRateLimits({
+      a: snap("a", { five_hour: { used_pct: 1, resets_at: NOW }, captured_at: null }),
+    });
+    expect(got?.captured_at).toBeNull();
+  });
+
+  it("the hook reports it", () => {
+    useBoard.setState({
+      sessions: {
+        a: snap("a", { five_hour: { used_pct: 1, resets_at: NOW }, captured_at: 5 }),
+        b: snap("b", { seven_day: { used_pct: 2, resets_at: NOW }, captured_at: 0 }),
+      },
+    });
+    const { result } = renderHook(() => useAccountUsage());
+    expect(result.current?.captured_at).toBe(5);
+  });
+});
+
+describe("useAccountUsage identity", () => {
+  it("keeps window objects when a replaced snapshot carries the same used_pct and resets_at", () => {
+    const rl = (pct: number) => ({
+      five_hour: { used_pct: pct, resets_at: NOW + 1000 },
+      seven_day: { used_pct: 5, resets_at: NOW + 2000 },
+      captured_at: NOW,
+    });
+    useBoard.setState({ sessions: { a: snap("a", rl(10)) } });
+    const { result } = renderHook(() => useAccountUsage());
+    const first = result.current;
+    act(() => useBoard.setState({ sessions: { a: snap("a", rl(10)) } }));
+    expect(result.current).toBe(first);
+    act(() => useBoard.setState({ sessions: { a: snap("a", rl(11)) } }));
+    expect(result.current).not.toBe(first);
+    expect(result.current?.five_hour?.used_pct).toBe(11);
+    expect(result.current?.seven_day).toBe(first?.seven_day);
   });
 });
 
@@ -256,6 +311,11 @@ describe("UsageWidget placement", () => {
     expect(box()).toMatchObject({ x: 0, y: 0 });
     fireEvent.pointerMove(h, { clientX: 9999, clientY: 9999, pointerId: 1 });
     expect(box()).toMatchObject({ x: 1440 - WIDGET_SIZE, y: 900 - WIDGET_SIZE });
+    fireEvent.pointerUp(h, { pointerId: 1 });
+    expect(JSON.parse(window.localStorage.getItem(KEY)!)).toMatchObject({
+      x: 1440 - WIDGET_SIZE,
+      y: 900 - WIDGET_SIZE,
+    });
   });
 
   it("arrow keys move by a step, Shift by a larger step, and persist", () => {

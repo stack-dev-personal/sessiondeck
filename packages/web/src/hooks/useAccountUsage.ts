@@ -1,5 +1,6 @@
 import type { SessionSnapshot, Window } from "@sessiondeck/contract";
 import { useMemo } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useBoard } from "../store/board";
 
 export type RateLimits = SessionSnapshot["rate_limits"];
@@ -32,8 +33,15 @@ export function pickFreshestRateLimits(
   return {
     five_hour: f?.win ?? null,
     seven_day: d?.win ?? null,
-    captured_at: Math.max(f?.at ?? -Infinity, d?.at ?? -Infinity) || null,
+    captured_at: larger(f?.at ?? null, d?.at ?? null),
   };
+}
+
+/** The larger of two optional values; null only when neither exists (0 is a value). */
+function larger(a: number | null, b: number | null): number | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Math.max(a, b);
 }
 
 export interface AccountUsage {
@@ -42,19 +50,55 @@ export interface AccountUsage {
   captured_at: number | null;
 }
 
+interface Flat {
+  fu: number | null;
+  fr: number | null;
+  fa: number | null;
+  su: number | null;
+  sr: number | null;
+  sa: number | null;
+  hasFive: boolean;
+  hasSeven: boolean;
+}
+
+/** Primitives only, so shallow equality compares used_pct and resets_at, never object identity. */
+function selectFlat(sessions: Record<string, SessionSnapshot>): Flat {
+  const f = pickFreshestWindow(sessions, "five_hour");
+  const d = pickFreshestWindow(sessions, "seven_day");
+  return {
+    fu: f?.win.used_pct ?? null,
+    fr: f?.win.resets_at ?? null,
+    fa: f?.at ?? null,
+    su: d?.win.used_pct ?? null,
+    sr: d?.win.resets_at ?? null,
+    sa: d?.at ?? null,
+    hasFive: f !== null,
+    hasSeven: d !== null,
+  };
+}
+
 /**
  * Self-contained data hook for the UsageWidget (S15 can host the widget in its own window with
- * this alone). Each selector returns an existing window object, stable until a newer payload
- * lands, so the widget does not re-render on unrelated session updates.
+ * this alone). The store replaces whole snapshots, so the selection is compared by value
+ * (used_pct, resets_at, captured_at): the result keeps its identity, and the widget does not
+ * re-render, until one of those changes.
  */
 export function useAccountUsage(): AccountUsage | null {
-  const five = useBoard((s) => pickFreshestWindow(s.sessions, "five_hour")?.win ?? null);
-  const seven = useBoard((s) => pickFreshestWindow(s.sessions, "seven_day")?.win ?? null);
+  const x = useBoard(useShallow((s) => selectFlat(s.sessions)));
+  const five = useMemo(
+    () => (x.hasFive ? { used_pct: x.fu, resets_at: x.fr } : null),
+    [x.hasFive, x.fu, x.fr],
+  );
+  const seven = useMemo(
+    () => (x.hasSeven ? { used_pct: x.su, resets_at: x.sr } : null),
+    [x.hasSeven, x.su, x.sr],
+  );
+  const at = larger(x.hasFive ? x.fa : null, x.hasSeven ? x.sa : null);
   return useMemo(
     () =>
       five === null && seven === null
         ? null
-        : { five_hour: five, seven_day: seven, captured_at: null },
-    [five, seven],
+        : { five_hour: five, seven_day: seven, captured_at: at },
+    [five, seven, at],
   );
 }
