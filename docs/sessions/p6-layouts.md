@@ -91,3 +91,11 @@
 - U5 iteration 3: fc3cdb9, 0063d15 fixed all four (Layout re-renders per delta 24 -> 0; 500 web tests, typecheck, lint clean). Gate FAIL both runs: run 1 (load 8.9, disturbed) board app drops 150,7,5,1; run 2 (load 5.7) 15,6,0,0, 1 long task (156 ms wall, 2.1 ms CPU), non-app board 22 vs control 5+1. Evidence /state/3/screens/S10-gate3/, S10-gate3b/.
 - sd-reviewer iteration 3: code mergeable apart from the gate; BLOCKING = no passing gate run. 3 MINOR deferred (live case ignores gate:false at R6.4.spec.ts:817,826; per-pane Profiler assertion too loose; hidden-count test static). Trace reading: Paint/Layout/Layerize totals fall w2 > w3 > w6 > w7 for equal event counts; bad frames cluster 5-6 s into w2/w3; a 26 ms full GC from the seed fill lands in w3/w4. Opinion: host CPU steal plus seed-fill GC, not app steady state.
 - Three review iterations used with a BLOCKING finding open: stopped blocked per the loop. Question: /state/3/questions/S10.md. U6 (close) not started; R6.1-R6.3, R6.5, R6.6 reviewed, final verification and rebase still pending.
+
+## Relaunch 6 2026-10-29
+- The sprint container restarted at 2026-10-29T13:56Z (previous run also ended on a network outage, ENOTFOUND about 02:10Z). Worktree clean at a895ee1, pushed. origin/sprint/3-organize at 7c5f3d4.
+- Answer received: /state/3/answers/S10.md (conductor's call, option A, 2026-10-29T13:58Z).
+
+### Decisions made (relaunch 6)
+5. R6.4 gate stays unchanged (thresholds, ABBA order, attribution). R6.4 is marked "needs quiet-host confirmation" in VERIFY-P6.md with the latest evidence (board app-attributed drops 15, 6, 0, 0). The gate definition (option B) is not changed in this session. The conductor runs the gate on the laptop with other sprints idle: `pnpm --filter web exec playwright test e2e/R6.4.spec.ts`.
+6. U6 proceeds: fix the three deferred U5 MINORs, rebase onto origin/sprint/3-organize, full suite, final VERIFY-P6.md, docs/LAYOUTS.md, PR.
