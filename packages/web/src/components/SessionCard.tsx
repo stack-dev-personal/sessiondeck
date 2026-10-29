@@ -171,7 +171,6 @@ function SessionCardImpl({
   const branchTx = fromTranscript(s, "git_branch") && s.git.branch !== null;
   const modelTx = fromTranscript(s, "model") && s.model !== null;
   const activityTx = fromTranscript(s, "last_assistant_message") && activity !== null;
-  const costTx = fromTranscript(s, "cost");
   return (
     <article
       tabIndex={0}
@@ -203,10 +202,10 @@ function SessionCardImpl({
         <span
           data-slot="where"
           title={branchTx ? `${where} (branch ${TRANSCRIPT_LABEL})` : where}
-          className="num min-w-0 shrink-[8] truncate text-fg-muted"
+          className="num flex min-w-0 shrink-[8] truncate text-fg-muted"
         >
-          {where}
-          {branchTx ? <SourceMark /> : null}
+          <span className="min-w-0 truncate">{where}</span>
+          {branchTx ? <SourceMark className="shrink-0" /> : null}
         </span>
       </div>
       <div data-row="2" className={`${ROW} justify-between`}>
@@ -255,20 +254,16 @@ function SessionCardImpl({
             title={costAria(s)}
             className="num text-fg-muted"
           >
-            <span aria-hidden="true" className="text-xs text-fg-faint">
-              API-equiv.{" "}
-            </span>
             <span aria-hidden="true">{formatCost(s.cost.usd)}</span>
-            {costTx ? <SourceMark /> : null}
           </span>
           <span
             data-slot="model"
             role="group"
             aria-label={`model ${modelText}${modelTx ? `, ${TRANSCRIPT_LABEL}` : ""}`}
+            title={`model ${modelText}${modelTx ? `, ${TRANSCRIPT_LABEL}` : ""}`}
             className="num text-fg-muted"
           >
             <span aria-hidden="true">{modelText}</span>
-            {modelTx ? <SourceMark /> : null}
           </span>
         </span>
       </div>

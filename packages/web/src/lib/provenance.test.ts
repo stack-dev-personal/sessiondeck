@@ -1,10 +1,12 @@
 import { createSnapshot, type SessionSnapshot, type SubagentSnapshot } from "@sessiondeck/contract";
 import { describe, expect, it } from "vitest";
+import { shortModel } from "./format";
 import { contextModel } from "../components/Meter";
 import {
   COST_LABEL,
   TRANSCRIPT_LABEL,
   contextTokensText,
+  transcriptHint,
   costAria,
   fromTranscript,
   subagentFromTranscript,
@@ -54,6 +56,25 @@ describe("provenance", () => {
       "API-equivalent cost $1.84",
     );
     expect(costAria(snap())).toBe("API-equivalent cost n/a");
+  });
+
+  it("shortModel shortens transcript model ids and display names", () => {
+    expect(shortModel("claude-opus-5-5")).toBe("Opus");
+    expect(shortModel("Claude Opus 4.7")).toBe("Opus");
+  });
+
+  it("null cost with a transcript source reads n/a with no source claim", () => {
+    const nullCost = snap({ sources: { cost: "transcript" } });
+    expect(costAria(nullCost)).toBe("API-equivalent cost n/a");
+  });
+
+  it("transcriptHint lists only figures that hold a value", () => {
+    const s = snap({
+      sources: { cost: "transcript", context: "transcript", model: "transcript" },
+      model: { id: "m", display_name: "m" },
+    });
+    expect(transcriptHint(s)).toBe("Model is from transcript");
+    expect(transcriptHint(headless)).toBe("Cost and context are from transcript");
   });
 
   it("context tokens text: tokens only, never a percent", () => {

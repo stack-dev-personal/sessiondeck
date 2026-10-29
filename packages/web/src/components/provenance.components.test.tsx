@@ -63,7 +63,7 @@ describe("card provenance (R3.16)", () => {
     expect(ctx).not.toHaveTextContent("%");
     const cost = screen.getByRole("group", { name: "API-equivalent cost $2.09, from transcript" });
     expect(cost).toHaveTextContent("$2.09");
-    expect(cost.querySelector('[data-source="transcript"]')).not.toBeNull();
+    expect(cost).toHaveAttribute("title", "API-equivalent cost $2.09, from transcript");
     expect(document.querySelector('[data-slot="model"]')).toHaveAccessibleName(/from transcript/);
     expect(
       screen.getByText(/Enter opens details\. Cost, context.* are from transcript/),
@@ -76,6 +76,41 @@ describe("card provenance (R3.16)", () => {
     expect(cost.querySelector('[data-source="transcript"]')).toBeNull();
     expect(document.querySelector('[data-source="transcript"]')).toBeNull();
     expect(document.body.textContent).not.toContain("from transcript");
+  });
+});
+
+describe("card provenance edge cases (R3.16)", () => {
+  it("warning level shows the cue and the transcript glyph together", () => {
+    const s = {
+      ...headless(),
+      context: { used_pct: 75, window: 200_000, input: 150_000, output: null },
+    };
+    render(<SessionCard s={s} now={NOW} />);
+    const ctx = document.querySelector('[data-meter="context"]') as HTMLElement;
+    expect(ctx.textContent).toContain("75%");
+    expect(ctx.textContent).toContain("†");
+    expect(ctx.textContent).toMatch(/[!▲]/);
+  });
+
+  it("branch marker is a sibling of the truncated text, so it cannot be clipped", () => {
+    render(<SessionCard s={headless()} now={NOW} />);
+    const where = document.querySelector('[data-slot="where"]') as HTMLElement;
+    const mark = where.querySelector('[data-source="transcript"]') as HTMLElement;
+    expect(mark).not.toBeNull();
+    expect(mark.className).toContain("shrink-0");
+    expect(where.querySelector(":scope > .truncate")?.contains(mark)).toBe(false);
+  });
+
+  it("transcript cost source with null cost shows n/a, no source claim, not in the hint", () => {
+    const s = {
+      ...headless(),
+      cost: { usd: null, duration_ms: null, lines_added: null, lines_removed: null },
+    };
+    render(<SessionCard s={s} now={NOW} />);
+    const cost = document.querySelector('[data-slot="cost"]') as HTMLElement;
+    expect(cost).toHaveAccessibleName("API-equivalent cost n/a");
+    expect(cost.querySelector('[data-source="transcript"]')).toBeNull();
+    expect(screen.getByText(/Enter opens details. Context.* from transcript/)).toBeInTheDocument();
   });
 });
 
@@ -93,7 +128,8 @@ describe("drawer provenance (R3.16)", () => {
     expect(rows[0]).toHaveTextContent("32k");
     expect(rows[0]?.querySelector('[data-source="transcript"]')).not.toBeNull();
     expect(rows[1]?.querySelector('[data-source="transcript"]')).toBeNull();
-    expect(rows[1]).toHaveTextContent("n/a");
+    expect(rows[1]).not.toHaveTextContent("medium");
+    expect(rows[0]).toHaveTextContent("claude-sonnet-5-5 · medium");
   });
 
   it("statusline drawer has no transcript text", () => {

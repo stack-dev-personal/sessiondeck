@@ -45,8 +45,8 @@ test("R3.16 headless card and drawer: figures, no percent, API-equivalent, acces
   const cost = card.locator('[data-slot="cost"]');
   await expect(cost).toContainText("$2.09");
   await expect(cost).toHaveAttribute("aria-label", "API-equivalent cost $2.09, from transcript");
-  await expect(cost.locator('[data-source="transcript"]')).toHaveText(/from transcript/);
-  await expect(card.locator('[data-slot="model"]')).toContainText("claude-opus-5-5");
+  await expect(cost).toHaveAttribute("title", "API-equivalent cost $2.09, from transcript");
+  await expect(card.locator('[data-slot="model"]')).toContainText("Opus");
   await expect(card.locator('[data-slot="model"]')).toHaveAccessibleName(/from transcript/);
 
   // Keyboard and screen reader reach the same text through the card's description.

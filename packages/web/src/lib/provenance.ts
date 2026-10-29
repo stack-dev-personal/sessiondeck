@@ -26,9 +26,27 @@ const FIGURE_NAMES: ReadonlyArray<readonly [keyof SnapshotSources, string]> = [
   ["last_assistant_message", "last message"],
 ];
 
+/** Whether the snapshot actually holds a value for this figure (a source with null shows n/a, unmarked). */
+function hasValue(s: SessionSnapshot, key: keyof SnapshotSources): boolean {
+  switch (key) {
+    case "cost":
+      return s.cost.usd !== null;
+    case "context":
+      return s.context.used_pct !== null || s.context.input !== null;
+    case "model":
+      return s.model !== null;
+    case "git_branch":
+      return s.git.branch !== null;
+    case "last_assistant_message":
+      return !!s.last_assistant_message?.trim();
+    default:
+      return false;
+  }
+}
+
 /** Sentence for the card's keyboard hint, e.g. "Cost and context are from transcript"; null if none. */
 export function transcriptHint(s: SessionSnapshot): string | null {
-  const names = FIGURE_NAMES.filter(([k]) => fromTranscript(s, k)).map(([, n]) => n);
+  const names = FIGURE_NAMES.filter(([k]) => fromTranscript(s, k) && hasValue(s, k)).map(([, n]) => n);
   if (names.length === 0) return null;
   const list =
     names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
@@ -38,7 +56,7 @@ export function transcriptHint(s: SessionSnapshot): string | null {
 /** Spoken and tooltip text of the cost figure. */
 export function costAria(s: SessionSnapshot): string {
   const base = `${COST_LABEL} cost ${formatCost(s.cost.usd)}`;
-  return fromTranscript(s, "cost") ? `${base}, ${TRANSCRIPT_LABEL}` : base;
+  return fromTranscript(s, "cost") && s.cost.usd !== null ? `${base}, ${TRANSCRIPT_LABEL}` : base;
 }
 
 /** "94k tok" when the snapshot has context tokens; null otherwise. Never a percent. */

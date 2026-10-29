@@ -347,9 +347,6 @@ export function DetailDrawer({
                     <th scope="col" className="font-normal pl-s-2">
                       Model
                     </th>
-                    <th scope="col" className="font-normal pl-s-2">
-                      Effort
-                    </th>
                     <th scope="col" className="text-right font-normal">
                       Elapsed
                     </th>
@@ -371,8 +368,10 @@ export function DetailDrawer({
                       <td className="num text-right">
                         {a.context_window === null ? "n/a" : formatTokens(a.context_window)}
                       </td>
-                      <td className="num pl-s-2">{a.model ?? "n/a"}</td>
-                      <td className="num pl-s-2">{a.effort ?? "n/a"}</td>
+                      <td className="num pl-s-2">
+                        {a.model ?? "n/a"}
+                        {a.effort ? ` · ${a.effort}` : ""}
+                      </td>
                       <td className="num text-right">
                         {formatDuration((a.ended_at ?? now) - a.started_at)}
                       </td>

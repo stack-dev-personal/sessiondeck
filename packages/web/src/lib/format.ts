@@ -59,8 +59,10 @@ export function formatCost(usd: number | null): string {
   return usd === null ? "n/a" : `$${usd.toFixed(2)}`;
 }
 
-/** "Claude Opus 4.7" -> "Opus". Falls back to the whole name. */
+/** "Claude Opus 4.7" -> "Opus"; a transcript model id "claude-opus-5-5" -> "Opus". Falls back to the whole name. */
 export function shortModel(displayName: string): string {
+  const id = /^claude-([a-z]+)-\d/i.exec(displayName);
+  if (id) return `${id[1]!.charAt(0).toUpperCase()}${id[1]!.slice(1).toLowerCase()}`;
   const parts = displayName.split(/\s+/).filter((p) => p.toLowerCase() !== "claude");
   return parts[0] ?? displayName;
 }

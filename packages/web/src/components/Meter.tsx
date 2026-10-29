@@ -85,6 +85,7 @@ export function contextModel(s: SessionSnapshot, exceeds200k: boolean | null = n
   const m = baseContextModel(s, exceeds200k);
   if (!fromTranscript(s, "context")) return { ...m, fromTranscript: false };
   const tokens = s.context.input;
+  if (m.pct === null && tokens === null) return { ...m, fromTranscript: false };
   if (m.pct === null && tokens !== null) {
     // Window unknown: tokens only. No percent, no bar fill, no estimate.
     return {
@@ -179,6 +180,11 @@ export function Meter({ m }: { m: MeterModel }) {
       >
         {m.text}
       </span>
+      {m.level && m.fromTranscript ? (
+        <span aria-hidden="true" data-slot="source-glyph" className="num shrink-0 text-fg-muted">
+          {TRANSCRIPT_GLYPH}
+        </span>
+      ) : null}
       <span
         aria-hidden="true"
         data-slot="cue"
@@ -205,7 +211,7 @@ export function MeterValue({ m }: { m: MeterModel }) {
     >
       <span aria-hidden="true">
         {m.pct !== null
-          ? `${Math.round(m.pct)}%`
+          ? `${Math.round(m.pct)}%${m.level && m.fromTranscript ? TRANSCRIPT_GLYPH : ""}`
           : m.fromTranscript
             ? m.text.replace(/ tok$/, "")
             : "n/a"}
