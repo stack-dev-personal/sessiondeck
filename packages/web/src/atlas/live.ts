@@ -1,5 +1,5 @@
 import type { AtlasSession } from "./types";
-import { atlasOf } from "./types";
+import { atlasOf, isArchivedState } from "./types";
 
 /** Same value as LIVE_GRACE_MS in packages/hub/src/snapshots.ts (copied, not imported). */
 export const LIVE_GRACE_MS = 10 * 60 * 1000;
@@ -10,7 +10,7 @@ export const LIVE_GRACE_MS = 10 * 60 * 1000;
  */
 export function isLive(s: AtlasSession, now: number): boolean {
   const state = s.state as string | null | undefined;
-  if (state === "archived") return false;
+  if (state === "archived" || isArchivedState(s)) return false;
   if (state !== "ended" && state !== "exited") return true;
   return (s.state_since || s.last_event_at || 0) >= now - LIVE_GRACE_MS;
 }

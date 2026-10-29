@@ -1,5 +1,6 @@
 import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
 import { basename } from "./format";
+import { neutralize } from "./neutralize";
 
 /** The two states that wait on the user. They pin to the top of the board. */
 export function isAttentionState(state: SessionState): boolean {
@@ -18,7 +19,7 @@ export function projectOf(s: SessionSnapshot): string {
 
 /** Name used in the card title and in notifications: the session name, else the project. */
 export function displayNameOf(s: SessionSnapshot): string {
-  return s.session_name ?? projectOf(s);
+  return neutralize(s.session_name ?? projectOf(s));
 }
 
 /**

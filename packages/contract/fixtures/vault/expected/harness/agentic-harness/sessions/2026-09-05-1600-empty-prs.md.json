@@ -1,0 +1,36 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-05-1600-empty-prs.md"
+  },
+  "schema_version": 2,
+  "session_id": "3a1cf540-d233-4511-a574-b7b64979cf2e",
+  "collection": "harness/agentic-harness",
+  "title": "Spool compaction",
+  "date": "2026-09-05",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 2700,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Edit",
+      "count": null
+    },
+    {
+      "name": "Bash",
+      "count": null
+    }
+  ],
+  "commits": [
+    "c0ffee1 Compact on size"
+  ],
+  "prs": [],
+  "outcome": "Spool compacts at 4 MB.",
+  "outcome_truncated": false
+}

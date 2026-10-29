@@ -1,0 +1,26 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-08-1400-colon-title.md"
+  },
+  "schema_version": 2,
+  "session_id": "c4265ebd-411e-40ec-a12d-19106f9c01b1",
+  "collection": "harness/agentic-harness",
+  "title": "Plan: phase 5 split",
+  "date": "2026-09-08",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 1500,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    }
+  ],
+  "commits": [],
+  "prs": [],
+  "outcome": "Split phase 5 into core and archive import.",
+  "outcome_truncated": false
+}

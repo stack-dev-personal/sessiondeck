@@ -1,0 +1,38 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-01-0900-probe-spool.md"
+  },
+  "schema_version": 2,
+  "session_id": "d915413c-ee5c-4594-a857-30d5ab9976bf",
+  "collection": "harness/agentic-harness",
+  "title": "Add retry to probe spool",
+  "date": "2026-09-01",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 2700,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Edit",
+      "count": null
+    },
+    {
+      "name": "Bash",
+      "count": null
+    }
+  ],
+  "commits": [
+    "a1b2c3d Add spool retry"
+  ],
+  "prs": [
+    "#41"
+  ],
+  "outcome": "Spool writer now retries three times with backoff.\nAll spool tests pass.",
+  "outcome_truncated": false
+}

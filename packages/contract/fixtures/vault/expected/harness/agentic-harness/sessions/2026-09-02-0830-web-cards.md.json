@@ -1,0 +1,40 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-02-0830-web-cards.md"
+  },
+  "schema_version": 2,
+  "session_id": "882cf4ff-513d-44ea-aae9-eb17225f39ce",
+  "collection": "harness/agentic-harness",
+  "title": "Session card layout",
+  "date": "2026-09-02",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 4980,
+  "project_dir": "C:/Users/dev/projects/sessiondeck",
+  "branch": "p3/cards",
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Edit",
+      "count": null
+    },
+    {
+      "name": "Write",
+      "count": null
+    },
+    {
+      "name": "Grep",
+      "count": null
+    }
+  ],
+  "commits": [
+    "e7f8091 Card grid"
+  ],
+  "prs": [],
+  "outcome": "Cards render in a responsive grid. Screenshot attached in the PR.",
+  "outcome_truncated": false
+}

@@ -1,0 +1,26 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-09-1700-null-ish.md"
+  },
+  "schema_version": 2,
+  "session_id": "6236f3e6-9320-4e88-a838-eb4e3efe1e58",
+  "collection": "harness/agentic-harness",
+  "title": "Spike: SQLite WAL",
+  "date": "2026-09-09",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 300,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Bash",
+      "count": null
+    }
+  ],
+  "commits": [],
+  "prs": [],
+  "outcome": "WAL mode confirmed, no code kept.",
+  "outcome_truncated": false
+}

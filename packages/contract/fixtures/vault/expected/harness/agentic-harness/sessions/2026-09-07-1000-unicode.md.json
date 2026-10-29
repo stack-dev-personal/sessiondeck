@@ -1,0 +1,34 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-07-1000-unicode.md"
+  },
+  "schema_version": 2,
+  "session_id": "3bbf954a-8f4b-4849-ac5d-0a8055aaee3b",
+  "collection": "harness/agentic-harness",
+  "title": "Tooltip copy review",
+  "date": "2026-09-07",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 3000,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": null
+    },
+    {
+      "name": "Edit",
+      "count": null
+    }
+  ],
+  "commits": [
+    "abc1230 Reword tooltips"
+  ],
+  "prs": [
+    "#49"
+  ],
+  "outcome": "Replaced jargon in tooltips. Checked rendering of é, ü and ✓ in the UI.",
+  "outcome_truncated": false
+}

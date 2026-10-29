@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useSearchParams } from "react-router-dom";
 import { SESSION_STATES } from "@sessiondeck/contract";
 import { atlasApi, SESSION_LIST_LIMIT } from "../atlas/api";
-import { atlasOf, type AtlasSession } from "../atlas/types";
+import { archiveOf, atlasOf, isArchivedState, type AtlasSession } from "../atlas/types";
 import { useLoad } from "../atlas/useProjects";
 import { FixedList } from "../components/FixedList";
 import { ProjectSwatch } from "../components/ProjectSwatch";
+import { ArchiveLine, ArchivedBadge, branchOf, rowName } from "../components/ArchiveSummary";
 import { StateChip } from "../components/StateChip";
 import { useNow } from "../hooks/useNow";
-import { displayNameOf, projectOf } from "../lib/attention";
+import { projectOf } from "../lib/attention";
 import { formatDuration } from "../lib/format";
 import { shouldIgnoreKey } from "../lib/keys";
 import {
@@ -64,14 +65,16 @@ function Row({
   onPick: (id: string) => void;
 }) {
   const a = atlasOf(s);
-  const name = displayNameOf(s);
-  const branch = s.git.branch;
+  const name = rowName(s);
+  const hasArchive = archiveOf(s) !== null;
+  const branch = branchOf(s);
   const known = (STATE_VOCAB as Record<string, unknown>)[s.state] !== undefined;
   return (
     <div
       data-testid="session-list-row"
       data-session-id={s.session_id}
       data-selected={selected}
+      data-archived={hasArchive}
       aria-current={selected ? "true" : undefined}
       tabIndex={tabbable ? 0 : -1}
       onClick={() => onPick(s.session_id)}
@@ -81,7 +84,11 @@ function Row({
           : "border-transparent hover:bg-surface-2"
       }`}
     >
-      {known ? (
+      {isArchivedState(s) ? (
+        <span className="truncate" data-slot="state">
+          <ArchivedBadge />
+        </span>
+      ) : known ? (
         <StateChip state={s.state} />
       ) : (
         <span className="num truncate text-fg-muted">{s.state}</span>
@@ -90,9 +97,13 @@ function Row({
         <span className="truncate" title={name}>
           {name}
         </span>
-        <span className="num truncate text-xs text-fg-muted" title={`${s.host} ${s.session_id}`}>
-          {s.host}
-        </span>
+        {hasArchive ? (
+          <ArchiveLine s={s} prefix={s.host} />
+        ) : (
+          <span className="num truncate text-xs text-fg-muted" title={`${s.host} ${s.session_id}`}>
+            {s.host}
+          </span>
+        )}
       </span>
       <span className="flex min-w-0 items-center gap-s-2" data-slot="project">
         <ProjectSwatch color={a.project_color} />

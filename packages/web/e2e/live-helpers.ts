@@ -65,6 +65,35 @@ export const promptEnv = (id: string) =>
 export const stopEnv = (id: string) => hookEnvelope(id, "Stop", "Stop/02-sample.json");
 export const endEnv = (id: string) => hookEnvelope(id, "SessionEnd", "SessionEnd/01-other.json");
 
+/**
+ * An archive envelope (R5.2/R5.3) built from a vault fixture under contract/fixtures/vault/expected:
+ * the same session_id and host as the live hooks merges into one record; any other id is archive-only.
+ */
+export function archiveEnvelope(
+  sessionId: string,
+  fixtureRel: string,
+  payload: Record<string, unknown> = {},
+  host: string = HOST,
+) {
+  const base = fixture(`vault/expected/${fixtureRel}`) as { source: Record<string, unknown> };
+  return {
+    v: 1,
+    id: ulid(),
+    kind: "archive",
+    host,
+    os: "linux",
+    session_id: sessionId,
+    ts: Date.now(),
+    seq: ++seq,
+    payload: {
+      ...base,
+      source: { ...base.source, mtime_ms: Date.now(), size: 1234 },
+      session_id: sessionId,
+      ...payload,
+    },
+  };
+}
+
 export async function ingest(envelopes: unknown[], host: string = HOST): Promise<void> {
   const res = await fetch(`${LIVE.directUrl}/ingest`, {
     method: "POST",

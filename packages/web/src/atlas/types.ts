@@ -1,4 +1,5 @@
 import type { SessionSnapshot } from "@sessiondeck/contract";
+import { neutralize } from "../lib/neutralize";
 
 /**
  * Fields the hub adds to every session list, detail, WS initial and `session` delta (docs/ATLAS.md).
@@ -13,7 +14,77 @@ export interface AtlasFields {
   phase_source?: "manual" | "inferred" | null;
 }
 
-export type AtlasSession = SessionSnapshot & AtlasFields;
+/** `snapshot.archive` as the hub stores it (R5.3): untrusted shape, parsed defensively by `archiveOf`. */
+export interface ArchiveFields {
+  archive?: unknown;
+}
+
+export type AtlasSession = SessionSnapshot & AtlasFields & ArchiveFields;
+
+/** The archive record of a session, normalized and neutralized for display. */
+export interface ArchiveView {
+  title: string | null;
+  outcome: string;
+  outcomeTruncated: boolean;
+  date: string | null;
+  durationS: number | null;
+  branch: string | null;
+  commits: string[];
+  prs: string[];
+  tools: { name: string; count: number | null }[];
+}
+
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const optText = (v: unknown): string | null => (typeof v === "string" ? neutralize(v) : null);
+const textList = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map(neutralize) : [];
+
+/**
+ * The archive record of `s`, or null when it has none. All free text (title, outcome, branch,
+ * commits, prs, tool names) comes back neutralized (bidi, zero-width and C1 characters made
+ * visible), so callers can render it as plain React text.
+ */
+export function archiveOf(s: SessionSnapshot): ArchiveView | null {
+  const a = (s as AtlasSession).archive;
+  if (!isRec(a)) return null;
+  const dur = a["duration_s"];
+  return {
+    title: optText(a["title"]),
+    outcome: typeof a["outcome"] === "string" ? neutralize(a["outcome"]) : "",
+    outcomeTruncated: a["outcome_truncated"] === true,
+    date: typeof a["date"] === "string" ? a["date"] : null,
+    durationS: typeof dur === "number" && Number.isFinite(dur) && dur >= 0 ? dur : null,
+    branch: optText(a["branch"]),
+    commits: textList(a["commits"]),
+    prs: textList(a["prs"]),
+    tools: Array.isArray(a["tools_used"])
+      ? a["tools_used"].filter(isRec).flatMap((t) =>
+          typeof t["name"] === "string"
+            ? [
+                {
+                  name: neutralize(t["name"]),
+                  count: typeof t["count"] === "number" ? t["count"] : null,
+                },
+              ]
+            : [],
+        )
+      : [],
+  };
+}
+
+/** True when the session has an archive record and is no longer live (the hub's `archived` row state). */
+export function isArchivedState(s: SessionSnapshot): boolean {
+  const st = s.state as string;
+  return (
+    isRec((s as AtlasSession).archive) && (st === "ended" || st === "exited" || st === "archived")
+  );
+}
+
+/** One-line excerpt of the outcome for rows and cards. */
+export function outcomeExcerpt(outcome: string, max = 140): string {
+  const t = outcome.replace(/\s+/g, " ").trim();
+  return t.length <= max ? t : `${t.slice(0, max - 1)}…`;
+}
 
 export const ATLAS_KEYS = [
   "project_id",
@@ -29,6 +100,11 @@ export function carryAtlas(
   from: SessionSnapshot | undefined,
 ): SessionSnapshot {
   if (from === undefined) return to;
+  // A board copy older than the capture lacks `archive`: the REST row's record is kept.
+  const fa = (from as AtlasSession).archive;
+  if (fa !== undefined && (to as AtlasSession).archive === undefined) {
+    to = { ...to, archive: fa } as SessionSnapshot;
+  }
   const t = to as unknown as Record<string, unknown>;
   if (ATLAS_KEYS.some((k) => k in t)) return to;
   const f = from as unknown as Record<string, unknown>;

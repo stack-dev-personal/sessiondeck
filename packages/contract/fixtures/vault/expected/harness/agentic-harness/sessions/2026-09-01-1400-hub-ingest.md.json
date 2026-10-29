@@ -1,0 +1,40 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-01-1400-hub-ingest.md"
+  },
+  "schema_version": 2,
+  "session_id": "a8da2bb2-b893-4c97-a2bb-4a7de4f84240",
+  "collection": "harness/agentic-harness",
+  "title": "Hub ingest idempotency",
+  "date": "2026-09-01T14:05:00Z",
+  "started_at": "2026-09-01T14:05:00Z",
+  "ended_at": "2026-09-01T15:28:00Z",
+  "duration_s": 4980,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Read",
+      "count": 14
+    },
+    {
+      "name": "Edit",
+      "count": 9
+    },
+    {
+      "name": "Bash",
+      "count": 22
+    }
+  ],
+  "commits": [
+    "d4e5f6a Dedupe by envelope id",
+    "0b1c2d3 Add ingest test"
+  ],
+  "prs": [
+    "#42",
+    "#43"
+  ],
+  "outcome": "Ingest is idempotent on (host, seq).\n\nFollow-ups:\n- add a metrics counter\n- document the unique index",
+  "outcome_truncated": false
+}

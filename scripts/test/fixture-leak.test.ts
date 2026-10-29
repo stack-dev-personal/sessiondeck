@@ -214,3 +214,80 @@ describe("leak check", () => {
     ]);
   });
 });
+
+describe("leak check vault mode", () => {
+  const golden = {
+    source: { root_label: "vault", rel_path: "harness/h/sessions/a.md" },
+    schema_version: 2,
+    session_id: "abc-123",
+    collection: "harness/h",
+    title: "Some free text title",
+    date: "2026-09-01",
+    started_at: null,
+    ended_at: null,
+    duration_s: 60,
+    project_dir: "C:/Users/dev/code/demo",
+    branch: "main",
+    tools_used: [{ name: "Read", count: 2 }],
+    commits: ["abc1234 fix thing"],
+    prs: [],
+    outcome: "Did the thing.",
+    outcome_truncated: false,
+  };
+  const withFiles = (files: Record<string, unknown>): string => {
+    const root = makeTempDir();
+    for (const [rel, body] of Object.entries(files)) {
+      mkdirSync(join(root, rel, ".."), { recursive: true });
+      writeFileSync(join(root, rel), typeof body === "string" ? body : JSON.stringify(body));
+    }
+    return root;
+  };
+  const md = "---\nsession_id: abc-123\nproject_dir: C:/Users/dev/code/demo\n---\nBody\n";
+  const clean = (): Record<string, unknown> => ({
+    "vault/harness/h/sessions/a.md": md,
+    "vault/expected/harness/h/sessions/a.md.json": golden,
+    "vault-edge/harness/h/sessions/notes.txt": "plain note\n",
+    ".gitattributes": "vault/** -text\n",
+  });
+
+  it("passes a clean vault, skipping hook-payload structure checks", () => {
+    const r = leakCheck(withFiles(clean()));
+    expect(r.byCategory).toEqual({});
+    expect(r.total).toBe(0);
+  });
+
+  it("still catches a planted secret, email and token in a vault .md or .txt", () => {
+    for (const [rel, planted] of [
+      ["vault/harness/h/sessions/a.md", "key ghp_abcdefghijklmnopqrstuv"],
+      ["vault/harness/h/sessions/a.md", "mail me@example.org"],
+      ["vault-edge/harness/h/sessions/notes.txt", "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dE3fG5"],
+    ] as const) {
+      const r = leakCheck(withFiles({ ...clean(), [rel]: md + planted }));
+      expect(r.total, planted).toBeGreaterThan(0);
+    }
+  });
+
+  it("allows only C:/Users/dev as a home path", () => {
+    for (const p of ["C:/Users/bob/x", "/home/dev/x", "/Users/dev/x", "C:/Users/devon/x"]) {
+      const r = leakCheck(withFiles({ ...clean(), "vault/harness/h/sessions/a.md": md + p }));
+      expect(r.byCategory["home-path-shape"], p).toBe(1);
+    }
+  });
+
+  it("flags a golden with an unknown key or a non-object, and unknown files", () => {
+    const g = "vault/expected/harness/h/sessions/a.md.json";
+    expect(leakCheck(withFiles({ ...clean(), [g]: { ...golden, junk: 1 } })).byCategory).toEqual({
+      "golden-schema": 1,
+    });
+    expect(
+      leakCheck(withFiles({ ...clean(), [g]: { ...golden, tools_used: [{ name: "a", x: 1 }] } }))
+        .byCategory["golden-schema"],
+    ).toBe(1);
+    expect(leakCheck(withFiles({ ...clean(), [g]: [1] })).byCategory["golden-schema"]).toBe(1);
+    expect(
+      leakCheck(withFiles({ ...clean(), "vault/harness/h/sessions/a.bin": "x" })).byCategory[
+        "unscanned-file"
+      ],
+    ).toBe(1);
+  });
+});

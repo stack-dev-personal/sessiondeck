@@ -14,7 +14,15 @@ import { join } from "node:path";
 import type { Envelope, EventKind } from "../src/envelope";
 
 export const FIXTURES_DIR = join(import.meta.dirname, "..", "fixtures");
-const EXCLUDED_DIRS = new Set(["raw", "settings", "sessions", "synthetic", "transcripts"]);
+const EXCLUDED_DIRS = new Set([
+  "raw",
+  "settings",
+  "sessions",
+  "synthetic",
+  "transcripts",
+  "vault",
+  "vault-edge",
+]);
 
 /** Test-only ULID-shaped id. */
 export const TEST_ULID = "01HZX3K9QJ5V8M2N4P6R7S8T9W";

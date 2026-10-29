@@ -10,7 +10,7 @@ Every probe-to-hub message is one `Envelope` (`src/envelope.ts`, architecture 3.
 | --- | --- | --- |
 | `v` | `1` | envelope schema version |
 | `id` | string | ULID, assigned by the probe at write time |
-| `kind` | `hook` `statusline` `subagents` `transcript` `liveness` `probe` | event kind |
+| `kind` | `hook` `statusline` `subagents` `transcript` `liveness` `probe` `archive` | event kind |
 | `host` | string | machine name, non-empty |
 | `os` | `win32` `linux` `darwin` | host OS |
 | `session_id` | string or null | null only for kind `probe` |
@@ -28,6 +28,32 @@ The `Envelope` interface has no `pid` field. The pid travels in the payload of `
 - `alive: false` on a session that is not `ended` or `exited` moves it to `exited`, unless its pid differs from `snapshot.pid`.
 - Who emits the first report (hook at SessionStart, or the daemon) is Phase 1's choice.
 - A new `session_id` under the same host and pid (`/clear`, `--resume`) ends the previous session: `supersedeSamePid(sessions, { host, session_id, pid, ts })` returns the collection with those sessions `ended`, `ended_reason: 'superseded'`.
+
+## Kind `archive` (Phase 5)
+
+Added for R5.2 and R5.3. The envelope version stays `v: 1` and no envelope field changed: `archive` is one more value of `kind`, and its data travels in `payload`. `session_id` must be non-null (only `probe` may be null). Schema and caps: `src/archive.ts`; fixtures: `packages/contract/fixtures/vault/` (synthetic, see its README).
+
+The probe parses one vault capture file (`projects/<x>/sessions/*.md` or `harness/<x>/sessions/*.md`) into one envelope. `ArchivePayloadSchema` fields:
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `source.root_label` | string | which configured vault; `^[a-z0-9][a-z0-9_-]{0,63}$` (case-insensitive) |
+| `source.rel_path` | string | `(projects\|harness)/<x>/sessions/<file>.md`, forward slashes, no `.`, `..` or empty segments, no control chars or `:`, no segment ending in `.` or space, no Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9, with or without extension), max 512 |
+| `source.mtime_ms`, `source.size` | safe integer >= 0 | file mtime (epoch ms) and byte size; the importer's change check |
+| `schema_version` | integer or null | frontmatter `schema_version` |
+| `session_id` | string | `^[A-Za-z0-9-]{1,128}$`; must equal the envelope `session_id` (`isArchiveEnvelopeConsistent`, `ArchiveEnvelopeSchema`) |
+| `collection` | string or null | `projects/<x>` or `harness/<x>`; when not null it must equal the first two segments of `source.rel_path` |
+| `title`, `date`, `started_at`, `ended_at` | string or null | title max 300; the others ISO 8601 date or datetime, max 40, components in range (month 1-12, a real day, hour 0-23, minute and second 0-59) |
+| `duration_s` | number >= 0 or null | seconds, at most 30 days; the probe converts `1h 23m` style strings |
+| `project_dir`, `branch` | string or null | `project_dir` from frontmatter `project_dir`, else `cwd`; max 1024 and 255 |
+| `tools_used` | array of `{ name, count }` | max 100 entries, name max 100, `count` integer 0 to 1,000,000 or null (a plain name list gives null) |
+| `commits`, `prs` | string array | max 50 entries, each max 200 chars |
+| `outcome` | string | trimmed markdown body, max 16384 chars |
+| `outcome_truncated` | boolean | true when the probe cut the body to the cap |
+
+The caps are exported as `ARCHIVE_MAX_*` constants so the probe truncates to the numbers the hub enforces. All archive objects are `.strict()`: an unknown key is rejected, never passed through, and `ArchiveEnvelopeSchema` returns the parsed payload. `title`, `branch`, `project_dir`, `commits`, `prs` and tool names reject C0 control characters other than `\n` and `\t`; `outcome` also allows `\r`. Bidi overrides are not rejected here; the web unit owns rendering safety. A max-size payload stays under half of the hub's 1 MiB ingest body limit even at 6 bytes per character (tested).
+
+Parsers of vault frontmatter must read YAML timestamps as strings (YAML core or JSON schema semantics). A default gray-matter or js-yaml load turns an unquoted `2026-09-01` into a `Date`, which breaks the string-typed `date`, `started_at` and `ended_at` and the goldens.
 
 ## State machine
 

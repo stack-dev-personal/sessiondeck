@@ -94,10 +94,11 @@ export function registerIngest(
       const r = deps.ingestor.ingest(host, envelopes);
       // last_seq is the batch's acknowledged max (see Ingestor.ingest), never a stored max.
       // expired (older than the compaction watermark, acknowledged but not stored) is additive.
-      const res: IngestResponse & { expired?: number } = {
+      const res: IngestResponse & { expired?: number; rejected?: number } = {
         accepted: r.accepted,
         last_seq: r.last_seq,
         ...(r.expired > 0 ? { expired: r.expired } : {}),
+        ...(r.rejected > 0 ? { rejected: r.rejected } : {}),
       };
       return reply.send(res);
     },

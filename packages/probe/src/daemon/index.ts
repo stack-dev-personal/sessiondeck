@@ -132,6 +132,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<DaemonHandle | u
   }
   try {
     const c0 = await getConfig();
+    if (c0?.archiveError) log("warn", `archive import off: ${c0.archiveError}`);
     if (c0?.hubUrl) {
       const chk = checkHubUrl(c0.hubUrl, c0.allowInsecureHub === true);
       if (chk.ok && chk.insecure) log("warn", INSECURE_HUB_WARNING);

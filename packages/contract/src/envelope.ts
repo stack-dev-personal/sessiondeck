@@ -8,6 +8,7 @@ export const EVENT_KINDS = [
   "transcript",
   "liveness",
   "probe",
+  "archive",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 

@@ -3,7 +3,8 @@ import Database from "better-sqlite3";
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { inferProject, projectIdOf } from "../atlas/infer.ts";
+import { cleanLabel, defaultColor, inferProject, projectIdOf } from "../atlas/infer.ts";
+import { rowStateOf, type ArchivedSnapshot } from "../ingest/archive.ts";
 import { buildMatch, indexSessionText } from "../atlas/search.ts";
 import { migrations } from "./migrations.ts";
 
@@ -204,7 +205,12 @@ export class Store {
         "SELECT session_id, project_dir, snapshot FROM sessions WHERE project_id IS NULL",
       ).all() as { session_id: string; project_dir: string | null; snapshot: string }[];
       for (const r of rows) {
-        const pid = this.resolveProjectId(r.session_id, r.project_dir, () => cwdOf(r.snapshot));
+        const pid = this.resolveProjectId(
+          r.session_id,
+          r.project_dir,
+          () => cwdOf(r.snapshot),
+          () => collectionOf(r.snapshot),
+        );
         const ov = this.stmt("SELECT phase FROM session_overrides WHERE session_id = ?").get(
           r.session_id,
         ) as { phase: string | null } | undefined;
@@ -267,14 +273,51 @@ export class Store {
     sessionId: string,
     projectDir: string | null,
     cwd: () => string | null,
+    collection: () => string | null = () => null,
   ): string {
     const ov = this.stmt(
       `SELECT o.project_id FROM session_overrides o JOIN projects p ON p.id = o.project_id
        WHERE o.session_id = ?`,
     ).get(sessionId) as { project_id: string } | undefined;
     if (ov !== undefined) return ov.project_id;
+    // R5.3: an archive entry with no project_dir (and no cwd) is placed by its vault collection.
+    if ((projectDir ?? "").trim() === "" && (cwd() ?? "").trim() === "") {
+      const col = collection();
+      if (col !== null) return this.projectForCollection(col);
+    }
     const inf = inferProject(projectDir, cwd());
     return this.ensureProject(inf.key, inf.name, inf.color);
+  }
+
+  /**
+   * Project of a vault collection ("harness/agentic-harness"): the project linked through
+   * projects.vault_collection; else the only project whose name equals the collection's last
+   * segment (case-insensitive); else a project created for the collection (key "vault:<collection>",
+   * named after the last segment). Ambiguous name matches fall through to the created project.
+   */
+  private projectForCollection(collection: string): string {
+    const linked = this.stmt(
+      "SELECT id FROM projects WHERE vault_collection = ? AND id IS NOT NULL ORDER BY created_at, project_dir LIMIT 1",
+    ).get(collection) as { id: string } | undefined;
+    if (linked !== undefined) return linked.id;
+    const name =
+      Array.from(
+        cleanLabel(
+          collection
+            .split("/")
+            .filter((x) => x !== "")
+            .at(-1) ?? "",
+        ),
+      )
+        .slice(0, 80)
+        .join("")
+        .trim() || "archive";
+    const byName = this.stmt(
+      "SELECT id FROM projects WHERE LOWER(name) = LOWER(?) AND id IS NOT NULL LIMIT 2",
+    ).all(name) as { id: string }[];
+    if (byName.length === 1) return byName[0]!.id;
+    const key = `vault:${collection}`;
+    return this.ensureProject(key, name, defaultColor(key));
   }
 
   transaction<T>(fn: () => T): T {
@@ -316,8 +359,32 @@ export class Store {
     // the hot path of an unchanged session adds no parse and no write.
     let projectId = prev?.project_id ?? null;
     let phaseLabel: string | null = null;
-    if (prev === undefined || projectId === null || prev.project_dir !== row.project_dir) {
-      projectId = this.resolveProjectId(row.session_id, row.project_dir, () => cwdOf(row.snapshot));
+    // R5.3: a capture-only row is placed by its vault collection, and by its cwd once live events
+    // arrive. For a row that carries an archive record only, a changed cwd also re-derives the
+    // project, so ingest (which stores incrementally) and replay (which derives from the final
+    // snapshot) agree. Rows without an archive never pay for this.
+    const cwdMoved =
+      prev !== undefined &&
+      row.snapshot.includes('"archive":{') &&
+      cwdOf(
+        (
+          this.stmt("SELECT snapshot FROM sessions WHERE session_id = ?").get(row.session_id) as {
+            snapshot: string;
+          }
+        ).snapshot,
+      ) !== cwdOf(row.snapshot);
+    if (
+      prev === undefined ||
+      projectId === null ||
+      prev.project_dir !== row.project_dir ||
+      cwdMoved
+    ) {
+      projectId = this.resolveProjectId(
+        row.session_id,
+        row.project_dir,
+        () => cwdOf(row.snapshot),
+        () => collectionOf(row.snapshot),
+      );
     }
     if (prev === undefined) {
       phaseLabel =
@@ -815,14 +882,14 @@ export class Store {
    */
   listOpenSessionsForHost(host: string): SessionRow[] {
     return this.stmt(
-      "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')",
+      "SELECT * FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended') AND state <> 'archived'",
     ).all(host) as SessionRow[];
   }
 
   countOpenSessionsForHost(host: string): number {
     return (
       this.stmt(
-        "SELECT COUNT(*) AS n FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended')",
+        "SELECT COUNT(*) AS n FROM sessions WHERE host = ? AND (state < 'ended' OR state > 'ended') AND state <> 'archived'",
       ).get(host) as { n: number }
     ).n;
   }
@@ -979,7 +1046,12 @@ export class Store {
         `INSERT INTO session_overrides (session_id, project_id, phase, updated_at) VALUES (?, ?, NULL, ?)
          ON CONFLICT(session_id) DO UPDATE SET project_id = excluded.project_id, updated_at = excluded.updated_at`,
       ).run(sessionId, projectId, Date.now());
-      const pid = this.resolveProjectId(sessionId, row.project_dir, () => cwdOf(row.snapshot));
+      const pid = this.resolveProjectId(
+        sessionId,
+        row.project_dir,
+        () => cwdOf(row.snapshot),
+        () => collectionOf(row.snapshot),
+      );
       this.stmt("UPDATE sessions SET project_id = ? WHERE session_id = ?").run(pid, sessionId);
       this.reindexSession(sessionId);
       this.reindexProjectPhases(row.project_id ?? null);
@@ -1108,7 +1180,7 @@ export class Store {
       `INSERT INTO session_baselines (session_id, snapshot, updated_at, host, state) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at,
          host = excluded.host, state = excluded.state`,
-    ).run(sn.session_id, JSON.stringify(sn), now, sn.host, sn.state);
+    ).run(sn.session_id, JSON.stringify(sn), now, sn.host, rowStateOf(sn as ArchivedSnapshot));
   }
 
   getBaseline(sessionId: string): string | undefined {
@@ -1120,16 +1192,16 @@ export class Store {
 
   listOpenBaselinesForHost(host: string): string[] {
     return (
-      this.stmt("SELECT snapshot FROM session_baselines WHERE host = ? AND state <> 'ended'").all(
-        host,
-      ) as { snapshot: string }[]
+      this.stmt(
+        "SELECT snapshot FROM session_baselines WHERE host = ? AND state NOT IN ('ended', 'archived')",
+      ).all(host) as { snapshot: string }[]
     ).map((r) => r.snapshot);
   }
 
   countOpenBaselinesForHost(host: string): number {
     return (
       this.stmt(
-        "SELECT COUNT(*) AS n FROM session_baselines WHERE host = ? AND state <> 'ended'",
+        "SELECT COUNT(*) AS n FROM session_baselines WHERE host = ? AND state NOT IN ('ended', 'archived')",
       ).get(host) as { n: number }
     ).n;
   }
@@ -1239,6 +1311,15 @@ function toHit(r: SearchRow): SearchHit {
   };
   if (r.state !== null) hit.state = r.state;
   return hit;
+}
+
+function collectionOf(snapshot: string): string | null {
+  try {
+    const c = (JSON.parse(snapshot) as { archive?: { collection?: unknown } }).archive?.collection;
+    return typeof c === "string" && c !== "" ? c : null;
+  } catch {
+    return null;
+  }
 }
 
 function cwdOf(snapshot: string): string | null {

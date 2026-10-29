@@ -1,0 +1,39 @@
+{
+  "source": {
+    "root_label": "vault",
+    "rel_path": "harness/agentic-harness/sessions/2026-09-03-1530-installer.md"
+  },
+  "schema_version": 2,
+  "session_id": "fc727a7b-bc64-4de4-8767-4a0a61457910",
+  "collection": "harness/agentic-harness",
+  "title": "Installer merge of settings.json",
+  "date": "2026-09-03T15:30:00+02:00",
+  "started_at": null,
+  "ended_at": null,
+  "duration_s": 3900,
+  "project_dir": null,
+  "branch": null,
+  "tools_used": [
+    {
+      "name": "Edit",
+      "count": 11
+    },
+    {
+      "name": "Bash",
+      "count": 7
+    },
+    {
+      "name": "Read",
+      "count": 4
+    }
+  ],
+  "commits": [
+    "99aa88b Merge hooks idempotently",
+    "77cc66d Add uninstall"
+  ],
+  "prs": [
+    "#45"
+  ],
+  "outcome": "Installer merges only probe-owned keys.\nUninstall restores the previous file byte for byte.",
+  "outcome_truncated": false
+}

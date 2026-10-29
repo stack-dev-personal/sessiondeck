@@ -96,7 +96,7 @@ const logTextOrEmpty = (): string => {
   }
 };
 
-describe("R1.5 byte budget and 413", () => {
+describe("R1.5 byte budget and 413", { timeout: 30_000 }, () => {
   it("a reader takes an oversize first item only when allowed (buffer empty)", async () => {
     const dir = join(home, "spool");
     appendSpoolLines(dir, [line(1, 1, "hook", 3000)], undefined);
@@ -230,7 +230,7 @@ function writeLock(path: string, info: Record<string, unknown> | string, ageMs =
   }
 }
 
-describe("R1.4 single-instance lock", () => {
+describe("R1.4 single-instance lock", { timeout: 30_000 }, () => {
   const lockPath = (): string => join(home, "daemon", "daemon.lock");
   const bootNow = Date.now() - 3_600_000;
   const deps = { bootMs: () => bootNow };

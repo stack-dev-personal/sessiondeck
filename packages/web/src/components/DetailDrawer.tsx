@@ -1,13 +1,15 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import { formatClockSec, formatDuration, formatReset, formatTokens } from "../lib/format";
-import { STATE_VOCAB } from "../lib/state-vocab";
+import { neutralize } from "../lib/neutralize";
+import { ARCHIVED_VOCAB, STATE_VOCAB } from "../lib/state-vocab";
 import { windowAt } from "../statusline-adapter";
 import { EMPTY_HISTORY, type Sample, type SessionHistory } from "../store/history";
-import { atlasOf } from "../atlas/types";
+import { archiveOf, atlasOf, isArchivedState } from "../atlas/types";
 import { MoveToProject } from "./MoveToProject";
 import { PhaseChip } from "./PhaseChip";
 import { ProjectLink } from "./ProjectLink";
+import { rowName } from "./ArchiveSummary";
 import { cardInfo } from "./SessionCard";
 import { Meter, windowModel } from "./Meter";
 
@@ -149,7 +151,10 @@ export function DetailDrawer({
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [rawOpen, setRawOpen] = useState(false);
-  const { name, vocab } = cardInfo(s);
+  const info = cardInfo(s);
+  const name = rowName(s);
+  const vocab = isArchivedState(s) ? ARCHIVED_VOCAB : info.vocab;
+  const archive = archiveOf(s);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -266,6 +271,46 @@ export function DetailDrawer({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-s-4 overflow-y-auto p-s-3">
+          {archive ? (
+            <Section id="archive" title="Archive">
+              <div className={`flex items-center gap-s-2 ${ARCHIVED_VOCAB.textClass}`}>
+                <span aria-hidden="true" className="num">
+                  {ARCHIVED_VOCAB.glyph}
+                </span>
+                <span>{ARCHIVED_VOCAB.label}</span>
+                <span className="num text-xs text-fg-muted">
+                  · {archive.date ?? "n/a"} ·{" "}
+                  {archive.durationS === null ? "n/a" : formatDuration(archive.durationS * 1000)}
+                </span>
+              </div>
+              {archive.title ? <p className="m-0 text-sm">{archive.title}</p> : null}
+              <p
+                data-slot="archive-outcome"
+                className="m-0 whitespace-pre-wrap break-words text-sm"
+              >
+                {archive.outcome === "" ? "no outcome recorded" : archive.outcome}
+                {archive.outcomeTruncated ? " …" : ""}
+              </p>
+              <dl className="m-0 grid grid-cols-[5rem_1fr] gap-x-s-2 text-xs">
+                <dt className="text-fg-muted">Commits</dt>
+                <dd className="num m-0 break-all" data-slot="archive-commits">
+                  {archive.commits.length === 0 ? "n/a" : archive.commits.join(" | ")}
+                </dd>
+                <dt className="text-fg-muted">PRs</dt>
+                <dd className="num m-0 break-all" data-slot="archive-prs">
+                  {archive.prs.length === 0 ? "n/a" : archive.prs.join(" | ")}
+                </dd>
+                <dt className="text-fg-muted">Tools</dt>
+                <dd className="num m-0 break-all">
+                  {archive.tools.length === 0
+                    ? "n/a"
+                    : archive.tools
+                        .map((t) => (t.count === null ? t.name : `${t.name} ${t.count}`))
+                        .join(", ")}
+                </dd>
+              </dl>
+            </Section>
+          ) : null}
           <Section id="timeline" title="State timeline">
             {timeline.length === 0 ? (
               NA
@@ -390,9 +435,11 @@ export function DetailDrawer({
           <Section id="git" title="Git">
             <dl className="m-0 grid grid-cols-[5rem_1fr] gap-x-s-2 gap-y-0.5">
               <dt className="text-fg-muted">Branch</dt>
-              <dd className="num m-0 break-all">{git.branch ?? "n/a"}</dd>
+              <dd className="num m-0 break-all">{git.branch ? neutralize(git.branch) : "n/a"}</dd>
               <dt className="text-fg-muted">Worktree</dt>
-              <dd className="num m-0 break-all">{git.worktree ?? "n/a"}</dd>
+              <dd className="num m-0 break-all">
+                {git.worktree ? neutralize(git.worktree) : "n/a"}
+              </dd>
               <dt className="text-fg-muted">PR</dt>
               <dd className="num m-0">
                 {git.pr && prHref ? (

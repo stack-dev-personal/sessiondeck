@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command for the live e2e: builds the hub image, starts hub + ws-gate + Playwright containers
-# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9, R5.5-live, R5.4-live with real hub CORS and a hub restart through the host-side poller; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
+# on a private network, runs every live spec (R3.1, R3.3, R3.6, R3.9, R5.5-live, R5.4-live, R5.3-live with real hub CORS and a hub restart through the host-side poller; SD_E2E_SKIP_PERF=1 skips the 40 s perf run), copies
 # screenshots, removes everything.
 #
 #   packages/web/scripts/e2e-live.sh

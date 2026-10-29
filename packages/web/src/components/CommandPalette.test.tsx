@@ -366,3 +366,35 @@ describe("request handling", () => {
     expect(dialog()).toHaveAttribute("data-results-for", "ab");
   });
 });
+
+describe("archive hits (R5.3)", () => {
+  it("marks an archived outcome hit, neutralizes its text, and Enter opens that session", async () => {
+    const rlo = String.fromCodePoint(0x202e);
+    setAtlasApi(
+      fakeApi({
+        search: vi.fn(async () =>
+          ok([
+            hit({
+              kind: "session",
+              id: "arch-1",
+              title: `Spool${rlo} compaction`,
+              snippet: `outcome: kestrel${rlo} shipped`,
+              state: "archived",
+            }),
+          ]),
+        ),
+      }),
+    );
+    mount();
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await userEvent.keyboard("kestrel");
+    const opt = await screen.findByRole("option");
+    expect(opt).toHaveTextContent("Archived");
+    expect(opt).toHaveTextContent("Spool<U+202E> compaction");
+    expect(opt.textContent).not.toContain(rlo);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.getByTestId("where")).toHaveTextContent("/sessions?open=arch-1"),
+    );
+  });
+});
