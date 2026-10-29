@@ -52,7 +52,15 @@ export class CostFiller {
   private closed = false;
   private deferredSince: number | undefined;
   private lastRebuildCheck:
-    { key: { projects: number; index: object; version: number }; stale: boolean } | undefined;
+    | { projects: number; generation: number; version: number; stale: boolean }
+    | undefined;
+  /**
+   * Identity of the index the cache entry was computed for, WITHOUT keeping it alive: the usage
+   * service swaps in a new index on refresh and the old one (hundreds of MB) must be collectable.
+   * A WeakRef plus a counter bumped whenever the live index is a different object.
+   */
+  private indexRef: WeakRef<object> | undefined;
+  private indexGeneration = 0;
   private readonly debounceMs: number;
   private readonly rebuildQuietMs: number;
   private readonly rebuildMaxDeferMs: number;
@@ -128,20 +136,28 @@ export class CostFiller {
     // indexed rows (index identity and version): without a change in either, reuse it instead of
     // reading the whole sessions table and building a Map on every flush.
     const index = this.usage.index;
-    const key = { projects: this.store.projectsVersion, index, version: index.version };
+    if (this.indexRef?.deref() !== index) {
+      this.indexRef = new WeakRef(index);
+      this.indexGeneration++;
+    }
+    const key = {
+      projects: this.store.projectsVersion,
+      generation: this.indexGeneration,
+      version: index.version,
+    };
     const last = this.lastRebuildCheck;
     if (
       last !== undefined &&
-      last.key.projects === key.projects &&
-      last.key.index === key.index &&
-      last.key.version === key.version
+      last.projects === key.projects &&
+      last.generation === key.generation &&
+      last.version === key.version
     ) {
       return last.stale;
     }
     const current = new Map<string, string | null>();
     for (const r of this.store.listSessionProjects()) current.set(r.session_id, r.project_dir);
     const stale = index.staleProjects(current);
-    this.lastRebuildCheck = { key, stale };
+    this.lastRebuildCheck = { ...key, stale };
     return stale;
   }
 
