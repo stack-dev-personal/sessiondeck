@@ -114,7 +114,9 @@ describe("open and close", () => {
     mount();
     await userEvent.click(card("a"));
     const dlg = screen.getByRole("dialog");
-    const items = Array.from(dlg.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]'));
+    const items = Array.from(
+      dlg.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex="0"]'),
+    );
     const first = items[0]!;
     const last = items[items.length - 1]!;
     last.focus();
@@ -153,20 +155,12 @@ describe("keys while the drawer is open", () => {
     expect(header).not.toHaveAttribute("inert");
   });
 
-  it("switching the open session remounts the drawer (raw state reset, focus on close)", async () => {
+  it("switching the open session remounts the popout (focus on close)", async () => {
     mount();
     await userEvent.click(card("a"));
-    await userEvent.click(screen.getByRole("button", { name: /envelopes/ }));
-    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    await userEvent.tab();
     act(() => useUi.getState().openSession("b"));
     expect(screen.getByRole("dialog", { name: "name-b" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
     expect(screen.getByRole("button", { name: /close/i })).toHaveFocus();
   });
 
@@ -252,8 +246,7 @@ describe("live updates", () => {
 
 describe("content", () => {
   it("sections appear in the design-system order", async () => {
-    mount();
-    await userEvent.click(card("a"));
+    render(<DetailDrawer session={snap("a")} now={NOW} onClose={() => {}} />);
     const ids = Array.from(screen.getByRole("dialog").querySelectorAll("[data-section]")).map((n) =>
       n.getAttribute("data-section"),
     );
@@ -263,8 +256,14 @@ describe("content", () => {
   it("raw tail is collapsed by default and expands", async () => {
     useBoard.getState().enqueue(hook("a", "Stop", NOW));
     act(() => useBoard.getState().flush());
-    mount();
-    await userEvent.click(card("a"));
+    render(
+      <DetailDrawer
+        session={useBoard.getState().sessions["a"]!}
+        history={useBoard.getState().history["a"]}
+        now={NOW}
+        onClose={() => {}}
+      />,
+    );
     const toggle = screen.getByRole("button", { name: /envelopes/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByLabelText("Envelope JSON")).toBeNull();
@@ -274,8 +273,7 @@ describe("content", () => {
   });
 
   it("empty and null data render n/a and empty-state text, not blanks", async () => {
-    mount();
-    await userEvent.click(card("a"));
+    render(<DetailDrawer session={snap("a")} now={NOW} onClose={() => {}} />);
     const dlg = screen.getByRole("dialog");
     expect(within(dlg).getByRole("img", { name: /n\/a/ })).toBeInTheDocument();
     expect(dlg).toHaveTextContent("No subagents in this session.");

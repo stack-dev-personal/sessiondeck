@@ -201,3 +201,22 @@ body {
     animation: none;
   }
 }
+
+.sd-popout {
+  animation: sd-pop-in var(--t-base) var(--ease) 1;
+}
+
+@keyframes sd-pop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-popout {
+    animation: none;
+  }
+}
