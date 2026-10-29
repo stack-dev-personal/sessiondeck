@@ -10,11 +10,11 @@
 
 | Unit | Requirements | Executor | Blocked by | State |
 |------|--------------|----------|------------|-------|
-| U1 contract: subagent parent links; phase doc R3.10 to R3.13 | R3.11 (data) | sd-executor-contract | none | pending |
-| U2 web: display activity hysteresis, stable order, grace setting | R3.10 | sd-executor-web | none | pending |
-| U3 web: SessionPopout and AgentRollup replace the drawer | R3.11 | sd-executor-web | U1 | pending |
-| U4 web: UsageWidget, meters off cards, Fable estimate | R3.12 | sd-executor-web | none | pending |
-| U5 web: mock mode and Playwright evidence | R3.13 (+ screens R3.10 to R3.12) | sd-executor-web | U2, U3, U4 | pending |
+| U1 contract: subagent parent links; phase doc R3.10 to R3.13 | R3.11 (data) | sd-executor-contract | none | done |
+| U2 web: display activity hysteresis, stable order, grace setting | R3.10 | sd-executor-web | none | done |
+| U3 web: SessionPopout and AgentRollup replace the drawer | R3.11 | sd-executor-web | U1 | done |
+| U4 web: UsageWidget, meters off cards, Fable estimate | R3.12 | sd-executor-web | none | done |
+| U5 web: mock mode and Playwright evidence | R3.13 (+ screens R3.10 to R3.12) | sd-executor-web | U2, U3, U4 | done |
 
 Fable estimate source: hub GET /history/daily already returns per-day model_breakdowns, so no hub change is planned.
 
@@ -89,3 +89,19 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 ### Decisions made
 - 2026-10-29 Usage freshness is per window: each of five_hour and seven_day comes from the freshest payload that carries it (rate limits are account-wide; a newer payload missing one window must not hide valid data).
 - 2026-10-29 DetailDrawer.tsx is no longer mounted (popout replaced it) and still renders per-session rate-limit rows; delete in U5 if the diff stays small, else defer.
+
+## Resume 2026-10-29 (after the network outage at 02:05Z)
+
+### U5 mock mode and Playwright evidence (sd-executor-web): 662cd34, 1560cd7, 0218d5a, 9d3dac1, d433d68, e4eb205, cfeb135
+- Found uncommitted DetailDrawer removal and e2e retargeting in the worktree; the executor finished it (0218d5a) and added e2e R3.10 to R3.13 specs with screenshots (9d3dac1). Playwright ran in mcr.microsoft.com/playwright:v1.63.0-noble with the sprint-2-work volume (Docker Desktop cannot see the worktree path), 44/44.
+- Review iteration 1: fix-then-merge (MAJOR deleted DetailDrawer.test.tsx took live popout behaviour tests with it; MAJOR mock flap timer on by default made baselines time-dependent; MINORs usage identity on captured_at, vacuous R3.10 e2e, empty flap param, subagent id truncated at 390). Fixed in d433d68 and e4eb205 (tests restored as DrawerHost.test.tsx).
+- Review iteration 2: merge; three MINORs (dev/cards baselines shot mid-replay, widget still re-rendered on captured_at, no test for id truncation) fixed in cfeb135, three baselines regenerated, Playwright 44/44 twice.
+- Session-end verifier: R3.10, R3.11, R3.12, R3.13 PASS (docs/VERIFY-P3.md). Gates: typecheck, lint, format:check clean; contract 1119/1 skip, hub 290, probe 332/1 skip, web 312, scripts 535/3 skip.
+
+### Decisions made
+- 2026-10-29 The e2e "no fable" check is scoped to the usage widget: fixture cards legitimately show the model label "fable·xhigh", which is not usage (decision 28 is about the usage row).
+- 2026-10-29 The R3.2 settled-board state mix no longer expects idle under the frozen e2e clock (the 120 s grace holds it as working); idle stays covered by specimens and Board.hysteresis.test.tsx.
+- 2026-10-29 Mock flapping is off under replay=fast unless the URL opts in with flap=<ms>, so baselines do not depend on runner speed.
+
+### Deferred findings
+- Root `pnpm -F sessiondeck exec vitest run` sweeps the repo without per-package configs and reports failures; not a gate (per-package runs are), noted in VERIFY-P3.md.
