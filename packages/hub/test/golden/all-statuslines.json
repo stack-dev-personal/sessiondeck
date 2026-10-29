@@ -11,6 +11,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000018000,
       "state_detail": null,
@@ -75,6 +76,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000006000,
       "state_detail": null,
@@ -139,6 +141,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000108000,
       "state_detail": null,
@@ -200,6 +203,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000036000,
       "state_detail": null,
@@ -261,6 +265,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000072000,
       "state_detail": null,
@@ -316,6 +321,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000120000,
       "state_detail": null,
@@ -377,6 +383,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000102000,
       "state_detail": null,
@@ -438,6 +445,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000012000,
       "state_detail": null,
@@ -502,6 +510,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000054000,
       "state_detail": null,
@@ -589,6 +598,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "starting",
       "state_since": 1760000090000,
       "state_detail": null,

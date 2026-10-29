@@ -103,6 +103,7 @@ export function applyStatusLine(
   }
   const level = p.effort?.level;
   if (typeof level === "string" && level !== "") s.effort = cap(level);
+  if (typeof p.fast_mode === "boolean") s.fast_mode = p.fast_mode;
   const name = nonEmpty(p.session_name);
   if (name !== null) s.session_name = cap(name);
   if (s.cwd === "" && nonEmpty(p.cwd) !== null) s.cwd = cap(p.cwd as string);

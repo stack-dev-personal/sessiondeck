@@ -11,6 +11,7 @@
         "display_name": "Fable 5.1"
       },
       "effort": "xhigh",
+      "fast_mode": false,
       "state": "ended",
       "state_since": 1760001818000,
       "state_detail": null,
@@ -87,6 +88,7 @@
         "display_name": "claude-fable-5-1"
       },
       "effort": null,
+      "fast_mode": null,
       "state": "exited",
       "state_since": 1760001842000,
       "state_detail": "process gone",

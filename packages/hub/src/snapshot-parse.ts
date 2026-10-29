@@ -1,4 +1,9 @@
-import { readSubagentRows, readTracking, type SessionSnapshot } from "@sessiondeck/contract";
+import {
+  readFastMode,
+  readSubagentRows,
+  readTracking,
+  type SessionSnapshot,
+} from "@sessiondeck/contract";
 
 /**
  * The one way a stored snapshot JSON is parsed. Subagent rows stored before parent links existed
@@ -11,5 +16,6 @@ export function parseStoredSnapshot(raw: string): SessionSnapshot {
   if (typeof s !== "object" || s === null) return s;
   s.subagents = readSubagentRows(s.subagents);
   s.tracking = readTracking(s.tracking);
+  s.fast_mode = readFastMode((s as { fast_mode?: unknown }).fast_mode);
   return s;
 }
