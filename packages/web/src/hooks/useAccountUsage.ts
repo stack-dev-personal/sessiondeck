@@ -52,10 +52,8 @@ export interface AccountUsage {
 interface Flat {
   fu: number | null;
   fr: number | null;
-  fa: number | null;
   su: number | null;
   sr: number | null;
-  sa: number | null;
   hasFive: boolean;
   hasSeven: boolean;
 }
@@ -67,10 +65,8 @@ function selectFlat(sessions: Record<string, SessionSnapshot>): Flat {
   return {
     fu: f?.win.used_pct ?? null,
     fr: f?.win.resets_at ?? null,
-    fa: f?.at ?? null,
     su: d?.win.used_pct ?? null,
     sr: d?.win.resets_at ?? null,
-    sa: d?.at ?? null,
     hasFive: f !== null,
     hasSeven: d !== null,
   };

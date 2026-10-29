@@ -29,9 +29,11 @@ export async function freezeClock(page: Page): Promise<void> {
 
 export async function gotoDevCards(page: Page): Promise<void> {
   await freezeClock(page);
-  await page.goto("/dev/cards");
+  await page.goto("/dev/cards?replay=fast");
   await expect(page.getByTestId("dev-cards")).toBeVisible();
   await expect(page.getByTestId("specimen-populated")).toBeVisible();
+  // The usage widget is mounted on every route; wait until its numbers stop changing.
+  await waitForReplayDone(page);
 }
 
 /** Waits for the mock replay to produce `n` cards. */
