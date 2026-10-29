@@ -273,9 +273,7 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
     // from the transcript, not stated by the statusline, so they become null (replay applies the
     // statusline before any transcript figure exists and gets exactly that).
     const base =
-      states && row.figures_source === "transcript"
-        ? withoutTranscriptFigures(row)
-        : row;
+      states && row.figures_source === "transcript" ? withoutTranscriptFigures(row) : row;
     return {
       ...base,
       ...(states ? { figures_source: "subagent_statusline" as const } : {}),

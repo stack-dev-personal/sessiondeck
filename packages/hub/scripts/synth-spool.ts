@@ -83,7 +83,10 @@ function assistantRow(
       id: `msg_${sid}_${n}`,
       type: "message",
       role: "assistant",
-      content: shape.textFree === true ? [{ type: "tool_use", id: "t", name: "Read", input: {} }] : [{ type: "text", text }],
+      content:
+        shape.textFree === true
+          ? [{ type: "tool_use", id: "t", name: "Read", input: {} }]
+          : [{ type: "text", text }],
       stop_reason: "end_turn",
       usage: {
         input_tokens: 2 + Math.floor(rand() * 10),
@@ -184,9 +187,21 @@ export function* synthSessions(
           ? { branchless: true, textFree: true, sidechain: sub }
           : {};
         const lines = Array.from({ length: 5 }, (_, k) =>
-          assistantRow(sid, lineNo + k, ts, "x".repeat(400 + Math.floor(rand() * 400)), rand, shape),
+          assistantRow(
+            sid,
+            lineNo + k,
+            ts,
+            "x".repeat(400 + Math.floor(rand() * 400)),
+            rand,
+            shape,
+          ),
         );
-        push("transcript", { start_line: lineNo, lines }, undefined, sub ? { agent_id: STRESS_AGENT_ID } : {});
+        push(
+          "transcript",
+          { start_line: lineNo, lines },
+          undefined,
+          sub ? { agent_id: STRESS_AGENT_ID } : {},
+        );
       } else {
         const p = middle[hookIdx++ % middle.length] as Rec;
         push("hook", { ...p, session_id: sid }, String(p["hook_event_name"]));

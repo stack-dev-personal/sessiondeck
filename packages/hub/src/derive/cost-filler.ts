@@ -52,8 +52,7 @@ export class CostFiller {
   private closed = false;
   private deferredSince: number | undefined;
   private lastRebuildCheck:
-    | { projects: number; generation: number; version: number; stale: boolean }
-    | undefined;
+    { projects: number; generation: number; version: number; stale: boolean } | undefined;
   /**
    * Identity of the index the cache entry was computed for, WITHOUT keeping it alive: the usage
    * service swaps in a new index on refresh and the old one (hundreds of MB) must be collectable.

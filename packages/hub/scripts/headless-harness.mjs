@@ -33,7 +33,12 @@ let mode = "none";
 let localProc;
 
 function compose(args, opts = {}) {
-  const files = ["-f", path.join(repo, "infra/docker-compose.yml"), "-f", path.join(tmp, "override.yml")];
+  const files = [
+    "-f",
+    path.join(repo, "infra/docker-compose.yml"),
+    "-f",
+    path.join(tmp, "override.yml"),
+  ];
   return spawnSync("docker", ["compose", "-p", PROJECT, ...files, ...args], {
     encoding: "utf8",
     env: {
@@ -129,7 +134,10 @@ const ulid = () => {
   return `0${s}`;
 };
 const readJson = (p) => JSON.parse(readFileSync(p, "utf8"));
-const lines = (p) => readFileSync(p, "utf8").split("\n").filter((l) => l !== "");
+const lines = (p) =>
+  readFileSync(p, "utf8")
+    .split("\n")
+    .filter((l) => l !== "");
 
 function buildEnvelopes(dir) {
   const tdir = path.join(dir, "transcripts/01-subagents");
@@ -139,14 +147,26 @@ function buildEnvelopes(dir) {
   const subs = files.map((f) => {
     const id = f.replace(/^agent-/, "").replace(/\.jsonl$/, "");
     const meta = readJson(path.join(tdir, "subagents", f.replace(/\.jsonl$/, ".meta.json")));
-    return { id, type: meta.agentType || "general-purpose", lines: lines(path.join(tdir, "subagents", f)) };
+    return {
+      id,
+      type: meta.agentType || "general-purpose",
+      lines: lines(path.join(tdir, "subagents", f)),
+    };
   });
   const out = [];
   let seq = 0;
   const push = (kind, payload, extra = {}) =>
     out.push({
-      v: 1, id: ulid(), kind, host: HOST, os: "linux", session_id: session,
-      ts: Date.now(), seq: seq++, payload, ...extra,
+      v: 1,
+      id: ulid(),
+      kind,
+      host: HOST,
+      os: "linux",
+      session_id: session,
+      ts: Date.now(),
+      seq: seq++,
+      payload,
+      ...extra,
     });
   const hook = (rel, over = {}) => {
     const p = { ...readJson(path.join(dir, rel)), session_id: session, ...over };
@@ -154,16 +174,21 @@ function buildEnvelopes(dir) {
   };
   const transcript = (all, agent) => {
     for (let i = 0; i < all.length; i += CHUNK) {
-      push("transcript", { start_line: i, lines: all.slice(i, i + CHUNK) },
-        agent === undefined ? {} : { agent_id: agent });
+      push(
+        "transcript",
+        { start_line: i, lines: all.slice(i, i + CHUNK) },
+        agent === undefined ? {} : { agent_id: agent },
+      );
     }
   };
   hook("SessionStart/01-startup.json");
   hook("UserPromptSubmit/01-sample.json");
-  for (const s of subs) hook("SubagentStart/01-subagent.json", { agent_id: s.id, agent_type: s.type });
+  for (const s of subs)
+    hook("SubagentStart/01-subagent.json", { agent_id: s.id, agent_type: s.type });
   transcript(main);
   for (const s of subs) transcript(s.lines, s.id);
-  for (const s of subs) hook("SubagentStop/01-subagent.json", { agent_id: s.id, agent_type: s.type });
+  for (const s of subs)
+    hook("SubagentStop/01-subagent.json", { agent_id: s.id, agent_type: s.type });
   hook("Stop/01-after-ask.json");
   return { session, envelopes: out, subs };
 }
@@ -180,7 +205,14 @@ async function api(method, route, body) {
 
 async function run() {
   const fixtureDir = path.join(tmp, "fixtures");
-  for (const d of ["transcripts/01-subagents", "SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop"]) {
+  for (const d of [
+    "transcripts/01-subagents",
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+  ]) {
     cpSync(path.join(FIXTURES, d), path.join(fixtureDir, d), { recursive: true });
   }
   const { session, envelopes, subs } = buildEnvelopes(fixtureDir);
@@ -196,11 +228,14 @@ async function run() {
     up = await startLocal();
   }
   if (!up) throw new Error("hub did not become healthy");
-  console.log(`hub path: ${mode === "docker" ? `docker compose -p ${PROJECT} (container ${CONTAINER})` : "local node process"} on ${BASE}`);
+  console.log(
+    `hub path: ${mode === "docker" ? `docker compose -p ${PROJECT} (container ${CONTAINER})` : "local node process"} on ${BASE}`,
+  );
 
   for (let i = 0; i < envelopes.length; i += 100) {
     const r = await api("POST", "/ingest", { host: HOST, envelopes: envelopes.slice(i, i + 100) });
-    if (r.rejected?.length) throw new Error(`rejected envelopes: ${JSON.stringify(r.rejected).slice(0, 300)}`);
+    if (r.rejected?.length)
+      throw new Error(`rejected envelopes: ${JSON.stringify(r.rejected).slice(0, 300)}`);
   }
   console.log(`posted ${envelopes.length} envelopes for session ${session}`);
 
@@ -229,22 +264,31 @@ function report({ snap, cost }) {
   // window and used_pct are expected null (R2.12: show tokens without a percent when unknown).
   const msg = (snap.last_assistant_message ?? "").replace(/\s+/g, " ").slice(0, 80);
   console.log("\nsession");
-  console.table([{
-    model: snap.model?.id ?? null,
-    ctx_tokens: snap.context?.input ?? null,
-    window: snap.context?.window ?? null,
-    used_pct: snap.context?.used_pct ?? null,
-    "cost.usd": snap.cost?.usd ?? null,
-    route_cost_usd: cost.cost_usd ?? null,
-    branch: snap.git?.branch ?? null,
-    last_message: msg,
-  }]);
+  console.table([
+    {
+      model: snap.model?.id ?? null,
+      ctx_tokens: snap.context?.input ?? null,
+      window: snap.context?.window ?? null,
+      used_pct: snap.context?.used_pct ?? null,
+      "cost.usd": snap.cost?.usd ?? null,
+      route_cost_usd: cost.cost_usd ?? null,
+      branch: snap.git?.branch ?? null,
+      last_message: msg,
+    },
+  ]);
   console.log("sources:", JSON.stringify(snap.sources ?? {}));
   console.log("\nsubagents");
-  console.table(snap.subagents.map((s) => ({
-    agent_id: s.agent_id, agent_type: s.agent_type, model: s.model, effort: s.effort ?? null, tokens: s.tokens,
-    context_window: s.context_window, figures_source: s.figures_source ?? null,
-  })));
+  console.table(
+    snap.subagents.map((s) => ({
+      agent_id: s.agent_id,
+      agent_type: s.agent_type,
+      model: s.model,
+      effort: s.effort ?? null,
+      tokens: s.tokens,
+      context_window: s.context_window,
+      figures_source: s.figures_source ?? null,
+    })),
+  );
   if (snap.subagents.length === 0) missing.push("subagents (none)");
   for (const s of snap.subagents) {
     need(`subagent ${s.agent_id} model`, s.model);
