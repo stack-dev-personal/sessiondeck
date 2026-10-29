@@ -54,3 +54,16 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 
 ### Deferred findings
 - [LOW, security, pre-existing] packages/contract/src/tracking.ts:64-67 readTracking/readHolder do not length-cap stored last_tool/permission strings; only reachable with DB write access.
+
+## Resume 2026-10-29 (after the 5-hour usage limit at 23:31Z)
+
+### U2 hysteresis (sd-executor-web): bffb565, a429250, a8b1c8d, c4981b8
+- Found uncommitted review-style fixes in the worktree; the executor checked them, fixed a contradictory reorder assertion and a timer test, committed a429250.
+- Review iteration 1: fix-then-merge (MAJOR idle to working not held, so a card could change group twice in 1 s; MINORs held state_since, first-sight clock skew, waiting to idle shown working). Fixed in a8b1c8d.
+- Review iteration 2: merge, with two MINORs (held card shown as literal idle; no grace-change-mid-hold test). Fixed in c4981b8.
+- Verifier: R3.10 behavior PASS, web 243/243; screens pending U5 (docs/VERIFY-P3.md).
+
+### Decisions made
+- 2026-10-29 "At most one group change per grace period" applies both ways: idle to working shows idle until one grace since the last group change (the timer moves it). Attention is never held.
+- 2026-10-29 Waiting to idle shows working for the grace (spec says "continuously idle or waiting"); kept as specified.
+- 2026-10-29 First-sight idle start is clamped to min(max(state_since, now - grace), now), so hub/browser clock skew can never hold a card longer than one grace.
