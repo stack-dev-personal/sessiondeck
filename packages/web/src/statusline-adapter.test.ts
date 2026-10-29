@@ -27,6 +27,15 @@ describe("applyStatusLine (web-side adapter, contract has none)", () => {
     expect(s.last_event_at).toBe(NOW);
   });
 
+  it("copies fast_mode like effort: true/false set, absent or null keeps previous", () => {
+    const on = applyStatusLine(base, { session_id: "s", fast_mode: true }, NOW);
+    expect(on.fast_mode).toBe(true);
+    expect(applyStatusLine(on, { session_id: "s" }, NOW).fast_mode).toBe(true);
+    expect(applyStatusLine(on, { session_id: "s", fast_mode: null }, NOW).fast_mode).toBe(true);
+    expect(applyStatusLine(on, { session_id: "s", fast_mode: false }, NOW).fast_mode).toBe(false);
+    expect(base.fast_mode).toBeNull();
+  });
+
   it("stale window becomes null, never the old number", () => {
     const s = applyStatusLine(
       base,

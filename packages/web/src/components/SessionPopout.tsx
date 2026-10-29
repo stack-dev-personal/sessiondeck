@@ -5,7 +5,17 @@ import { STATE_VOCAB } from "../lib/state-vocab";
 import { AgentRollup } from "./AgentRollup";
 import { cardInfo } from "./SessionCard";
 
-const FOCUSABLE = 'button:not([disabled]), a[href], [tabindex="0"]';
+const FOCUSABLE =
+  'button, a[href], input:not([type="hidden"]), select, textarea, summary, [tabindex], [contenteditable="true"]';
+
+function tabbable(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) =>
+      !el.matches('[disabled], [tabindex="-1"]') &&
+      !el.closest("[inert]") &&
+      !el.closest("fieldset[disabled]"),
+  );
+}
 
 const NA = <span className="num text-fg-muted">n/a</span>;
 
@@ -68,7 +78,7 @@ export function SessionPopout({ session: s, onClose, contentSlot }: SessionPopou
       }
       const root = ref.current;
       if (e.key !== "Tab" || !root) return;
-      const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+      const items = tabbable(root);
       const first = items[0];
       const last = items[items.length - 1];
       if (!first || !last) return;
@@ -125,9 +135,12 @@ export function SessionPopout({ session: s, onClose, contentSlot }: SessionPopou
               <Fact label="Effort" slot="effort">
                 {s.effort ?? NA}
               </Fact>
-              {/* The contract snapshot carries no speed/fast field yet: absent, not guessed. */}
               <Fact label="Speed" slot="speed">
-                {NA}
+                {s.fast_mode === null || s.fast_mode === undefined
+                  ? NA
+                  : s.fast_mode
+                    ? "fast"
+                    : "standard"}
               </Fact>
               <Fact label="Cost (API-equivalent)" slot="cost">
                 {s.cost.usd === null ? NA : formatCost(s.cost.usd)}

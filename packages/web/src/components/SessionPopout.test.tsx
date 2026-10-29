@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, type SessionSnapshot, type SubagentSnapshot } from "@sessiondeck/contract";
 import { App } from "../App";
 import { useBoard } from "../store/board";
@@ -129,6 +129,48 @@ describe("header and content slot", () => {
     expect(document.querySelectorAll('[data-slot="effort"]')[1]).toHaveTextContent("n/a");
   });
 
+  it("speed shows fast, standard, or n/a from fast_mode", () => {
+    for (const [v, text] of [
+      [true, "fast"],
+      [false, "standard"],
+      [null, "n/a"],
+    ] as const) {
+      const { unmount } = render(
+        <SessionPopout session={snap("f", { fast_mode: v })} onClose={() => {}} />,
+      );
+      expect(document.querySelector('[data-slot="speed"]')).toHaveTextContent(text);
+      unmount();
+    }
+  });
+
+  it("focus trap covers inputs and summary in contentSlot, skips tabindex=-1", async () => {
+    render(
+      <SessionPopout
+        session={snap("a")}
+        onClose={() => {}}
+        contentSlot={
+          <div>
+            <input aria-label="q" />
+            <button tabIndex={-1}>skip</button>
+            <details>
+              <summary>more</summary>
+            </details>
+          </div>
+        }
+      />,
+    );
+    const dlg = screen.getByRole("dialog");
+    const last = within(dlg).getByText("more");
+    last.focus();
+    await userEvent.tab();
+    expect(within(dlg).getByRole("button", { name: /Close/ })).toHaveFocus();
+    await userEvent.tab();
+    expect(within(dlg).getByLabelText("q")).toHaveFocus();
+    await userEvent.tab();
+    expect(within(dlg).queryByText("skip")).not.toHaveFocus();
+    expect(last).toHaveFocus();
+  });
+
   it("renders contentSlot inside the content region", () => {
     render(
       <SessionPopout session={snap("a")} onClose={() => {}} contentSlot={<p>hello slot</p>} />,
@@ -148,6 +190,37 @@ describe("#session-<id> hash", () => {
     expect(window.location.hash).toBe("#session-a");
     await userEvent.keyboard("{Escape}");
     expect(window.location.hash).toBe("");
+  });
+
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty"])(
+    "#session-%s opens nothing and does not crash",
+    (name) => {
+      window.history.replaceState(null, "", `/#session-${name}`);
+      mount();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.queryByText("Something failed")).toBeNull();
+      expect(screen.getAllByTestId("session-card")).toHaveLength(2);
+    },
+  );
+
+  it("Esc after a card open pops the pushed entry (one Back step, not two)", async () => {
+    mount();
+    await userEvent.click(card("a"));
+    const back = vi.spyOn(window.history, "back");
+    await userEvent.keyboard("{Escape}");
+    expect(back).toHaveBeenCalledTimes(1);
+    back.mockRestore();
+  });
+
+  it("closing a popout opened from the hash uses replaceState, not back", async () => {
+    window.history.replaceState(null, "", "/#session-b");
+    mount();
+    await screen.findByRole("dialog", { name: "name-b" });
+    const back = vi.spyOn(window.history, "back");
+    await userEvent.keyboard("{Escape}");
+    expect(back).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+    back.mockRestore();
   });
 
   it("loading with the hash opens the popout", async () => {

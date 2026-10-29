@@ -46,7 +46,9 @@ function focusNearest(neighbour: string | null): void {
 export function DrawerHost() {
   const id = useUi((s) => s.selectedSessionId);
   const closeSession = useUi((s) => s.closeSession);
-  const session = useBoard((s) => (id === null ? undefined : s.sessions[id]));
+  const session = useBoard((s) =>
+    id === null || !Object.hasOwn(s.sessions, id) ? undefined : s.sessions[id],
+  );
   useSessionHash();
   const open = id !== null && session !== undefined;
   const openedFor = useRef<string | null>(null);

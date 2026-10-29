@@ -21,8 +21,10 @@ function parse(hash: string): string | null {
 export function useSessionHash(): void {
   const selected = useUi((s) => s.selectedSessionId);
   const [hashId, setHashId] = useState<string | null>(() => parse(window.location.hash));
-  const known = useBoard((s) => (hashId !== null ? hashId in s.sessions : false));
+  const known = useBoard((s) => (hashId !== null ? Object.hasOwn(s.sessions, hashId) : false));
   const prevHash = useRef(hashId);
+  const started = useRef(false);
+  const pushed = useRef(false); // this hook pushed the history entry for the open popout
 
   useEffect(() => {
     const onHash = () => setHashId(parse(window.location.hash));
@@ -42,18 +44,29 @@ export function useSessionHash(): void {
     }
   }, [hashId, known]);
 
-  // Selection -> hash.
+  // Selection -> hash. The first run only observes: a hash present at load is for the other
+  // effect to open, not to clear.
   useEffect(() => {
+    if (!started.current) {
+      started.current = true;
+      return;
+    }
     try {
       if (selected !== null) {
         const want = `${PREFIX}${encodeURIComponent(selected)}`;
-        if (window.location.hash !== want) window.location.hash = want;
+        if (window.location.hash !== want) {
+          window.location.hash = want;
+          pushed.current = true;
+        }
         setHashId(selected);
         prevHash.current = selected;
       } else if (window.location.hash.startsWith(PREFIX) && parse(window.location.hash) !== null) {
         // Selection null while a hash is pending for a not-yet-known session: leave it alone.
         if (hashId !== null && !known) return;
-        window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        if (pushed.current) window.history.back();
+        else
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+        pushed.current = false;
         setHashId(null);
         prevHash.current = null;
       }
