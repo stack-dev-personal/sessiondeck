@@ -248,6 +248,31 @@ describe("#session-<id> hash", () => {
     expect(await screen.findByRole("dialog", { name: "name-late" })).toBeInTheDocument();
   });
 
+  it("a hash typed over an open card selection does not leave Esc going Back to the old session", async () => {
+    mount();
+    await userEvent.click(card("a"));
+    act(() => {
+      window.history.pushState(null, "", "/#session-b");
+      fireEvent(window, new HashChangeEvent("hashchange"));
+    });
+    await screen.findByRole("dialog", { name: "name-b" });
+    const back = vi.spyOn(window.history, "back");
+    await userEvent.keyboard("{Escape}");
+    expect(back).not.toHaveBeenCalled();
+    expect(window.location.hash).toBe("");
+    back.mockRestore();
+  });
+
+  it("an over-long hash id opens nothing", () => {
+    const long = "x".repeat(257);
+    useBoard.setState({ sessions: { ...useBoard.getState().sessions, [long]: snap(long) } });
+    window.history.replaceState(null, "", `/#session-${long}`);
+    mount();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    window.history.replaceState(null, "", `/#session-${"%41".repeat(5000)}`);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("removing the hash (Back) closes", async () => {
     mount();
     await userEvent.click(card("a"));

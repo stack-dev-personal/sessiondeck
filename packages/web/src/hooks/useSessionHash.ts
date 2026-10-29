@@ -3,11 +3,16 @@ import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
 const PREFIX = "#session-";
+/** The contract sets no session_id cap; ids are UUID-like, so 256 is generous. */
+const MAX_ID_CHARS = 256;
 
 function parse(hash: string): string | null {
   if (!hash.startsWith(PREFIX) || hash.length === PREFIX.length) return null;
+  // Raw length first so an oversized value is never decoded.
+  if (hash.length - PREFIX.length > MAX_ID_CHARS * 9) return null;
   try {
-    return decodeURIComponent(hash.slice(PREFIX.length));
+    const id = decodeURIComponent(hash.slice(PREFIX.length));
+    return id.length > MAX_ID_CHARS ? null : id;
   } catch {
     return null;
   }
@@ -38,7 +43,11 @@ export function useSessionHash(): void {
     prevHash.current = hashId;
     const ui = useUi.getState();
     if (hashId !== null) {
-      if (known && ui.selectedSessionId !== hashId) ui.openSession(hashId);
+      if (known && ui.selectedSessionId !== hashId) {
+        // Selection came from the hash side: any entry we pushed earlier belongs to another session.
+        pushed.current = false;
+        ui.openSession(hashId);
+      }
     } else if (was !== null && ui.selectedSessionId !== null) {
       ui.closeSession();
     }
