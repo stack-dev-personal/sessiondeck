@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_4>",
+  "description": "U1 fixture scrub and select",
+  "toolUseId": "toolu_01EuPJUinEgbUSRMU6Tipw5F",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

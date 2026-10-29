@@ -3,17 +3,24 @@
  * Fixture leak gate (R0.7). Scans packages/contract/fixtures (raw/ excluded) and exits 1 with
  * counts per category and file when it finds a leak. It never prints a matched value.
  *
- *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>]
+ *   node scripts/fixture-leak-check.mjs [fixturesDir] [--raw <dir>] [--no-git-literals]
+ *
+ * transcripts/ gets its own text, structure and account-literal checks (lib/transcript-leak-*.mjs).
+ * To prove the CI path locally, point --raw at a directory that does not exist; raw/ is never moved.
  *
  * The default run also scans docs/CONTRACT.md with the text checks (not the payload structure check).
  *
  * With raw/ present the user name and project directory names are derived from it at run time;
- * without raw/ (CI) only the pattern and structure checks run (CI)
+ * without raw/ (CI) only the pattern and structure checks run (CI). With raw/ present the check also
+ * exits 1 when a git lookup behind the account names (user.email, user.name, origin owner) is
+ * empty, because the reduced literal set would let the same blind spot pass both gates;
+ * --no-git-literals allows it.
  */
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { FIXTURES_ROOT, RAW_ROOT } from "./lib/fixture-files.mjs";
 import { leakCheck } from "./lib/fixture-leak-core.mjs";
+import { gitLiteralProblem } from "./lib/transcript-scrub-own.mjs";
 
 const args = process.argv.slice(2);
 const rawIdx = args.indexOf("--raw");
@@ -31,6 +38,15 @@ const DOCS_FILES = [
     label: "docs/CONTRACT.md",
     allow: ["sessiondeck", "workspace", "thread"],
   },
+  // This session's own notes and inventory: hand-written, so they get the text checks as well.
+  ...[
+    "docs/sessions/p0-transcript-fixtures.md",
+    "docs/research/2026-10-27-transcript-inventory.md",
+  ].map((rel) => ({
+    path: join(FIXTURES_ROOT, "..", "..", "..", ...rel.split("/")),
+    label: rel,
+    allow: ["sessiondeck", "workspace", "thread"],
+  })),
 ];
 const textFiles = positional[0] === undefined ? DOCS_FILES : [];
 
@@ -42,9 +58,25 @@ const r = leakCheck(root, { rawRoot: rawPresent ? raw : null, textFiles });
 console.log(`mode: ${rawPresent ? "raw-derived literals + patterns" : "patterns only (no raw/)"}`);
 console.log(`files scanned: ${r.files}`);
 console.log(
-  `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped})`,
+  `derived literals: users=${r.literals.users} projects=${r.literals.projects} names=${r.literals.names} (skipped short=${r.literals.skipped}); deny words checked=${r.literals.deny}`,
 );
+if (r.transcripts) {
+  const t = r.transcripts;
+  console.log(
+    `transcripts: files=${t.files} rows=${t.rows} raw=${t.literals.rawPresent ? "yes" : "no"} account-literals=${t.literals.accounts} fragments=${t.literals.fragments} folders=${t.literals.folders} hook-literals=${t.literals.hook}`,
+  );
+  const tc = Object.entries(t.byCategory).sort();
+  console.log(
+    `  transcript findings: ${tc.length === 0 ? "0" : tc.map(([c, n]) => `${c}=${n}`).join(" ")}`,
+  );
+}
 for (const [c, n] of Object.entries(r.byCategory).sort()) console.log(`  ${c}: ${n}`);
 for (const f of r.perFile.slice(0, 50)) console.log(`  ${f.file}: ${f.category} x${f.count}`);
-console.log(r.total === 0 ? "PASS: no leaks found" : `FAIL: ${r.total} finding(s)`);
-process.exit(r.total === 0 ? 0 : 1);
+const gitProblem = r.transcripts?.literals.rawPresent
+  ? gitLiteralProblem(r.transcripts.literals.gitMissing, args.includes("--no-git-literals"))
+  : null;
+if (gitProblem !== null) console.log(`FAIL: ${gitProblem}`);
+if (gitProblem === null || r.total > 0) {
+  console.log(r.total === 0 ? "PASS: no leaks found" : `FAIL: ${r.total} finding(s)`);
+}
+process.exit(r.total === 0 && gitProblem === null ? 0 : 1);

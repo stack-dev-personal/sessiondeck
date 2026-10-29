@@ -20,6 +20,7 @@ export const STRUCT = new Set([
   "tool-results",
   "node_modules",
   ".git",
+  ".sprint",
   "tmp",
   "var",
   "home",
@@ -158,6 +159,11 @@ export class Mapper {
       }
     }
     return this.#project(best ?? `enc:${rest}`);
+  }
+
+  /** Public form of the encoded-project mapping, for the transcript text scrub. */
+  mapEncodedFolder(/** @type {string} */ seg) {
+    return this.#encodedProject(seg);
   }
 
   /** @param {string} seg @param {boolean} isFile */

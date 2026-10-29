@@ -14,7 +14,7 @@ export const SPRINT_TOOLING_TESTS = "test/sprint-*.test.ts";
 // and so stays in the default run.
 export const GUARD_TIMING_TESTS = "test/guard-timing*.test.ts";
 
-// Third rule: the suites that start real node processes (about 66 spawns: guard hook, capture and
+// Third rule: the suites that start real node processes (about 70 spawns: guard hook, capture and
 // install scripts, fixture tools) run in their own CI step (vitest.proc.config.ts,
 // `pnpm test:proc`), outside the R0.5 budget, as probe's `test:proc` does (FIX-5, user decision
 // R0.5 option A). Each entry is an exact file name; the other tests stay in-process in the default run.
@@ -30,6 +30,7 @@ export const PROC_TESTS = [
   "test/install-deploy.test.ts",
   "test/install-guards.test.ts",
   "test/install-recognition.test.ts",
+  "test/transcript-inventory.test.ts",
 ];
 
 // Most of these files wait on child processes and the file system, so on a small box more workers

@@ -1,0 +1,10 @@
+{
+  "agentType": "<AGENT_9>",
+  "isBuiltIn": false,
+  "description": "Verify Bun npm and compile facts",
+  "toolUseId": "toolu_01KD6zqXCtpJoBpTTDynqypB",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

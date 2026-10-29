@@ -5,6 +5,10 @@
  *   node scripts/fixture-scrub.mjs [--raw <dir>] [--out <dir>]
  *
  * Defaults: --raw packages/contract/fixtures/raw, --out packages/contract/fixtures.
+ * --transcripts: scrub raw/transcripts/<NN-slug>/ into <out>/transcripts/<NN-slug>/ instead of the
+ * hook payloads (lib/transcript-scrub-*.mjs); the two modes never run together. Exits 1 when a git
+ * lookup behind account-name discovery is empty (--no-git-literals allows it), and when the
+ * repository's own folder (--own-project <name>, default from git) is not <PROJECT_A>.
  * Output layout under --out:
  *   <Event>/NN-<slug>.json        hook payloads, one per distinct key-set/tool shape
  *   statusLine/NN-<tag>.json      20 samples;  subagentStatusLine/NN-<tag>.json  5 samples
@@ -18,6 +22,8 @@ import { existsSync, mkdirSync, readdirSync, rmdirSync, rmSync, writeFileSync } 
 import { join, relative, resolve } from "node:path";
 import { FIXTURES_ROOT, RAW_ROOT, listEvents, readEvent } from "./lib/fixture-files.mjs";
 import { Scrubber } from "./lib/fixture-scrub-core.mjs";
+import { runTranscripts } from "./lib/transcript-scrub-run.mjs";
+import { parseScrubFlags } from "./lib/transcript-scrub-own.mjs";
 import { Mapper } from "./lib/fixture-scrub-paths.mjs";
 import { buildSynthetic } from "./lib/fixture-synthetic.mjs";
 import {
@@ -90,6 +96,10 @@ function main() {
   const out = resolve(arg("--out", FIXTURES_ROOT));
   if (!existsSync(raw)) throw new Error("raw directory not found");
   assertSafeOut(out, raw);
+  if (process.argv.includes("--transcripts")) {
+    process.exitCode = runTranscripts(raw, out, parseScrubFlags(process.argv.slice(2)));
+    return;
+  }
 
   /** @type {Map<string, any[]>} */
   const byEvent = new Map();

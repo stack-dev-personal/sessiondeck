@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_4>",
+  "description": "U1/U4 fix round 3 (final)",
+  "toolUseId": "toolu_017wcWT4Qqyq33EueiLZmceh",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

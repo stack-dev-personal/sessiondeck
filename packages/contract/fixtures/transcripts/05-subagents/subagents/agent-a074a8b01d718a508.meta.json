@@ -1,0 +1,9 @@
+{
+  "agentType": "<AGENT_11>",
+  "description": "Security re-check fix round 1",
+  "toolUseId": "toolu_01VxcpdJdm2p4KSpSTWNzN4h",
+  "spawnDepth": 1,
+  "requestShape": "foreground",
+  "requestNonInteractive": true,
+  "finished": true
+}

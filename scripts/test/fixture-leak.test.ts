@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { deriveLiterals, leakCheck, listFixtureFiles } from "../lib/fixture-leak-core.mjs";
-import { cleanupTempDirs, makeTempDir } from "./helpers";
+import { SCRIPTS_DIR, cleanupTempDirs, makeTempDir } from "./helpers";
 import { LEAK, SID_A, makeRaw, runNodeAsync } from "./fixture-raw-helpers";
 
 afterEach(cleanupTempDirs);
@@ -147,6 +149,53 @@ describe("leak check", () => {
     expect(bad.stdout).not.toContain("example.org");
     expect(ok.status).toBe(0);
     expect(missing.status).toBe(2);
+  });
+
+  it("CLI exits 1 when the git identity is empty and raw/ is present; --no-git-literals lets it pass", () => {
+    const base = makeTempDir();
+    const fixtures = join(base, "fixtures");
+    mkdirSync(join(fixtures, "transcripts"), { recursive: true });
+    const raw = join(base, "raw");
+    const dir = join(raw, "transcripts", "01-synthetic");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), `${JSON.stringify({ type: "user" })}\n`);
+    const env = {
+      ...process.env,
+      GIT_CONFIG_GLOBAL: join(base, "no-such-gitconfig"),
+      GIT_CONFIG_SYSTEM: join(base, "no-such-gitconfig"),
+      GIT_CONFIG_NOSYSTEM: "1",
+    };
+    const run = (extra: string[]) =>
+      spawnSync(process.execPath, [LEAK, fixtures, "--raw", raw, ...extra], {
+        encoding: "utf8",
+        windowsHide: true,
+        cwd: base,
+        env,
+      });
+    const bad = run([]);
+    expect(bad.status).toBe(1);
+    expect(bad.stdout).toContain("git lookup empty");
+    expect(run(["--no-git-literals"]).status).toBe(0);
+  });
+
+  it("ownProjectName returns an empty name outside a git repository", () => {
+    const cwd = makeTempDir();
+    const mod = pathToFileURL(join(SCRIPTS_DIR, "lib", "transcript-scrub-own.mjs")).href;
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { ownProjectName } from ${JSON.stringify(mod)}; console.log(JSON.stringify(ownProjectName()));`,
+      ],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        cwd,
+        env: { ...process.env, GIT_CEILING_DIRECTORIES: cwd },
+      },
+    );
+    expect(r.stdout.trim()).toBe('""');
   });
 
   it("listFixtureFiles returns every file, sorted, skipping raw at the top only", () => {
