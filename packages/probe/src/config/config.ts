@@ -3,6 +3,7 @@ import { chmod, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { resolveHostName } from "../host.ts";
 import { isFile, system32Dir } from "../win-utf8.ts";
+import { compileRedactionConfig } from "../redaction/config.ts";
 import { ensurePrivateDir, writeFileAtomic } from "../install/atomic.ts";
 
 /** probe.json: hub URL, token, host name. Lives in the probe home, never in settings.json. */
@@ -12,6 +13,10 @@ export interface ProbeConfig {
   host: string;
   /** Opt-in to cleartext http for a non-loopback hub (a LAN hub without TLS). */
   allowInsecureHub?: boolean;
+  /** Raw `redaction` section (see src/redaction/config.ts); kept verbatim so a rewrite preserves it. */
+  redaction?: unknown;
+  /** Why the `redaction` section was rejected; built-in rules alone are then in force. */
+  redactionError?: string;
 }
 
 export class ConfigError extends Error {}
@@ -26,7 +31,8 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(text);
+    // PowerShell 5 `Set-Content -Encoding UTF8` writes a BOM; JSON.parse rejects it.
+    raw = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   } catch {
     throw new ConfigError(`${path} is not valid JSON; fix or delete it`);
   }
@@ -40,6 +46,11 @@ export async function readConfig(path: string): Promise<ProbeConfig | undefined>
   if (typeof r["hubUrl"] === "string") cfg.hubUrl = r["hubUrl"];
   if (typeof r["token"] === "string") cfg.token = r["token"];
   if (r["allowInsecureHub"] === true) cfg.allowInsecureHub = true;
+  if (r["redaction"] !== undefined) {
+    cfg.redaction = r["redaction"];
+    const c = compileRedactionConfig(r["redaction"]);
+    if (!c.ok) cfg.redactionError = c.error;
+  }
   return cfg;
 }
 
@@ -181,6 +192,7 @@ export async function writeConfig(path: string, cfg: ProbeConfig): Promise<void>
   if (cfg.token !== undefined) body["token"] = cfg.token;
   body["host"] = cfg.host;
   if (cfg.allowInsecureHub === true) body["allowInsecureHub"] = true;
+  if (cfg.redaction !== undefined) body["redaction"] = cfg.redaction;
   await writeFileAtomic(path, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
     beforeWrite: async (tmp) => {

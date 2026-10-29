@@ -98,6 +98,19 @@ describe("probe install (R1.8)", () => {
     expect(readText(sb.settings)).not.toContain("\\\\");
   });
 
+  it("re-running install with a new hub keeps the redaction section of probe.json (R4.7)", async () => {
+    const sb = sandbox(harnessFixture);
+    await runCli(["install"], sb.env);
+    const cfgPath = join(sb.home, "probe.json");
+    const section = { deny: [{ name: "corp-id", pattern: "CORP-[0-9]{8}" }], allow: ["EXAMPLE"] };
+    writeText(cfgPath, JSON.stringify({ ...readJson(cfgPath), redaction: section }, null, 2));
+    const r = await runCli(["install", "--hub", "http://127.0.0.1:1"], sb.env);
+    expect(r.code, r.stderr).toBe(0);
+    const after = readJson(cfgPath);
+    expect(after.hubUrl).toBe("http://127.0.0.1:1");
+    expect(after.redaction).toEqual(section);
+  });
+
   it("--host-name is stored in probe.json and passed as --host to hook and statusline; bad names are refused", async () => {
     const sb = sandbox(harnessFixture);
     const r = await runCli(["install", "--host-name", "desk-wsl", "--statusline=replace"], sb.env);

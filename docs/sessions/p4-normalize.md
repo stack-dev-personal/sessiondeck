@@ -11,7 +11,7 @@
 | Unit | Requirements | Executor | Blocked by | State |
 |------|--------------|----------|-----------|-------|
 | U1 normalizer (contract/normalize.ts, golden tests) | R4.1, R4.2, R4.3 | sd-executor-hub | none | done (6375ca8) |
-| U2 redaction filter, corpora, probe.json rules | R4.7 | sd-executor-probe | none | pending |
+| U2 redaction filter, corpora, probe.json rules | R4.7 | sd-executor-probe | none | blocked (3 iterations, security fail) |
 | U3 pricing 1h/5m cache-write split, unpriced models | R2.10 | sd-executor-hub | none | done (563e177) |
 | U4 hub transcript API (normalized, ?after=) and WS transcript deltas | R4.1, R4.4 (hub side) | sd-executor-hub | U1 | pending |
 | U5 transcript tail end-to-end harness (Linux daemon to hub within 2 s) | R4.4 | sd-executor-hub | U2, U4 | pending |
@@ -29,6 +29,20 @@
 - Concurrency for this process is 1: executor units run one at a time; reviewers run in parallel (read-only).
 
 ## Units
+
+### U2 redaction (R4.7)
+- Commits: 16110dd, 7e449be, b5ace8c (engine, tailer wiring, corpora, bench); fix 1 7d72021 + 50df89b; fix 2 efee615;
+  fix 3 cafe191 + 6488177 (key rules generalised, type annotations, vm runtime bound for user deny/allow,
+  PATTERN_HINTS, pgpass anchored and checked, CLI and cloud shapes, repo-source FP test, README gaps).
+- Iteration 2: reviewer fix-then-merge (pgpass MAC/IPv6 MAJOR); security fail (SECRET_KEY_BASE, typed declarations HIGH;
+  validator bypass, pgpass FPs, CLI forms, cloud output MEDIUM).
+- 2026-10-29 resume: fix 3 had been cut by the network outage (ENOTFOUND) before any commit; the partial rules.ts diff
+  was kept by the executor and fix 3 re-run with the same verbatim findings (reviewer harnesses in /tmp were lost).
+- Iteration 3: probe 411 tests pass; corpora 0/200, 0/83, 0/470 leaks, 0% benign; bench changed 0. Reviewer
+  fix-then-merge (BLOCKING pgpass Read-tool regression, MAJOR numeric suffix). Security Gate: fail (HIGH ANN ReDoS on
+  space runs, HIGH placeholder prefix check, HIGH Rust/Go typed declarations; MEDIUM suffixIsSetting .some()).
+- Cap reached: session blocked; question /state/2/questions/S7.md with the findings verbatim (default A: one more
+  targeted round with built-ins under the vm deadline and whole-value placeholder checks).
 
 ### U3 pricing (R2.10), resumed after container stop
 - Resume: uncommitted follow-up on top of 076660a was finished by sd-executor-hub as 2771a1c (exact-match lookup
@@ -81,3 +95,14 @@
   value (0.36). Dead fallback in hiRate (compare-hub.ts:213). No test for the 5m-above-200k-without-1h-above asymmetry.
 - U3: "decision 25" is cited in phase-2-hub.md but not recorded in 00-open-decisions.md; recording it is the
   conductor's call (conductor numbering), reported in the final report.
+
+- 2026-10-29 resume (answer /state/2/answers/S7.md, user 15:10Z):
+  - Q2 GH013 push protection: option B. Corpus tokens are assembled at run time, generated corpora go to a gitignored
+    directory created by test setup; p4/normalize (never pushed) is rebuilt locally from origin/sprint/2-content with
+    U2 squashed, no secret-shaped literals; local secret scan of the diff before push, output logged here. No force
+    push, no unblock URLs, GitHub settings untouched. New remote URL https://github.com/stack-dev-personal/sessiondeck.git
+    if the old one fails. Done first.
+  - Q1 redaction gate: option A with a hard stop. One targeted fix round (iteration-3 findings plus built-ins under the
+    vm deadline and whole-value placeholder checks), one review by both reviewers. If the security gate fails again:
+    no new question; R4.7 is deferred to a dedicated redaction session before Sprint 4 in VERIFY-P4.md, the tail stays
+    hub-local, U4 and U5 finish so S7 can merge.

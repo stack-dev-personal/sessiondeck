@@ -13,7 +13,12 @@
 import { constants, type BigIntStats } from "node:fs";
 import { type FileHandle, lstat, open, readFile, realpath, rename, stat } from "node:fs/promises";
 import path from "node:path";
+import { readConfig } from "../config/config.ts";
 import { hostOs } from "../envelope.ts";
+import { compileRedactionConfig } from "../redaction/config.ts";
+import { type Redactor, createRedactor, redactorFromConfig } from "../redaction/redactor.ts";
+import { BUILTIN_RULES } from "../redaction/rules.ts";
+import { probeConfigFile } from "../paths.ts";
 import { writeFileAtomic } from "../install/atomic.ts";
 import type { SpoolLine } from "../spool-format.ts";
 import { ulid } from "../ulid.ts";
@@ -160,6 +165,11 @@ export interface TranscriptTailerOptions {
   pollMs?: number;
   maxEnvelopeBytes?: number;
   maxLineJsonBytes?: number;
+  /**
+   * Redacts every line before it is enqueued (R4.7). Default: the `redaction` section of probe.json
+   * read at start() (read once; restart the daemon to apply changes), else the built-in rules.
+   */
+  redactor?: Redactor;
 }
 
 /** Seconds since 2026-01-01 times 4: ~1.2e8 in 2026, below 2^31 until about 2043. */
@@ -261,6 +271,8 @@ export class TranscriptTailer implements DaemonComponent {
   readonly stats = { lines: 0, envelopes: 0, resets: 0, markers: 0 };
 
   private readonly o: TranscriptTailerOptions;
+  /** Built-in rules until start() has read probe.json; never absent, so nothing ships unredacted. */
+  private redactor: Redactor;
 
   constructor(o: TranscriptTailerOptions) {
     this.o = o;
@@ -270,6 +282,7 @@ export class TranscriptTailer implements DaemonComponent {
         throw new Error("transcript tailer has no outbox");
       });
     this.host = o.host ?? "unknown";
+    this.redactor = o.redactor ?? createRedactor();
     this.log = o.log ?? ((): void => undefined);
     this.now = o.now ?? Date.now;
     this.platform = o.platform ?? process.platform;
@@ -295,12 +308,43 @@ export class TranscriptTailer implements DaemonComponent {
       this.enqueue = ctx.enqueue;
       this.host = ctx.host;
       this.log = ctx.log;
+      if (!this.o.redactor) await this.loadRedactor(ctx.home);
     }
     await this.pinRoot();
     await this.load();
     if (this.o.pollMs !== 0) {
       this.timer = setInterval(() => void this.poll().catch(() => undefined), this.o.pollMs ?? 500);
       this.timer.unref();
+    }
+  }
+
+  private async loadRedactor(home: string): Promise<void> {
+    try {
+      const cfg = await readConfig(probeConfigFile(home));
+      const setup = redactorFromConfig(cfg?.redaction);
+      this.redactor = setup.redactor;
+      if (setup.error) this.log("error", `${setup.error}; using built-in redaction rules only`);
+      if (!setup.redactor.enabled) {
+        this.log("warn", "transcript redaction is disabled in probe.json");
+      } else {
+        const c = compileRedactionConfig(cfg?.redaction);
+        const v = c.ok ? c.value : undefined;
+        this.log(
+          "info",
+          `transcript redaction active: ${BUILTIN_RULES.length - (v?.disableRules.size ?? 0)} built-in rules, ${v?.deny.length ?? 0} deny, ${v?.allow.length ?? 0} allow (read once at start; restart the daemon to apply probe.json changes)`,
+        );
+        if (v && v.allow.length > 0) {
+          this.log(
+            "warn",
+            `redaction allow patterns are active and exempt matching secrets: ${v.allow.length} pattern(s), source lengths ${v.allow.map((a) => a.source.length).join(",")} (sources are not logged; an allow entry may be a real token)`,
+          );
+        }
+      }
+    } catch (e) {
+      this.log(
+        "error",
+        `probe.json unreadable for redaction (${e instanceof Error ? e.message : String(e)}); using built-in rules`,
+      );
     }
   }
 
@@ -885,7 +929,16 @@ export class TranscriptTailer implements DaemonComponent {
       size = 0;
     };
     for (let l of lines) {
-      let n = Buffer.byteLength(JSON.stringify(l)) + 1;
+      // A raw line over the limit is never parsed or scanned: it would be a marker anyway, and
+      // redaction cost grows with line length (R4.7).
+      const rawBytes = Buffer.byteLength(l);
+      let n: number;
+      if (rawBytes > maxLine) {
+        n = maxLine + 1;
+      } else {
+        l = this.redactor.redactLine(l);
+        n = Buffer.byteLength(JSON.stringify(l)) + 1;
+      }
       if (n > maxLine) {
         l = marker(Buffer.byteLength(l));
         n = Buffer.byteLength(JSON.stringify(l)) + 1;

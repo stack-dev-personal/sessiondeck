@@ -264,6 +264,8 @@ async function install(args: Args, io: RunIo): Promise<number> {
       existing?.host ??
       resolveHostName(),
     ...(existing?.allowInsecureHub === true ? { allowInsecureHub: true } : {}),
+    // A re-run with a new hub or token must keep the owner's redaction rules (R4.7).
+    ...(existing?.redaction !== undefined ? { redaction: existing.redaction } : {}),
   };
   // Exe form: Claude Code runs this binary on every hook, so the home must not be swappable by
   // another account (same rule as `daemon install`); then hash the sources (read-only).

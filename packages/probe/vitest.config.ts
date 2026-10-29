@@ -4,6 +4,7 @@ import { defineConfig } from "vitest/config";
 // Process-spawning suites (*.proc.test.ts) run through vitest.proc.config.ts (`pnpm test:proc`).
 export default defineConfig({
   test: {
+    globalSetup: ["test/redaction/global-setup.ts"],
     include: ["test/**/*.test.ts"],
     exclude: ["test/**/*.proc.test.ts", "node_modules/**"],
   },
