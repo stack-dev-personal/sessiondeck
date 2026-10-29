@@ -144,6 +144,13 @@ These behaviors are not confirmed by a capture (synthetic payloads, or cases the
 - `packages/contract/fixtures/<Event>/*.json`: scrubbed, committed. `<Event>` is the hook event name, plus `statusLine/` and `subagentStatusLine/`.
 - `packages/contract/fixtures/settings/`: settings-merge test input, not payloads.
 
+## Snapshot fast_mode (R3.11)
+
+- `SessionSnapshot.fast_mode: boolean | null`, default null. It is the statusLine top-level `fast_mode` as the session reports it.
+- `StatusLinePayloadSchema.fast_mode` is optional. Absent stays undefined; a non-boolean value parses to null and never fails the payload.
+- Apply rule (same as `effort`): set the snapshot field only when the payload value is a boolean; absent or null keeps the previous value.
+- `readFastMode(raw)` reads a stored value: a boolean stays, anything else (including rows stored before the field existed) is null.
+
 ## Units
 
 `Window.resets_at` and `prompt_cache.expires_at` are epoch milliseconds in the snapshot and epoch seconds in the statusLine payload. Convert with `epochSecondsToMs` (`src/statusline.ts`).

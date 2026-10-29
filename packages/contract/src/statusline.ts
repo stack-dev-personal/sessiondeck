@@ -108,6 +108,11 @@ export const StatusLinePayloadSchema = z
       .passthrough()
       .nullable()
       .optional(),
+    /** Absent stays undefined; any non-boolean value reads null and never fails the payload. */
+    fast_mode: z
+      .unknown()
+      .transform((v) => (typeof v === "boolean" ? v : null))
+      .optional(),
     cost: z
       .object({
         total_cost_usd: CoercedNumberSchema.optional(),

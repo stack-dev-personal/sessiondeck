@@ -22,7 +22,7 @@ describe("createSnapshot", () => {
       rate_limits: { five_hour: null, seven_day: null, captured_at: null },
       tracking: { last_tool: null, permission: null },
     });
-    expect(Object.keys(snap)).toHaveLength(25);
+    expect(Object.keys(snap)).toHaveLength(26);
   });
 
   it("returns a new object (and new nested objects) every call", () => {

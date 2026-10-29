@@ -65,6 +65,8 @@ export interface SessionSnapshot {
   session_name: string | null;
   model: { id: string; display_name: string } | null;
   effort: string | null;
+  /** statusLine fast_mode as the session reports it; null when never reported. */
+  fast_mode: boolean | null;
   state: SessionState;
   state_since: number;
   state_detail: string | null;
@@ -118,6 +120,7 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     session_name: null,
     model: null,
     effort: null,
+    fast_mode: null,
     state: "starting",
     state_since: input.ts,
     state_detail: null,
@@ -137,6 +140,11 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     compactions: 0,
     tracking: createTracking(),
   };
+}
+
+/** Reads a stored fast_mode: a boolean stays, anything else (including a row stored before the field existed) is null. */
+export function readFastMode(raw: unknown): boolean | null {
+  return typeof raw === "boolean" ? raw : null;
 }
 
 /**
