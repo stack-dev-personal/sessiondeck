@@ -383,6 +383,6 @@ describe("UsageWidget collapse", () => {
     render(<UsageWidget />);
     expect(screen.getByTestId("usage-collapse")).toHaveTextContent("5h 41% · 7d 63%");
     fireEvent.click(screen.getByTestId("usage-collapse"));
-    expect(box()).toMatchObject({ x: 1440 - WIDGET_SIZE, y: 900 - WIDGET_SIZE });
+    expect(box()).toMatchObject({ x: 1440 - CHIP_W, y: 900 - WIDGET_SIZE });
   });
 });
