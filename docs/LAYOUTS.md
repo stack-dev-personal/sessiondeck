@@ -18,6 +18,38 @@ Open it from the header link "Layout" (route `/layout`).
 
 Panes are resizable (react-resizable-panels, MIT). Ratios live in the layout spec; the last layout is remembered per viewer in browser storage.
 
+### Gallery
+
+Captured at 1440x900 in the dark theme against the mock hub (fixture data only). The 2560x1440 versions are produced by `e2e/R6.1.spec.ts`.
+
+**solo**: One session pane over a thin board strip.
+
+![solo preset](images/layouts/R6.1-solo-1440x900.png)
+
+**pair**: Two session panes side by side.
+
+![pair preset](images/layouts/R6.1-pair-1440x900.png)
+
+**quad**: Four session panes in a 2 by 2 grid.
+
+![quad preset](images/layouts/R6.1-quad-1440x900.png)
+
+**focus**: One large session pane with three small ones stacked beside it.
+
+![focus preset](images/layouts/R6.1-focus-1440x900.png)
+
+**grid6**: Six session panes, 2 rows by 3 columns.
+
+![grid6 preset](images/layouts/R6.1-grid6-1440x900.png)
+
+**by-project**: One column per project, in attention order.
+
+![by-project preset](images/layouts/R6.1-by-project-1440x900.png)
+
+**strip**: Compact board only.
+
+![strip preset](images/layouts/R6.1-strip-1440x900.png)
+
 ## Pane kinds
 
 `board` (compact session rows), `session` (live activity list for one session, virtualized), `project` (the sessions of one project), `metrics`. A session pane with no session shows an empty slot with a hint for `Enter`.
