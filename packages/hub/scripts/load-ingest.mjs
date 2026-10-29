@@ -125,6 +125,7 @@ for (const s of synthSessions({
   idStart,
   seqStart,
   sidPrefix,
+  stress: args.includes("--stress"), // branchless, text-free sessions with subagent transcript lines
 })) {
   const list = perHost.get(s.host) ?? [];
   for (const e of s.envelopes) {

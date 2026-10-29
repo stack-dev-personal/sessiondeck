@@ -7,6 +7,7 @@ import { loadRetentionSettings } from "./config.ts";
 import { Store } from "./db/store.ts";
 import type { Logger } from "./ingest/ingestor.ts";
 import { leaseRemainingMs } from "./lease.ts";
+import { cachePathFor, loadPricing } from "./pricing/loader.ts";
 import { replay } from "./replay.ts";
 import { DAY_MS, runRetention } from "./retention.ts";
 
@@ -88,7 +89,16 @@ export async function runCli(
     }
     if (cmd === "replay") {
       const now = Date.now();
+      // Same table `serve` prices with (HUB_PRICING_FILE, refreshed cache, else bundled), so the
+      // replayed cost.usd equals what GET /sessions/:id/cost returns.
+      const pricingFile = env["HUB_PRICING_FILE"];
+      const pricing = loadPricing({
+        ...(pricingFile !== undefined && pricingFile !== "" ? { file: pricingFile } : {}),
+        cachePath: cachePathFor(dbPath),
+        log,
+      });
       const r = replay(store, log, {
+        pricing,
         maxOpenSessionsPerHost: cfg.maxOpenSessionsPerHost,
         sampleWindow: {
           minTs: now - cfg.sampleRetentionDays * DAY_MS,

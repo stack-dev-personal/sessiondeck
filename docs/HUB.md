@@ -204,6 +204,36 @@ R2.5 gate: `pnpm -F @sessiondeck/hub ws:harness` (in-process hub) or `HUB_URL=..
 - `HUB_ALLOWED_ORIGINS` is empty by default: a browser Origin is not checked, and only the token blocks cross-site WebSocket hijacking. When Cloudflare Access (or any other front) puts the hub on a public name in Phase 7, set `HUB_ALLOWED_ORIGINS` to the web UI origin(s), for example `https://deck.example.com`.
 - Request logs never contain the Authorization header or query strings.
 
+## Transcript-derived figures
+
+R2.12. Headless `claude -p` sessions send hooks and transcript lines but no statusline, so the snapshot would keep model, context, cost, git branch and last message empty. The hub fills them from the session's main transcript lines (agent_id '') and records where each came from in `snapshot.sources` (`statusline` or `transcript`; a key is absent until filled; effort has none and stays null).
+
+| Field | From the transcript | Notes |
+|-------|--------------------|-------|
+| model | last assistant row's `message.model` | id and display_name are both the id; `<synthetic>` rows are skipped |
+| context.input | last assistant row's usage: input + cache_creation + cache_read tokens | window and used_pct stay null: the pricing table's public API does not expose max_input_tokens, and windows are never hard-coded |
+| cost.usd | lifetime transcript-priced cost, the same figure as `GET /sessions/:id/cost` (all agents) | filled after the batch commits, see below |
+| git.branch | latest non-empty `gitBranch` of any row | |
+| last_assistant_message | last non-empty assistant text block | capped at 2000 chars with the contract's truncation (mirrored in `derive/apply.ts`, equality tested) |
+
+Rules. A statusline value always wins. A statusline payload that sets a field sets its source to `statusline`, and later transcript values never overwrite it. If a transcript filled the field first, the statusline overwrites it and the source flips (a statusline context object replaces transcript tokens wholesale). The Stop and SessionStart hooks cannot displace a transcript-filled message or model, so ingest order never changes the result.
+
+Incremental. The ingest transaction folds only the batch's fresh main-transcript lines onto a per-session cache entry (`derive/deriver.ts`: newest line_no plus the four figures). A cache miss (restart), a line not newer than the newest seen (out of order) or a rolled-back batch rebuilds the entry by scanning the stored lines backwards until every figure is found or `REBUILD_MAX_LINES` (2000) lines have been read, so a session with no git branch or no text row never pages its whole transcript inside the ingest transaction. The bound applies to the ingest path only: replay rebuilds through the same function without it (it runs offline and sees every line, as the live forward fold does). Lines that look like assistant rows but do not parse are skipped and counted in one warn line per scan. A transcript never creates a session: lines that arrive before SessionStart are stored, and the figures are derived when the session is created (in the same batch).
+
+Cost is asynchronous. Nothing is priced in the ingest transaction. After a batch commits, `CostFiller` marks sessions whose lines carried `"usage":{` (or that have no cost yet), debounces them (one flush per second however many batches arrive), refreshes the usage index, reads the same memoized figure the cost route serves, prices one session per event-loop turn outside any transaction, writes the snapshots in one short transaction and emits it on the ingest `batch` event, so WS clients get an ordinary `session` delta. A failure is logged (`cost fill failed`) and retried by the next transcript batch. The pending set and a timer are the only state and lose nothing on restart. When a session's `project_dir` changed after its usage rows were indexed (first statusline after the first transcript lines of an interactive session), `UsageService.refresh` would rebuild the whole index; the filler detects that beforehand and waits for 2 s of quiet ingest (`IngestActivity`), at most 60 s, so the rebuild does not run in front of ingest requests. Shutdown during a fill writes nothing.
+
+Replay and retention. `hub replay` folds the events, then re-derives every session from the stored lines with the same functions (`derive/replay-figures.ts`), so the result equals the ingest-time snapshot. The usage index is built once, and only when some session has no statusline cost. `hub replay` prices with the table `serve` uses (`HUB_PRICING_FILE`, else the refreshed cache next to the database, else the bundled list), so a replayed `cost.usd` equals `GET /sessions/:id/cost`. Compaction baselines hold events-only state; replay re-derives over them.
+
+Known gap. A Stop or SessionStart hook cannot displace a transcript-filled message or model, even when the hook is newer than the transcript row (for example the probe's transcript tailer stalls while hooks keep flowing). Letting the newer one win needs a per-field timestamp that survives restart and replay; the snapshot has no place for it (contract change, not made here).
+
+### Subagent figures (R2.13)
+
+For every session, headless or interactive, a subagent row (created by SubagentStart) with no figure source yet gets model (last assistant row's `message.model`) and tokens (that row's input + cache_creation + cache_read, the same meaning as the subagentStatusLine `tokenCount`) from the lines stored under its agent_id, and `figures_source: "transcript"`. context_window stays null (no max_input_tokens in the pricing API, nothing hard-coded) and effort is the string `effort` of the subagent's own newest assistant row that states one (decision 28: measured, never estimated; absent when no row states it). The SubagentStop hook's `effort.level` is session-wide and is NOT used for a subagent row. Model ids and effort are capped at 120 characters (also the session-level model fill). A subagentStatusLine task that states a figure sets `figures_source: "subagent_statusline"` and the transcript never overwrites it afterwards; over a transcript-filled row the figures the task leaves out become null (and effort is dropped), so live equals replay; a task stating nothing leaves transcript figures alone. Lines for an agent with no row create nothing; they are derived when SubagentStart arrives. Replay re-derives rows the same way.
+
+### Live-shape harness (R2.12, R2.13)
+
+`node scripts/headless-harness.mjs` (run from packages/hub) copies the 01-subagents transcript and hook fixtures to a temp dir, builds probe-shaped envelopes for one session (no statusline), starts its own hub with `docker compose -p sd-2-s8d` on port 28787 (a local node hub on 127.0.0.1:28787 if the image build fails), posts them, waits for the cost fill, prints the figures and exits non-zero if a required one is null. It tears down on every exit path and removes its temp dir.
+
 ## Replay and retention
 
 Snapshots (`sessions`, `statusline_samples`) are materialized on ingest. Everything derived can be rebuilt from the stored events, and old events are folded away so the database does not grow without bound.

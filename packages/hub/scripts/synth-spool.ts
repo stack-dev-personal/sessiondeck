@@ -1,8 +1,10 @@
 // Shared envelope synthesizer for scripts/bench-replay.ts (R2.9) and scripts/load-ingest.mjs
 // (R2.4). Mix per session: 80% hook (the golden session's non-lifecycle hooks cycled in order),
-// 12% statusline (the captured statusLine fixtures cycled), 3% liveness, 5% transcript (5 lines
-// of 400-800 bytes each); every session has a SessionStart and a SessionEnd. Deterministic for a
-// given seed. See bench-replay.ts for the volume rationale.
+// 12% statusline (the captured statusLine fixtures cycled; odd-numbered sessions are headless and
+// send none, so the hub derives their figures and cost from the transcript, R2.12), 3% liveness,
+// 5% transcript (5 assistant rows of 400-800 bytes each, with usage, a unique message.id, model
+// and gitBranch, shaped like the 01-subagents fixture); every session has a SessionStart and a
+// SessionEnd. Deterministic for a given seed. See bench-replay.ts for the volume rationale.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import type { Envelope } from "@sessiondeck/contract";
@@ -55,6 +57,52 @@ function fixtures(): NonNullable<typeof cache> {
   return cache;
 }
 
+/** Row variations for the stress mix: branchless, text-free, subagent (sidechain, no effort). */
+interface RowShape {
+  branchless?: boolean;
+  textFree?: boolean;
+  sidechain?: boolean;
+}
+
+/** agent_id of the golden session's SubagentStart, so the stress lines link to a real subagent row. */
+const STRESS_AGENT_ID = "750bc48c804160940";
+
+/** One assistant transcript row with usage, the shape the deriver and the usage index parse. */
+function assistantRow(
+  sid: string,
+  n: number,
+  ts: number,
+  text: string,
+  rand: () => number,
+  shape: RowShape = {},
+): string {
+  return JSON.stringify({
+    isSidechain: shape.sidechain === true,
+    message: {
+      model: "claude-opus-5-5",
+      id: `msg_${sid}_${n}`,
+      type: "message",
+      role: "assistant",
+      content:
+        shape.textFree === true
+          ? [{ type: "tool_use", id: "t", name: "Read", input: {} }]
+          : [{ type: "text", text }],
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 2 + Math.floor(rand() * 10),
+        cache_creation_input_tokens: Math.floor(rand() * 3000),
+        cache_read_input_tokens: 20_000 + Math.floor(rand() * 60_000),
+        output_tokens: 50 + Math.floor(rand() * 900),
+      },
+    },
+    type: "assistant",
+    uuid: `u-${sid}-${n}`,
+    timestamp: new Date(ts).toISOString(),
+    sessionId: sid,
+    ...(shape.branchless === true ? {} : { gitBranch: "bench/synth" }),
+  });
+}
+
 export interface SynthOptions {
   sessions: number;
   totalEvents: number;
@@ -67,6 +115,14 @@ export interface SynthOptions {
   idStart?: number;
   seqStart?: number;
   sidPrefix?: string;
+  /**
+   * Stress mix for the replay full scan (R2.9) and the subagent parse (R2.4). Every 4th session is
+   * branchless and text-free (a headless run outside a repository: its figures never complete), and
+   * every other transcript envelope of those sessions is a subagent transcript (agent_id of the
+   * golden SubagentStart, sidechain rows with no effort). Off by default: the default mix and its
+   * random sequence are unchanged.
+   */
+  stress?: boolean;
 }
 
 /** One session's envelopes in generation order (ts non-decreasing within the session). */
@@ -84,9 +140,11 @@ export function* synthSessions(
     const sid = `${o.sidPrefix ?? "bench"}-${String(s).padStart(4, "0")}-${ulid(s + 1)
       .slice(-8)
       .toLowerCase()}`;
+    const headless = s % 2 === 1;
     let ts = o.t0 + Math.floor((s / o.sessions) * o.spanMs);
     const out: Envelope[] = [];
-    const push = (kind: Envelope["kind"], payload: Rec, hook?: string): void => {
+    const stressed = o.stress === true && s % 4 === 3;
+    const push = (kind: Envelope["kind"], payload: Rec, hook?: string, extra: Rec = {}): void => {
       const seq = (seqOf.get(host) ?? o.seqStart ?? 0) + 1;
       seqOf.set(host, seq);
       out.push({
@@ -99,6 +157,7 @@ export function* synthSessions(
         ...(hook !== undefined ? { hook_event_name: hook } : {}),
         ts,
         seq,
+        ...extra,
         payload,
       } as Envelope);
     };
@@ -113,7 +172,7 @@ export function* synthSessions(
     while (out.length < perSession - 1) {
       step();
       const r = rand();
-      if (r < 0.12) {
+      if (r < 0.12 && !headless) {
         push("statusline", {
           ...(statuses[statusIdx++ % statuses.length] as Rec),
           session_id: sid,
@@ -123,10 +182,26 @@ export function* synthSessions(
         ts += 6000; // keeps repeats of the identical liveness payload outside the 5 s signature window
       } else if (r < 0.2) {
         const lineNo = out.length * 5;
+        const sub = stressed && out.length % 2 === 0;
+        const shape: RowShape = stressed
+          ? { branchless: true, textFree: true, sidechain: sub }
+          : {};
         const lines = Array.from({ length: 5 }, (_, k) =>
-          JSON.stringify({ n: lineNo + k, text: "x".repeat(400 + Math.floor(rand() * 400)) }),
+          assistantRow(
+            sid,
+            lineNo + k,
+            ts,
+            "x".repeat(400 + Math.floor(rand() * 400)),
+            rand,
+            shape,
+          ),
         );
-        push("transcript", { start_line: lineNo, lines });
+        push(
+          "transcript",
+          { start_line: lineNo, lines },
+          undefined,
+          sub ? { agent_id: STRESS_AGENT_ID } : {},
+        );
       } else {
         const p = middle[hookIdx++ % middle.length] as Rec;
         push("hook", { ...p, session_id: sid }, String(p["hook_event_name"]));

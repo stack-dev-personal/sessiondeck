@@ -10,6 +10,12 @@ import {
   type Level,
   type MeterKind,
 } from "../lib/format";
+import {
+  TRANSCRIPT_GLYPH,
+  TRANSCRIPT_LABEL,
+  contextTokensText,
+  fromTranscript,
+} from "../lib/provenance";
 
 export interface MeterModel {
   kind: MeterKind;
@@ -22,6 +28,8 @@ export interface MeterModel {
   /** Spoken text, includes the threshold word for warn and high. */
   aria: string;
   title: string;
+  /** R3.16: figure was filled from the transcript; renders the quiet marker. */
+  fromTranscript?: boolean;
 }
 
 const CUE: Record<Level, string> = { ok: "", warn: "!", high: "!!" };
@@ -74,6 +82,29 @@ function build(
  * board store (the contract snapshot has no field for it). null means unknown: no tag.
  */
 export function contextModel(s: SessionSnapshot, exceeds200k: boolean | null = null): MeterModel {
+  const m = baseContextModel(s, exceeds200k);
+  if (!fromTranscript(s, "context")) return { ...m, fromTranscript: false };
+  const tokens = s.context.input;
+  if (m.pct === null && tokens === null) return { ...m, fromTranscript: false };
+  if (m.pct === null && tokens !== null) {
+    // Window unknown: tokens only. No percent, no bar fill, no estimate.
+    return {
+      ...m,
+      text: contextTokensText(s) ?? m.text,
+      aria: `context ${tokens} tokens, window n/a, ${TRANSCRIPT_LABEL}`,
+      title: `context window n/a, ${TRANSCRIPT_LABEL}`,
+      fromTranscript: true,
+    };
+  }
+  return {
+    ...m,
+    aria: `${m.aria}, ${TRANSCRIPT_LABEL}`,
+    title: `${m.title}, ${TRANSCRIPT_LABEL}`,
+    fromTranscript: true,
+  };
+}
+
+function baseContextModel(s: SessionSnapshot, exceeds200k: boolean | null): MeterModel {
   const win = s.context.window;
   const over = exceeds200k === true;
   const extra = over ? " · 200k+" : win !== null ? ` of ${formatTokens(win)}` : "";
@@ -149,12 +180,17 @@ export function Meter({ m }: { m: MeterModel }) {
       >
         {m.text}
       </span>
+      {m.level && m.fromTranscript ? (
+        <span aria-hidden="true" data-slot="source-glyph" className="num shrink-0 text-fg-muted">
+          {TRANSCRIPT_GLYPH}
+        </span>
+      ) : null}
       <span
         aria-hidden="true"
         data-slot="cue"
         className={`num w-4 shrink-0 ${m.level ? TEXT[m.level] : ""}`}
       >
-        {m.level ? CUE[m.level] : ""}
+        {m.level ? CUE[m.level] : m.fromTranscript ? TRANSCRIPT_GLYPH : ""}
       </span>
     </div>
   );
@@ -173,9 +209,15 @@ export function MeterValue({ m }: { m: MeterModel }) {
         m.level ? TEXT[m.level] : "text-fg-muted"
       }`}
     >
-      <span aria-hidden="true">{m.pct === null ? "n/a" : `${Math.round(m.pct)}%`}</span>
+      <span aria-hidden="true">
+        {m.pct !== null
+          ? `${Math.round(m.pct)}%${m.level && m.fromTranscript ? TRANSCRIPT_GLYPH : ""}`
+          : m.fromTranscript
+            ? m.text.replace(/ tok$/, "")
+            : "n/a"}
+      </span>
       <span aria-hidden="true" className="w-3 text-left">
-        {m.level ? CUE[m.level] : ""}
+        {m.level ? CUE[m.level] : m.fromTranscript ? TRANSCRIPT_GLYPH : ""}
       </span>
     </span>
   );

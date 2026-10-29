@@ -1,6 +1,21 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { SessionSnapshot } from "@sessiondeck/contract";
-import { formatClockSec, formatDuration, formatReset, formatTokens } from "../lib/format";
+import {
+  formatClockSec,
+  formatCost,
+  formatDuration,
+  formatReset,
+  formatTokens,
+  shortModel,
+} from "../lib/format";
+import {
+  COST_LABEL,
+  TRANSCRIPT_LABEL,
+  contextTokensText,
+  fromTranscript,
+  subagentFromTranscript,
+} from "../lib/provenance";
+import { SourceMark } from "./SourceMark";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { windowAt } from "../statusline-adapter";
 import { EMPTY_HISTORY, type Sample, type SessionHistory } from "../store/history";
@@ -79,6 +94,48 @@ function Sparkline({ samples }: { samples: readonly Sample[] }) {
         {last ? `latest ${Math.round(last.pct)}% · ${samples.length} samples` : "n/a"}
       </span>
     </div>
+  );
+}
+
+/** Visible "from transcript" text (design system: marker plus words, never color alone). */
+function TxNote() {
+  return (
+    <span data-source="transcript" className="text-xs text-fg-muted">
+      {TRANSCRIPT_LABEL}
+    </span>
+  );
+}
+
+/** Model, context tokens and API-equivalent cost, each labelled when transcript-derived (R3.16). */
+function Figures({ s }: { s: SessionSnapshot }) {
+  const ctx = s.context;
+  const tokens = contextTokensText(s);
+  const pct = ctx.used_pct === null ? null : `${Math.round(ctx.used_pct)}%`;
+  const ctxText =
+    pct !== null
+      ? `${pct}${ctx.window !== null ? ` of ${formatTokens(ctx.window)}` : ""}`
+      : fromTranscript(s, "context") && tokens !== null
+        ? tokens
+        : "n/a";
+  const model = s.model ? `${s.model.display_name}${s.effort ? ` · ${s.effort}` : ""}` : "n/a";
+  return (
+    <dl data-slot="figures" className="m-0 grid grid-cols-[7.5rem_1fr] gap-x-s-2 gap-y-0.5">
+      <dt className="text-fg-muted">Model</dt>
+      <dd className="num m-0 flex flex-wrap gap-x-s-2">
+        <span>{model}</span>
+        {fromTranscript(s, "model") && s.model ? <TxNote /> : null}
+      </dd>
+      <dt className="text-fg-muted">Context</dt>
+      <dd className="num m-0 flex flex-wrap gap-x-s-2">
+        <span>{ctxText}</span>
+        {fromTranscript(s, "context") && ctxText !== "n/a" ? <TxNote /> : null}
+      </dd>
+      <dt className="text-fg-muted">{COST_LABEL}</dt>
+      <dd className="num m-0 flex flex-wrap gap-x-s-2">
+        <span>{formatCost(s.cost.usd)}</span>
+        {fromTranscript(s, "cost") && s.cost.usd !== null ? <TxNote /> : null}
+      </dd>
+    </dl>
   );
 }
 
@@ -263,6 +320,7 @@ export function DetailDrawer({
             )}
           </Section>
           <Section id="context" title="Context">
+            <Figures s={s} />
             <Sparkline samples={history.samples} />
           </Section>
           <Section id="limits" title="Rate limits">
@@ -298,19 +356,28 @@ export function DetailDrawer({
                 <tbody>
                   {s.subagents.map((a) => (
                     <tr key={a.agent_id} data-agent={a.ended_at === null ? "active" : "ended"}>
-                      <td className="max-w-0 truncate">
+                      <td className="max-w-0 truncate" title={a.agent_type}>
                         <span aria-hidden="true" className="num">
                           {a.ended_at === null ? "● " : "○ "}
                         </span>
                         {a.agent_type}
                       </td>
                       <td className="num text-right">
+                        {subagentFromTranscript(a) ? <SourceMark className="mr-s-1" /> : null}
                         {a.tokens === null ? "n/a" : formatTokens(a.tokens)}
                       </td>
                       <td className="num text-right">
                         {a.context_window === null ? "n/a" : formatTokens(a.context_window)}
                       </td>
-                      <td className="num pl-s-2">{a.model ?? "n/a"}</td>
+                      <td
+                        className="num whitespace-nowrap pl-s-2"
+                        title={
+                          a.model ? `${a.model}${a.effort ? ` · ${a.effort}` : ""}` : undefined
+                        }
+                      >
+                        {a.model ? shortModel(a.model) : "n/a"}
+                        {a.effort ? ` · ${a.effort}` : ""}
+                      </td>
                       <td className="num text-right">
                         {formatDuration((a.ended_at ?? now) - a.started_at)}
                       </td>
@@ -353,11 +420,22 @@ export function DetailDrawer({
           </Section>
           <Section id="assistant" title="Last assistant message">
             <Text value={s.last_assistant_message} />
+            {fromTranscript(s, "last_assistant_message") && s.last_assistant_message ? (
+              <TxNote />
+            ) : null}
           </Section>
           <Section id="git" title="Git">
             <dl className="m-0 grid grid-cols-[5rem_1fr] gap-x-s-2 gap-y-0.5">
               <dt className="text-fg-muted">Branch</dt>
-              <dd className="num m-0 break-all">{git.branch ?? "n/a"}</dd>
+              <dd className="num m-0 break-all">
+                {git.branch ?? "n/a"}
+                {fromTranscript(s, "git_branch") && git.branch ? (
+                  <>
+                    {" "}
+                    <TxNote />
+                  </>
+                ) : null}
+              </dd>
               <dt className="text-fg-muted">Worktree</dt>
               <dd className="num m-0 break-all">{git.worktree ?? "n/a"}</dd>
               <dt className="text-fg-muted">PR</dt>

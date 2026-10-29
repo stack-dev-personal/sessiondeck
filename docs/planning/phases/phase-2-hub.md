@@ -58,6 +58,10 @@ Out:
 - R2.9 `hub replay` rebuilds all snapshots from events in under 60 s for 30 days of your typical volume.
 - R2.10 Cost history per session and per day matches ccusage `session` output for the same transcripts within 1%.
 
+Added 2026-10-28 from user report (session S8d, handoff docs/handoffs/S08d-headless-metrics.md). R2.11 is left for another session; add, never renumber.
+- R2.12 Transcript-derived snapshot fields. When a session has no statusline value for a field, the hub fills it from the transcript lines it already stores: model (last assistant row message.model), context tokens (last assistant row usage: input + cache_creation + cache_read) and used % against the model context window from the pricing table (max_input_tokens; if unknown, tokens without a percent), cost (the transcript-priced lifetime cost the cost route computes), git branch (the rows gitBranch), last assistant message (last assistant text, capped as today). Statusline values always win when present. Each filled field carries its source (statusline or transcript) in the snapshot. Updates flow through the existing WS deltas as transcript lines arrive.
+- R2.13 Subagents of any session (headless or interactive): model, tokens and context from their subagent transcript lines (agentId link), filling the nulls in snapshot.subagents. Effort only if a transcript or hook row states it; otherwise null (measured figures only, decision 28).
+
 ## Definition of done
 - [ ] All R2.x pass; load numbers in `docs/HUB-BENCH.md`.
 - [ ] `docker compose up` on the laptop serves `/health` and accepts the Phase 1 daemon.

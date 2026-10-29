@@ -14,6 +14,57 @@ export interface SubagentSnapshot {
   tokens: number | null;
   context_window: number | null;
   model: string | null;
+  /** Where tokens, model and context_window came from. Set by the hub; absent until filled. */
+  figures_source?: SubagentFigureSource;
+  /** Null or absent unless a transcript or hook row states it (decision 28). */
+  effort?: string | null;
+}
+
+/** Where a subagent's tokens, model and context_window came from. */
+export type SubagentFigureSource = "subagent_statusline" | "transcript";
+
+export const SUBAGENT_FIGURE_SOURCES: readonly SubagentFigureSource[] = [
+  "subagent_statusline",
+  "transcript",
+];
+
+export function isSubagentFigureSource(x: unknown): x is SubagentFigureSource {
+  return typeof x === "string" && (SUBAGENT_FIGURE_SOURCES as readonly string[]).includes(x);
+}
+
+/** Where a snapshot figure came from. */
+export type FigureSource = "statusline" | "transcript";
+
+export const FIGURE_SOURCES: readonly FigureSource[] = ["statusline", "transcript"];
+
+export function isFigureSource(x: unknown): x is FigureSource {
+  return typeof x === "string" && (FIGURE_SOURCES as readonly string[]).includes(x);
+}
+
+/**
+ * Per-figure provenance. Absent key = not filled yet. Effort has no entry on purpose (decision 28:
+ * measured figures only). Set by the hub, never by createSnapshot().
+ */
+export interface SnapshotSources {
+  readonly model?: FigureSource;
+  readonly context?: FigureSource;
+  readonly cost?: FigureSource;
+  readonly git_branch?: FigureSource;
+  readonly last_assistant_message?: FigureSource;
+}
+
+/**
+ * New sources object with key set to src. Statusline wins: an existing "statusline" entry is never
+ * replaced by "transcript". Does not mutate its input.
+ */
+export function mergeSource(
+  sources: SnapshotSources | undefined,
+  key: keyof SnapshotSources,
+  src: FigureSource,
+): SnapshotSources {
+  const current = sources?.[key];
+  if (current === "statusline" && src === "transcript") return { ...sources };
+  return { ...sources, [key]: src };
 }
 
 /**
@@ -88,6 +139,8 @@ export interface SessionSnapshot {
   prompt_cache: { warm: boolean; expires_at: number | null } | null;
   compactions: number;
   tracking: Tracking;
+  /** Figure provenance, set by the hub (headless sessions). createSnapshot() omits it. */
+  sources?: SnapshotSources;
 }
 
 export interface CreateSnapshotInput {

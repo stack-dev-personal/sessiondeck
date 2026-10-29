@@ -49,7 +49,8 @@
           "ended_at": 1760001482000,
           "tokens": 1234,
           "context_window": 1000000,
-          "model": "claude-opus-5-5"
+          "model": "claude-opus-5-5",
+          "figures_source": "subagent_statusline"
         }
       ],
       "tasks": {
@@ -72,6 +73,11 @@
       "tracking": {
         "last_tool": null,
         "permission": null
+      },
+      "sources": {
+        "model": "statusline",
+        "context": "statusline",
+        "cost": "statusline"
       }
     },
     "kinds-second-session": {

@@ -5,16 +5,25 @@
 import {
   StatusLinePayloadSchema,
   epochSecondsToMs,
+  mergeSource,
   normalizeRateLimitWindow,
   type Envelope,
   type RateLimitPeriod,
+  type SnapshotSources,
   type SessionSnapshot,
+  type SubagentSnapshot,
   type Window,
 } from "@sessiondeck/contract";
 import { z } from "zod";
 import type { SampleRow } from "../db/store.ts";
 
 const MAX_TEXT = 200;
+const EMPTY_CONTEXT: SessionSnapshot["context"] = {
+  used_pct: null,
+  window: null,
+  input: null,
+  output: null,
+};
 const cap = (s: string): string => (s.length > MAX_TEXT ? s.slice(0, MAX_TEXT) : s);
 const finite = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -90,14 +99,21 @@ export function applyStatusLine(
   if (!parsed.success) throw new Error("statusline payload does not match StatusLinePayloadSchema");
   const p = parsed.data;
   const s: SessionSnapshot = { ...prev, last_event_at: Math.max(prev.last_event_at, e.ts) };
+  // R2.12: a figure the statusline sets is owned by it from now on (transcripts never overwrite it).
+  let sources: SnapshotSources | undefined = prev.sources;
+  const own = (key: keyof SnapshotSources): void => {
+    sources = mergeSource(sources, key, "statusline");
+  };
 
   const modelRaw = p.model;
   if (typeof modelRaw === "string" && modelRaw !== "") {
     s.model = { id: cap(modelRaw), display_name: cap(modelRaw) };
+    own("model");
   } else if (typeof modelRaw === "object" && modelRaw !== null) {
     const id = nonEmpty(modelRaw.id);
     if (id !== null) {
       s.model = { id: cap(id), display_name: cap(nonEmpty(modelRaw.display_name) ?? id) };
+      own("model");
     }
   }
   const level = p.effort?.level;
@@ -112,6 +128,7 @@ export function applyStatusLine(
   const worktree = nonEmpty(p.workspace?.git_worktree) ?? nonEmpty(p.worktree?.name);
   const prNumber = finite(p.pr?.number);
   const prUrl = nonEmpty(p.pr?.url);
+  if (branch !== null) own("git_branch");
   s.git = {
     branch: branch !== null ? cap(branch) : prev.git.branch,
     worktree: worktree !== null ? cap(worktree) : prev.git.worktree,
@@ -125,15 +142,15 @@ export function applyStatusLine(
       onNulled("context_window.used_percentage");
       used = null;
     }
+    // Tokens a transcript filled are not statusline figures: do not carry them into a statusline context.
+    const base = prev.sources?.context === "transcript" ? EMPTY_CONTEXT : prev.context;
     s.context = {
-      used_pct: cw.used_percentage === undefined ? prev.context.used_pct : used,
-      window:
-        cw.context_window_size === undefined ? prev.context.window : finite(cw.context_window_size),
-      input:
-        cw.total_input_tokens === undefined ? prev.context.input : finite(cw.total_input_tokens),
-      output:
-        cw.total_output_tokens === undefined ? prev.context.output : finite(cw.total_output_tokens),
+      used_pct: cw.used_percentage === undefined ? base.used_pct : used,
+      window: cw.context_window_size === undefined ? base.window : finite(cw.context_window_size),
+      input: cw.total_input_tokens === undefined ? base.input : finite(cw.total_input_tokens),
+      output: cw.total_output_tokens === undefined ? base.output : finite(cw.total_output_tokens),
     };
+    own("context");
   }
 
   const cost = p.cost;
@@ -154,6 +171,9 @@ export function applyStatusLine(
           : finite(cost.total_lines_removed),
     };
   }
+
+  if (finite(cost?.total_cost_usd) !== null) own("cost");
+  if (sources !== prev.sources) s.sources = sources;
 
   const rl = p.rate_limits;
   const base = prev.rate_limits;
@@ -205,6 +225,12 @@ export function applyStatusLine(
   return { snapshot: s, sample };
 }
 
+function withoutTranscriptFigures(row: SubagentSnapshot): SubagentSnapshot {
+  const { effort: _effort, ...rest } = row;
+  void _effort;
+  return { ...rest, tokens: null, context_window: null, model: null };
+}
+
 const SubagentsPayloadSchema = z
   .object({
     tasks: z.array(
@@ -223,7 +249,12 @@ const SubagentsPayloadSchema = z
 /**
  * subagentStatusLine rows refresh tokens, context window and model of the snapshot's existing
  * subagent rows (matched by agent_id = task id). Rows are created and closed by the hooks
- * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored.
+ * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored. A task that
+ * states at least one figure makes the row statusline-owned (figures_source "subagent_statusline",
+ * R2.13): the transcript deriver never touches it afterwards. A task that states none leaves a
+ * transcript-filled row as it is, so a null never erases a measured figure. A task that states
+ * only some figures over a transcript-filled row nulls the rest (and effort), so a replay, which
+ * applies the statusline before any transcript figure exists, agrees with live.
  */
 export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnapshot {
   if (e.host !== prev.host || e.session_id !== prev.session_id) return prev;
@@ -233,12 +264,23 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
   const subagents = prev.subagents.map((row) => {
     const t = byId.get(row.agent_id);
     if (t === undefined) return row;
+    const states =
+      finite(t.tokenCount) !== null ||
+      finite(t.contextWindowSize) !== null ||
+      nonEmpty(t.model) !== null;
+    if (!states && row.figures_source === "transcript") return row;
+    // A task that states something takes the whole row over: figures it leaves out were measured
+    // from the transcript, not stated by the statusline, so they become null (replay applies the
+    // statusline before any transcript figure exists and gets exactly that).
+    const base =
+      states && row.figures_source === "transcript" ? withoutTranscriptFigures(row) : row;
     return {
-      ...row,
-      tokens: t.tokenCount === undefined ? row.tokens : finite(t.tokenCount),
+      ...base,
+      ...(states ? { figures_source: "subagent_statusline" as const } : {}),
+      tokens: t.tokenCount === undefined ? base.tokens : finite(t.tokenCount),
       context_window:
-        t.contextWindowSize === undefined ? row.context_window : finite(t.contextWindowSize),
-      model: t.model === undefined ? row.model : nonEmpty(t.model),
+        t.contextWindowSize === undefined ? base.context_window : finite(t.contextWindowSize),
+      model: t.model === undefined ? base.model : nonEmpty(t.model),
     };
   });
   return { ...prev, subagents, last_event_at: Math.max(prev.last_event_at, e.ts) };

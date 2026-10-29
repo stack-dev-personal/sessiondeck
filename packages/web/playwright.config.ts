@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
+import { resolvePort } from "./e2e/port";
 
 const vite = "node ./node_modules/vite/bin/vite.js";
 
@@ -16,7 +17,8 @@ const vite = "node ./node_modules/vite/bin/vite.js";
  */
 const live = (process.env["SD_E2E_HUB_URL"] ?? "") !== "";
 const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.3.spec.ts", "**/R3.6.spec.ts", "**/R3.9.spec.ts"];
-const port = live ? 5174 : 5173;
+/** SD_E2E_PORT moves the preview server (the live web on 5173 must never be reused or stopped). */
+const port = resolvePort(process.env["SD_E2E_PORT"], live ? 5174 : 5173);
 
 /**
  * The suite runs against a VITE_MOCK=1 production build served by `vite preview` on 5173, so no
@@ -49,8 +51,10 @@ export default defineConfig({
   webServer: {
     command: live
       ? `${vite} build --outDir dist/e2e-live --emptyOutDir && ${vite} preview --outDir dist/e2e-live --port ${port} --strictPort --host 127.0.0.1`
-      : `VITE_MOCK=1 ${vite} build --outDir dist/e2e-mock --emptyOutDir && ${vite} preview --outDir dist/e2e-mock --port ${port} --strictPort --host 127.0.0.1`,
+      : `${vite} build --outDir dist/e2e-mock --emptyOutDir && ${vite} preview --outDir dist/e2e-mock --port ${port} --strictPort --host 127.0.0.1`,
     url: `http://localhost:${port}`,
+    // Set through env (not a `VITE_MOCK=1` command prefix) so it also works from Windows shells.
+    env: live ? {} : { VITE_MOCK: "1" },
     reuseExistingServer: !process.env["CI"],
     timeout: 120_000,
     stdout: "pipe",
