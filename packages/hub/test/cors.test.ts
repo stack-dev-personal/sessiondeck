@@ -107,6 +107,22 @@ describe("hub CORS", () => {
     expect(p.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("R6.3: encoded /ingest paths never get CORS headers", async () => {
+    await boot(OK);
+    for (const url of ["/%69ngest", "/%69ngest?x=1", "/ingest/", "/%zz", "//ingest"]) {
+      const o = await pre(OK, url);
+      expect(o.statusCode, url).not.toBe(204);
+      expect(o.headers["access-control-allow-origin"], url).toBeUndefined();
+      const p = await app.inject({
+        method: "POST",
+        url,
+        headers: { ...auth, origin: OK, "content-type": "application/json" },
+        payload: "{}",
+      });
+      expect(p.headers["access-control-allow-origin"], url).toBeUndefined();
+    }
+  });
+
   it("preflight needs no auth, the actual request still 401s without a token", async () => {
     await boot(OK);
     expect((await pre(OK)).statusCode).toBe(204);

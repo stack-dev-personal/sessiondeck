@@ -112,10 +112,23 @@ export function buildServer(opts: {
   // headers at all (same-origin only), not "accept any". /ingest is never exposed to browsers.
   // Bearer header, not cookies: no Allow-Credentials.
   const corsOrigins = new Set(opts.config.allowedOrigins);
+  // Exclusion must hold for the routed url (actual requests) and for the percent-decoded path
+  // (preflights match no route; /%69ngest decodes to /ingest). Malformed encoding is excluded.
+  const isIngestPath = (req: FastifyRequest): boolean => {
+    if (req.routeOptions?.url === "/ingest") return true;
+    let path: string;
+    try {
+      path = decodeURIComponent(req.url.split("?")[0] ?? "");
+    } catch {
+      return true;
+    }
+    path = path.replace(/\/+/g, "/").replace(/\/+$/, "").toLowerCase();
+    return path === "/ingest" || path.startsWith("/ingest/");
+  };
   const corsOriginOf = (req: FastifyRequest): string | null => {
     const o = req.headers.origin;
     if (typeof o !== "string" || !corsOrigins.has(o)) return null;
-    if (req.url.split("?")[0] === "/ingest") return null;
+    if (isIngestPath(req)) return null;
     return o;
   };
   const preflightLimiter = new RateLimiter(opts.config.readRate, opts.config.readBurst, 1024, now);
