@@ -437,7 +437,9 @@ export function DetailDrawer({
               <dt className="text-fg-muted">Branch</dt>
               <dd className="num m-0 break-all">{git.branch ? neutralize(git.branch) : "n/a"}</dd>
               <dt className="text-fg-muted">Worktree</dt>
-              <dd className="num m-0 break-all">{git.worktree ? neutralize(git.worktree) : "n/a"}</dd>
+              <dd className="num m-0 break-all">
+                {git.worktree ? neutralize(git.worktree) : "n/a"}
+              </dd>
               <dt className="text-fg-muted">PR</dt>
               <dd className="num m-0">
                 {git.pr && prHref ? (
