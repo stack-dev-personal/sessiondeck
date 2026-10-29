@@ -1,6 +1,7 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
+import { resolvePort } from "./e2e/port";
 
 const vite = "node ./node_modules/vite/bin/vite.js";
 
@@ -17,7 +18,7 @@ const vite = "node ./node_modules/vite/bin/vite.js";
 const live = (process.env["SD_E2E_HUB_URL"] ?? "") !== "";
 const LIVE_SPECS = ["**/R3.1.spec.ts", "**/R3.3.spec.ts", "**/R3.6.spec.ts", "**/R3.9.spec.ts"];
 /** SD_E2E_PORT moves the preview server (the live web on 5173 must never be reused or stopped). */
-const port = Number(process.env["SD_E2E_PORT"] ?? (live ? 5174 : 5173));
+const port = resolvePort(process.env["SD_E2E_PORT"], live ? 5174 : 5173);
 
 /**
  * The suite runs against a VITE_MOCK=1 production build served by `vite preview` on 5173, so no
