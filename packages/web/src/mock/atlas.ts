@@ -106,6 +106,35 @@ function seedArchived(): Archived[] {
     snap.last_event_at = ended;
     snap.git.branch = n % 3 === 0 ? "main" : `feat/old-${n}`;
     snap.cost.usd = 0.4 + n * 0.11;
+    // Every second run is a merged record (it also has live fields); the vault capture is on all.
+    (snap as AtlasSession).archive = {
+      source: {
+        root_label: "vault",
+        rel_path: `projects/bb2dash/sessions/2026-09-${String(n).padStart(2, "0")}-run.md`,
+        mtime_ms: ended,
+        size: 900,
+      },
+      collection: "projects/bb2dash",
+      // The fourth carries a right-to-left override: the UI must show it, not obey it.
+      title: n === 4 ? "Run \u202Etxet-evil\u202C four" : `Archived run ${n}`,
+      date: new Date(ended).toISOString().slice(0, 10),
+      started_at: null,
+      ended_at: null,
+      duration_s: (40 + n) * 60,
+      project_dir: key,
+      branch: snap.git.branch,
+      tools_used: [
+        { name: "Read", count: 12 },
+        { name: "Edit", count: 5 },
+      ],
+      commits: Array.from({ length: n % 4 }, (_, k) => `c0ffee${k} change ${k + 1}`),
+      prs: n % 5 === 0 ? [`#${100 + n} Widgets batch`] : [],
+      outcome:
+        n === 1
+          ? "Lazy chart loading shipped; kestrel benchmark dropped the first paint by 40%."
+          : `Run ${n} finished the widget batch and left the build green.`,
+      outcome_truncated: false,
+    };
     return { snap, key };
   });
 }
@@ -279,9 +308,10 @@ export function createMockAtlas(store: UseBoundStore<StoreApi<BoardState>>): Moc
           project_id: a.project_id ?? "",
           title: s.session_name ?? a.project_name ?? s.session_id,
           snippet: "",
-          state: s.state,
+          state: (s as AtlasSession).archive !== undefined ? "archived" : s.state,
         },
         [
+          String(((s as AtlasSession).archive as { outcome?: string } | undefined)?.outcome ?? ""),
           s.last_prompt ?? "",
           s.last_assistant_message ?? "",
           a.phase ?? "",

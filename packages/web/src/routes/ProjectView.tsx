@@ -5,14 +5,14 @@ import { atlasApi } from "../atlas/api";
 import { COLOR_TOKENS, cssColor, isValidColor } from "../atlas/color";
 import { formatCount, formatHours, formatTotalCost } from "../atlas/format";
 import { ARCHIVED_CAP, mergeLive } from "../atlas/live";
-import { atlasOf, type AtlasSession } from "../atlas/types";
+import { archiveOf, atlasOf, isArchivedState, type AtlasSession } from "../atlas/types";
 import { useLoad, useProjects } from "../atlas/useProjects";
 import { InlineEdit } from "../components/InlineEdit";
 import { MoveToProject } from "../components/MoveToProject";
 import { PhaseChip } from "../components/PhaseChip";
 import { ProjectSwatch } from "../components/ProjectSwatch";
 import { FixedList } from "../components/FixedList";
-import { displayNameOf } from "../lib/attention";
+import { ArchiveLine, ArchivedBadge, branchText, rowName } from "../components/ArchiveSummary";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
@@ -76,6 +76,13 @@ const ROW_GRID =
 const ROW = `${ROW_GRID} h-full px-s-3 text-sm`;
 
 function stateCell(s: SessionSnapshot) {
+  if (isArchivedState(s)) {
+    return (
+      <span className="truncate" data-slot="state">
+        <ArchivedBadge />
+      </span>
+    );
+  }
   const v = STATE_VOCAB[s.state] as (typeof STATE_VOCAB)[keyof typeof STATE_VOCAB] | undefined;
   return v ? (
     <span className={`num truncate ${v.textClass}`} data-slot="state">
@@ -100,8 +107,9 @@ function SessionRow({
   onChanged: () => void;
 }) {
   const openSession = useUi((u) => u.openSession);
-  const name = displayNameOf(s);
-  const branch = s.git.branch ?? "n/a";
+  const name = rowName(s);
+  const hasArchive = archiveOf(s) !== null;
+  const branch = branchText(s);
   const wt = s.git.worktree;
   const where = `${branch}${wt ? ` (worktree ${wt})` : ""}`;
   return (
@@ -110,23 +118,23 @@ function SessionRow({
       data-testid="project-session"
       data-session-id={s.session_id}
       data-live={live}
+      data-archived={hasArchive}
     >
       {stateCell(s)}
-      {live ? (
+      <span className="flex min-w-0 flex-col" data-slot="session">
         <button
           type="button"
-          onClick={() => openSession(s.session_id)}
+          onClick={() =>
+            openSession(s.session_id, useBoard.getState().sessions[s.session_id] ? undefined : s)
+          }
           aria-haspopup="dialog"
           title={`Open details: ${name}`}
           className="min-w-0 truncate text-left text-fg underline decoration-border-strong hover:decoration-fg"
         >
-          {s.session_name ? `"${name}"` : name}
+          {s.session_name || hasArchive ? `"${name}"` : name}
         </button>
-      ) : (
-        <span className="min-w-0 truncate" title={name}>
-          {s.session_name ? `"${name}"` : name}
-        </span>
-      )}
+        <ArchiveLine s={s} />
+      </span>
       <span className="num min-w-0 truncate text-fg-muted" data-slot="where" title={where}>
         {where}
       </span>
@@ -245,7 +253,11 @@ export function ProjectView() {
     () => (d ? mergeLive(d.live, board as Record<string, AtlasSession>, id) : []),
     [d, board, id],
   );
-  const archived = useMemo(() => (d?.archived ?? []).slice(0, ARCHIVED_CAP), [d]);
+  // One record per session: a session shown live is never repeated in the archived list.
+  const archived = useMemo(() => {
+    const liveIds = new Set(live.map((s) => s.session_id));
+    return (d?.archived ?? []).filter((s) => !liveIds.has(s.session_id)).slice(0, ARCHIVED_CAP);
+  }, [d, live]);
   const notFound = detail.error !== null && d === null;
   const name = d?.project.name || d?.project.project_dir || "n/a";
   const color = d?.project.color ?? "";

@@ -29,3 +29,11 @@ export const STATE_VOCAB: Record<SessionState, StateVocab> = {
   ended: { glyph: "■", label: "Ended", textClass: "text-state-ended", attention: false },
   exited: { glyph: "◆", label: "Exited", textClass: "text-state-exited", attention: false },
 };
+
+/** Marks a session whose vault capture is attached (R5.3). Same glyph, label, color rule as the states. */
+export const ARCHIVED_VOCAB: StateVocab = {
+  glyph: "▤",
+  label: "Archived",
+  textClass: "text-state-ended",
+  attention: false,
+};

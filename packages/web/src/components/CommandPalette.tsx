@@ -12,7 +12,8 @@ import { useNavigate } from "react-router-dom";
 import { atlasApi, isAbort } from "../atlas/api";
 import type { SearchKind, SearchResult } from "../atlas/types";
 import { Highlighted, queryTokens } from "../lib/highlight";
-import { STATE_VOCAB } from "../lib/state-vocab";
+import { neutralize } from "../lib/neutralize";
+import { ARCHIVED_VOCAB, STATE_VOCAB } from "../lib/state-vocab";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 
@@ -76,7 +77,9 @@ interface Shown {
   roundTripMs: number | null;
 }
 
-const clip = (t: string): string => (t.length > MAX_TEXT ? `${t.slice(0, MAX_TEXT)}…` : t);
+/** Hub text is raw transcript or vault text: cut, then bidi/zero-width/C1 characters made visible. */
+const clip = (t: string): string =>
+  neutralize(t.length > MAX_TEXT ? `${t.slice(0, MAX_TEXT)}…` : t);
 
 /** The visible order: grouped by kind (Sessions, Projects, Phases), hub order inside a group. */
 export function groupResults(results: readonly SearchResult[]) {
@@ -313,9 +316,11 @@ function PaletteDialog() {
                   const i = ++flatIndex;
                   const sel = i === activeIdx;
                   const v = r.state
-                    ? (STATE_VOCAB as Record<string, (typeof STATE_VOCAB)["idle"] | undefined>)[
-                        r.state
-                      ]
+                    ? r.state === "archived"
+                      ? ARCHIVED_VOCAB
+                      : (STATE_VOCAB as Record<string, (typeof STATE_VOCAB)["idle"] | undefined>)[
+                          r.state
+                        ]
                     : undefined;
                   return (
                     <div
