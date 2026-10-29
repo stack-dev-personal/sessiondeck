@@ -80,3 +80,12 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 - 2026-10-29 Popout header shows the raw contract state (truthful), while board cards show the display state (R3.10 hysteresis).
 - 2026-10-29 Speed shows "fast" / "standard" from statusLine fast_mode, "n/a" when never reported.
 - Gap (R3.11, restated): live hook data gives no nesting; all subagents show at the first level with an "unlinked" marker until S7 transcript links.
+
+### U4 usage widget (sd-executor-web): 8a63eee, 9181388, c189783, 27cbdb6
+- Review iteration 1: fix-then-merge (MAJOR collapsed chip clipped its 7d number and focus ring; MINORs drag save timing, click-without-move pinning, whole-payload freshness, z-index above the popout scrim, aria-controls/ids, lost threshold tests). Fixed.
+- Review iteration 2: merge; MINORs carried into U5 (hook equality/comment, captured_at always null, clamp test without release, rendered chip-fit check in Playwright).
+- Verifier: R3.12 PASS on tests (web 305/305), screens pending U5. No "fable" in packages/web/src outside the test that asserts its absence.
+
+### Decisions made
+- 2026-10-29 Usage freshness is per window: each of five_hour and seven_day comes from the freshest payload that carries it (rate limits are account-wide; a newer payload missing one window must not hide valid data).
+- 2026-10-29 DetailDrawer.tsx is no longer mounted (popout replaced it) and still renders per-session rate-limit rows; delete in U5 if the diff stays small, else defer.
