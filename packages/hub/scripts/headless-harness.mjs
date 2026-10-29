@@ -242,7 +242,7 @@ function report({ snap, cost }) {
   console.log("sources:", JSON.stringify(snap.sources ?? {}));
   console.log("\nsubagents");
   console.table(snap.subagents.map((s) => ({
-    agent_id: s.agent_id, agent_type: s.agent_type, model: s.model, tokens: s.tokens,
+    agent_id: s.agent_id, agent_type: s.agent_type, model: s.model, effort: s.effort ?? null, tokens: s.tokens,
     context_window: s.context_window, figures_source: s.figures_source ?? null,
   })));
   if (snap.subagents.length === 0) missing.push("subagents (none)");
@@ -260,7 +260,7 @@ function report({ snap, cost }) {
 }
 
 let code = 1;
-for (const sig of ["SIGINT", "SIGTERM"]) {
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) {
   process.on(sig, () => void teardown().finally(() => process.exit(130)));
 }
 try {
