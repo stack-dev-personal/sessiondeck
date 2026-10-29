@@ -189,3 +189,26 @@ Verified 2026-10-28T23:23:34Z by sd-verifier on p2/headless-metrics. Host: Windo
 R2.12 status: PARTIAL. Everything the four proving files cover passes; the live-shape harness from the handoff test list is pending and the percent-of-window clause has no separately identified check. Not marked pass.
 
 Count: 6 pass / 0 fail / 1 unverifiable, 1 pending (live-shape harness).
+
+## R2.12 and R2.13 re-evaluation, HEAD 2dced8c
+
+Verified 2026-10-29T01:40:53Z by sd-verifier on p2/headless-metrics. Host: Windows 11 Home, AMD Ryzen AI 9 465, node v24.19.0. Supersedes the 220c624 R2.12 section above (kept).
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R2.12 whole (model, context tokens, cost, branch, last message from transcript; statusline wins; source per field; WS deltas) | `cd packages/hub && pnpm exec vitest run` (transcript-figures 10, transcript-figures-review 2, transcript-figures-unit 11, cost-filler 7) | 26 files passed; 323 passed, 4 skipped (327). Includes cost equals GET /cost route, sources "transcript", statusline never overwritten, live delta | pass | 2026-10-29T01:40:53Z |
+| R2.12 "used % ... if unknown, tokens without a percent" | subagent-figures.test.ts "headless: tokens are set while window and used_pct stay null"; transcript-figures.test.ts asserts used_pct null, window null | pricing table has no window data, so null percent with tokens set is the permitted branch. Harness shows ctx_tokens 94172, window null, used_pct null | pass (unknown-window branch only; the percent-computed branch is not exercised because no window data exists) | 2026-10-29T01:40:53Z |
+| R2.12 live-shape harness | `cd packages/hub && node scripts/headless-harness.mjs` | exit 0, hub sd-2-s8d on 127.0.0.1:28787, 23 envelopes posted. model claude-opus-5-5, ctx 94172, cost.usd 2.0868447 equals route_cost_usd 2.0868447, branch p1/hook-exe, last message present, all sources "transcript". "PASS: all required figures present" | pass | 2026-10-29T01:40:53Z |
+| R2.13 subagent model, tokens, context from subagent transcript (agentId link) | subagent-figures.test.ts (15 tests, in full run), harness subagents table | 4 subagents, each model claude-sonnet-5-5, tokens 31959 / 25809 / 43955 / 33520, figures_source "transcript"; context_window null (same unknown-window rule). Test: no row created for transcript without SubagentStart | pass | 2026-10-29T01:40:53Z |
+| R2.13 effort only when a row states it; hook effort unused | subagent-figures.test.ts "effort stays absent when the subagent's own rows state none (hook effort is not used)"; fixture test expects "medium" when rows state it | effort null when rows lack it; harness shows effort "medium" from subagent rows | pass | 2026-10-29T01:40:53Z |
+| R2.13 statusline wins; replay equality | subagent-figures.test.ts "statusline first, transcript later", "transcript first, statusline later", "replay equals live with the statusline in the middle", "replay yields the snapshot ingest produced, subagents included" | all green; statusline task erases nothing, partial task nulls the rest, live equals replay | pass | 2026-10-29T01:40:53Z |
+| Cleanup after harness | `docker ps -a --filter name=sd-2-S8d` | empty | pass | 2026-10-29T01:40:53Z |
+
+Note rows (not pass/fail):
+
+| Item | Source | Detail |
+|---|---|---|
+| R2.9 stress replay bench | docs/HUB-BENCH.md "U3 fix iteration 1 (R2.9 stress mix)", HEAD 2dced8c-era code, `node scripts/bench-replay.mjs --dir /tmp/sd-2-S8d-bench5 --stress` | 14,217 ms against the 60 s limit, 71,745 events/s, peak RSS 342.4 MB, 0 exceptions. Taken on a loaded host (CPU 64 to 71%); recorded as a note, not re-run |
+| R2.4 load bench with --stress | not run | Deferred: quiet-host run still outstanding (as with the existing R2.4 laptop confirmation row) |
+
+Count: 6 pass / 0 fail / 0 unverifiable (R2.12 and R2.13 as a whole: pass).
