@@ -6,6 +6,7 @@ import { setAtlasApiReady } from "./atlas/api";
 import { App } from "./App";
 import { startLive } from "./live/start";
 import { useBoard } from "./store/board";
+import { startSaved, useSaved } from "./store/saved";
 import { applyTheme, useUi } from "./store/ui";
 import "./styles/index.css";
 
@@ -22,6 +23,7 @@ if (import.meta.env.VITE_MOCK === "1") {
 }
 
 startAlerts(useBoard, useUi);
+startSaved(useBoard, useUi, useSaved);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -131,4 +131,17 @@ CREATE INDEX sessions_search_dirty ON sessions(session_id) WHERE search_dirty = 
 UPDATE sessions SET search_dirty = 1;
 `,
   },
+  {
+    version: 9,
+    name: "layouts_slots",
+    // R6.3. Saved layouts get a hotkey slot (1-9) and an optional host pin (NULL = all hosts).
+    // One layout holds a slot per host scope: partial unique expression index, valid on SQLite and
+    // Postgres. updated_at is epoch ms.
+    sql: `
+ALTER TABLE layouts ADD COLUMN hotkey INTEGER;
+ALTER TABLE layouts ADD COLUMN host TEXT;
+ALTER TABLE layouts ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+CREATE UNIQUE INDEX layouts_slot ON layouts(hotkey, (COALESCE(host, ''))) WHERE hotkey IS NOT NULL;
+`,
+  },
 ];

@@ -22,6 +22,11 @@ export interface LoadOptions {
   sessions?: number;
   tickMs?: number;
   perHostPerTick?: number;
+  /**
+   * In-process delivery (R6.4, mock build, no hub): when set, `post` hands each batch to this
+   * function instead of POSTing to /ingest, and nothing here touches the network.
+   */
+  sink?: (host: string, envelopes: Record<string, unknown>[]) => void;
 }
 
 export interface LoadStats {
@@ -220,6 +225,11 @@ export function createLoad(opts: LoadOptions) {
   };
   const doPost = async (host: string, envelopes: Env[]): Promise<void> => {
     posts++;
+    if (opts.sink) {
+      opts.sink(host, envelopes);
+      sent += envelopes.length;
+      return;
+    }
     try {
       const res = await fetch(`${LIVE.directUrl}/ingest`, {
         method: "POST",
@@ -234,16 +244,17 @@ export function createLoad(opts: LoadOptions) {
   };
 
   /** SessionStart, a prompt and a statusLine tick per session so every card is fully populated. */
-  const setup = async (): Promise<void> => {
-    for (const host of opts.hosts) {
-      const batch: Env[] = [];
-      for (const s of sessions.filter((x) => x.host === host)) {
-        batch.push(envelope(s, "hook", "SessionStart", "SessionStart/01-startup.json"));
-        batch.push(envelope(s, "hook", "UserPromptSubmit", "UserPromptSubmit/01-sample.json"));
-        batch.push(statusline(s));
-      }
-      await post(host, batch);
+  const setupBatch = (host: string): Env[] => {
+    const batch: Env[] = [];
+    for (const s of sessions.filter((x) => x.host === host)) {
+      batch.push(envelope(s, "hook", "SessionStart", "SessionStart/01-startup.json"));
+      batch.push(envelope(s, "hook", "UserPromptSubmit", "UserPromptSubmit/01-sample.json"));
+      batch.push(statusline(s));
     }
+    return batch;
+  };
+  const setup = async (): Promise<void> => {
+    for (const host of opts.hosts) await post(host, setupBatch(host));
     sent = 0;
     posts = 0;
   };
@@ -309,5 +320,7 @@ export function createLoad(opts: LoadOptions) {
     }
   };
 
-  return { sessions, setup, run, stop, end };
+  /** The next event for session `i` (R6.4 builds its own schedule from this). */
+  const nextFor = (i: number): Env => next(sessions[i]!);
+  return { sessions, setup, setupBatch, nextFor, run, stop, end };
 }

@@ -4,6 +4,7 @@ import { applyEnvelope } from "../ingest";
 import { exceeds200kOf } from "../statusline-adapter";
 import { RESERVED_IDS } from "../live/stream-client";
 import { carryAtlas } from "../atlas/types";
+import { appendRows, draftRows, type ActivityLog } from "./activity";
 import { recordEnvelope, type SessionHistory } from "./history";
 
 export type ConnectionStatus = "mock" | "connecting" | "open" | "closed" | "invalid";
@@ -17,7 +18,12 @@ export interface BoardState {
   exceeds200k: Record<string, boolean | null>;
   /** Bounded per-session history for the detail drawer; fed by the same flush as snapshots. */
   history: Record<string, SessionHistory>;
+  /** Bounded per-session activity rows (max ACTIVITY_CAP) for the session pane's live list. */
+  activity: Record<string, ActivityLog>;
   connection: ConnectionStatus;
+  /** True once the first full set has arrived (hub resync or the end of the mock replay). */
+  loaded: boolean;
+  setLoaded: (loaded: boolean) => void;
   /** Epoch ms of the next reconnect attempt while closed; null otherwise. */
   retryAt: number | null;
   setConnection: (c: ConnectionStatus, retryAt?: number | null) => void;
@@ -52,7 +58,10 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     sessions: {},
     exceeds200k: {},
     history: {},
+    activity: {},
     connection: "closed",
+    loaded: false,
+    setLoaded: (loaded) => set({ loaded }),
     retryAt: null,
     setConnection: (connection, retryAt = null) => set({ connection, retryAt }),
     enqueue: (e) => {
@@ -68,12 +77,29 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
     replaceAll: (list) => {
       queue = [];
       snaps = new Map();
+      const kept = list.filter((s) => !RESERVED_IDS.has(s.session_id));
       set({
-        sessions: Object.fromEntries(
-          list.filter((s) => !RESERVED_IDS.has(s.session_id)).map((s) => [s.session_id, s]),
-        ),
+        sessions: Object.fromEntries(kept.map((s) => [s.session_id, s])),
         exceeds200k: {},
         history: {},
+        // A session already known keeps its log (scroll position and history survive a reconnect)
+        // and gets a state row only if its state changed; a new one opens on its current state.
+        activity: Object.fromEntries(
+          kept.map((s) => {
+            const prev = get().sessions[s.session_id];
+            const log = get().activity[s.session_id];
+            if (prev !== undefined && log !== undefined) {
+              return [
+                s.session_id,
+                prev.state === s.state
+                  ? log
+                  : appendRows(log, s.last_event_at, draftRows(prev, s).slice(0, 1)),
+              ];
+            }
+            return [s.session_id, appendRows(undefined, s.last_event_at, draftRows(undefined, s))];
+          }),
+        ),
+        loaded: true,
       });
     },
     flush: () => {
@@ -86,6 +112,7 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       const next = { ...get().sessions };
       let flags = get().exceeds200k;
       const history = { ...get().history };
+      const activity = { ...get().activity };
       for (const e of batch) {
         if (e.session_id === null) continue;
         const before = next[e.session_id];
@@ -93,6 +120,11 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
         if (updated) {
           next[e.session_id] = updated;
           history[e.session_id] = recordEnvelope(history[e.session_id], before, updated, e);
+          activity[e.session_id] = appendRows(
+            activity[e.session_id],
+            e.ts,
+            draftRows(before, updated, e.hook_event_name),
+          );
         }
         if (e.kind === "statusline") {
           const f = exceeds200kOf(e.payload);
@@ -101,8 +133,11 @@ export function createBoardStore(raf?: Raf): UseBoundStore<StoreApi<BoardState>>
       }
       // Hub deltas carry project and phase fields; they pass through untouched (a delta from a hub
       // that predates them keeps the previous values).
-      for (const [id, snap] of deltas) next[id] = carryAtlas(snap, next[id]);
-      set({ sessions: next, exceeds200k: flags, history });
+      for (const [id, snap] of deltas) {
+        activity[id] = appendRows(activity[id], snap.last_event_at, draftRows(next[id], snap));
+        next[id] = carryAtlas(snap, next[id]);
+      }
+      set({ sessions: next, exceeds200k: flags, history, activity });
     },
   }));
 }

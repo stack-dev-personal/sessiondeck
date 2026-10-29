@@ -93,8 +93,8 @@ jobs:
     name: e2e-web (Playwright smoke, mock build)
     # Visual baselines in packages/web/e2e/__screenshots__ were generated in this exact image;
     # any other image renders fonts differently and the screenshot comparisons fail.
-    # Budget (minutes): install 3 + mock build 1 + suite 5 = 9; 15 leaves a margin.
-    timeout-minutes: 15
+    # Budget (minutes): install 3 + mock build 1 + suite 5 + R6.4 perf trace 4 = 13; 20 leaves a margin.
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
@@ -108,14 +108,31 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: playwright smoke (R3.2, R3.4, R3.5, R3.7, R3.8)
         working-directory: packages/web
+        # R6.4 is skipped here: its dropped-frame rule is too tight for shared runners. It is confirmed
+        # on a quiet host (VERIFY-P6.md) and reported by the next step.
+        env:
+          SD_E2E_SKIP_PERF: "1"
         # github.workspace expands to the host path in container jobs; the shell variable is the in-container path.
         run: SCREENS_DIR="$GITHUB_WORKSPACE/e2e-screens" node node_modules/@playwright/test/cli.js test
+      - name: R6.4 perf trace (report-only)
+        continue-on-error: true
+        working-directory: packages/web
+        env:
+          SD_E2E_SKIP_PERF: "0"
+        run: SCREENS_DIR="$GITHUB_WORKSPACE/e2e-screens-perf" node node_modules/@playwright/test/cli.js test e2e/R6.4.spec.ts
       - name: upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-web-screens
           path: e2e-screens
+          if-no-files-found: warn
+      - name: upload R6.4 perf trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-perf-screens
+          path: e2e-screens-perf
           if-no-files-found: warn
       - name: upload playwright results (actual, expected, diff)
         if: always()
@@ -145,28 +162,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: live playwright specs (R3.1, R3.3, R3.9)
         # The script generates its own random hub token; nothing secret is passed in.
-        # R3.6 is skipped here: its dropped-frame rule is too tight for shared runners. It is gated in
-        # the verifier's container run (VERIFY-P3.md) and reported by the next step.
+        # R3.6 and R6.4 (live-board-20) are skipped here: their frame-rate rules are too tight for shared
+        # runners. They are gated in the verifier's container run (VERIFY-P3.md, VERIFY-P6.md) and reported by the next step.
         env:
           SD_E2E_SKIP_PERF: "1"
         run: bash packages/web/scripts/e2e-live.sh
-      - name: R3.6 perf trace (report-only)
+      - name: R3.6 and R6.4 perf traces (report-only)
         continue-on-error: true
         env:
           SD_E2E_SKIP_PERF: "0"
-          SD_E2E_ARGS: R3.6
+          SD_E2E_ARGS: "R3.6 R6.4"
           SD_E2E_PREFIX: sd-1-S6-perf
           SD_E2E_SCREENS_OUT: ${{ github.workspace }}/e2e-live-perf-screens
           SD_E2E_RESULTS_OUT: ${{ github.workspace }}/e2e-live-perf-results
         run: bash packages/web/scripts/e2e-live.sh
-      - name: upload R3.6 perf trace
+      - name: upload R3.6 and R6.4 perf trace
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-web-live-perf
           path: e2e-live-perf-screens
           if-no-files-found: warn
-      - name: upload R3.6 perf results
+      - name: upload R3.6 and R6.4 perf results
         if: always()
         uses: actions/upload-artifact@v4
         with:

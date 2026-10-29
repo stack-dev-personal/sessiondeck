@@ -57,7 +57,7 @@ describe("hub CORS", () => {
     const o = await pre(OK);
     expect(o.statusCode).toBe(204);
     expect(o.headers["access-control-allow-origin"]).toBe(OK);
-    expect(o.headers["access-control-allow-methods"]).toBe("GET, PATCH");
+    expect(o.headers["access-control-allow-methods"]).toBe("GET, PUT, PATCH, DELETE");
     expect(o.headers["access-control-allow-headers"]).toBe("authorization, content-type");
     expect(o.headers["access-control-max-age"]).toBe("600");
     expect(o.headers["access-control-allow-credentials"]).toBeUndefined();
@@ -107,6 +107,22 @@ describe("hub CORS", () => {
     expect(p.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("R6.3: encoded /ingest paths never get CORS headers", async () => {
+    await boot(OK);
+    for (const url of ["/%69ngest", "/%69ngest?x=1", "/ingest/", "/%zz", "//ingest"]) {
+      const o = await pre(OK, url);
+      expect(o.statusCode, url).not.toBe(204);
+      expect(o.headers["access-control-allow-origin"], url).toBeUndefined();
+      const p = await app.inject({
+        method: "POST",
+        url,
+        headers: { ...auth, origin: OK, "content-type": "application/json" },
+        payload: "{}",
+      });
+      expect(p.headers["access-control-allow-origin"], url).toBeUndefined();
+    }
+  });
+
   it("preflight needs no auth, the actual request still 401s without a token", async () => {
     await boot(OK);
     expect((await pre(OK)).statusCode).toBe(204);
@@ -142,5 +158,30 @@ describe("hub CORS", () => {
     expect(codes.has(429)).toBe(true);
     expect((await from("10.0.0.1")).statusCode).toBe(429);
     expect((await from("10.0.0.2")).statusCode).toBe(204);
+  });
+
+  it("R6.3: /layouts GET, PUT, DELETE preflight and responses carry CORS", async () => {
+    await boot(OK);
+    for (const m of ["GET", "PUT", "DELETE"]) {
+      const o = await app.inject({
+        method: "OPTIONS",
+        url: "/layouts/x",
+        headers: {
+          origin: OK,
+          "access-control-request-method": m,
+          "access-control-request-headers": "authorization,content-type",
+        },
+      });
+      expect(o.statusCode).toBe(204);
+      expect(o.headers["access-control-allow-methods"]).toContain(m);
+    }
+    const g = await app.inject({
+      method: "GET",
+      url: "/layouts",
+      headers: { ...auth, origin: OK },
+    });
+    expect(g.statusCode).toBe(200);
+    expect(g.headers["access-control-allow-origin"]).toBe(OK);
+    expect(g.headers["vary"]).toContain("Origin");
   });
 });

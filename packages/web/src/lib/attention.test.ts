@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   applyFilters,
   displayNameOf,
+  NO_PROJECT_DIR,
+  projectDirOf,
+  projectDirsByAttention,
+  projectLabels,
   projectOf,
   selectProjects,
   sortForAttention,
@@ -87,5 +91,31 @@ describe("project and filters", () => {
       "alpha",
       "beta",
     ]);
+  });
+});
+
+describe("project dirs for layouts (R6.1)", () => {
+  const rec = (l: SessionSnapshot[]) => Object.fromEntries(l.map((s) => [s.session_id, s]));
+  it("matches on the full dir: project_dir, else cwd, else the no-project key", () => {
+    expect(projectDirOf(snap("a", "idle", 1, { project_dir: "/p/web" }))).toBe("/p/web");
+    expect(projectDirOf(snap("b", "idle", 1, { project_dir: null, cwd: "/c/x" }))).toBe("/c/x");
+    expect(projectDirOf(snap("c", "idle", 1, { project_dir: null, cwd: "" }))).toBe(NO_PROJECT_DIR);
+  });
+  it("orders dirs by attention: the project with a waiting session first", () => {
+    const l = [
+      snap("a", "working", 900, { project_dir: "/p/alpha" }),
+      snap("b", "idle", 100, { project_dir: "/p/zeta" }),
+      snap("c", "waiting_permission", 10, { project_dir: "/p/zeta" }),
+      snap("d", "working", 500, { project_dir: "/p/beta" }),
+    ];
+    expect(projectDirsByAttention(rec(l))).toEqual(["/p/zeta", "/p/alpha", "/p/beta"]);
+  });
+  it("labels with the basename, adding the parent only when basenames collide", () => {
+    const m = projectLabels(["/a/web", "/b/web", "/a/hub", "C:\\w\\api", NO_PROJECT_DIR]);
+    expect(m.get("/a/web")).toBe("a/web");
+    expect(m.get("/b/web")).toBe("b/web");
+    expect(m.get("/a/hub")).toBe("hub");
+    expect(m.get("C:\\w\\api")).toBe("api");
+    expect(m.get(NO_PROJECT_DIR)).toBe(NO_PROJECT_DIR);
   });
 });

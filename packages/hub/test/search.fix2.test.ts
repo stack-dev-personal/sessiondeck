@@ -47,7 +47,10 @@ describe("R5.4 deferred indexing, fix round 2", () => {
     seedSession(s, "s1", { last_prompt: "banana" });
     s.flushSearchIndex();
     // Stand-in for a database written by the older design: migration 8 not yet applied, stale index.
-    s.db.prepare("DELETE FROM schema_migrations WHERE version = 8").run();
+    s.db.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9)").run();
+    s.db.prepare("DROP INDEX layouts_slot").run();
+    for (const c of ["hotkey", "host", "updated_at"])
+      s.db.prepare(`ALTER TABLE layouts DROP COLUMN ${c}`).run();
     s.db.prepare("DROP INDEX sessions_search_dirty").run();
     s.db.prepare("ALTER TABLE sessions DROP COLUMN search_dirty").run();
     s.db.prepare("UPDATE sessions SET snapshot = replace(snapshot, 'banana', 'cherry')").run();

@@ -10,6 +10,7 @@ import { Board } from "./routes/Board";
 import { ProjectView } from "./routes/ProjectView";
 import { Projects } from "./routes/Projects";
 import { SessionList } from "./routes/SessionList";
+import { Layout } from "./routes/Layout";
 import { Settings } from "./routes/Settings";
 import { useUi } from "./store/ui";
 
@@ -38,6 +39,7 @@ export function App() {
             <Route path="/projects" element={<Projects />} />
             <Route path="/projects/:id" element={<ProjectView />} />
             <Route path="/sessions" element={<SessionList />} />
+            <Route path="/layout" element={<Layout />} />
             <Route path="/settings" element={<Settings />} />
             {DevCards ? (
               <Route

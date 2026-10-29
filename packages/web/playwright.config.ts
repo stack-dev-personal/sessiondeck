@@ -5,7 +5,7 @@ import { defineConfig } from "@playwright/test";
 const vite = "node ./node_modules/vite/bin/vite.js";
 
 /**
- * Live mode (R3.1, R3.3, R3.6, R3.9, R5.4-live, R5.5-live; SD_E2E_SKIP_PERF=1 skips R3.6): set SD_E2E_HUB_URL to run only the live specs against a real hub, with a
+ * Live mode (R3.1, R3.3, R3.6, R3.9, R5.4-live, R5.5-live, R6.3; SD_E2E_SKIP_PERF=1 skips R3.6): set SD_E2E_HUB_URL to run only the live specs against a real hub, with a
  * non-mock build on port 5174. Variables (all read by e2e/live-helpers.ts):
  *   SD_E2E_HUB_URL         hub base URL the browser uses (http://host:8787); required
  *   SD_E2E_HUB_TOKEN       the hub's HUB_TOKEN (passed in the environment, never committed)
@@ -24,6 +24,8 @@ const LIVE_SPECS = [
   "**/R5.5-live.spec.ts",
   "**/R5.4-live.spec.ts",
 ];
+// R6.3 and R6.4 run in both modes: a fake hub in the mock build, the real hub in live mode (its describes skip themselves).
+const BOTH_SPECS = ["**/R6.3.spec.ts", "**/R6.4.spec.ts"];
 const port = live ? 5174 : 5173;
 
 /**
@@ -34,7 +36,7 @@ const port = live ? 5174 : 5173;
  */
 export default defineConfig({
   testDir: "e2e",
-  testMatch: live ? LIVE_SPECS : "**/*.spec.ts",
+  testMatch: live ? [...LIVE_SPECS, ...BOTH_SPECS] : "**/*.spec.ts",
   testIgnore: live ? [] : LIVE_SPECS,
   // One platform only (the pinned Linux image), so baselines have no platform suffix.
   // Regenerate all of them with: node node_modules/@playwright/test/cli.js test --update-snapshots

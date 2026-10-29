@@ -1,0 +1,118 @@
+# Session log: p6/layouts (S10, Phase 6 layouts)
+
+- Date: 2026-10-27
+- Handoff: docs/handoffs/S10-layouts.md (sprint 3 organize, headless, concurrency 1)
+- Contract SHA: cde5b026db72d70942a7fb57d9db214e9593bb53 (branch created from sprint/3-organize at the same commit; main has not moved)
+
+## Task list
+
+| # | Unit | Executor | Requirements | Depends on |
+|---|------|----------|--------------|------------|
+| U1 | Layout engine: spec types, JSON round-trip, split tree renderer, typed panes, seven presets, reload persistence, preset screenshots | sd-executor-web | R6.1 | none |
+| U2 | Hub layouts API: migration (hotkey slot, host pin), GET/PUT/DELETE /layouts, validation | sd-executor-hub | R6.3 (hub half) | none |
+| U3 | Saved layouts client, hotkeys 1-9, switch timing; Shift+C compact-all with exact restore | sd-executor-web | R6.3, R6.5 | U1, U2 |
+| U4 | Auto-fit by count and by project; drag and keyboard pane assignment, one content pane per session | sd-executor-web | R6.2, R6.6 | U1 |
+| U5 | Session content pane (virtualized, unmount when hidden) and six-pane 20 deltas/s trace | sd-executor-web | R6.4 | U1 |
+| U6 | Session close: rebase, full suite, integration checks, VERIFY-P6.md and docs/LAYOUTS.md | sd-verifier | all | U1-U5 |
+
+## Decisions made
+
+1. R6.3 says layouts persist in the hub; packages/hub is owned by sd-executor-hub, so the hub half is its own unit (U2) although the handoff names only sd-executor-web. The `layouts` table already exists (migration 1); U2 adds columns through a new migration.
+2. The Phase 4 content view (S8, sprint 2) is not on this base. The `session` pane in U5 renders a minimal virtualized live activity list fed by the board store, behind a single component seam that S8's content view replaces on rebase. R6.4 is measured against this pane. Recorded as an open question for the user.
+3. Layout spec types live in packages/web (not packages/contract) so the pinned contract commit is untouched; the hub stores the spec as validated opaque JSON with a size cap.
+4. react-resizable-panels: npm registry reports 4.15.0, license MIT (checked from the orchestrator shell, `npm view`).
+
+## Units
+
+### U1 layout engine (R6.1): done, re-verify at close
+- Commits ff36d9f, b21f9e6, ef80999, fix 29fe34e; verify 1c3a118.
+- Files: packages/web/src/layout/*, store/layout.ts, components/layout/*, routes/Layout.tsx, e2e/R6.1.spec.ts; header link added (R3 baselines regenerated, reviewer diffed them pixel by pixel: header-only change).
+- react-resizable-panels 4.15.0 (MIT) kept; ratios live in the spec, library gets defaultLayout and setLayout.
+- Review: iteration 1 fix-then-merge (3 SHOULD, 4 NIT, all fixed); iteration 2 merge.
+- Verifier: R6.1 pass (289 vitest, 15 Playwright), screenshots /state/3/screens/S10/R6.1-*.png.
+- Deferred to U4: "+N more" hidden-project count (reviewer SHOULD, Layout.tsx:41); by-project cards clipped in narrow columns at 1440x900 (verifier flag, orchestrator looked at the PNG). Solo strip overflow is intended (design 5.4: strip horizontally scrollable).
+### U2 hub layouts API (R6.3 hub half): reviewed, verify with U3
+- Commits f57bebb, fixes acfbf41, 3762d82, 6d1e3f7.
+- Files: packages/hub/src/db/layouts.ts, src/routes/layouts.ts (new), src/db/migrations.ts (appended v6 layouts_slots; renumber at rebase over S9's v6), src/server.ts (registration + write-limiter closure), test/layouts.test.ts, test/migrations.test.ts.
+- Routes: GET /layouts?host=, PUT /layouts/:id, DELETE /layouts/:id; global bearer auth; route-level write limiter 2/s burst 10 per principal; spec opaque JSON, depth 16, 32 KiB; 200-row cap; builtin rows read-only and never hold hotkeys.
+- Review: sd-reviewer fix-then-merge x2, then clean; sd-security-reviewer gate pass all three rounds (MEDIUMs closed: depth stack overflow, write limiter, percent-encoded bypass). Three iterations used.
+- Decision: hotkey scope is per host pin; a pinned layout wins over an unpinned one on its host, exposed as `active_hotkey` on GET and PUT rows.
+- GET /layouts p95 1.56 ms in-process with 50 rows.
+- Deferred: pre-existing `/history` and `/ingest` raw-URL prefix checks in server.ts can be bypassed with percent-encoding (security LOW, predates this branch; S9 edits that file); hub-side spec validation looser than web's (LOW, web validates every row); Phase 7 Postgres notes (READ COMMITTED slot race, BIGINT as string) in db/layouts.ts.
+### U2b hub CORS for browser REST (R6.3): reviewed
+- Found by the U3 executor: the hub sent no CORS headers, so the web app (:5173) could not call /layouts on the hub (:8787). The web only used WS before this phase.
+- Commits 99dcb87, 91eefe9. Files: packages/hub/src/cors.ts (new), src/server.ts (one line before the bearer hook), src/config.ts (HUB_ALLOWED_ORIGINS validated at startup), test/cors.test.ts, test/config.test.ts, docs/HUB.md.
+- Behavior: on only when HUB_ALLOWED_ORIGINS is non-empty (compose default is the two localhost:5173 origins); exact-origin reflection, Vary: Origin, no credentials; preflight GET/HEAD/PUT/DELETE with Authorization/Content-Type on /layouts and read routes; /ingest and /stream never CORS-enabled.
+- Review: sd-reviewer merge; sd-security-reviewer gate pass twice.
+- Deferred to rebase: S9 adds GET /search and PATCH /projects/:id, /sessions/:id/project, /sessions/:id/phase; add them to the CORS scope when rebasing (sd-reviewer SHOULD). Optional LOWs: suggest the normalized origin in the config error; IPv6 and uppercase-host test cases.
+
+### U3 saved layouts client, hotkeys 1-9, Shift+C (R6.3, R6.5): reviewed, verify with U4
+- Commits 596ce83, 25a888a, ddd7807, b6e7afd, 756562e; fixes 9561744, 6b78e12, edcd31f, 9748caa.
+- Review: iteration 1 fix-then-merge (6 MAJOR, 5 MINOR, all fixed); iteration 2 merge.
+- Decision: the viewer host is an explicit Settings value (default none = only unpinned layouts answer 1-9); not inferred from session activity.
+- Decision: Shift+C rules: switching layout discards the snapshot; manual expand of one pane and resizes while compacted keep it (restore wins); the snapshot persists across reload; saving while compacted saves the pre-compact layout.
+- Switch timing (keydown to next frame with new panes): fake hub max 31-64 ms, live hub (real CORS, no relay) max 48.3 ms. One unreproduced full-suite failure of the per-sample 100 ms assertion.
+- Carry-over to U4: re-load after a write cancels an in-flight fetch; warm-up press before timing samples; keyboard test that reaches row 149's Open.
+### U4 auto-fit and pane assignment (R6.2, R6.6) plus carry-overs: reviewed
+- Commits c153425, fb1ad8a, 0548142, a858088; fix 939d2e1.
+- Auto-fit table: 0 strip, 1 solo, 2 pair, 3 focus (4th unassigned), 4 quad, 5 grid6 (6th unassigned), 6 grid6, 7+ grid6 with "+N more"; live = not ended/exited; assignment in attention order. Keys: a arrange, p by project, Enter/g picker on a focused session pane, Delete/Backspace unassign; native HTML5 drag.
+- Decision: dragging onto an occupied pane swaps; every spec change passes one choke point (commit) that dedupes session panes (first holder in reading order), including hub rows, localStorage, and the compact-all snapshot.
+- Review: iteration 1 fix-then-merge (1 BLOCKING duplicates on load paths, 4 SHOULD, 4 NIT, all fixed); iteration 2 merge.
+- Carry-over to U5: by-project edge fade too wide (hides the last visible column's header control); "N more columns" count assumes equal widths; PaneChrome selector should select only the name string.
+
+### U5 session content pane and six-pane trace (R6.4): in progress
+- Commits fd79685, afecdda (plus 15fc612 carrying U4's carry-overs).
+
+## Relaunch 2026-10-27
+- The sprint container stopped at 2026-10-27T19:18Z and killed the session mid-U5. No answer file; no docs/HANDOFF-*.md. Worktree held uncommitted U5 changes in e2e/R6.4.spec.ts, playwright.config.ts, ActivityList.tsx, store/activity.test.ts, store/board.ts. main moved to 2426e6d (PR #14) and origin/sprint/3-organize includes it; picked up at the final rebase.
+- Resumed: executor inspects the uncommitted diff, finishes or redoes U5, then review and verification as usual.
+
+## Relaunch 2 2026-10-27
+- The sprint container stopped again at 2026-10-27T20:43Z (second container restart, not a session fault). Worktree at 3fe6b60; the only uncommitted change was this log's U5 and relaunch-1 sections. U5 commits since relaunch 1: 934f6ce, 3fe6b60. No answer file; no docs/HANDOFF-*.md.
+- Resumed: executor confirms U5 state, then U5 review and verification as usual, then U6 close.
+
+## Relaunch 3 2026-10-28
+- The sprint container stopped at 2026-10-27T21:18Z (account usage limit), the third external restart. Worktree clean at 18b522a. No answer file; no docs/HANDOFF-*.md.
+- Resumed: executor state check, then U5 review and verification, then U6 close.
+- Stray untracked items in the main clone /work (not committed, not deleted, outside the worktree):
+  - .s10out1, .s10out2, .s10out3: output dirs of three R6.4 trace runs on 2026-10-27 (six-pane PNGs, trace json/json.gz, summary json).
+  - .tmp-screens-S10, s10shots: earlier R3.x screenshot copies (R3.2, R3.4, R3.5) from a baseline-regeneration check.
+  - diag-S10.mjs: ad-hoc Playwright diagnostic that logs transitionend events at 6 sessions x 20 updates/s (reduced motion).
+
+## Relaunch 4 2026-10-28
+- The sprint container stopped at 2026-10-28T15:37Z (external stop; API retries were failing), the fourth external restart. Worktree at d394eeb with uncommitted U5 changes (about 50 minutes of a delegation): e2e/R6.4.spec.ts, e2e/load/trace.ts, PaneBodies.tsx, SessionPaneBody.test.tsx, store/activity.test.ts, store/board.ts, trace.test.ts. No answer file; no docs/HANDOFF-*.md. S9 is merged into origin/sprint/3-organize (73252da).
+- Resumed: web executor inspects the diff and keeps and finishes it or discards it, then U5 review and verification, then U6 close. Stray items in /work (.s10out1-3, .tmp-screens-S10, s10shots, diag-S10.mjs) stay uncommitted.
+
+## Relaunch 5 2026-10-29
+- The sprint container stopped at 2026-10-28T23:31Z (external stop: orchestrator exited, sessions killed), the fifth external restart. Worktree clean at 3f5633c. No answer file; no docs/HANDOFF-*.md. origin/sprint/3-organize now at 7c5f3d4 (main 77a4fa1, PR #16 transcript fixtures merged in).
+- U5 state at stop: review iteration 1 fixed all 7 findings (f96ba58..616dccb); the attributed ABBA gate failed with 115-146 app-attributed drops per board window at the 500-row cap; iteration 2 fix commits 7fb61ac, 3f5633c landed. Iteration 2 of 3 continues.
+- Resumed: web executor confirms the fix against the gate, then U5 review, verification, U6 close. Stray untracked items in /work (.s10diag, .s10full, s10shots, diag-S10.mjs) stay uncommitted.
+- U5 iteration 2: executor re-ran the gate against 7fb61ac/3f5633c with no code change: board app drops 1,3,0,0 (was 115-146), still FAIL (non-app gaps 5.66 and 3.98 vsyncs; noisy second run worse). sd-reviewer fix-then-merge: 2 MAJOR (Layout re-rendered on every delta via projectDirsByAttention; no passing gate), 2 MINOR (diagnostic switches could write gate:true; no rebase-boundary row test).
+- U5 iteration 3: fc3cdb9, 0063d15 fixed all four (Layout re-renders per delta 24 -> 0; 500 web tests, typecheck, lint clean). Gate FAIL both runs: run 1 (load 8.9, disturbed) board app drops 150,7,5,1; run 2 (load 5.7) 15,6,0,0, 1 long task (156 ms wall, 2.1 ms CPU), non-app board 22 vs control 5+1. Evidence /state/3/screens/S10-gate3/, S10-gate3b/.
+- sd-reviewer iteration 3: code mergeable apart from the gate; BLOCKING = no passing gate run. 3 MINOR deferred (live case ignores gate:false at R6.4.spec.ts:817,826; per-pane Profiler assertion too loose; hidden-count test static). Trace reading: Paint/Layout/Layerize totals fall w2 > w3 > w6 > w7 for equal event counts; bad frames cluster 5-6 s into w2/w3; a 26 ms full GC from the seed fill lands in w3/w4. Opinion: host CPU steal plus seed-fill GC, not app steady state.
+- Three review iterations used with a BLOCKING finding open: stopped blocked per the loop. Question: /state/3/questions/S10.md. U6 (close) not started; R6.1-R6.3, R6.5, R6.6 reviewed, final verification and rebase still pending.
+
+## Relaunch 6 2026-10-29
+- The sprint container restarted at 2026-10-29T13:56Z (previous run also ended on a network outage, ENOTFOUND about 02:10Z). Worktree clean at a895ee1, pushed. origin/sprint/3-organize at 7c5f3d4.
+- Answer received: /state/3/answers/S10.md (conductor's call, option A, 2026-10-29T13:58Z).
+
+### Decisions made (relaunch 6)
+5. R6.4 gate stays unchanged (thresholds, ABBA order, attribution). R6.4 is marked "needs quiet-host confirmation" in VERIFY-P6.md with the latest evidence (board app-attributed drops 15, 6, 0, 0). The gate definition (option B) is not changed in this session. The conductor runs the gate on the laptop with other sprints idle: `pnpm --filter web exec playwright test e2e/R6.4.spec.ts`.
+6. U6 proceeds: fix the three deferred U5 MINORs, rebase onto origin/sprint/3-organize, full suite, final VERIFY-P6.md, docs/LAYOUTS.md, PR.
+
+### U5 close (R6.4)
+- Per answer A: U5 code reviewed mergeable (iteration 3); the attributed ABBA gate is unchanged and not re-run on this shared host. R6.4 is "needs quiet-host confirmation" in VERIFY-P6.md.
+
+### U6 close: fixes, rebase, evidence, docs
+- U6a: deferred U5 MINORs fixed (cef5983, replayed as 92fad86): live diagnostic never calls judgeGate; exact per-pane Profiler counts; hidden count with a project arriving after mount. sd-reviewer: merge. web 501 tests.
+- U6b: rebase onto origin/sprint/3-organize (7c5f3d4), 55 commits, stops resolved by the owning executor (web: App.tsx, Header.tsx, R3.7-live counts, playwright.config.ts, keys.ts, ui.ts, board.ts; hub: migrations.ts, server.ts, config.ts, cors.test.ts, migrations.test.ts).
+  - Decision 7: S9's inline CORS in server.ts is the single implementation; S10's packages/hub/src/cors.ts removed. allow-methods widened to GET, PUT, PATCH, DELETE for /layouts. S10's 403-on-disallowed-preflight behavior does not carry over (S9 falls through to bearer 401).
+  - Decision 8: layouts_slots migration renumbered v6 -> v9 after S9's v6-v8. Dev hub volumes created by the pre-rebase S10 hub (schema version 6 = layouts_slots) must be wiped before running the rebased hub; production unaffected (sd-reviewer MINOR, recorded here as the fix).
+- U6c: f6e6a5a hub test follow-ups for v9 (atlas.R5.1, search.fix2). hub 439 tests.
+- U6d: 06c9379 eight R3 baselines regenerated for the Projects and Layout header links (header-only plus run-to-run noise); 907531c docs/LAYOUTS.md. Playwright mock 78 pass 1 skip; live 6 pass 4 skip. Screens in /state/3/screens/S10/.
+- Review: sd-reviewer merge (3 MINOR: two LAYOUTS.md errors fixed in fb95d6d; dev volume note above). sd-security-reviewer gate pass (2 LOW: /ingest CORS exclusion on raw URL fixed in 5ae739a; global allow-methods recorded as a checkpoint below). Re-review of fb95d6d, 5ae739a: merge, gate pass.
+- Deferred findings (pre-existing, not from this branch): server.ts ingest-activity check and /history limiter compare the raw URL (percent-encoding bypass, LOW, needs bearer). Checkpoint: any new PUT or DELETE route must revisit the global CORS allow-methods (security LOW).
+- U6g: 4c9dd12 preset screenshots (7 x 1440x900, mock data only) in docs/images/layouts and the LAYOUTS.md gallery; VERIFY-P6 final 0d8d3cb, DoD evidence eca28ea. Verifier: R6.1, R6.2, R6.3, R6.5, R6.6 pass; R6.4 needs quiet-host confirmation. Note: the verifier's first live run included R6.4 by default (BOTH_SPECS) and failed on the loaded host (5, 12, 9, 13 app drops); not used as evidence, recorded in VERIFY-P6.md.
+- Decision 9: origin/p6/layouts (a895ee1) predates the rebase and force-push is forbidden. The rebased branch is joined to the old tip with `git merge -s ours origin/p6/layouts` (tree unchanged, old commits superseded) so the push is a fast-forward. The PR diff against sprint/3-organize equals the rebased tree.
+- U6h: PR #19 CI failed on root lint (LayoutMenu.tsx disable comment for a rule the root config lacks), root format:check (5 web files), and the R6.4 gate inside the mock smoke job on a shared runner. Fixes 885b415 (web: hook refactor, prettier, R6.4 honors SD_E2E_SKIP_PERF=1 like R3.6), 91c9a99 and 1310fbe (ci.yml: smoke skips perf; R6.4 runs report-only with continue-on-error in the mock and live jobs, mirroring R3.6). sd-reviewer: merge (1 MINOR fixed in 1310fbe). Gate definition unchanged; default run (env unset) still runs the gate.
+- Lesson: run the root `pnpm ci` chain (lint:root, format:check), not only `pnpm -r lint`, before pushing.

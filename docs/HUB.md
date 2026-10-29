@@ -68,7 +68,7 @@ Phase 7 runs linux/arm64. Nothing in the Dockerfile is amd64-only: the base tag 
 | `HUB_READ_RATE`         | `50`                            | Read limit, requests per second, for REST GETs and WS upgrades, keyed on the credential that authenticated (D-S3-14).                    |
 | `HUB_READ_BURST`        | `100`                           | Read bucket size.                                                                                                                        |
 | `HUB_MAX_WS_CLIENTS`    | `64`                            | Concurrent `/stream` clients. Further upgrades get 503.                                                                                  |
-| `HUB_ALLOWED_ORIGINS`   | empty                           | Comma-separated Origin allow-list for WS upgrades. When non-empty, an upgrade carrying any other Origin is refused (403). See security. |
+| `HUB_ALLOWED_ORIGINS`   | empty (compose: `http://localhost:5173,http://127.0.0.1:5173`) | Comma-separated Origin allow-list. Each entry must be `http(s)://host[:port]` with no path; `null` and `*` are rejected at startup. Gates WS upgrades (any other Origin is refused, 403) and turns on REST CORS for every route except `/ingest`. Empty disables CORS. See security. |
 | `HUB_MAX_CLOCK_SKEW_MS` | `86400000` (1 day)              | An envelope whose `ts` is more than this ahead of the hub clock refuses the whole batch (400 `too_far_in_future`; a warn log with counts only). Range 60000 (1 min) to 604800000 (7 days); outside it the hub does not start. |
 | `HUB_EVENT_RETENTION_DAYS` | `30` | Events older than this are folded into per-session baselines and deleted by compaction. |
 | `HUB_SAMPLE_RETENTION_DAYS` | `30` | Statusline samples older than this are deleted. |
@@ -201,7 +201,7 @@ R2.5 gate: `pnpm -F @sessiondeck/hub ws:harness` (in-process hub) or `HUB_URL=..
 
   Sessions created by a bogus host stay in `sessions` until retention exists; remove them with `DELETE FROM sessions WHERE host = '<bogus host>'`.
 
-- `HUB_ALLOWED_ORIGINS` is empty by default: a browser Origin is not checked, and only the token blocks cross-site WebSocket hijacking. When Cloudflare Access (or any other front) puts the hub on a public name in Phase 7, set `HUB_ALLOWED_ORIGINS` to the web UI origin(s), for example `https://deck.example.com`.
+- `HUB_ALLOWED_ORIGINS` is empty by default in the binary (the compose file sets `http://localhost:5173,http://127.0.0.1:5173`): a browser Origin is not checked, no CORS headers are sent, and only the token blocks cross-site WebSocket hijacking. When non-empty, the list also enables REST CORS on every route except `/ingest` (and `/stream`, which is WS): the exact matching Origin is reflected (never `*`), no credentials header, `Vary: Origin` on every reply, and an allowed-origin preflight answers 204 with methods GET, PUT, PATCH, DELETE, headers `authorization, content-type`, max-age 600 (rate limited, 429). A preflight from any other origin gets no CORS headers (401). When Cloudflare Access (or any other front) puts the hub on a public name in Phase 7, set `HUB_ALLOWED_ORIGINS` to the web UI origin(s), for example `https://deck.example.com`.
 - Request logs never contain the Authorization header or query strings.
 
 ## Replay and retention

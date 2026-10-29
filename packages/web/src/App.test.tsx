@@ -82,6 +82,20 @@ describe("shell", () => {
     expect(stored).toMatchObject({ hubUrl: "http://hub:8787", notifications: true });
   });
 
+  it("finding 2: the Viewer host is a setting, default none, saved with the rest", async () => {
+    useBoard.setState({
+      sessions: { s: createSnapshot({ session_id: "s", host: "lap", cwd: "/p", ts: 1 }) },
+    });
+    mount("/settings");
+    const sel = screen.getByRole("combobox", { name: "Viewer host" });
+    expect(sel).toHaveValue("");
+    await userEvent.selectOptions(sel, "lap");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(JSON.parse(window.localStorage.getItem("sd.settings")!)).toMatchObject({
+      viewerHost: "lap",
+    });
+  });
+
   it("every state renders glyph and word on the board", () => {
     const sessions = Object.fromEntries(
       SESSION_STATES.map((st, i) => [

@@ -47,7 +47,11 @@ body {
     animation: none;
   }
   * {
-    transition-duration: 0.01ms !important;
+    /* 0s, not 0.01ms: a 0.01ms transition on "all" still starts for every changed property and
+       fires transitionend, which put a second style/paint pass and thousands of events per second
+       under a live pane (R6.4 trace). No code listens for transitionend. Animations keep the tiny
+       duration because animationend handlers (the arrival glow) must still fire. */
+    transition-duration: 0s !important;
     animation-duration: 0.01ms !important;
   }
 }
@@ -200,4 +204,12 @@ body {
   .sd-drawer {
     animation: none;
   }
+}
+
+/* Layout pane geometry (design system 5.4): fixed, so data arriving never resizes a pane. */
+:root {
+  --pane-head-h: 28px;
+  --pane-gutter: 1px;
+  --strip-h: 36px;
+  --activity-row-h: 24px;
 }

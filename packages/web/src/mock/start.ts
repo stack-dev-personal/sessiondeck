@@ -33,6 +33,7 @@ export function startMock(store: UseBoundStore<StoreApi<BoardState>>): () => voi
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           root.dataset["replay"] = "done";
+          store.getState().setLoaded(true);
         }),
       );
     },
