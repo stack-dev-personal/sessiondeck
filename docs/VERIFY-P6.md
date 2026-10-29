@@ -1,30 +1,67 @@
 # Verify P6 (layouts)
 
-Branch p6/layouts, HEAD b21e533 (R6.1 rows verified at 29fe34e; R6.2, R6.3, R6.5, R6.6 rows at b21e533). Verified 2026-10-27 by sd-verifier.
+Final run for session S10. Branch p6/layouts, HEAD 955d182 (rebased on origin/sprint/3-organize 7c5f3d4). Run 2026-10-29 14:34 to 14:45 UTC by sd-verifier.
 
-| Requirement | Command | Output excerpt | Result | Evidence |
-|-------------|---------|----------------|--------|----------|
-| R6.1 "All seven builtin presets render correctly at both test resolutions and survive reload." (unit part: spec golden round-trip, presets, store persistence) | `pnpm -F @sessiondeck/web test` | `Test Files 25 passed (25)`, `Tests 289 passed (289)`; includes layout/spec.test.ts 41, store/layout.test.ts 8, layout/ops.test.ts 3, LayoutView.test.tsx 4, routes/Layout.test.tsx 16 | pass | terminal output, 2026-10-27 16:26 UTC |
-| R6.1 (browser part: 7 presets x 1440x900 and 2560x1440, plus keyboard menu and reload persistence) | `docker run --name sd-3-S10-verify-* --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.1'` (container removed afterward; mock build, VITE_MOCK=1, via playwright.config.ts webServer) | `Running 15 tests using 1 worker`, 14 preset/size tests plus `R6.1 menu is reachable by keyboard and a chosen preset survives reload`, `15 passed (41.0s)` | pass | /state/3/screens/S10/R6.1-<preset>-<w>x<h>.png (14 files, regenerated 16:27 UTC) |
-| R6.1 visual review of the 14 PNGs | read each image | No zero-size panes, no overlapping chrome, every pane has its 28 px header. Flags below. | pass, with flags | same PNGs |
-| R6.2 "Auto-fit picks the expected preset for 1-6 live sessions (table-driven test)." | `pnpm -F @sessiondeck/web test` (layout/autofit.test.ts it.each table; routes/Layout.assign.test.tsx arrange keys); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.2'` | Web unit: `Test Files 30 passed (30)`, `Tests 447 passed (447)`. e2e: R6.2 spec, 1-8 live cases (6, 7, 8 live -> grid6), by-project, reload persistence, all passed | pass | /state/3/screens/S10/R6.2-autofit-{0..8}.png, R6.2-by-project-mock.png; reviewed, no broken renders |
-| R6.3 "Saved layouts persist in the hub, switch in < 100 ms, hotkeys 1-9 work." | `pnpm -F @sessiondeck/hub test` (layouts.test.ts, cors.test.ts); `pnpm -F @sessiondeck/web test`; mock e2e `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.3'` run 3 times; live: `SD_E2E_PREFIX=sd-3-S10-verify SD_E2E_WORK_VOLUME=sprint-3-work SD_E2E_SCREENS_OUT=<dir> SD_E2E_ARGS=R6.3 packages/web/scripts/e2e-live.sh` (perf not skipped; it was not needed) | Hub: `Test Files 23 passed (23)`, `Tests 309 passed (309)`. Mock e2e x3, each `4 passed, 1 skipped` (the live describe self-skips): run1 max=23 ms first_after_reload=14 ms; run2 max=23 first_after_reload=26; run3 max=33 first_after_reload=12 (n=15 switches each, threshold 100 ms). Live against the real hub image: `1 passed` (4 mock describes skipped), max=24 p95=24 mean=10.6 first_after_reload=21.3 ms | pass | /state/3/screens/S10/R6.3-timing-run{1,2,3}.json, R6.3-timing-live.json, R6.3-timing-hub-down.json, R6.3-saved-{1,2,3}.png, R6.3-saved-{1,2,3}-live.png, R6.3-save-dialog.png, R6.3-manage-dialog.png, R6.3-viewer-host.png |
-| R6.4 | - | - | pending | - |
-| R6.5 "`Shift+C` compacts all panes; `Shift+C` again restores the previous layout exactly." | `pnpm -F @sessiondeck/web test` (store/layout.test.ts, routes/Layout.test.tsx Shift+C); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.5'` (run with R6.2 and R6.6, 16 passed) | e2e: `R6.5 Shift+C compacts all panes, Shift+C restores the layout exactly`, `restore is exact across a reload`, `manual expand keeps the restore; switching layout discards it` all passed; `16 passed (28.1s)` | pass | /state/3/screens/S10/R6.5-compacted.png, R6.5-restored.png, R6.5-restored-after-reload.png |
-| R6.6 "Drag-assign and keyboard-assign both work; a session can appear in at most one content pane." | `pnpm -F @sessiondeck/web test` (layout/ops.test.ts property test, store/layout.test.ts property test, routes/Layout.assign.test.tsx 29 tests); `docker run --name sd-3-S10-verify-<x> --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test R6.6'` | e2e: `drag a card onto pane 2, then the same session onto pane 3` and `keyboard only: Tab to a pane, Enter, filter, Enter` passed; `16 passed (28.1s)` | pass | /state/3/screens/S10/R6.6-drag.png, R6.6-keyboard.png, R6.6-invariant.png |
+Host: Linux 6.18.33.2-microsoft-standard-WSL2 (WSL2, Debian 12 container), AMD Ryzen AI 9 465 (20 logical CPUs), node v22.23.3, load average about 5.2 during the run (shared with other sprints). Playwright image mcr.microsoft.com/playwright:v1.63.0-noble. Test containers sd-3-S10-verify-* were removed afterwards (`docker ps -a | grep S10` is empty).
 
-## Visual flags for R6.1 (not covered by the spec's assertions)
+Result: 5 pass / 0 fail / 1 needs quiet-host confirmation (R6.4).
 
-- by-project (both sizes): cards are wider than their 180 px (1440) or 250 px (2560) columns and are clipped at the right edge; text such as the cost field and project name is cut off in most columns.
-- solo (both sizes): the Board pane is a single short row of cards that overflows horizontally, so only 3 of 8 sessions are visible at 1440 and 5 at 2560. Intended behaviour for "1 content + strip" is not stated in the phase doc.
+## Requirements
 
-Screenshots: solo, pair, quad, focus, grid6, by-project, strip, each at 1440x900 and 2560x1440.
+| ID | Requirement (phase doc) | Command | Key output | Verdict | Evidence |
+|----|-------------------------|---------|------------|---------|----------|
+| R6.1 | "All seven builtin presets render correctly at both test resolutions and survive reload." | web unit: `pnpm -r test`; mock e2e (see Playwright below) specs R6.1 | unit: `Test Files 46 passed (46)`, `Tests 589 passed (589)` (web). e2e: 14 preset/size tests plus `R6.1 menu is reachable by keyboard and a chosen preset survives reload`, all passed; whole mock suite `78 passed, 1 skipped` | pass | 14 PNGs `/state/3/screens/S10/R6.1-<preset>-<w>x<h>.png`, regenerated 14:36 to 14:38 UTC by this run |
+| R6.2 | "Auto-fit picks the expected preset for 1-6 live sessions (table-driven test)." | `npx vitest run src/layout/autofit.test.ts` (inside the full run); e2e R6.2 | `autoFit by count (R6.2)`: 0 live -> strip, 1 -> solo, 2 -> pair, 3 -> focus, 4 -> quad, 5, 6, 7, 8 -> grid6, all passed (15 tests in file). e2e `R6.2 0..8 live` and by-project and reload cases passed | pass | `packages/web/src/layout/autofit.test.ts`, `/state/3/screens/S10/R6.2-autofit-{0..8}.png` |
+| R6.3 | "Saved layouts persist in the hub, switch in < 100 ms, hotkeys 1-9 work." | `pnpm -r test` (hub 440, web 589); mock e2e R6.3; live `SD_E2E_PREFIX=sd-3-S10-verify SD_E2E_WORK_VOLUME=sprint-3-work SD_E2E_SCREENS_OUT=<dir> SD_E2E_SKIP_PERF=1 SD_E2E_ARGS="R3.1 R3.3 R3.9 R5.4-live R5.5-live R6.3" packages/web/scripts/e2e-live.sh` | mock: `R6.3 switch ms: n=15 max=23 p95=23 mean=17.8 first_after_reload=25`. live (real hub image): `R6.3 switch ms-live: n=15 max=21.9 p95=21.9 mean=12.6 first_after_reload=18.9`; `6 passed, 4 skipped` (the 4 are the mock-only describes) | pass | `/state/3/screens/S10/R6.3-saved-{1,2,3}[-live].png`, `R6.3-timing*.json` (limit 100 ms) |
+| R6.4 | (frame-rate requirement: six panes at 20 deltas/s, 0 dropped frames) | NOT RUN, per the user's decision (answer A, `/state/3/answers/S10.md`). Gate unchanged. | See "R6.4: needs quiet-host confirmation" below | needs quiet-host confirmation (not pass, not fail) | unit tests below; `/state/3/screens/S10-gate3b/R6.4-trace-summary-mock.json` |
+| R6.5 | "`Shift+C` compacts all panes; `Shift+C` again restores the previous layout exactly." | `npx vitest run src/store/layout.test.ts` (inside the full run); e2e R6.5 | `Shift+C compact all (R6.5) > compacts every pane, then restores the previous spec exactly (deep-equal)` passed, plus 7 sibling tests (reload, manual expand, resize, layout switch). e2e `R6.5 Shift+C compacts all panes, Shift+C restores the layout exactly`, `the restore is exact across a reload between the two presses`, `a manual expand keeps the restore...` passed | pass | `/state/3/screens/S10/R6.5-{compacted,restored,restored-after-reload}.png` |
+| R6.6 | "Drag-assign and keyboard-assign both work; a session can appear in at most one content pane." | web unit (ops.test.ts, layout.test.ts, Layout.assign.test.tsx) in the full run; e2e R6.6 | unit: `never puts a session in two panes`, `one session in at most one pane, whatever the source (R6.6)` passed. e2e `drag a card onto pane 2, then the same session onto pane 3` and `keyboard only: Tab to a pane, Enter, filter, Enter` passed | pass | `/state/3/screens/S10/R6.6-{drag,keyboard,invariant}.png` |
 
-## Flags for R6.2, R6.3, R6.5, R6.6 (not covered by the specs' assertions)
+## R6.4: needs quiet-host confirmation
 
-- `pnpm -F @sessiondeck/web typecheck` and `lint` exit 0.
-- R6.5 screenshots: all four panes are Unassigned, so the shots prove the toggle label (Compact all / Expand) and layout restore but do not show a populated pane collapsing; session content compaction is covered only by the unit tests.
-- R6.3 live screenshots show the restored layout named `u-3192444aff7d1` in the toolbar (the saved name appears only in the info line `Layout 2: Layout 2 Quad`); panes are unassigned.
-- R6.2 focus at 3 live sessions: the right-hand cards touch the pane edge and the cost line reaches the border; a 4th pane is left Unassigned by design.
-- R6.2 by-project: the third column is faded and the "Scroll for 3 more columns" chip is shown at 1440 wide; consistent with the R6.1 clipped-column flag being addressed.
-- R6.3 timing across the 3 mock runs: max 23, 23, 33 ms (limit 100); no flakiness seen. Test containers sd-3-S10-verify-* removed.
+Not a pass and not a fail. Per the user's decision (answer A) the trace gate was not run and not changed. Evidence short of the gate:
+
+- Unit tests, this run, `npx vitest run src/routes/Layout.render.test.tsx src/store/activity.test.ts` (4 files with the layout store and autofit tests: `Test Files 4 passed (4)`, `Tests 50 passed (50)`):
+  - `Layout re-renders (R6.4) > deltas that reorder the projects do not re-render the layout route` passed
+  - `... > with six filled panes a delta commits only the pane that owns it` passed
+  - `... > the hidden-project note appears when a live project has no column`, `... > a project that arrives after mount updates the hidden count; plain deltas do not re-render` passed
+  - `src/store/activity.test.ts` (9 tests, ring buffer cap, one `set()` per frame) passed
+- Latest gate evidence, `/state/3/screens/S10-gate3b/R6.4-trace-summary-mock.json` (written 2026-10-29 01:22 UTC, host load 5.7): board-20 app-attributed drops per board window 15 (w2), 6 (w3), 0, 0; previously 115 to 146. That run's gate verdict was still `pass: false` (window 2: 15 app drops, 1 long task, a non-app gap of 2.16 vsyncs vs limit 2.1; window 3: 6 app drops; non-app drops board 22 > control 5 + 1). Reviewer opinion in `docs/sessions/p6-layouts.md`: host CPU steal plus seed-fill GC, not steady-state app cost. Not proven.
+- Confirmation command, to run on an idle host (other sprints stopped):
+
+```
+pnpm --filter web exec playwright test e2e/R6.4.spec.ts
+```
+
+Process note: my first live run (`e2e-live.sh` without `SD_E2E_ARGS`) also executed the R6.4 live spec before I noticed that script includes it (`BOTH_SPECS` in playwright.config.ts). It failed (window 2: 5, window 3: 12, window 6: 9, window 7: 13 app-attributed drops; non-app gap 6.83 vsyncs) on this loaded host. That run's outputs went to a /tmp directory, not to /state, and are not used as evidence; the live suite was rerun with R6.4 excluded (above).
+
+## Suite counts
+
+| Command | Result |
+|---------|--------|
+| `pnpm -r test` | exit 0. contract 28 files, 1090 passed, 1 skipped. hub 31 files, 440 passed. probe 13 files, 332 passed, 1 skipped. scripts 27 files (1 skipped), 535 passed, 3 skipped. web 46 files, 589 passed |
+| `pnpm -r typecheck` | exit 0 (contract, probe, hub, web, scripts) |
+| `pnpm -r lint` | exit 0 (contract, probe, hub, web, scripts) |
+| Playwright, mock mode, all specs except R6.4: `docker run --name sd-3-S10-verify-mock --shm-size=1g -v sprint-3-work:/work -w /work/wt/S10/packages/web -e CI=1 -e HOME=/root -e SCREENS_DIR=/tmp/screens mcr.microsoft.com/playwright:v1.63.0-noble sh -c 'node node_modules/@playwright/test/cli.js test e2e/R3.1.spec.ts ... e2e/R6.6.spec.ts'` (every e2e/*.spec.ts but R6.4) | exit 0. `78 passed (1.8m)`, 1 skipped (R6.3 real-hub describe; live-only specs are in testIgnore in mock mode). Screens copied out with `docker cp`, container removed |
+| Live, `e2e-live.sh` with `SD_E2E_SKIP_PERF=1` and the six non-R6.4 live specs | exit 0. `6 passed`, 4 skipped. R3.1 max 116 ms; R3.3, R3.9, R5.4-live (warm typed-to-results median 61.6 ms), R5.5-live, R6.3 live passed. R3.6 (perf) skipped by SD_E2E_SKIP_PERF=1, not run |
+
+## Sprint integration checks for S10
+
+| Check | Result |
+|-------|--------|
+| Seven presets at 1440x900 and 2560x1440 | pass. 14 R6.1 PNGs exist in `/state/3/screens/S10/`; they were written by this run's R6.1 tests (generated 14:36 to 14:38 UTC, after run start 14:36:18Z) and copied into place at 14:38 UTC. Visual flags from the earlier run (by-project clipped cards, solo overflow) were not re-reviewed by eye this run |
+| Auto-fit table test | `src/layout/autofit.test.ts` > `autoFit by count (R6.2)` (it.each over 0..8 live): passed, 9 table rows plus 6 other tests, 15 of 15. e2e `R6.2 N live -> preset` for N = 0..8: passed |
+| Shift+C restore exact | `src/store/layout.test.ts` > `Shift+C compact all (R6.5) > compacts every pane, then restores the previous spec exactly (deep-equal)`: passed. e2e `R6.5 Shift+C compacts all panes, Shift+C restores the layout exactly`: passed |
+
+## Definition of done (phase-6-layouts.md)
+
+| Item | Status | Evidence |
+|------|--------|----------|
+| All R6.x pass; preset screenshots in `docs/LAYOUTS.md` | NOT MET yet: R6.1, R6.2, R6.3, R6.5, R6.6 pass; R6.4 needs quiet-host confirmation. `docs/LAYOUTS.md` exists and describes the presets (section "Presets (R6.1)") | this file; `docs/LAYOUTS.md`; the PNGs live in `/state/3/screens/S10/` (LAYOUTS.md describes them, it does not embed images; not checked line by line) |
+| You use a saved layout for a real multi-project evening and record what was missing in `docs/BOARD-FEEDBACK.md` | NOT MET: user task. The Phase 6 section 6 of the file is still "(fill in)" | `docs/BOARD-FEEDBACK.md` lines 95 to 96 |
+| `sd-reviewer` sign-off | MET for code (merge verdicts after the three U5 iterations, U6a and the final U6 review, with sd-security-reviewer gate pass); the sign-off does not cover the R6.4 gate, which stays open | `docs/sessions/p6-layouts.md` (U5 iteration 3, U6a, U6 review entries) |
+
+## Previous runs
+
+- 2026-10-27, HEAD b21e533, sd-verifier: R6.1 (15 e2e tests, 14 PNGs), R6.2, R6.3 (mock max 23, 23, 33 ms over 3 runs; live max 24 ms), R6.5, R6.6 passed; R6.4 pending. Web unit 447 passed then. Visual flags recorded then: by-project cards wider than their columns (clipped at the right edge), solo Board pane overflows horizontally with only 3 of 8 (1440) or 5 of 8 (2560) cards visible, R6.5 shots show only unassigned panes (compaction of populated panes covered by unit tests only), R6.2 focus right-hand cards touch the pane edge.
+- 2026-10-29 01:22 UTC, gate run `S10-gate3b`: R6.4 board-20 failed with the app-attributed drop counts above.
