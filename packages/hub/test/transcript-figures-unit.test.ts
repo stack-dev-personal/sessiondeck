@@ -45,7 +45,13 @@ describe("last_assistant_message cap mirrors the contract", () => {
 describe("readRow", () => {
   it("reads the facts of an assistant row", () => {
     const r = readRow(assistant({}), () => undefined);
-    expect(r).toEqual({ branch: "b1", model: "claude-x", contextTokens: 12, message: "hello" });
+    expect(r).toEqual({
+      branch: "b1",
+      model: "claude-x",
+      contextTokens: 12,
+      message: "hello",
+      effort: null,
+    });
   });
   it("ignores synthetic and sidechain rows (branch aside)", () => {
     const syn = assistant({ message: { model: "<synthetic>", content: [] } });

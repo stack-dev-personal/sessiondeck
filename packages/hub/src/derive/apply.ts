@@ -113,7 +113,9 @@ function ownedElsewhere(row: SubagentSnapshot): boolean {
  * R2.13. Fills one subagent row's model and tokens from its transcript figures (tokens = last
  * assistant row's input + cache_creation + cache_read, the same meaning as the subagentStatusLine
  * tokenCount). context_window stays as it is: the pricing table's public API does not expose
- * max_input_tokens and no window is hard-coded. effort is never set (decision 28). A row with no
+ * max_input_tokens and no window is hard-coded. effort is set only when the subagent's own
+ * assistant rows state a string `effort` (decision 28: measured, never estimated); the SubagentStop
+ * hook's effort.level is a session-wide field and is not used here. A row with no
  * matching agent_id is ignored, never created; a statusline-owned row is never touched.
  */
 export function applySubagentFigures(
@@ -121,21 +123,27 @@ export function applySubagentFigures(
   agentId: string,
   f: TranscriptFigures,
 ): SessionSnapshot {
-  if (f.model === null && f.contextTokens === null) return snap;
+  if (f.model === null && f.contextTokens === null && f.effort === null) return snap;
   const idx = snap.subagents.findIndex((r) => r.agent_id === agentId);
   const row = snap.subagents[idx];
   if (row === undefined || ownedElsewhere(row)) return snap;
   if (
     row.model === f.model &&
     row.tokens === f.contextTokens &&
+    (row.effort ?? null) === f.effort &&
     row.figures_source === "transcript"
   ) {
     return snap;
   }
+  // effort is written only when the transcript states it; the key stays absent otherwise so a
+  // replayed row and a live row serialize identically.
+  const { effort: _prior, ...rest } = row;
+  void _prior;
   const next: SubagentSnapshot = {
-    ...row,
+    ...rest,
     model: f.model,
     tokens: f.contextTokens,
+    ...(f.effort !== null ? { effort: f.effort } : {}),
     figures_source: "transcript",
   };
   return { ...snap, subagents: snap.subagents.map((r, i) => (i === idx ? next : r)) };

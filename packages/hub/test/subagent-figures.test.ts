@@ -57,12 +57,64 @@ describe("R2.13 headless subagents", () => {
         expect(row?.figures_source).toBe("transcript");
         // No public max_input_tokens, no hard-coded windows: stays null.
         expect(row?.context_window).toBeNull();
-        expect(row?.effort ?? null).toBeNull();
+        // Every row of the fixture transcripts states "effort":"medium" (decision 28: measured).
+        expect(row?.effort).toBe("medium");
         expect(row?.ended_at).not.toBeNull();
       }
       expect(h.app.hub.reducerExceptionCount()).toBe(0);
     });
   }
+
+  it("effort stays absent when the subagent's own rows state none (hook effort is not used)", async () => {
+    const h = await boot();
+    const seq = new EnvSeq();
+    seq.hook("SessionStart/01-startup.json");
+    seq.hook("SubagentStart/01-subagent.json", { agent_id: SUBAGENT_ID });
+    seq.transcript(
+      subagentFileLines(SUBAGENT_ID).map((l) => l.replaceAll('"effort":"medium"', '"x":1')),
+      60,
+      SUBAGENT_ID,
+    );
+    seq.hook("SubagentStop/01-subagent.json", { agent_id: SUBAGENT_ID });
+    await sendAll(h, seq);
+    const row = stored(h).subagents[0];
+    expect(row?.figures_source).toBe("transcript");
+    expect(row?.effort ?? null).toBeNull();
+    replay(h.store, quiet, { maxOpenSessionsPerHost: 1000 });
+    expect(stored(h).subagents[0]?.effort ?? null).toBeNull();
+  });
+
+  it("caps a huge subagent model, session model and effort at 120 characters", async () => {
+    const h = await boot();
+    const huge = "m".repeat(50_000);
+    const row = (extra: object, sidechain: boolean): string =>
+      JSON.stringify({
+        type: "assistant",
+        isSidechain: sidechain,
+        gitBranch: "b",
+        effort: "e".repeat(5000),
+        message: {
+          model: huge,
+          content: [{ type: "text", text: "t" }],
+          usage: { input_tokens: 1, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        },
+        ...extra,
+      });
+    const seq = new EnvSeq();
+    seq.hook("SessionStart/01-startup.json");
+    seq.hook("SubagentStart/01-subagent.json", { agent_id: SUBAGENT_ID });
+    seq.transcript([row({}, false)], 5);
+    seq.transcript([row({}, true)], 5, SUBAGENT_ID);
+    await sendAll(h, seq);
+    const s = stored(h);
+    expect(s.model?.id).toHaveLength(120);
+    expect(s.model?.display_name).toHaveLength(120);
+    expect(s.subagents[0]?.model).toHaveLength(120);
+    expect(s.subagents[0]?.effort).toHaveLength(120);
+    const live = s;
+    replay(h.store, quiet, { maxOpenSessionsPerHost: 1000 });
+    expect(stored(h)).toEqual(live);
+  });
 
   it("never creates a row for a transcript with no SubagentStart", async () => {
     const h = await boot();
@@ -156,6 +208,28 @@ describe("R2.13 subagentStatusLine wins", () => {
       tokens: 31_959,
       figures_source: "transcript",
     });
+  });
+
+  it("a partial task over transcript figures nulls the rest, live equals replay", async () => {
+    const h = await boot();
+    const seq = new EnvSeq();
+    hooks(seq);
+    lines(seq);
+    seq.subagents("subagentStatusLine/05-rows-1.json", [
+      { id: SUBAGENT_ID, contextWindowSize: 200_000 },
+    ]);
+    await sendAll(h, seq);
+    const live = stored(h);
+    const row = live.subagents.find((r) => r.agent_id === SUBAGENT_ID);
+    expect(row).toMatchObject({
+      model: null,
+      tokens: null,
+      context_window: 200_000,
+      figures_source: "subagent_statusline",
+    });
+    expect(row?.effort ?? null).toBeNull();
+    replay(h.store, quiet, { maxOpenSessionsPerHost: 1000 });
+    expect(stored(h)).toEqual(live);
   });
 
   it("replay equals live with the statusline in the middle of the transcripts", async () => {

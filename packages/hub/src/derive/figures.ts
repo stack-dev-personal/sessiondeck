@@ -11,6 +11,8 @@ export interface TranscriptFigures {
   branch: string | null;
   /** Last assistant text block, uncapped; applyFigures caps it. */
   message: string | null;
+  /** Subagent transcripts only: the newest string `effort` an assistant row states. */
+  effort: string | null;
   /** Highest line_no seen (any row kind), -1 when none. */
   maxLine: number;
 }
@@ -20,6 +22,7 @@ export const EMPTY_FIGURES: TranscriptFigures = {
   contextTokens: null,
   branch: null,
   message: null,
+  effort: null,
   maxLine: -1,
 };
 
@@ -28,20 +31,45 @@ interface RowFacts {
   model: string | null;
   contextTokens: number | null;
   message: string | null;
+  effort: string | null;
 }
 
 /** Claude Code writes this model on locally generated rows (errors, interrupts); not a real turn. */
 const SYNTHETIC_MODEL = "<synthetic>";
 const ASSISTANT_MARK = '"type":"assistant"';
+const BRANCH_MARK = '"gitBranch":';
 const BRANCH_RE = /"gitBranch":("(?:[^"\\]|\\.)*")/;
 
-const NO_FACTS: RowFacts = { branch: null, model: null, contextTokens: null, message: null };
+const NO_FACTS: RowFacts = {
+  branch: null,
+  model: null,
+  contextTokens: null,
+  message: null,
+  effort: null,
+};
+
+/** Longest model id / effort string kept (mirrors the contract's MODEL_ID_MAX_CHARS, not exported). */
+export const MODEL_ID_MAX_CHARS = 120;
+
+export function capId(s: string): string {
+  if (s.length <= MODEL_ID_MAX_CHARS) return s;
+  let cut = MODEL_ID_MAX_CHARS;
+  const last = s.charCodeAt(cut - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1;
+  return s.slice(0, cut);
+}
+
+function effortOf(row: Record<string, unknown>): string | null {
+  const e = row["effort"];
+  return typeof e === "string" && e !== "" ? capId(e) : null;
+}
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 function branchOf(raw: string): string | null {
+  if (!raw.includes(BRANCH_MARK)) return null;
   const m = raw.match(BRANCH_RE);
   if (m?.[1] === undefined) return null;
   try {
@@ -98,9 +126,10 @@ export function readRow(raw: string, onMalformed: () => void, sidechain = false)
   if (model === SYNTHETIC_MODEL) return { ...NO_FACTS, branch };
   return {
     branch,
-    model: model === "" ? null : model,
+    model: model === "" ? null : capId(model),
     contextTokens: usageTokens(message["usage"]),
     message: lastTextBlock(message["content"]),
+    effort: sidechain ? effortOf(row) : null,
   };
 }
 
@@ -124,6 +153,7 @@ export function foldForward(
       contextTokens: r.contextTokens ?? f.contextTokens,
       branch: r.branch ?? f.branch,
       message: r.message ?? f.message,
+      effort: r.effort ?? f.effort,
       maxLine: Math.max(f.maxLine, l.line_no),
     };
   }
@@ -135,7 +165,7 @@ export function foldForward(
  * (sidechain) states only a model and tokens; branch and message do not matter there.
  */
 export function isComplete(f: TranscriptFigures, sidechain = false): boolean {
-  if (sidechain) return f.model !== null && f.contextTokens !== null;
+  if (sidechain) return f.model !== null && f.contextTokens !== null && f.effort !== null;
   return f.model !== null && f.contextTokens !== null && f.branch !== null && f.message !== null;
 }
 
@@ -155,6 +185,7 @@ export function foldBackward(
       contextTokens: f.contextTokens ?? r.contextTokens,
       branch: f.branch ?? r.branch,
       message: f.message ?? r.message,
+      effort: f.effort ?? r.effort,
       maxLine: Math.max(f.maxLine, l.line_no),
     };
   }
