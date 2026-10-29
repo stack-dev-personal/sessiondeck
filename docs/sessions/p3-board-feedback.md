@@ -105,3 +105,13 @@ Fable estimate source: hub GET /history/daily already returns per-day model_brea
 
 ### Deferred findings
 - Root `pnpm -F sessiondeck exec vitest run` sweeps the repo without per-package configs and reports failures; not a gate (per-package runs are), noted in VERIFY-P3.md.
+
+### CI fix after PR #20 opened: 2815c8d (sd-executor-web)
+- First CI run failed: root `eslint .` has no react-hooks plugin, so two `react-hooks/exhaustive-deps` disable comments errored (useDisplayActivity.ts, useSessionHash.ts); live e2e R3.9 expected idle right after resync while R3.10 holds a just-idled card as working.
+- Fix: both hooks restructured with refs (no disable comments, behaviour identical); R3.9 live spec sets idle grace 0 with a comment citing R3.10. Review: merge. CI on 2815c8d: all check jobs (ubuntu and windows, node 22 and 24), e2e-web and e2e-web-live pass.
+
+### Decisions made
+- 2026-10-29 R3.9 live spec runs with grace 0: the hysteresis is intended; R3.9 proves the resync brings hub truth.
+
+### Deferred findings
+- [MINOR, reviewer, R3.10] packages/web/src/lib/display-activity.ts:70-73: for a session already tracked, an idle run that the browser learns about at resync starts at resync time, not at the hub's state_since, so after a long disconnect a card can show working up to one full grace after reconnect. Candidate fix: start the run from the clamped state_since as the first-sight branch does, with a unit test. Not a spec violation for a live link; deferred to the next web session.
