@@ -11,6 +11,7 @@ import {
   type RateLimitPeriod,
   type SnapshotSources,
   type SessionSnapshot,
+  type SubagentSnapshot,
   type Window,
 } from "@sessiondeck/contract";
 import { z } from "zod";
@@ -224,6 +225,12 @@ export function applyStatusLine(
   return { snapshot: s, sample };
 }
 
+function withoutTranscriptFigures(row: SubagentSnapshot): SubagentSnapshot {
+  const { effort: _effort, ...rest } = row;
+  void _effort;
+  return { ...rest, tokens: null, context_window: null, model: null };
+}
+
 const SubagentsPayloadSchema = z
   .object({
     tasks: z.array(
@@ -245,7 +252,9 @@ const SubagentsPayloadSchema = z
  * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored. A task that
  * states at least one figure makes the row statusline-owned (figures_source "subagent_statusline",
  * R2.13): the transcript deriver never touches it afterwards. A task that states none leaves a
- * transcript-filled row as it is, so a null never erases a measured figure.
+ * transcript-filled row as it is, so a null never erases a measured figure. A task that states
+ * only some figures over a transcript-filled row nulls the rest (and effort), so a replay, which
+ * applies the statusline before any transcript figure exists, agrees with live.
  */
 export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnapshot {
   if (e.host !== prev.host || e.session_id !== prev.session_id) return prev;
@@ -260,13 +269,20 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
       finite(t.contextWindowSize) !== null ||
       nonEmpty(t.model) !== null;
     if (!states && row.figures_source === "transcript") return row;
+    // A task that states something takes the whole row over: figures it leaves out were measured
+    // from the transcript, not stated by the statusline, so they become null (replay applies the
+    // statusline before any transcript figure exists and gets exactly that).
+    const base =
+      states && row.figures_source === "transcript"
+        ? withoutTranscriptFigures(row)
+        : row;
     return {
-      ...row,
+      ...base,
       ...(states ? { figures_source: "subagent_statusline" as const } : {}),
-      tokens: t.tokenCount === undefined ? row.tokens : finite(t.tokenCount),
+      tokens: t.tokenCount === undefined ? base.tokens : finite(t.tokenCount),
       context_window:
-        t.contextWindowSize === undefined ? row.context_window : finite(t.contextWindowSize),
-      model: t.model === undefined ? row.model : nonEmpty(t.model),
+        t.contextWindowSize === undefined ? base.context_window : finite(t.contextWindowSize),
+      model: t.model === undefined ? base.model : nonEmpty(t.model),
     };
   });
   return { ...prev, subagents, last_event_at: Math.max(prev.last_event_at, e.ts) };
