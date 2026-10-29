@@ -89,6 +89,8 @@ const PRIMER_MS = 4_000;
 const SETTLE_MS = 400;
 /** Deltas per session pushed before the run so every log is at the cap. R64_SEED=0 is a diagnostic: logs grow from empty. */
 const SEED_PER_SESSION = Number(process.env["R64_SEED"] ?? 700);
+/** Any R64_* variable makes the run a diagnostic: it is recorded as informational, never as the gate. */
+const DIAGNOSTIC = Object.keys(process.env).some((k) => k.startsWith("R64_"));
 const ABBA_FULL = [
   "control",
   "board",
@@ -553,7 +555,7 @@ test.describe("mock build, in-page delivery", () => {
     {
       name: "board-20",
       perSec: 20,
-      gate: true,
+      gate: !DIAGNOSTIC,
       modes: ABBA,
       perTick: (t: number) => [t % 6],
     },
@@ -694,6 +696,9 @@ test.describe("mock build, in-page delivery", () => {
           windowMs: WINDOW_MS,
           appWorkMs: APP_WORK_MS,
           scheduleTicks: ticks.length,
+          modes: c.modes,
+          seedPerSession: SEED_PER_SESSION,
+          diagnostic: DIAGNOSTIC,
         },
         fastestProbeMs,
         panes,
@@ -716,7 +721,7 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
   // messages, the page's WebSocket delivers them. 6 sessions over 2 hosts, 3 per host per tick:
   // 2 x 3 / 300 ms = 20/s. Control windows stop the generator and repaint a dot at 20/s.
   const LIVE_CASES = [
-    { name: "live-board-20", perSec: 20, tickMs: 300, gate: true, modes: ABBA },
+    { name: "live-board-20", perSec: 20, tickMs: 300, gate: !DIAGNOSTIC, modes: ABBA },
   ] as const;
 
   for (const c of LIVE_CASES) {
@@ -812,6 +817,7 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
         const verdict = judgeGate(wins.map((w) => w.gate));
         record(c.name, c.gate, wins, verdict, {
           verdictByWallTime: judgeGate(wins.map((w) => w.gateWall)),
+          definition: { modes: c.modes, diagnostic: DIAGNOSTIC },
           fastestProbeMs, failedPosts: stats.failedPosts, panes });
         saveBoardTraces(c.name, wins);
         expect(stats.failedPosts, "ingest posts failed").toBe(0);
