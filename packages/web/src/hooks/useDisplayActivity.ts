@@ -30,10 +30,12 @@ export function useDisplayActivity(
     new Map<string, { raw: SessionSnapshot; state: string; out: SessionSnapshot }>(),
   );
   const graceMs = graceSec * 1000;
-  const now = clock();
+  // Latest clock without making it a dependency: only a changed input or the timer recomputes.
+  const clockRef = useRef(clock);
+  clockRef.current = clock;
   const { rows, deadline } = useMemo(() => {
     void tick;
-    const map = deriveDisplay(tracked.current, sessions, now, graceMs);
+    const map = deriveDisplay(tracked.current, sessions, clockRef.current(), graceMs);
     tracked.current = map;
     const prevCache = shown.current;
     const cache = new Map<string, { raw: SessionSnapshot; state: string; out: SessionSnapshot }>();
@@ -50,8 +52,6 @@ export function useDisplayActivity(
     });
     shown.current = cache;
     return { rows: out, deadline: nextDeadline(map, graceMs) };
-    // `now` is read each render but only a changed input or the timer should recompute.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, graceMs, tick]);
   useEffect(() => {
     if (deadline === null) return;

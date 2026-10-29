@@ -30,6 +30,9 @@ export function useSessionHash(): void {
   const prevHash = useRef(hashId);
   const started = useRef(false);
   const pushed = useRef(false); // this hook pushed the history entry for the open popout
+  // Latest values for the selection effect, which must react to `selected` only.
+  const latest = useRef({ hashId, known });
+  latest.current = { hashId, known };
 
   useEffect(() => {
     const onHash = () => setHashId(parse(window.location.hash));
@@ -60,6 +63,7 @@ export function useSessionHash(): void {
       started.current = true;
       return;
     }
+    const { hashId: pending, known: pendingKnown } = latest.current;
     try {
       if (selected !== null) {
         const want = `${PREFIX}${encodeURIComponent(selected)}`;
@@ -71,7 +75,7 @@ export function useSessionHash(): void {
         prevHash.current = selected;
       } else if (window.location.hash.startsWith(PREFIX) && parse(window.location.hash) !== null) {
         // Selection null while a hash is pending for a not-yet-known session: leave it alone.
-        if (hashId !== null && !known) return;
+        if (pending !== null && !pendingKnown) return;
         if (pushed.current) window.history.back();
         else
           window.history.replaceState(null, "", window.location.pathname + window.location.search);
@@ -82,6 +86,5 @@ export function useSessionHash(): void {
     } catch {
       /* location unavailable */
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to selection only
   }, [selected]);
 }
