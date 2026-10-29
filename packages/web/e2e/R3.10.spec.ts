@@ -26,11 +26,19 @@ for (const theme of THEMES) {
 
       for (let i = 0; i < 3; i++) {
         await flap(page, "Stop");
+        await expect(row(page, FLAP_ID).getByTestId("session-card")).toHaveAttribute(
+          "data-state",
+          "idle",
+        );
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await expect(row(page, FLAP_ID)).toHaveAttribute("data-group", "working");
         expect(await order(page)).toEqual(before);
         await flap(page, "UserPromptSubmit");
+        await expect(row(page, FLAP_ID).getByTestId("session-card")).toHaveAttribute(
+          "data-state",
+          "working",
+        );
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await expect(row(page, FLAP_ID)).toHaveAttribute("data-group", "working");

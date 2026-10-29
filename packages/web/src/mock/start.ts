@@ -12,15 +12,18 @@ import {
 /**
  * URL switches (all optional):
  *   usage=none  no statusLine carries rate_limits: the usage widget shows its empty state
- *   flap=<ms>   gap between the flapping session's Stop and prompt (default 30000, 0 turns it off)
+ *   flap=<ms>   gap between the flapping session's Stop and prompt (default 30000; 0 turns it off;
+ *               with replay=fast the default is off, so e2e baselines cannot drift)
  */
 function paramsFromUrl(): { usage: boolean; flapMs: number } {
   try {
     const q = new URLSearchParams(window.location.search);
-    const flap = Number(q.get("flap") ?? DEFAULT_FLAP_MS);
+    const dflt = q.get("replay") === "fast" ? 0 : DEFAULT_FLAP_MS;
+    const raw = q.get("flap");
+    const flap = raw ? Number(raw) : dflt;
     return {
       usage: q.get("usage") !== "none",
-      flapMs: Number.isFinite(flap) && flap >= 0 ? flap : DEFAULT_FLAP_MS,
+      flapMs: Number.isFinite(flap) && flap >= 0 ? flap : dflt,
     };
   } catch {
     return { usage: true, flapMs: DEFAULT_FLAP_MS };

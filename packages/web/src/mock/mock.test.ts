@@ -254,7 +254,7 @@ describe("mock covers R3.10 to R3.12 (R3.13)", () => {
 
   it("the flapper alternates Stop and prompt every 30 s and stays in the working group", () => {
     fake();
-    window.history.pushState({}, "", "/board?replay=fast");
+    window.history.pushState({}, "", `/board?replay=fast&flap=${DEFAULT_FLAP_MS}`);
     const store = createBoardStore();
     startMock(store);
     vi.advanceTimersByTime(5000);
@@ -273,6 +273,18 @@ describe("mock covers R3.10 to R3.12 (R3.13)", () => {
     }
     expect(seen.slice(0, 4)).toEqual(["idle", "working", "idle", "working"]);
     expect(store.getState().sessions[id]!.subagents.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("replay=fast does not flap unless asked; an empty flap= is absent", () => {
+    fake();
+    window.history.pushState({}, "", "/board?replay=fast&flap=");
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const id = MOCK_DEEP_SESSION;
+    const before = store.getState().sessions[id]!.state;
+    vi.advanceTimersByTime(DEFAULT_FLAP_MS * 4);
+    expect(store.getState().sessions[id]!.state).toBe(before);
   });
 
   it("flapEnvelope builds Stop and UserPromptSubmit hooks for the deep session", () => {

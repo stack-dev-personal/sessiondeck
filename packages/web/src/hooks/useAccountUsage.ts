@@ -47,7 +47,6 @@ function larger(a: number | null, b: number | null): number | null {
 export interface AccountUsage {
   five_hour: Window | null;
   seven_day: Window | null;
-  captured_at: number | null;
 }
 
 interface Flat {
@@ -80,8 +79,9 @@ function selectFlat(sessions: Record<string, SessionSnapshot>): Flat {
 /**
  * Self-contained data hook for the UsageWidget (S15 can host the widget in its own window with
  * this alone). The store replaces whole snapshots, so the selection is compared by value
- * (used_pct, resets_at, captured_at): the result keeps its identity, and the widget does not
- * re-render, until one of those changes.
+ * (used_pct, resets_at): the result keeps its identity, and the widget does not re-render, until
+ * one of those changes. captured_at changes with every statusLine, so it is not part of this
+ * object; read it with useAccountUsageCapturedAt.
  */
 export function useAccountUsage(): AccountUsage | null {
   const x = useBoard(useShallow((s) => selectFlat(s.sessions)));
@@ -93,12 +93,17 @@ export function useAccountUsage(): AccountUsage | null {
     () => (x.hasSeven ? { used_pct: x.su, resets_at: x.sr } : null),
     [x.hasSeven, x.su, x.sr],
   );
-  const at = larger(x.hasFive ? x.fa : null, x.hasSeven ? x.sa : null);
   return useMemo(
-    () =>
-      five === null && seven === null
-        ? null
-        : { five_hour: five, seven_day: seven, captured_at: at },
-    [five, seven, at],
+    () => (five === null && seven === null ? null : { five_hour: five, seven_day: seven }),
+    [five, seven],
   );
+}
+
+/** When the shown windows were captured (a primitive: subscribers re-render only when it changes). */
+export function useAccountUsageCapturedAt(): number | null {
+  return useBoard((s) => {
+    const f = pickFreshestWindow(s.sessions, "five_hour");
+    const d = pickFreshestWindow(s.sessions, "seven_day");
+    return larger(f?.at ?? null, d?.at ?? null);
+  });
 }

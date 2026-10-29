@@ -54,8 +54,17 @@ function AgentCard({
         <span aria-hidden="true">{running ? "●" : "○"}</span>{" "}
         <span className="text-xs">{running ? "running" : "ended"}</span>
       </span>
-      <span data-slot="name" className="min-w-0 flex-1 truncate" title={a.agent_id}>
-        {a.agent_type} <span className="num text-fg-faint">{a.agent_id}</span>
+      <span
+        data-slot="name"
+        className="flex min-w-0 flex-1 items-baseline gap-s-1"
+        title={`${a.agent_type} ${a.agent_id}`}
+      >
+        <span data-slot="type" className="min-w-0 truncate">
+          {a.agent_type}
+        </span>
+        <span data-slot="id" className="num shrink-0 text-fg-faint">
+          {a.agent_id}
+        </span>
       </span>
       {node.unlinked ? (
         <span

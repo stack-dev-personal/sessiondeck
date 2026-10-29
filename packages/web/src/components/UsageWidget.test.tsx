@@ -1,7 +1,11 @@
 import { act, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
-import { pickFreshestRateLimits, useAccountUsage } from "../hooks/useAccountUsage";
+import {
+  pickFreshestRateLimits,
+  useAccountUsage,
+  useAccountUsageCapturedAt,
+} from "../hooks/useAccountUsage";
 import { STORAGE_KEYS } from "../lib/storage";
 import { useBoard } from "../store/board";
 import {
@@ -109,8 +113,8 @@ describe("captured_at", () => {
         b: snap("b", { seven_day: { used_pct: 2, resets_at: NOW }, captured_at: 0 }),
       },
     });
-    const { result } = renderHook(() => useAccountUsage());
-    expect(result.current?.captured_at).toBe(5);
+    const { result } = renderHook(() => useAccountUsageCapturedAt());
+    expect(result.current).toBe(5);
   });
 });
 
@@ -130,6 +134,24 @@ describe("useAccountUsage identity", () => {
     expect(result.current).not.toBe(first);
     expect(result.current?.five_hour?.used_pct).toBe(11);
     expect(result.current?.seven_day).toBe(first?.seven_day);
+  });
+});
+
+describe("useAccountUsage and captured_at", () => {
+  it("keeps identity when only captured_at changes, and reports it separately", () => {
+    const rl = (at: number) => ({
+      five_hour: { used_pct: 10, resets_at: NOW + 1000 },
+      seven_day: { used_pct: 5, resets_at: NOW + 2000 },
+      captured_at: at,
+    });
+    useBoard.setState({ sessions: { a: snap("a", rl(NOW)) } });
+    const usage = renderHook(() => useAccountUsage());
+    const at = renderHook(() => useAccountUsageCapturedAt());
+    const first = usage.result.current;
+    expect(at.result.current).toBe(NOW);
+    act(() => useBoard.setState({ sessions: { a: snap("a", rl(NOW + 5000)) } }));
+    expect(usage.result.current).toBe(first);
+    expect(at.result.current).toBe(NOW + 5000);
   });
 });
 
