@@ -61,7 +61,9 @@ export function startMock(store: UseBoundStore<StoreApi<BoardState>>): () => voi
   const flap = (name?: "Stop" | "UserPromptSubmit") => {
     const which = name ?? (nextStop ? "Stop" : "UserPromptSubmit");
     nextStop = which !== "Stop";
-    enqueue(flapEnvelope(which, Date.now(), ++n));
+    // +n keeps ts strictly increasing even when the clock is frozen (e2e), so the reducer applies it.
+    n += 1;
+    enqueue(flapEnvelope(which, Date.now() + n, n));
   };
   const schedule = () => {
     if (stopped || flapMs === 0) return;

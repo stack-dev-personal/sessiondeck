@@ -24,26 +24,27 @@ for (const theme of THEMES) {
       const group = await row(page, FLAP_ID).getAttribute("data-group");
       expect(group).toBe("working");
 
+      // The card shows the held (display) state; the popout header shows the raw one, which is
+      // what proves each Stop and prompt was applied.
+      await row(page, FLAP_ID).getByTestId("session-card").click();
+      const popout = page.getByTestId("session-popout");
+      await expect(popout.locator('[data-slot="state"]').first()).toHaveText("Working");
       for (let i = 0; i < 3; i++) {
         await flap(page, "Stop");
-        await expect(row(page, FLAP_ID).getByTestId("session-card")).toHaveAttribute(
-          "data-state",
-          "idle",
-        );
+        await expect(popout.locator('[data-slot="state"]').first()).toHaveText("Idle");
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await expect(row(page, FLAP_ID)).toHaveAttribute("data-group", "working");
         expect(await order(page)).toEqual(before);
         await flap(page, "UserPromptSubmit");
-        await expect(row(page, FLAP_ID).getByTestId("session-card")).toHaveAttribute(
-          "data-state",
-          "working",
-        );
+        await expect(popout.locator('[data-slot="state"]').first()).toHaveText("Working");
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r(0))));
         await expect(row(page, FLAP_ID)).toHaveAttribute("data-group", "working");
         expect(await order(page)).toEqual(before);
       }
+      await page.keyboard.press("Escape");
+      await expect(popout).toHaveCount(0);
       await page.screenshot({ path: evidence("R3.10", theme, vp.w) });
     });
   }
