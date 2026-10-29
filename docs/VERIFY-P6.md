@@ -57,7 +57,7 @@ Process note: my first live run (`e2e-live.sh` without `SD_E2E_ARGS`) also execu
 
 | Item | Status | Evidence |
 |------|--------|----------|
-| All R6.x pass; preset screenshots in `docs/LAYOUTS.md` | NOT MET yet: R6.1, R6.2, R6.3, R6.5, R6.6 pass; R6.4 needs quiet-host confirmation. `docs/LAYOUTS.md` exists and describes the presets (section "Presets (R6.1)") | this file; `docs/LAYOUTS.md`; the PNGs live in `/state/3/screens/S10/` (LAYOUTS.md describes them, it does not embed images; not checked line by line) |
+| All R6.x pass; preset screenshots in `docs/LAYOUTS.md` | PARTIAL: R6.1, R6.2, R6.3, R6.5, R6.6 pass; R6.4 needs quiet-host confirmation, so "All R6.x pass" stays open. Preset screenshots MET: commit 4c9dd12 added 7 PNGs (solo, pair, quad, focus, grid6, by-project, strip), each a valid 1440x900 PNG, and the Gallery in `docs/LAYOUTS.md` links all 7 and every link resolves (checked 2026-10-29) | `docs/LAYOUTS.md` section "Gallery"; `docs/images/layouts/R6.1-<preset>-1440x900.png` |
 | You use a saved layout for a real multi-project evening and record what was missing in `docs/BOARD-FEEDBACK.md` | NOT MET: user task. The Phase 6 section 6 of the file is still "(fill in)" | `docs/BOARD-FEEDBACK.md` lines 95 to 96 |
 | `sd-reviewer` sign-off | MET for code (merge verdicts after the three U5 iterations, U6a and the final U6 review, with sd-security-reviewer gate pass); the sign-off does not cover the R6.4 gate, which stays open | `docs/sessions/p6-layouts.md` (U5 iteration 3, U6a, U6 review entries) |
 
