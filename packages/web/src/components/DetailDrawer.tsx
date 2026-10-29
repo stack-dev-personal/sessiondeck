@@ -5,10 +5,11 @@ import { neutralize } from "../lib/neutralize";
 import { ARCHIVED_VOCAB, STATE_VOCAB } from "../lib/state-vocab";
 import { windowAt } from "../statusline-adapter";
 import { EMPTY_HISTORY, type Sample, type SessionHistory } from "../store/history";
-import { archiveOf, atlasOf } from "../atlas/types";
+import { archiveOf, atlasOf, isArchivedState } from "../atlas/types";
 import { MoveToProject } from "./MoveToProject";
 import { PhaseChip } from "./PhaseChip";
 import { ProjectLink } from "./ProjectLink";
+import { rowName } from "./ArchiveSummary";
 import { cardInfo } from "./SessionCard";
 import { Meter, windowModel } from "./Meter";
 
@@ -150,7 +151,9 @@ export function DetailDrawer({
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const [rawOpen, setRawOpen] = useState(false);
-  const { name, vocab } = cardInfo(s);
+  const info = cardInfo(s);
+  const name = rowName(s);
+  const vocab = isArchivedState(s) ? ARCHIVED_VOCAB : info.vocab;
   const archive = archiveOf(s);
 
   useEffect(() => {
@@ -434,7 +437,7 @@ export function DetailDrawer({
               <dt className="text-fg-muted">Branch</dt>
               <dd className="num m-0 break-all">{git.branch ? neutralize(git.branch) : "n/a"}</dd>
               <dt className="text-fg-muted">Worktree</dt>
-              <dd className="num m-0 break-all">{git.worktree ?? "n/a"}</dd>
+              <dd className="num m-0 break-all">{git.worktree ? neutralize(git.worktree) : "n/a"}</dd>
               <dt className="text-fg-muted">PR</dt>
               <dd className="num m-0">
                 {git.pr && prHref ? (

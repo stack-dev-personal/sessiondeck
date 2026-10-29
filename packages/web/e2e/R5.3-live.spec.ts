@@ -57,9 +57,11 @@ test("R5.3 live: merged and archived-only records, search opens the archived ses
   ]);
 
   // The REST shape the UI relies on: one record for the merged session, archive attached.
-  const row = await hubJson<{ state: string; archive?: { outcome: string } }>(
+  const row = await hubJson<{ state: string; last_prompt?: string; archive?: { outcome: string } }>(
     `/sessions/${merged}`,
   );
+  expect(row.state).toBe("ended");
+  expect(row.last_prompt).toBe("Scaffold the web shell");
   expect(row.archive?.outcome).toContain(heron);
   const project = (await hubJson<{ project_id: string }>(`/sessions/${merged}`)).project_id;
   const onlyRow = await hubJson<{ project_id: string; archive?: unknown }>(`/sessions/${only}`);
@@ -124,6 +126,9 @@ test("R5.3 live: merged and archived-only records, search opens the archived ses
   const drawer = page.getByTestId("detail-drawer");
   await expect(drawer).toHaveAttribute("data-session-id", merged);
   await expect(drawer.locator('[data-slot="archive-outcome"]')).toContainText(heron);
+  await expect(drawer).toContainText("Web shell scaffold");
+  await expect(drawer.getByText("Archived").first()).toBeVisible();
+  await page.screenshot({ path: shot("R5.3-drawer.png") });
   await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);
 

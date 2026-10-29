@@ -150,7 +150,6 @@ describe("ProjectView archived rows", () => {
     );
     const only = archived("o1", {}, { session_name: "Spool compaction" });
     const d = detail({ live: [session("s1")], archived: [merged, only, merged] });
-    d.archived = [merged, only];
     mount(d);
     const list = await screen.findByTestId("archived-list");
     const rows = within(list).getAllByTestId("project-session");

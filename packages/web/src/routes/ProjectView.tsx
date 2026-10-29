@@ -5,6 +5,7 @@ import { atlasApi } from "../atlas/api";
 import { COLOR_TOKENS, cssColor, isValidColor } from "../atlas/color";
 import { formatCount, formatHours, formatTotalCost } from "../atlas/format";
 import { ARCHIVED_CAP, mergeLive } from "../atlas/live";
+import { neutralize } from "../lib/neutralize";
 import { archiveOf, atlasOf, isArchivedState, type AtlasSession } from "../atlas/types";
 import { useLoad, useProjects } from "../atlas/useProjects";
 import { InlineEdit } from "../components/InlineEdit";
@@ -111,7 +112,7 @@ function SessionRow({
   const hasArchive = archiveOf(s) !== null;
   const branch = branchText(s);
   const wt = s.git.worktree;
-  const where = `${branch}${wt ? ` (worktree ${wt})` : ""}`;
+  const where = neutralize(`${branch}${wt ? ` (worktree ${wt})` : ""}`);
   return (
     <div
       className={ROW}
@@ -256,7 +257,14 @@ export function ProjectView() {
   // One record per session: a session shown live is never repeated in the archived list.
   const archived = useMemo(() => {
     const liveIds = new Set(live.map((s) => s.session_id));
-    return (d?.archived ?? []).filter((s) => !liveIds.has(s.session_id)).slice(0, ARCHIVED_CAP);
+    const seen = new Set<string>();
+    return (d?.archived ?? [])
+      .filter((s) => {
+        if (liveIds.has(s.session_id) || seen.has(s.session_id)) return false;
+        seen.add(s.session_id);
+        return true;
+      })
+      .slice(0, ARCHIVED_CAP);
   }, [d, live]);
   const notFound = detail.error !== null && d === null;
   const name = d?.project.name || d?.project.project_dir || "n/a";

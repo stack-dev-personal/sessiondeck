@@ -23,6 +23,15 @@ describe("neutralize", () => {
       expect(neutralize(`x${c}y`)).toMatch(/^x<U\+00[89][0-9A-F]>y$/);
   });
 
+  it("covers DEL, C0 controls, fillers, variation selectors and tag characters", () => {
+    expect(neutralize(`a${ch(0x7f)}b`)).toBe("a<U+007F>b");
+    expect(neutralize(`a${ch(0x1)}b`)).toBe("a<U+0001>b");
+    expect(neutralize(`a${ch(0xe0041)}b`)).toBe("a<U+E0041>b");
+    expect(neutralize(`a${ch(0xfe0f)}${ch(0x3164)}${ch(0x115f)}${ch(0xffa0)}b`)).toBe(
+      "a<U+FE0F><U+3164><U+115F><U+FFA0>b",
+    );
+  });
+
   it("leaves ordinary text, newlines, tabs and non-latin letters alone", () => {
     const s = "Spool compaction\n\tdone: café 日本語 🙂 -- RTL مرحبا";
     expect(neutralize(s)).toBe(s);
