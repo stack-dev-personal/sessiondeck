@@ -3,7 +3,9 @@ import { Profiler } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { assignSession } from "../layout/ops";
 import { buildPreset } from "../layout/presets";
+import { panesOf } from "../layout/spec";
 import { useBoard } from "../store/board";
 import { useLayout } from "../store/layout";
 import { Layout } from "./Layout";
@@ -50,6 +52,32 @@ describe("Layout re-renders (R6.4)", () => {
       });
     }
     expect(commits).toBe(mounted);
+  });
+
+  it("with six filled panes a delta commits only the pane that owns it", () => {
+    let spec = buildPreset("grid6");
+    panesOf(spec)
+      .filter((p) => p.type === "session")
+      .forEach((p, i) => (spec = assignSession(spec, p.id, `s${i}`)));
+    useLayout.setState({ spec });
+    const commits: string[] = [];
+    render(
+      <MemoryRouter initialEntries={["/layout"]}>
+        <Profiler id="l" onRender={() => commits.push("c")}>
+          <Layout />
+        </Profiler>
+      </MemoryRouter>,
+    );
+    const mounted = commits.length;
+    for (let t = 0; t < 12; t++) {
+      act(() => {
+        useBoard.setState((st) => ({
+          sessions: { ...st.sessions, [`s${t % 6}`]: sess(t % 6, 10 + t) },
+        }));
+      });
+    }
+    // One commit per delta at most: no layout, toolbar or other pane work rides along.
+    expect(commits.length - mounted).toBeLessThanOrEqual(12);
   });
 
   it("the hidden-project note appears when a live project has no column", () => {

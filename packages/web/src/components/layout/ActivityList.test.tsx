@@ -186,6 +186,24 @@ describe("rows keep their place when the log trims (R6.4)", () => {
     expect(parseFloat(li.style.top) + shift).toBe(idx * ROW_H);
   });
 
+  it("every mounted row sits at index * ROW_H on both sides of a rebase boundary", () => {
+    const check = (from: number) => {
+      const list = mounted()[0]!.parentElement as HTMLElement;
+      const shift = Number(/translateY\((-?[\d.]+)px\)/.exec(list.style.transform)![1]);
+      expect(mounted().length).toBeGreaterThan(0);
+      for (const li of mounted()) {
+        const idx = Number(li.getAttribute("data-row")) - from;
+        expect(parseFloat(li.style.top) + shift).toBe(idx * ROW_H);
+      }
+    };
+    const { rerender } = render(<ActivityList rows={rows(1020, 1020 + ACTIVITY_CAP)} />);
+    check(1020);
+    for (const from of [1021, 1022, 1023, 1024, 1025, 2047, 2048, 2049]) {
+      rerender(<ActivityList rows={rows(from, from + ACTIVITY_CAP)} />);
+      check(from);
+    }
+  });
+
   it("offsets stay small however many rows have passed (rebased)", () => {
     render(<ActivityList rows={rows(5_000_000, 5_000_000 + ACTIVITY_CAP)} />);
     for (const li of mounted()) expect(parseFloat(li.style.top)).toBeLessThan(2048 * ROW_H);
