@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type KeyboardEvent,
@@ -14,8 +15,13 @@ import { Meter, windowModel } from "./Meter";
 
 /** Geometry the drag math needs; the markup uses the same numbers via inline style. */
 export const WIDGET_SIZE = 176;
-export const CHIP_W = 168;
-export const CHIP_H = 32;
+/**
+ * Chip content math (px): padding 8*2 + border 2 + button 24 + ring/slack 6 = 48 tall;
+ * 8*2 + 2 + handle 32 + gap 4 + label button (16 + 2 + 17 chars of 11px mono ~ 112) = 184, plus slack.
+ */
+export const CHIP_W = 200;
+export const CHIP_H = 48;
+export const CHIP_MIN = { w: 184, h: 42 };
 export const MARGIN = 16;
 export const KEY_STEP = 8;
 export const KEY_STEP_BIG = 64;
@@ -108,6 +114,9 @@ export function UsageWidget() {
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   const posRef = useRef(pos);
   posRef.current = pos;
+  const lastDrag = useRef<Pos | null>(null);
+  const bodyId = useId();
+  const hintId = useId();
 
   useEffect(() => {
     const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
@@ -121,6 +130,7 @@ export function UsageWidget() {
 
   const moveTo = (p: Pos, commit: boolean) => {
     const next = clampPos(p, collapsed, window.innerWidth, window.innerHeight);
+    lastDrag.current = next;
     setState((s) => ({ ...s, pos: next }));
     if (commit) persist(next, collapsed);
   };
@@ -128,6 +138,7 @@ export function UsageWidget() {
   const onPointerDown = (e: PointerEvent<HTMLElement>) => {
     if (e.button !== undefined && e.button !== 0) return;
     drag.current = { dx: e.clientX - posRef.current.x, dy: e.clientY - posRef.current.y };
+    lastDrag.current = null;
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
   const onPointerMove = (e: PointerEvent<HTMLElement>) => {
@@ -139,7 +150,8 @@ export function UsageWidget() {
     if (!drag.current) return;
     drag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
-    persist(posRef.current, collapsed);
+    if (lastDrag.current) persist(lastDrag.current, collapsed);
+    lastDrag.current = null;
   };
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
     const step = e.shiftKey ? KEY_STEP_BIG : KEY_STEP;
@@ -173,7 +185,7 @@ export function UsageWidget() {
       type="button"
       data-testid="usage-handle"
       aria-label="Move usage widget"
-      aria-describedby="usage-handle-hint"
+      aria-describedby={hintId}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
@@ -190,7 +202,7 @@ export function UsageWidget() {
       type="button"
       data-testid="usage-collapse"
       aria-expanded={!collapsed}
-      aria-controls="usage-body"
+      aria-controls={collapsed ? undefined : bodyId}
       aria-label={label}
       onClick={toggle}
       className="num flex h-6 min-w-0 items-center rounded border border-border-control px-s-2 text-xs text-fg"
@@ -205,9 +217,9 @@ export function UsageWidget() {
       data-collapsed={collapsed ? "true" : "false"}
       aria-label="Account usage"
       style={{ position: "fixed", left: pos.x, top: pos.y, width: w, height: h }}
-      className="z-40 flex flex-col overflow-hidden rounded-lg border border-border bg-surface-2 p-s-2 text-sm text-fg"
+      className="z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-surface-2 p-s-2 text-sm text-fg"
     >
-      <span id="usage-handle-hint" className="sr-only">
+      <span id={hintId} className="sr-only">
         Arrow keys move, Shift for larger steps
       </span>
       {collapsed ? (
@@ -227,7 +239,7 @@ export function UsageWidget() {
               {toggleBtn("Collapse usage widget", "–")}
             </span>
           </div>
-          <div id="usage-body" className="mt-s-2 flex min-h-0 flex-1 flex-col justify-between">
+          <div id={bodyId} className="mt-s-2 flex min-h-0 flex-1 flex-col justify-between">
             {reported ? (
               <>
                 <section data-slot="five_hour" aria-label="5 hour window">

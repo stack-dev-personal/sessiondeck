@@ -6,6 +6,7 @@ import { STORAGE_KEYS } from "../lib/storage";
 import { useBoard } from "../store/board";
 import {
   CHIP_H,
+  CHIP_MIN,
   CHIP_W,
   KEY_STEP,
   KEY_STEP_BIG,
@@ -74,6 +75,49 @@ describe("pickFreshestRateLimits", () => {
     expect(got).toEqual(fresh);
     expect(pickFreshestRateLimits({ c: snap("c") })).toBeNull();
     expect(pickFreshestRateLimits({})).toBeNull();
+  });
+});
+
+describe("per-window freshness", () => {
+  it("takes each window from the freshest payload that has it", () => {
+    useBoard.setState({
+      sessions: {
+        a: snap("a", {
+          five_hour: { used_pct: 70, resets_at: NOW + 1000 },
+          seven_day: null,
+          captured_at: NOW - 100,
+        }),
+        b: snap("b", {
+          five_hour: { used_pct: 10, resets_at: NOW + 1000 },
+          seven_day: { used_pct: 33, resets_at: NOW + 1000 },
+          captured_at: NOW - 9000,
+        }),
+      },
+    });
+    render(<UsageWidget />);
+    expect(screen.getByLabelText("5 hour window")).toHaveTextContent("70%");
+    expect(screen.getByLabelText("7 day window")).toHaveTextContent("33%");
+  });
+});
+
+describe("UsageWidget thresholds", () => {
+  it.each([
+    [59, "ok"],
+    [60, "warn"],
+    [85, "warn"],
+    [86, "high"],
+  ])("5h and 7d at %i percent carry data-level %s", (pct, level) => {
+    const w = { used_pct: pct, resets_at: NOW + 1000 };
+    useBoard.setState({
+      sessions: { a: snap("a", { five_hour: w, seven_day: w, captured_at: NOW }) },
+    });
+    render(<UsageWidget />);
+    for (const label of ["5 hour window", "7 day window"]) {
+      expect(screen.getByLabelText(label).querySelector("[data-meter]")).toHaveAttribute(
+        "data-level",
+        level,
+      );
+    }
   });
 });
 
@@ -194,6 +238,15 @@ describe("UsageWidget placement", () => {
     });
   });
 
+  it("a click on the handle without movement does not persist a position", () => {
+    render(<UsageWidget />);
+    const h = screen.getByTestId("usage-handle");
+    const s = box();
+    fireEvent.pointerDown(h, { clientX: s.x, clientY: s.y, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(h, { pointerId: 1 });
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+  });
+
   it("drag cannot leave the viewport", () => {
     render(<UsageWidget />);
     const h = screen.getByTestId("usage-handle");
@@ -277,6 +330,22 @@ describe("UsageWidget placement", () => {
 });
 
 describe("UsageWidget collapse", () => {
+  it("chip constants meet the content-fit minimum and stay under the modal scrim", () => {
+    expect(CHIP_H).toBeGreaterThanOrEqual(CHIP_MIN.h);
+    expect(CHIP_W).toBeGreaterThanOrEqual(CHIP_MIN.w);
+    render(<UsageWidget />);
+    expect(screen.getByTestId("usage-widget").className).toContain("z-20");
+  });
+
+  it("aria-controls only points at an existing body", () => {
+    render(<UsageWidget />);
+    const btn = screen.getByTestId("usage-collapse");
+    const id = btn.getAttribute("aria-controls")!;
+    expect(document.getElementById(id)).not.toBeNull();
+    fireEvent.click(btn);
+    expect(screen.getByTestId("usage-collapse")).not.toHaveAttribute("aria-controls");
+  });
+
   it("collapses to a chip, expands back, and persists the state", () => {
     const first = render(<UsageWidget />);
     const btn = screen.getByTestId("usage-collapse");
@@ -307,7 +376,10 @@ describe("UsageWidget collapse", () => {
         }),
       },
     });
-    window.localStorage.setItem(KEY, JSON.stringify({ x: 1440 - CHIP_W, y: 868, collapsed: true }));
+    window.localStorage.setItem(
+      KEY,
+      JSON.stringify({ x: 1440 - CHIP_W, y: 900 - CHIP_H, collapsed: true }),
+    );
     render(<UsageWidget />);
     expect(screen.getByTestId("usage-collapse")).toHaveTextContent("5h 41% · 7d 63%");
     fireEvent.click(screen.getByTestId("usage-collapse"));
