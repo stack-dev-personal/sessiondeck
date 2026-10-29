@@ -99,3 +99,16 @@
 ### Decisions made (relaunch 6)
 5. R6.4 gate stays unchanged (thresholds, ABBA order, attribution). R6.4 is marked "needs quiet-host confirmation" in VERIFY-P6.md with the latest evidence (board app-attributed drops 15, 6, 0, 0). The gate definition (option B) is not changed in this session. The conductor runs the gate on the laptop with other sprints idle: `pnpm --filter web exec playwright test e2e/R6.4.spec.ts`.
 6. U6 proceeds: fix the three deferred U5 MINORs, rebase onto origin/sprint/3-organize, full suite, final VERIFY-P6.md, docs/LAYOUTS.md, PR.
+
+### U5 close (R6.4)
+- Per answer A: U5 code reviewed mergeable (iteration 3); the attributed ABBA gate is unchanged and not re-run on this shared host. R6.4 is "needs quiet-host confirmation" in VERIFY-P6.md.
+
+### U6 close: fixes, rebase, evidence, docs
+- U6a: deferred U5 MINORs fixed (cef5983, replayed as 92fad86): live diagnostic never calls judgeGate; exact per-pane Profiler counts; hidden count with a project arriving after mount. sd-reviewer: merge. web 501 tests.
+- U6b: rebase onto origin/sprint/3-organize (7c5f3d4), 55 commits, stops resolved by the owning executor (web: App.tsx, Header.tsx, R3.7-live counts, playwright.config.ts, keys.ts, ui.ts, board.ts; hub: migrations.ts, server.ts, config.ts, cors.test.ts, migrations.test.ts).
+  - Decision 7: S9's inline CORS in server.ts is the single implementation; S10's packages/hub/src/cors.ts removed. allow-methods widened to GET, PUT, PATCH, DELETE for /layouts. S10's 403-on-disallowed-preflight behavior does not carry over (S9 falls through to bearer 401).
+  - Decision 8: layouts_slots migration renumbered v6 -> v9 after S9's v6-v8. Dev hub volumes created by the pre-rebase S10 hub (schema version 6 = layouts_slots) must be wiped before running the rebased hub; production unaffected (sd-reviewer MINOR, recorded here as the fix).
+- U6c: f6e6a5a hub test follow-ups for v9 (atlas.R5.1, search.fix2). hub 439 tests.
+- U6d: 06c9379 eight R3 baselines regenerated for the Projects and Layout header links (header-only plus run-to-run noise); 907531c docs/LAYOUTS.md. Playwright mock 78 pass 1 skip; live 6 pass 4 skip. Screens in /state/3/screens/S10/.
+- Review: sd-reviewer merge (3 MINOR: two LAYOUTS.md errors fixed in fb95d6d; dev volume note above). sd-security-reviewer gate pass (2 LOW: /ingest CORS exclusion on raw URL fixed in 5ae739a; global allow-methods recorded as a checkpoint below). Re-review of fb95d6d, 5ae739a: merge, gate pass.
+- Deferred findings (pre-existing, not from this branch): server.ts ingest-activity check and /history limiter compare the raw URL (percent-encoding bypass, LOW, needs bearer). Checkpoint: any new PUT or DELETE route must revisit the global CORS allow-methods (security LOW).
