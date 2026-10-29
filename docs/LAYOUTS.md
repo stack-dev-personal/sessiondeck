@@ -44,6 +44,9 @@ Key `p` arranges by project (by-project preset).
 | Key | Action |
 |-----|--------|
 | `1` to `9` | switch to the saved layout in that slot (scope below) |
+| `l` | open or close the layout presets menu |
+| `s` | save the current layout (same as the Save button) |
+| `m` | open the saved layouts manager (same as the Saved: N button) |
 | `Shift+C` | compact all panes; press again to restore the previous layout exactly |
 | `a` | auto-fit by live session count |
 | `p` | arrange by project |
@@ -63,7 +66,7 @@ Every mouse action has a key. The layout menu supports Arrow keys, Home, End, Es
 
 ## Saved layouts and host pins (R6.3)
 
-Save with the layout menu: name, slot 1 to 9 (optional), pin to host (optional). Rows live in the hub, so every viewer and browser sees them. Builtin presets are read-only and never hold a slot.
+Save with `s` or the Save button, and manage with `m`: name, slot 1 to 9 (optional), pin to host (optional). Rows live in the hub, so every viewer and browser sees them. Builtin presets are read-only and never hold a slot.
 
 - Hotkey scope is per host pin. A layout pinned to host H answers its slot only for a viewer whose host is H. An unpinned layout answers everywhere. When both hold the same slot, the pinned one wins on its host. The hub reports the winner as `active_hotkey` on GET and PUT rows.
 - Viewer host: an explicit value in Settings ("Viewer host"). Default is none, so only unpinned layouts answer 1 to 9. It is stored in the browser, never inferred from session activity.
@@ -84,7 +87,7 @@ Limits (hub): spec is opaque JSON up to 32 KiB and depth 16; at most 200 rows; w
 
 ### CORS
 
-The web app (port 5173) calls the hub (port 8787) from the browser, so the hub must send CORS headers. Set `HUB_ALLOWED_ORIGINS` to the web origin(s), comma separated, for example `http://localhost:5173,http://127.0.0.1:5173` (the compose file does this) or `https://deck.example.com` behind Cloudflare. Empty disables CORS, and browser calls to `/layouts` then fail. `/ingest` and `/stream` are never CORS-enabled. Details: `docs/HUB.md`.
+The web app (port 5173) calls the hub (port 8787) from the browser, so the hub must send CORS headers. Set `HUB_ALLOWED_ORIGINS` to the web origin(s), comma separated, for example `http://localhost:5173,http://127.0.0.1:5173` (the compose file does this) or `https://deck.example.com` behind Cloudflare. Empty disables CORS, and browser calls to `/layouts` then fail. `/ingest` is never CORS-enabled. `/stream` is a WebSocket upgrade, gated by the Origin allow-list and bearer auth, not by CORS. Details: `docs/HUB.md`.
 
 ## Performance gate (R6.4)
 
