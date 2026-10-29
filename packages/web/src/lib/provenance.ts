@@ -46,7 +46,9 @@ function hasValue(s: SessionSnapshot, key: keyof SnapshotSources): boolean {
 
 /** Sentence for the card's keyboard hint, e.g. "Cost and context are from transcript"; null if none. */
 export function transcriptHint(s: SessionSnapshot): string | null {
-  const names = FIGURE_NAMES.filter(([k]) => fromTranscript(s, k) && hasValue(s, k)).map(([, n]) => n);
+  const names = FIGURE_NAMES.filter(([k]) => fromTranscript(s, k) && hasValue(s, k)).map(
+    ([, n]) => n,
+  );
   if (names.length === 0) return null;
   const list =
     names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;

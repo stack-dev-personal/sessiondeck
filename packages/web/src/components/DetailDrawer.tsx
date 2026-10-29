@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatReset,
   formatTokens,
+  shortModel,
 } from "../lib/format";
 import {
   COST_LABEL,
@@ -355,7 +356,7 @@ export function DetailDrawer({
                 <tbody>
                   {s.subagents.map((a) => (
                     <tr key={a.agent_id} data-agent={a.ended_at === null ? "active" : "ended"}>
-                      <td className="max-w-0 truncate">
+                      <td className="max-w-0 truncate" title={a.agent_type}>
                         <span aria-hidden="true" className="num">
                           {a.ended_at === null ? "● " : "○ "}
                         </span>
@@ -368,8 +369,13 @@ export function DetailDrawer({
                       <td className="num text-right">
                         {a.context_window === null ? "n/a" : formatTokens(a.context_window)}
                       </td>
-                      <td className="num pl-s-2">
-                        {a.model ?? "n/a"}
+                      <td
+                        className="num whitespace-nowrap pl-s-2"
+                        title={
+                          a.model ? `${a.model}${a.effort ? ` · ${a.effort}` : ""}` : undefined
+                        }
+                      >
+                        {a.model ? shortModel(a.model) : "n/a"}
                         {a.effort ? ` · ${a.effort}` : ""}
                       </td>
                       <td className="num text-right">

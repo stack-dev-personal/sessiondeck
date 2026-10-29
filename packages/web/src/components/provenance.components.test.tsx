@@ -123,13 +123,13 @@ describe("drawer provenance (R3.16)", () => {
     expect(fig.textContent).not.toMatch(/\d%/);
     expect(within(fig).getAllByText("from transcript").length).toBeGreaterThanOrEqual(3);
     const rows = document.querySelectorAll('[data-section="subagents"] tbody tr');
-    expect(rows[0]).toHaveTextContent("claude-sonnet-5-5");
+    expect(rows[0]).toHaveTextContent("Sonnet");
     expect(rows[0]).toHaveTextContent("medium");
     expect(rows[0]).toHaveTextContent("32k");
     expect(rows[0]?.querySelector('[data-source="transcript"]')).not.toBeNull();
     expect(rows[1]?.querySelector('[data-source="transcript"]')).toBeNull();
     expect(rows[1]).not.toHaveTextContent("medium");
-    expect(rows[0]).toHaveTextContent("claude-sonnet-5-5 · medium");
+    expect(rows[0]?.querySelector('[title="claude-sonnet-5-5 · medium"]')).not.toBeNull();
   });
 
   it("statusline drawer has no transcript text", () => {

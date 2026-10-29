@@ -328,6 +328,30 @@ describe("content", () => {
     expect(link).toHaveAttribute("href", "https://example.com/pr/42");
   });
 
+  it("subagent Type carries a title and Model shows the short name with the full id in a title", () => {
+    const s = snap("a", {
+      subagents: [
+        {
+          agent_id: "x",
+          agent_type: "general-purpose",
+          started_at: NOW - 120_000,
+          ended_at: null,
+          tokens: 1,
+          context_window: 2,
+          model: "claude-sonnet-5-5",
+          effort: "medium",
+        },
+      ],
+    });
+    render(<DetailDrawer session={s} now={NOW} onClose={() => {}} />);
+    const row = screen.getByRole("row", { name: /general-purpose/ });
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[0]).toHaveAttribute("title", "general-purpose");
+    expect(cells[3]).toHaveTextContent("Sonnet · medium");
+    expect(cells[3]).not.toHaveTextContent("claude-sonnet-5-5");
+    expect(cells[3]).toHaveAttribute("title", "claude-sonnet-5-5 · medium");
+  });
+
   it("a stale window shows n/a for value and countdown; a javascript: PR url is not linked", () => {
     const s = snap("a", {
       rate_limits: {

@@ -67,7 +67,7 @@ test("R3.16 headless card and drawer: figures, no percent, API-equivalent, acces
   const rows = drawer.locator('[data-section="subagents"] tbody tr');
   await expect(rows).toHaveCount(2);
   for (const [i, tokens] of ["32k", "26k"].entries()) {
-    await expect(rows.nth(i)).toContainText("claude-sonnet-5-5");
+    await expect(rows.nth(i)).toContainText("Sonnet");
     await expect(rows.nth(i)).toContainText("medium");
     await expect(rows.nth(i)).toContainText(tokens);
     await expect(rows.nth(i).locator('[data-source="transcript"]')).toHaveText(/from transcript/);
