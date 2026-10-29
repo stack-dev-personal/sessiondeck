@@ -212,3 +212,15 @@ Note rows (not pass/fail):
 | R2.4 load bench with --stress | not run | Deferred: quiet-host run still outstanding (as with the existing R2.4 laptop confirmation row) |
 
 Count: 6 pass / 0 fail / 0 unverifiable (R2.12 and R2.13 as a whole: pass).
+
+## S8d session close (d61edfd), 2026-10-29T14:44Z
+
+Diff check: `git diff -w --stat 73f2d7f..HEAD -- packages/hub packages/contract` is non-empty (4 files, +82/-26), but `git diff -w` shows only prettier line re-wrapping (commit 0aeb7ff: harness array/call wrapping, synth-spool wrapping, a union-type line in cost-filler.ts, a ternary joined onto one line in ingest/reduce.ts). No identifiers, conditions or logic changed; packages/contract untouched. Live-shape harness not re-run; the 73f2d7f run (compose project sd-2-s8d, port 28787, exit 0, "PASS: all required figures present") is cited above.
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R2.12 transcript-derived snapshot fields | `cd packages/hub && npx vitest run src/ingest/subagent-figures.test.ts src/ingest/transcript-figures.test.ts` (+ transcript-figures-review, -unit, replay, replay-review) | 25 passed (2 files); 50 passed (2 files); plus workspace `pnpm -r test` hub 323 passed 4 skipped at d61edfd | pass (percent-computed branch not exercised: no window data in pricing table; permitted unknown-window branch only) | 2026-10-29T14:44Z |
+| R2.13 subagent figures, statusline wins, replay equality | same run | subagent-figures.test.ts green; harness evidence from 73f2d7f (4 subagents, claude-sonnet-5-5, tokens filled, effort only from rows) | pass | 2026-10-29T14:44Z |
+| Typecheck, lint, format, full tests | run by orchestrator at d61edfd | all exit 0 | cited, not re-run | 2026-10-29T14:44Z |
+
+Count: 2 pass / 0 fail / 0 unverifiable.

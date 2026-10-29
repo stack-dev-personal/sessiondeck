@@ -267,3 +267,13 @@ Verified 2026-10-29 by sd-verifier. Requirement (phase-3-board.md:60): "Board la
 | R3.16 CI visual baselines (Playwright v1.63.0-noble, 34/34) | Not run by me | Executor-reported; pending the PR run | verified by CI (pending), not counted as pass | 2026-10-29 |
 
 Count: 6 pass / 0 fail / 1 pending CI (visual baselines).
+
+## S8d session close (d61edfd), 2026-10-29T14:44Z
+
+| Requirement | Command | Key output | Result | Timestamp |
+|---|---|---|---|---|
+| R3.16 marker, API-equivalent label, no estimates (unit/component) | `cd packages/web && npx vitest run src/lib/provenance.test.ts src/components/provenance.components.test.tsx src/components/SessionCard.test.tsx src/components/DetailDrawer.test.tsx` | 4 files, 90 passed; web workspace 236 passed at d61edfd | pass | 2026-10-29T14:44Z |
+| R3.16 e2e and screenshots | Playwright R3.16.spec.ts, 6 passed, run at d61edfd per prior row above | cited, not re-run | pass (prior evidence) | 2026-10-29T14:44Z |
+| R3.16 CI visual baselines | PR CI run | not run locally | verified by CI (pending the PR run), not counted as pass | 2026-10-29T14:44Z |
+
+Count: 2 pass / 0 fail / 0 unverifiable; 1 pending CI.

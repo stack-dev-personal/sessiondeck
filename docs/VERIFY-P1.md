@@ -182,3 +182,9 @@ Workspace checks on HEAD 5614ffb: `pnpm -F @sessiondeck/probe test`: 13 files, 3
 CI: .github/workflows/ci.yml runs `pnpm -F @sessiondeck/probe test:proc` (line 52) and `pnpm -F @sessiondeck/probe test:proc:exe hook-exe` (line 65). Not yet run on GitHub for this branch; the orchestrator adds CI run ids after push.
 
 Count: 5 pass / 1 fail / 0 unverifiable (R1.1 fails on a loaded host; R1.11 passes for the linux-x64 build, and its WSL2 install and bridge part is not applicable and not counted).
+
+## S8d session close (d61edfd), 2026-10-29T14:44Z
+
+| Item | Command | Result |
+|---|---|---|
+| S8d: no Phase 1 requirement touched (no packages/probe changes) | `git diff --stat origin/sprint/2-content..HEAD -- packages/probe` | empty output | 
