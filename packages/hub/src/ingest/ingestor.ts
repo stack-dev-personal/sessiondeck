@@ -2,7 +2,7 @@ import { type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { EventEmitter } from "node:events";
 import type { SampleRow, SessionRow, Store, TranscriptLineRow } from "../db/store.ts";
-import { applyFigures } from "../derive/apply.ts";
+import { applyFigures, applySubagentFigures, needsSubagentFigures } from "../derive/apply.ts";
 import { TranscriptDeriver } from "../derive/deriver.ts";
 import { SnapshotEngine, type SessionSource } from "./engine.ts";
 import { parseTranscriptPayload } from "./reduce.ts";
@@ -272,6 +272,39 @@ export class Ingestor {
       // Always fold, even with no session yet, so the cache never misses lines; applied once it exists.
       const figures = this.deriver.update(id, "", lines);
       engine.amend(id, (s) => applyFigures(s, figures));
+    }
+    this.deriveSubagentFigures(engine, transcripts);
+  }
+
+  /**
+   * R2.13. Subagent rows get model and tokens from their own transcript (agent_id link). Derived
+   * for every subagent transcript that grew in this batch, and for rows this batch touched that
+   * have no figure source yet (the SubagentStart row appearing after its lines). A transcript with
+   * no row never creates one; its figures sit in the cache until the row exists.
+   */
+  private deriveSubagentFigures(
+    engine: SnapshotEngine,
+    transcripts: ReadonlyMap<string, TranscriptDelta>,
+  ): void {
+    const work = new Map<
+      string,
+      { session: string; agent: string; lines: TranscriptDelta["lines"] }
+    >();
+    const add = (session: string, agent: string, lines: TranscriptDelta["lines"]): void => {
+      work.set(`${session}\u0000${agent}`, { session, agent, lines });
+    };
+    for (const d of transcripts.values())
+      if (d.agent_id !== "") add(d.session_id, d.agent_id, d.lines);
+    for (const snap of engine.dirtySnapshots()) {
+      for (const row of snap.subagents) {
+        if (needsSubagentFigures(row) && !work.has(`${snap.session_id}\u0000${row.agent_id}`)) {
+          add(snap.session_id, row.agent_id, []);
+        }
+      }
+    }
+    for (const w of work.values()) {
+      const figures = this.deriver.update(w.session, w.agent, w.lines);
+      engine.amend(w.session, (s) => applySubagentFigures(s, w.agent, figures));
     }
   }
 

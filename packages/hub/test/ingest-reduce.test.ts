@@ -154,6 +154,7 @@ describe("subagents and transcript", () => {
         tokens: 77,
         context_window: 1000,
         model: "m1",
+        figures_source: "subagent_statusline",
       },
     ]);
   });

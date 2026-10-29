@@ -242,7 +242,10 @@ const SubagentsPayloadSchema = z
 /**
  * subagentStatusLine rows refresh tokens, context window and model of the snapshot's existing
  * subagent rows (matched by agent_id = task id). Rows are created and closed by the hooks
- * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored.
+ * SubagentStart and SubagentStop (contract reducer); unmatched tasks are ignored. A task that
+ * states at least one figure makes the row statusline-owned (figures_source "subagent_statusline",
+ * R2.13): the transcript deriver never touches it afterwards. A task that states none leaves a
+ * transcript-filled row as it is, so a null never erases a measured figure.
  */
 export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnapshot {
   if (e.host !== prev.host || e.session_id !== prev.session_id) return prev;
@@ -252,8 +255,14 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
   const subagents = prev.subagents.map((row) => {
     const t = byId.get(row.agent_id);
     if (t === undefined) return row;
+    const states =
+      finite(t.tokenCount) !== null ||
+      finite(t.contextWindowSize) !== null ||
+      nonEmpty(t.model) !== null;
+    if (!states && row.figures_source === "transcript") return row;
     return {
       ...row,
+      ...(states ? { figures_source: "subagent_statusline" as const } : {}),
       tokens: t.tokenCount === undefined ? row.tokens : finite(t.tokenCount),
       context_window:
         t.contextWindowSize === undefined ? row.context_window : finite(t.contextWindowSize),

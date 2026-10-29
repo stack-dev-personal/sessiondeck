@@ -51,6 +51,8 @@ export class CostFiller {
   private running: Promise<void> = Promise.resolve();
   private closed = false;
   private deferredSince: number | undefined;
+  private lastRebuildCheck:
+    { key: { projects: number; index: object; version: number }; stale: boolean } | undefined;
   private readonly debounceMs: number;
   private readonly rebuildQuietMs: number;
   private readonly rebuildMaxDeferMs: number;
@@ -122,9 +124,25 @@ export class CostFiller {
 
   /** True when refresh() would throw the index away: a session's project_dir moved since indexing. */
   private rebuildPending(): boolean {
+    // The answer depends only on the sessions' project_dirs (store.projectsVersion) and on the
+    // indexed rows (index identity and version): without a change in either, reuse it instead of
+    // reading the whole sessions table and building a Map on every flush.
+    const index = this.usage.index;
+    const key = { projects: this.store.projectsVersion, index, version: index.version };
+    const last = this.lastRebuildCheck;
+    if (
+      last !== undefined &&
+      last.key.projects === key.projects &&
+      last.key.index === key.index &&
+      last.key.version === key.version
+    ) {
+      return last.stale;
+    }
     const current = new Map<string, string | null>();
     for (const r of this.store.listSessionProjects()) current.set(r.session_id, r.project_dir);
-    return this.usage.index.staleProjects(current);
+    const stale = index.staleProjects(current);
+    this.lastRebuildCheck = { key, stale };
+    return stale;
   }
 
   /** True when the flush should wait: a rebuild is due and ingest is busy (bounded by max defer). */

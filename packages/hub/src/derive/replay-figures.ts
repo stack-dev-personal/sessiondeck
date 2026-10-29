@@ -7,7 +7,7 @@ import type { SessionSnapshot } from "@sessiondeck/contract";
 import type { Store } from "../db/store.ts";
 import type { PricingTable } from "../pricing/pricing.ts";
 import { UsageCollector } from "../usage/usage.ts";
-import { applyCost, applyFigures } from "./apply.ts";
+import { applyCost, applyFigures, applySubagentFigures, needsSubagentFigures } from "./apply.ts";
 import { TranscriptDeriver, type DeriverLog } from "./deriver.ts";
 
 const USAGE_PAGE = 5000;
@@ -44,7 +44,14 @@ export function rederiveFromTranscripts(
   const deriver = new TranscriptDeriver(store, log);
   const out = new Map<string, SessionSnapshot>();
   for (const [id, snap] of snapshots) {
-    out.set(id, applyFigures(snap, deriver.rebuild(id, "")));
+    // Replay is offline: scan every stored line (no ingest cap), so it agrees with the live fold.
+    let next = applyFigures(snap, deriver.rebuild(id, "", Number.POSITIVE_INFINITY));
+    for (const row of snap.subagents) {
+      if (!needsSubagentFigures(row)) continue;
+      const f = deriver.rebuild(id, row.agent_id, Number.POSITIVE_INFINITY);
+      next = applySubagentFigures(next, row.agent_id, f);
+    }
+    out.set(id, next);
   }
   const needCost = [...out.values()].some((s) => s.sources?.cost !== "statusline");
   if (!needCost) return out;

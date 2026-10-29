@@ -92,7 +92,7 @@ describe("R2.12: a rebuild reads a bounded number of lines", () => {
       seq.envelopes,
     );
 
-    const spy = vi.spyOn(store, "listMainLinesBefore");
+    const spy = vi.spyOn(store, "listLinesBefore");
     const figures = new TranscriptDeriver(store, quiet).rebuild(HEADLESS_SESSION, "");
     const returned = spy.mock.results.reduce((n, r) => n + (r.value as unknown[]).length, 0);
     expect(returned).toBe(REBUILD_MAX_LINES);

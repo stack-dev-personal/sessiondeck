@@ -580,7 +580,8 @@
           "ended_at": null,
           "tokens": 148290,
           "context_window": 1000000,
-          "model": "claude-opus-5-5"
+          "model": "claude-opus-5-5",
+          "figures_source": "subagent_statusline"
         },
         {
           "agent_id": "ecbdc44c75303c77b",
@@ -589,7 +590,8 @@
           "ended_at": null,
           "tokens": 165628,
           "context_window": 1000000,
-          "model": "claude-opus-5-5"
+          "model": "claude-opus-5-5",
+          "figures_source": "subagent_statusline"
         }
       ],
       "tasks": {
@@ -662,7 +664,8 @@
           "ended_at": null,
           "tokens": 0,
           "context_window": 1000000,
-          "model": "claude-fable-5-1"
+          "model": "claude-fable-5-1",
+          "figures_source": "subagent_statusline"
         }
       ],
       "tasks": {

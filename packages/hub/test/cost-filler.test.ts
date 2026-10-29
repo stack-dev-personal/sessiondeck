@@ -16,15 +16,23 @@ interface Rig {
   refresh: ReturnType<typeof vi.fn>;
   transaction: ReturnType<typeof vi.fn>;
   errors: object[];
-  state: { stale: boolean; waitMs: number; now: number };
+  state: { stale: boolean; waitMs: number; now: number; projectsVersion: number };
+  projectScans: { n: number };
 }
 
 function rig(refreshImpl?: () => Promise<void>): Rig {
-  const state = { stale: false, waitMs: 0, now: 0 };
+  const state = { stale: false, waitMs: 0, now: 0, projectsVersion: 0 };
+  const projectScans = { n: 0 };
   const refresh = vi.fn(refreshImpl ?? (() => Promise.resolve()));
   const transaction = vi.fn((fn: () => void) => fn());
   const store = {
-    listSessionProjects: () => [],
+    listSessionProjects: () => {
+      projectScans.n++;
+      return [];
+    },
+    get projectsVersion() {
+      return state.projectsVersion;
+    },
     transaction,
     getSession: () => undefined,
     upsertSession: () => undefined,
@@ -32,7 +40,7 @@ function rig(refreshImpl?: () => Promise<void>): Rig {
   const usage = {
     refresh,
     memo: (_k: string, _t: unknown, compute: () => unknown) => compute(),
-    index: { staleProjects: () => state.stale, sessions: () => [] },
+    index: { staleProjects: () => state.stale, sessions: () => [], version: 1 },
   };
   const errors: object[] = [];
   const filler = new CostFiller(
@@ -50,7 +58,7 @@ function rig(refreshImpl?: () => Promise<void>): Rig {
       clock: () => state.now,
     },
   );
-  return { filler, refresh, transaction, errors, state };
+  return { filler, refresh, transaction, errors, state, projectScans };
 }
 
 beforeEach(() => {
@@ -130,5 +138,28 @@ describe("CostFiller shutdown", () => {
     await r.filler.idle();
     expect(r.transaction).not.toHaveBeenCalled();
     expect(r.errors).toEqual([]);
+  });
+});
+
+describe("CostFiller rebuild check", () => {
+  it("reads the sessions table only when store.projectsVersion changed", async () => {
+    const r = rig();
+    for (let i = 0; i < 5; i++) {
+      r.filler.onBatch(usageBatch(`s${i}`));
+      await r.filler.idle(); // forced flushes skip the check; use the timer path
+    }
+    r.projectScans.n = 0;
+    for (let i = 0; i < 5; i++) {
+      r.filler.onBatch(usageBatch(`t${i}`));
+      await vi.advanceTimersByTimeAsync(1001);
+      await r.filler.idle();
+    }
+    expect(r.projectScans.n).toBe(1); // first flush scans, the next four reuse the result
+    r.state.projectsVersion++;
+    r.state.stale = true;
+    r.filler.onBatch(usageBatch("u"));
+    await vi.advanceTimersByTimeAsync(1001);
+    await r.filler.idle();
+    expect(r.projectScans.n).toBe(2);
   });
 });

@@ -312,9 +312,19 @@ export class Store {
     beforeLine: number,
     limit: number,
   ): { line_no: number; raw: string }[] {
+    return this.listLinesBefore(sessionId, "", beforeLine, limit);
+  }
+
+  /** Newest-first page of one transcript stream ('' = main thread, else a subagent id). */
+  listLinesBefore(
+    sessionId: string,
+    agentId: string,
+    beforeLine: number,
+    limit: number,
+  ): { line_no: number; raw: string }[] {
     return this.stmt(
-      "SELECT line_no, raw FROM transcript_lines WHERE session_id = ? AND agent_id = '' AND line_no < ? ORDER BY line_no DESC LIMIT ?",
-    ).all(sessionId, beforeLine, limit) as { line_no: number; raw: string }[];
+      "SELECT line_no, raw FROM transcript_lines WHERE session_id = ? AND agent_id = ? AND line_no < ? ORDER BY line_no DESC LIMIT ?",
+    ).all(sessionId, agentId, beforeLine, limit) as { line_no: number; raw: string }[];
   }
 
   /**

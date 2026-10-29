@@ -75,7 +75,7 @@ function usageTokens(usage: unknown): number | null {
  * that looks like one but does not parse is reported through onMalformed and contributes nothing
  * but a branch. Never throws.
  */
-export function readRow(raw: string, onMalformed: () => void): RowFacts {
+export function readRow(raw: string, onMalformed: () => void, sidechain = false): RowFacts {
   const branch = branchOf(raw);
   if (!raw.includes(ASSISTANT_MARK)) return branch === null ? NO_FACTS : { ...NO_FACTS, branch };
   let row: unknown;
@@ -85,7 +85,11 @@ export function readRow(raw: string, onMalformed: () => void): RowFacts {
     onMalformed();
     return { ...NO_FACTS, branch };
   }
-  if (!isRecord(row) || row["type"] !== "assistant" || row["isSidechain"] === true) {
+  if (
+    !isRecord(row) ||
+    row["type"] !== "assistant" ||
+    (row["isSidechain"] === true && !sidechain)
+  ) {
     return { ...NO_FACTS, branch };
   }
   const message = row["message"];
@@ -109,11 +113,12 @@ export interface FoldResult {
 export function foldForward(
   prev: TranscriptFigures,
   lines: readonly { line_no: number; raw: string }[],
+  sidechain = false,
 ): FoldResult {
   let malformed = 0;
   let f = prev;
   for (const l of lines) {
-    const r = readRow(l.raw, () => malformed++);
+    const r = readRow(l.raw, () => malformed++, sidechain);
     f = {
       model: r.model ?? f.model,
       contextTokens: r.contextTokens ?? f.contextTokens,
@@ -125,8 +130,12 @@ export function foldForward(
   return { figures: f, malformed };
 }
 
-/** True once every figure has a value, so a backward scan can stop. */
-export function isComplete(f: TranscriptFigures): boolean {
+/**
+ * True once every figure has a value, so a backward scan can stop. A subagent transcript
+ * (sidechain) states only a model and tokens; branch and message do not matter there.
+ */
+export function isComplete(f: TranscriptFigures, sidechain = false): boolean {
+  if (sidechain) return f.model !== null && f.contextTokens !== null;
   return f.model !== null && f.contextTokens !== null && f.branch !== null && f.message !== null;
 }
 
@@ -134,12 +143,13 @@ export function isComplete(f: TranscriptFigures): boolean {
 export function foldBackward(
   acc: TranscriptFigures,
   linesDesc: readonly { line_no: number; raw: string }[],
+  sidechain = false,
 ): FoldResult {
   let malformed = 0;
   let f = acc;
   for (const l of linesDesc) {
-    if (isComplete(f) && f.maxLine >= 0) break;
-    const r = readRow(l.raw, () => malformed++);
+    if (isComplete(f, sidechain) && f.maxLine >= 0) break;
+    const r = readRow(l.raw, () => malformed++, sidechain);
     f = {
       model: f.model ?? r.model,
       contextTokens: f.contextTokens ?? r.contextTokens,

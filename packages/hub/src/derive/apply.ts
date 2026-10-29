@@ -1,6 +1,11 @@
 // R2.12. Writes transcript-derived figures into a snapshot without ever displacing a statusline
 // value. Every function returns the same object when nothing changes and never mutates its input.
-import { mergeSource, type SessionSnapshot, type SnapshotSources } from "@sessiondeck/contract";
+import {
+  mergeSource,
+  type SessionSnapshot,
+  type SnapshotSources,
+  type SubagentSnapshot,
+} from "@sessiondeck/contract";
 import type { TranscriptFigures } from "./figures.ts";
 
 /**
@@ -94,4 +99,49 @@ export function keepTranscriptFigures(
     s = { ...s, last_assistant_message: prev.last_assistant_message };
   }
   return s;
+}
+
+/** A subagent row whose figures a subagentStatusLine (or any non-transcript source) owns. */
+function ownedElsewhere(row: SubagentSnapshot): boolean {
+  if (row.figures_source === "subagent_statusline") return true;
+  if (row.figures_source === "transcript") return false;
+  // No source yet: a non-null figure can only have come from a statusline written before sources existed.
+  return row.model !== null || row.tokens !== null || row.context_window !== null;
+}
+
+/**
+ * R2.13. Fills one subagent row's model and tokens from its transcript figures (tokens = last
+ * assistant row's input + cache_creation + cache_read, the same meaning as the subagentStatusLine
+ * tokenCount). context_window stays as it is: the pricing table's public API does not expose
+ * max_input_tokens and no window is hard-coded. effort is never set (decision 28). A row with no
+ * matching agent_id is ignored, never created; a statusline-owned row is never touched.
+ */
+export function applySubagentFigures(
+  snap: SessionSnapshot,
+  agentId: string,
+  f: TranscriptFigures,
+): SessionSnapshot {
+  if (f.model === null && f.contextTokens === null) return snap;
+  const idx = snap.subagents.findIndex((r) => r.agent_id === agentId);
+  const row = snap.subagents[idx];
+  if (row === undefined || ownedElsewhere(row)) return snap;
+  if (
+    row.model === f.model &&
+    row.tokens === f.contextTokens &&
+    row.figures_source === "transcript"
+  ) {
+    return snap;
+  }
+  const next: SubagentSnapshot = {
+    ...row,
+    model: f.model,
+    tokens: f.contextTokens,
+    figures_source: "transcript",
+  };
+  return { ...snap, subagents: snap.subagents.map((r, i) => (i === idx ? next : r)) };
+}
+
+/** True when a subagent row has no figure source yet, so a derive attempt may fill it. */
+export function needsSubagentFigures(row: SubagentSnapshot): boolean {
+  return row.figures_source === undefined && !ownedElsewhere(row);
 }

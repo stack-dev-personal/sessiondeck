@@ -18,6 +18,15 @@ export const HEADLESS_LAST_MESSAGE =
   "# A15 is blocked: the Bun hook exe lands right on the 80 ms limit\n\nThe Bun-compiled hook is about twice as fast as the N<TRUNCATED 2809>";
 export const HEADLESS_HOST = "laptop";
 export const SUBAGENT_ID = "a0521282f787974c4";
+/** The four subagent files of the fixture: agent id, expected model and tokens of the last assistant row. */
+export const SUBAGENTS: { id: string; model: string; tokens: number }[] = [
+  { id: "a0521282f787974c4", model: "claude-sonnet-5-5", tokens: 31_959 },
+  { id: "a34c7010c6c881f7d", model: "claude-sonnet-5-5", tokens: 25_809 },
+  { id: "a83f43fff7f36e4ce", model: "claude-sonnet-5-5", tokens: 43_955 },
+  { id: "aad72b831771ef7f4", model: "claude-sonnet-5-5", tokens: 33_520 },
+];
+export const subagentFileLines = (id: string): string[] =>
+  lines(`transcripts/01-subagents/subagents/agent-${id}.jsonl`);
 
 const lines = (rel: string): string[] =>
   readFileSync(path.join(FIXTURES, rel), "utf8")
@@ -25,8 +34,7 @@ const lines = (rel: string): string[] =>
     .filter((l) => l !== "");
 
 export const mainLines = (): string[] => lines("transcripts/01-subagents/session.jsonl");
-export const subagentLines = (): string[] =>
-  lines(`transcripts/01-subagents/subagents/agent-${SUBAGENT_ID}.jsonl`);
+export const subagentLines = (): string[] => subagentFileLines(SUBAGENT_ID);
 
 export class EnvSeq {
   readonly envelopes: Envelope[] = [];
@@ -72,6 +80,15 @@ export class EnvSeq {
     });
   }
 
+  /** A subagentStatusLine envelope: the fixture's payload with its task ids/figures replaced. */
+  subagents(file: string, tasks: Record<string, unknown>[]): Envelope {
+    return this.push("subagents", {
+      ...(readJson(file) as Record<string, unknown>),
+      session_id: this.session,
+      tasks,
+    });
+  }
+
   /** Transcript lines in chunks of `size`, as the probe tailer sends them. */
   transcript(all: readonly string[], size: number, agent?: string, from = 0): Envelope[] {
     const out: Envelope[] = [];
@@ -95,6 +112,29 @@ export function headlessSession(host = HEADLESS_HOST): EnvSeq {
   s.hook("UserPromptSubmit/01-sample.json");
   s.transcript(mainLines(), 40);
   s.transcript(subagentLines(), 40, SUBAGENT_ID);
+  s.hook("Stop/01-after-ask.json");
+  return s;
+}
+
+/**
+ * Headless session with SubagentStart/Stop hooks for the fixture's four subagents, re-keyed to
+ * their agent ids, and every transcript file. `hooksFirst` puts the hooks before the lines.
+ */
+export function headlessWithSubagents(hooksFirst = true): EnvSeq {
+  const s = new EnvSeq();
+  s.hook("SessionStart/01-startup.json");
+  s.hook("UserPromptSubmit/01-sample.json");
+  const starts = (): void => {
+    for (const a of SUBAGENTS) s.hook("SubagentStart/01-subagent.json", { agent_id: a.id });
+  };
+  const stops = (): void => {
+    for (const a of SUBAGENTS) s.hook("SubagentStop/01-subagent.json", { agent_id: a.id });
+  };
+  if (hooksFirst) starts();
+  s.transcript(mainLines(), 60);
+  for (const a of SUBAGENTS) s.transcript(subagentFileLines(a.id), 60, a.id);
+  if (!hooksFirst) starts();
+  stops();
   s.hook("Stop/01-after-ask.json");
   return s;
 }
