@@ -1,6 +1,6 @@
 # VERIFY P5 (Atlas), S9 session-end verification
 
-Branch p5/atlas-core, HEAD acd2556 (rebased on origin/sprint/3-organize 18a5871), clean tree. Run 2026-10-27 (20:18Z to 20:40Z). Node v22.23.3, Linux 6.18.33.2-microsoft-standard-WSL2 (WSL2), AMD Ryzen AI 9 465 (20 threads). R5.2 and R5.3 belong to S9b.
+Branch p5/atlas-core, HEAD acd2556 (rebased on origin/sprint/3-organize 18a5871), clean tree. Run 2026-10-27 (20:18Z to 20:40Z). Node v22.23.3, Linux 6.18.33.2-microsoft-standard-WSL2 (WSL2), AMD Ryzen AI 9 465 (20 threads). R5.2 and R5.3 verified by S9b below (2026-10-29, branch p5/archive-import, HEAD 6886b5b, rebased on origin/sprint/3-organize 7c5f3d4).
 
 ## Requirements
 
@@ -10,7 +10,8 @@ Branch p5/atlas-core, HEAD acd2556 (rebased on origin/sprint/3-organize 18a5871)
 | R5.4 Search returns results in < 100 ms for your data size; palette navigates with keyboard only. | `pnpm -F @sessiondeck/hub test:bench`; `node packages/hub/scripts/bench-search.mjs`; mock `e2e/R5.4.spec.ts` in mcr.microsoft.com/playwright:v1.63.0-noble (sd-3-S9-reverify-pw); web test, typecheck, lint, lint:root | HEAD 637bbc2: web test 302 passed (30 files), typecheck, lint, lint:root all exit 0. test:bench 1 passed, worst class p95 common-multi 41.68 ms (max 77.50). bench-search (n=400, 2000 sessions): worst class p95 common-multi 34.16 ms, overall route within limit; `PASS route p95 < 100 ms overall and per class`. Mock R5.4: 7 passed (keyboard-only). Live R5.4-live not re-run (last passed at acd2556: tookMs max 1.18 ms, typed-to-results median 55.4 ms) | pass | 2026-10-27T21:12Z |
 | R5.5 Phase labels are editable inline and survive hub restart. | mock `e2e/R5.5.spec.ts`; live R5.5-live (hub container restarted by the host poller) | Mock R5.5: 2 passed. Live R5.5-live: 1 passed (manual label survives hub restart and reload). R5.5-live.png viewed: row shows "Hardening 35641 manual" on the live project view. R5.5.png exists | pass | 2026-10-27T20:40Z |
 | R5.6 Project view shows: live sessions, last 20 archived, totals (sessions, hours, cost from history), active branches. | web vitest ProjectView.test.tsx (13), hub atlas.R5.6; mock `e2e/R5.6.spec.ts` | Mock R5.6: 3 passed (dark, light, phases and projects list; axe none on all). R5.6-projects.png viewed: 8 projects, named, colored, session and live counts. R5.6.png and R5.6-light.png exist (dated 19:55, not regenerated: the mock container writes screenshots to its /tmp, not copied out; the spec passed again) | pass | 2026-10-27T20:30Z |
-| R5.2, R5.3 | n/a | belong to S9b | S9b | n/a |
+| R5.2 Archive import is idempotent and incremental by file mtime; 293 harness files import in under 10 s. | `node packages/probe/scripts/bench-archive.mjs`; `node packages/probe/scripts/harness-archive-hub.mjs` (real hub image in Docker, container sd-3-S9b-hub); probe `test/archive.test.ts`; hub `test/archive.R5.3.test.ts` | Bench 293 files: run 1 shipped=293 in 572 ms (limit 10000), run 2 shipped=0 (33 ms), run 3 after touching 5 files shipped=5. Harness 22 vault fixtures: run1 shipped 22 in 421 ms, run2 shipped 0, touched file shipped exactly 1 (only that row changed), fresh index re-ship of 22 left rows byte-identical and events unchanged (23). 20 `ok`, 0 `not ok`, `RESULT pass`. probe archive.test.ts 100 passed; hub archive.R5.3 27 passed (incl. 22 goldens import twice, no change) | pass | 2026-10-29T01:38Z |
+| R5.3 A live session and its archive entry merge into one record after the harness writes the capture. | harness-archive-hub.mjs (both orders); hub `test/archive.R5.3.test.ts`; web `Archive.test.tsx`, `neutralize.test.ts`; Playwright summaries /state/3/screens/S9b/summary-mock.json and summary-live.json | Harness c1 live first and c2 archive first: `records=1`, live and archive fields present, row state archived, rescan ships 0; backlog-regress checks false. Hub 27 passed. Web 19 passed (Archive 12 + neutralize). summary-mock.json R5.3 pass; summary-live.json R5.3 pass ("merged and archived-only records, search opens the archived session"); screenshots R5.3*.png, R5.3-drawer.png present. Playwright not re-run (existing evidence from S9b) | pass | 2026-10-29T01:40Z |
 
 ## Full suite (repo root)
 
@@ -44,3 +45,24 @@ Skips (not failures): scripts/test/install-shortpath.test.ts (2 tests) is Window
 All sd-3-S9-final* containers, network and image removed (docker ps, network ls, images checked: none left). Nothing committed.
 
 Re-verify run: container sd-3-S9-reverify-pw was run with --rm; no containers, networks or volumes created by it remain.
+
+## S9b addendum (R5.2, R5.3), 2026-10-29
+
+Node v22.23.3, Linux 6.18.33.2-microsoft-standard-WSL2, AMD Ryzen AI 9 465 (20 threads). Docker image sd-3-s9b-hub:dev built by the harness (cached, 90 s), container sd-3-S9b-hub; removed after the run (no s9b containers, networks or images remain).
+
+Full suite at 6886b5b:
+
+| Command | Result |
+|---|---|
+| `pnpm -r test` | exit 0. contract 29 files, 1145 passed, 1 skipped; hub 31 files, 446 passed; probe 14 files, 432 passed, 1 skipped; scripts 27 files passed + 1 skipped file, 535 passed, 3 skipped; web 32 files, 322 passed |
+| `pnpm -r typecheck` | exit 0 |
+| `pnpm -r lint` | exit 0 |
+| `pnpm fixture:leak` (scripts) | `PASS: no leaks found` (310 files, 44 transcripts, 14545 rows, 0 findings) |
+
+Sprint integration check "20 fixture vault files import idempotently in under 10 s; live record merges with its archive by session_id": pass (22 fixtures, 421 ms, both merge orders, harness above). Evidence file from the S9b run: /state/3/screens/S9b/R5.2-R5.3-harness.txt (615 ms, same result).
+
+Notes:
+- summary-live.json lists R3.6 (perf) as fail. Phase 3, out of scope for this verification; recorded only.
+- Real vault paths per host (probe.json) are laptop confirmation and not verifiable here. Fixtures are synthetic (D-S9b-2), so the 293-file bench measures importer speed on generated files, not the user's real vault.
+- Playwright was not re-run; R5.3 rests on the recorded summaries plus unit and harness runs executed now.
+- Phase DoD row "Real projects ... archives attached" remains needing laptop confirmation.

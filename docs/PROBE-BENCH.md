@@ -87,3 +87,16 @@ Verdict R1.1 (judged at p95 < 100 ms on native Windows, user decision 2026-10-27
 - Combined, 8 exe rounds: 5 under 100 ms, 3 over. The host was noisier than in the earlier rounds (CPU up to 90%, 16-17 containers), and the bun-floor itself spiked to p95 128.4 ms in round 2, so part of the spread is host noise; p50 stayed 67.6-75.8 ms for every exe round. The cause of round 1 (146.6 ms, first run right after the rebuild) was not investigated.
 - Result as measured today: FAIL against < 100 ms (partial is fail). This is not a quiet-host number; the A15 note says the conductor runs the quiet-laptop bench with the user before the real install, and that number settles it.
 - The Node hook is far over either threshold (p95 176.6 ms). Statusline has no stated threshold: exe 127.4 ms vs Node 155.0 ms.
+
+## R5.2 archive import (threshold: 293 files in < 10 s), 2026-10-29
+
+Machine: Linux 6.18.33.2-microsoft-standard-WSL2 x64, AMD Ryzen AI 9 465 w/ Radeon 880M, 20 logical CPUs, node v22.23.3. Synthetic fixture files (D-S9b-2), not the real vault.
+
+Command: `node packages/probe/scripts/bench-archive.mjs` (also `pnpm -F @sessiondeck/probe bench:archive`).
+
+| Files | Run 1 (cold) | Run 2 (unchanged) | Run 3 (5 touched) |
+|---|---|---|---|
+| 20 | shipped 20, 67 ms | shipped 0, 8 ms | shipped 5, 20 ms |
+| 293 | shipped 293, 572 ms | shipped 0, 33 ms | shipped 5, 61 ms |
+
+Result: PASS (572 ms against a 10000 ms limit). Hub round trip: `node packages/probe/scripts/harness-archive-hub.mjs`, 22 fixtures, 421 ms, RESULT pass.

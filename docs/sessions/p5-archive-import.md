@@ -106,3 +106,8 @@
 ## Deferred findings (U5)
 - MINOR neutralize.ts:56-60 one FE0E/FE0F kept after whitespace (invisible, no reorder): follow-up.
 - MINOR summary-live.json lists R3.6 (Phase 3 perf, 20 sessions at 20 deltas/s) as fail in this container; out of U5 scope, environment-sensitive; not touched by this branch.
+
+## Rebase and close
+- Rebased onto origin/sprint/3-organize 7c5f3d4 by sd-executor-contract: one conflict, packages/contract/test/helpers.ts EXCLUDED_DIRS, kept both (transcripts from PR #16, vault and vault-edge from U1). Head 6886b5b.
+- Full suite: contract 1145/1 skip, hub 446, probe 432/1 skip, scripts 535/3 skip, web 322; typecheck and lint exit 0; fixture leak PASS.
+- sd-verifier: R5.2 pass (293 files 572 ms; run 2 ships 0; touch ships exactly the touched; harness 22 fixtures 421 ms, fresh-index re-ship no duplicates), R5.3 pass (harness merge both orders records=1; hub 27; web 19; Playwright mock and live R5.3 pass). docs/VERIFY-P5.md, docs/PROBE-BENCH.md.
