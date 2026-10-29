@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
+import { parseStoredSnapshot } from "../src/snapshot-parse.ts";
 import { rowOf } from "../src/ingest/ingestor.ts";
 import { AUTH, batch, makeHub, mkEnv, seedSession, type TestHub } from "./support/hub.ts";
 
@@ -96,6 +97,27 @@ describe("R2.7 read-time staleness on REST", () => {
     // The stored row is untouched (staleness is a read-time view).
     const stored = JSON.parse(h.store.getSession("stale")!.snapshot) as SessionSnapshot;
     expect(stored.rate_limits.five_hour?.used_pct).toBe(61);
+  });
+});
+
+describe("R3.11 stored tracking from an earlier iteration", () => {
+  it("retired tracking fields are dropped by parseStoredSnapshot and GET /sessions/:id", async () => {
+    const base = seedSession(h.store, "oldtrack", {});
+    const old = {
+      ...base,
+      tracking: {
+        ...base.tracking,
+        pending_spawns: [{ at: 1 }],
+        pending_tainted: true,
+        ambiguous_remaining: 2,
+      },
+    };
+    h.store.upsertSession(rowOf(old as unknown as SessionSnapshot));
+    const retired = ["pending_spawns", "pending_tainted", "ambiguous_remaining"];
+    const parsed = parseStoredSnapshot(h.store.getSession("oldtrack")!.snapshot);
+    for (const k of retired) expect(parsed.tracking).not.toHaveProperty(k);
+    const one = (await get("/sessions/oldtrack")).json() as SessionSnapshot;
+    for (const k of retired) expect(one.tracking).not.toHaveProperty(k);
   });
 });
 

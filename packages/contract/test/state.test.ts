@@ -372,6 +372,8 @@ describe("field updates", () => {
         tokens: null,
         context_window: null,
         model: null,
+        parent_agent_id: null,
+        parent_known: false,
       },
     ]);
     expect(reduce(one, start).subagents).toHaveLength(1);

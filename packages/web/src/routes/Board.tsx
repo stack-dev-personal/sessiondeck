@@ -2,7 +2,8 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { BoardToolbar } from "../components/BoardToolbar";
 import { CompactCard, SessionCard } from "../components/SessionCard";
 import { useNow } from "../hooks/useNow";
-import { applyFilters, isAttentionState, sortForAttention } from "../lib/attention";
+import { applyFilters, isAttentionState } from "../lib/attention";
+import { useDisplayActivity } from "../hooks/useDisplayActivity";
 import { useShortcuts } from "../lib/keys";
 import { reorderChildren } from "../lib/reorder";
 import { useBoard } from "../store/board";
@@ -10,9 +11,9 @@ import { useFilters } from "../store/filters";
 import { useUi } from "../store/ui";
 
 /**
- * Attention order (waiting first, then last event; see sortForAttention) after the host and
- * project filters. The sort runs in the same render as the state change, so a card moves with no
- * animation delay. Full: responsive grid of 6-row cards.
+ * Display order (R3.10: waiting first, then working, then idle, stable inside a group; see
+ * display-activity) after the host and project filters. The sort runs in the same render as the
+ * state change, so a card moves with no animation delay. Full: responsive grid of 6-row cards.
  * Compact: a dense single-column list of 36 px rows (the horizontally scrolling strip of design
  * system 5.4 is a layout pane form, built with layouts in Phase 6).
  */
@@ -41,13 +42,18 @@ export function Board() {
   const host = useFilters((s) => s.host);
   const project = useFilters((s) => s.project);
   const all = useMemo(() => Object.values(sessions), [sessions]);
-  const list = useMemo(
-    () => sortForAttention(applyFilters(all, { host, project })),
-    [all, host, project],
-  );
+  // R3.10: hysteresis and a stable order come from the display layer; filters apply after it so
+  // changing a filter never restarts a grace period.
+  const graceSec = useUi((s) => s.settings.idleGraceSec);
+  const rows = useDisplayActivity(all, graceSec);
+  const list = useMemo(() => {
+    const keep = new Set(applyFilters(all, { host, project }).map((s) => s.session_id));
+    return rows.filter((r) => keep.has(r.session.session_id));
+  }, [rows, all, host, project]);
+  const groupOf = new Map(list.map((r) => [r.session.session_id, r.group]));
   /** Waiting sessions the filters leave out; the toolbar says so, because nothing else would. */
   const hiddenAttention = useMemo(() => {
-    const shown = new Set(list.map((s) => s.session_id));
+    const shown = new Set(list.map((r) => r.session.session_id));
     return all.filter((s) => isAttentionState(s.state) && !shown.has(s.session_id)).length;
   }, [all, list]);
   // R3.6: React keeps a stable child order (first seen first) so it never moves a card itself; the
@@ -55,13 +61,13 @@ export function Board() {
   // reconciliation moved every card a moved one passed, and a moved card pays style, layout and
   // paint again.
   const stable = useRef<string[]>([]);
-  const present = new Set(list.map((s) => s.session_id));
+  const present = new Set(list.map((r) => r.session.session_id));
   const kept = stable.current.filter((id) => present.has(id));
   const known = new Set(kept);
-  for (const s of list) if (!known.has(s.session_id)) kept.push(s.session_id);
+  for (const r of list) if (!known.has(r.session.session_id)) kept.push(r.session.session_id);
   stable.current = kept;
-  const byId = new Map(list.map((s) => [s.session_id, s]));
-  const sortedIds = list.map((s) => s.session_id);
+  const byId = new Map(list.map((r) => [r.session.session_id, r.session]));
+  const sortedIds = list.map((r) => r.session.session_id);
   useLayoutEffect(() => {
     if (listRef.current) reorderChildren(listRef.current, sortedIds);
   });
@@ -117,7 +123,13 @@ export function Board() {
           {kept
             .map((id) => byId.get(id)!)
             .map((s) => (
-              <li key={s.session_id} data-row={s.session_id} className="min-w-0">
+              <li
+                key={s.session_id}
+                data-row={s.session_id}
+                data-group={groupOf.get(s.session_id)}
+                data-testid="board-row"
+                className="min-w-0"
+              >
                 {compact ? (
                   <CompactCard
                     s={s}

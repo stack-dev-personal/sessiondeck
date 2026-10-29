@@ -19,6 +19,8 @@ export function displayNameOf(s: SessionSnapshot): string {
 /**
  * Attention order: waiting_permission and waiting_input first, then most recent last_event_at
  * first, ties by session_id so the order is total and stable. Returns a new array.
+ *
+ * @deprecated The board orders with sortDisplay (R3.10); kept for Sprint 3 references only.
  */
 export function sortForAttention(sessions: readonly SessionSnapshot[]): SessionSnapshot[] {
   return [...sessions].sort((a, b) => {

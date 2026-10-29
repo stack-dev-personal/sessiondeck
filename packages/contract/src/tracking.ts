@@ -62,6 +62,7 @@ function readHolder(value: unknown): PermissionHolder | null {
 export function readTracking(value: unknown): Tracking {
   const record = asRecord(value);
   const lastTool = record["last_tool"];
+  // Old stored snapshots may carry pending_spawns / pending_tainted / ambiguous_remaining: ignored.
   return {
     last_tool: typeof lastTool === "string" ? lastTool : null,
     permission: readHolder(record["permission"]),

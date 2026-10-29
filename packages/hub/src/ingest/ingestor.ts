@@ -1,3 +1,4 @@
+import { parseStoredSnapshot } from "../snapshot-parse.ts";
 import { type Envelope, type SessionSnapshot } from "@sessiondeck/contract";
 import Database from "better-sqlite3";
 import { EventEmitter } from "node:events";
@@ -72,7 +73,7 @@ class StoreSessions implements SessionSource {
 
   get(id: string): SessionSnapshot | undefined {
     const row = this.store.getSession(id);
-    return row === undefined ? undefined : (JSON.parse(row.snapshot) as SessionSnapshot);
+    return row === undefined ? undefined : parseStoredSnapshot(row.snapshot);
   }
 
   listOpenForHost(host: string, skip: (id: string) => boolean): SessionSnapshot[] {
@@ -80,7 +81,7 @@ class StoreSessions implements SessionSource {
     return this.store
       .listOpenSessionsForHost(host)
       .filter((r) => !skip(r.session_id))
-      .map((r) => JSON.parse(r.snapshot) as SessionSnapshot);
+      .map((r) => parseStoredSnapshot(r.snapshot));
   }
 
   countOpenForHost(host: string): number {

@@ -1,4 +1,7 @@
+import { AGENT_ID_MAX_CHARS, SUBAGENT_ROWS_MAX, truncate } from "./limits";
+import { asRecord } from "./payload";
 import type { SessionState } from "./state";
+import { normalizeSubagentLinks } from "./subagent-links";
 
 /** One rate-limit window. resets_at is epoch ms (converted from the payload's seconds). */
 export interface Window {
@@ -14,6 +17,13 @@ export interface SubagentSnapshot {
   tokens: number | null;
   context_window: number | null;
   model: string | null;
+  /**
+   * The agent that spawned this one; null when the main thread did (or when unknown, see
+   * parent_known). Rows stored before this field existed read as null / false.
+   */
+  parent_agent_id: string | null;
+  /** False when the reducer could not attribute the parent (always false for rows built from hook envelopes; S7 transcripts set real links). */
+  parent_known: boolean;
 }
 
 /**
@@ -55,6 +65,8 @@ export interface SessionSnapshot {
   session_name: string | null;
   model: { id: string; display_name: string } | null;
   effort: string | null;
+  /** statusLine fast_mode as the session reports it; null when never reported. */
+  fast_mode: boolean | null;
   state: SessionState;
   state_since: number;
   state_detail: string | null;
@@ -108,6 +120,7 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     session_name: null,
     model: null,
     effort: null,
+    fast_mode: null,
     state: "starting",
     state_since: input.ts,
     state_detail: null,
@@ -127,4 +140,50 @@ export function createSnapshot(input: CreateSnapshotInput): SessionSnapshot {
     compactions: 0,
     tracking: createTracking(),
   };
+}
+
+/** Reads a stored fast_mode: a boolean stays, anything else (including a row stored before the field existed) is null. */
+export function readFastMode(raw: unknown): boolean | null {
+  return typeof raw === "boolean" ? raw : null;
+}
+
+/**
+ * A subagent row with the parent fields filled in: rows stored before parent links existed read as
+ * parent_agent_id null, parent_known false. Always a fresh object.
+ */
+export function readSubagentRow(row: unknown): SubagentSnapshot {
+  const raw = asRecord(row);
+  const parent = raw["parent_agent_id"];
+  const id = typeof parent === "string" ? truncate(parent, AGENT_ID_MAX_CHARS) : null;
+  const agentId = raw["agent_id"];
+  return {
+    ...raw,
+    ...(typeof agentId === "string" ? { agent_id: truncate(agentId, AGENT_ID_MAX_CHARS) } : {}),
+    parent_agent_id: id,
+    parent_known: raw["parent_known"] === true && (parent === null || typeof parent === "string"),
+  } as unknown as SubagentSnapshot;
+}
+
+/**
+ * A stored subagents value read defensively: [] for a non-array; elements that are not plain objects
+ * or lack a string agent_id are dropped; rows repeating an agent_id are dropped (first kept); only the
+ * last SUBAGENT_ROWS_MAX remain; each row goes through readSubagentRow; then links are
+ * normalized over the whole list (a parent that is not in the list, or on a parent cycle, reads
+ * null / unknown). Same normalizer as the reducer's write path.
+ */
+export function readSubagentRows(raw: unknown): SubagentSnapshot[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const unique: Record<string, unknown>[] = [];
+  for (const r of raw) {
+    if (typeof r !== "object" || r === null || Array.isArray(r)) continue;
+    const rawId = (r as Record<string, unknown>)["agent_id"];
+    if (typeof rawId !== "string") continue;
+    const id = truncate(rawId, AGENT_ID_MAX_CHARS);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(r as Record<string, unknown>);
+  }
+  // Bound the O(n^2) normalize: only the newest rows are kept.
+  return normalizeSubagentLinks(unique.slice(-SUBAGENT_ROWS_MAX).map((r) => readSubagentRow(r)));
 }

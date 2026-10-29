@@ -52,6 +52,7 @@ export function applyStatusLine(prev: SessionSnapshot, raw: unknown, ts: number)
     last_event_at: ts,
     model,
     effort: p.effort?.level ?? prev.effort,
+    fast_mode: p.fast_mode ?? prev.fast_mode,
     session_name: p.session_name ?? prev.session_name,
     cwd: p.cwd ?? prev.cwd,
     project_dir: p.workspace?.project_dir ?? prev.project_dir,

@@ -3,6 +3,7 @@
 // reduce() / reduceLiveness(); this file never reimplements them. Time comes only from e.ts so a
 // replay reproduces the same snapshots.
 import {
+  readSubagentRows,
   StatusLinePayloadSchema,
   epochSecondsToMs,
   normalizeRateLimitWindow,
@@ -102,6 +103,7 @@ export function applyStatusLine(
   }
   const level = p.effort?.level;
   if (typeof level === "string" && level !== "") s.effort = cap(level);
+  if (typeof p.fast_mode === "boolean") s.fast_mode = p.fast_mode;
   const name = nonEmpty(p.session_name);
   if (name !== null) s.session_name = cap(name);
   if (s.cwd === "" && nonEmpty(p.cwd) !== null) s.cwd = cap(p.cwd as string);
@@ -230,7 +232,7 @@ export function applySubagents(prev: SessionSnapshot, e: Envelope): SessionSnaps
   const parsed = SubagentsPayloadSchema.safeParse(e.payload);
   if (!parsed.success) throw new Error("subagents payload does not match the expected shape");
   const byId = new Map(parsed.data.tasks.map((t) => [t.id, t]));
-  const subagents = prev.subagents.map((row) => {
+  const subagents = readSubagentRows(prev.subagents).map((row) => {
     const t = byId.get(row.agent_id);
     if (t === undefined) return row;
     return {

@@ -8,7 +8,7 @@ import {
 import { applyStatusLine, exceeds200kOf } from "../statusline-adapter";
 
 /**
- * Specimens for /dev/cards. Bases come from the contract statusLine fixtures (bundled by Vite);
+ * Specimens for /dev/cards. Account usage (5h, 7d) lives in the UsageWidget, not on cards (R3.12). Bases come from the contract statusLine fixtures (bundled by Vite);
  * synthetic overrides fill in values the fixtures lack (boundary percentages, a stale window,
  * subagents, a long name). This module is only reachable from the lazy dev route, which App
  * mounts in dev and mock builds only, so the production build carries no fixtures.
@@ -46,6 +46,8 @@ function agents(n: number, ended = 0): SubagentSnapshot[] {
     tokens: 1000,
     context_window: 200_000,
     model: null,
+    parent_agent_id: null,
+    parent_known: false,
   }));
 }
 
@@ -99,20 +101,13 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
     snapshot: { ...base(id), ...over },
     exceeds200k: null,
   });
-  const meterWith = (id: string, kind: "ctx" | "5h" | "7d", pct: number): Specimen => {
+  const meterWith = (id: string, pct: number): Specimen => {
     const b = base(id);
-    const win = { used_pct: pct, resets_at: now + 7_800_000 };
     return {
       id,
-      label: `${kind} ${pct}%`,
+      label: `ctx ${pct}%`,
       exceeds200k: null,
-      snapshot:
-        kind === "ctx"
-          ? { ...b, context: { ...b.context, used_pct: pct } }
-          : {
-              ...b,
-              rate_limits: { ...b.rate_limits, [kind === "5h" ? "five_hour" : "seven_day"]: win },
-            },
+      snapshot: { ...b, context: { ...b.context, used_pct: pct } },
     };
   };
 
@@ -130,17 +125,7 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
     {
       id: "ctx",
       title: "Context thresholds (ok below 60, warn 60-80, high above 80)",
-      specimens: [59, 60, 80, 81].map((p) => meterWith(`meter-ctx-${p}`, "ctx", p)),
-    },
-    {
-      id: "5h",
-      title: "5h thresholds (ok below 60, warn 60-85, high above 85)",
-      specimens: [59, 60, 85, 86].map((p) => meterWith(`meter-5h-${p}`, "5h", p)),
-    },
-    {
-      id: "7d",
-      title: "7d thresholds (ok below 60, warn 60-85, high above 85)",
-      specimens: [59, 60, 85, 86].map((p) => meterWith(`meter-7d-${p}`, "7d", p)),
+      specimens: [59, 60, 80, 81].map((p) => meterWith(`meter-ctx-${p}`, p)),
     },
     {
       id: "nulls",
@@ -167,13 +152,6 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
       id: "edge",
       title: "Edge cases",
       specimens: [
-        make("stale-window", "stale 5h window", {
-          rate_limits: {
-            five_hour: { used_pct: 90, resets_at: now - 60_000 },
-            seven_day: { used_pct: 30, resets_at: now + 3 * 86_400_000 },
-            captured_at: now - 3_600_000,
-          },
-        }),
         {
           ...make("over-200k", "200k+ tag", {
             context: { used_pct: 45, window: 1_000_000, input: 450_000, output: 1000 },

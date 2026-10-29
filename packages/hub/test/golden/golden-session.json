@@ -11,6 +11,7 @@
         "display_name": "claude-fable-5-1"
       },
       "effort": null,
+      "fast_mode": null,
       "state": "ended",
       "state_since": 1760001770000,
       "state_detail": null,
@@ -43,7 +44,9 @@
           "ended_at": 1760001434000,
           "tokens": null,
           "context_window": null,
-          "model": null
+          "model": null,
+          "parent_agent_id": null,
+          "parent_known": false
         }
       ],
       "tasks": {

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionSnapshot } from "@sessiondeck/contract";
 import type { BatchCommitted } from "../src/ingest/ingestor.ts";
 import { BASE_TS, readJson } from "./support/sequences.ts";
-import { batch, makeHub, mkEnv, type TestHub } from "./support/hub.ts";
+import { AUTH, batch, makeHub, mkEnv, seedSession, type TestHub } from "./support/hub.ts";
 
 let h: TestHub;
 beforeEach(async () => {
@@ -154,8 +154,121 @@ describe("subagents and transcript", () => {
         tokens: 77,
         context_window: 1000,
         model: "m1",
+        parent_agent_id: null,
+        parent_known: false,
       },
     ]);
+  });
+
+  it("damaged stored subagents are dropped on read, not thrown", async () => {
+    const good = {
+      agent_id: "a",
+      agent_type: "x",
+      started_at: 1,
+      ended_at: null,
+      tokens: 1,
+      context_window: 2,
+      model: null,
+    };
+    seedSession(h.store, "bad1", {
+      subagents: [null, 7, [], {}, good] as unknown as SessionSnapshot["subagents"],
+    });
+    seedSession(h.store, "bad2", {
+      subagents: "nope" as unknown as SessionSnapshot["subagents"],
+    });
+    const r1 = await h.app.inject({ method: "GET", url: "/sessions/bad1", headers: AUTH });
+    expect(r1.statusCode).toBe(200);
+    const subs = (r1.json() as SessionSnapshot).subagents;
+    expect(subs).toHaveLength(1);
+    expect(subs[0]).toMatchObject({ agent_id: "a", parent_known: false });
+    const r2 = await h.app.inject({ method: "GET", url: "/sessions/bad2", headers: AUTH });
+    expect(r2.statusCode).toBe(200);
+    expect((r2.json() as SessionSnapshot).subagents).toEqual([]);
+  });
+
+  it("stored cyclic and dangling parent links read back as null / unknown", async () => {
+    const row = (id: string, parent: string) => ({
+      agent_id: id,
+      agent_type: "x",
+      started_at: 1,
+      ended_at: null,
+      tokens: 1,
+      context_window: 2,
+      model: null,
+      parent_agent_id: parent,
+      parent_known: true,
+    });
+    seedSession(h.store, "cyc1", {
+      subagents: [
+        row("A", "B"),
+        row("B", "A"),
+        row("C", "gone"),
+      ] as unknown as SessionSnapshot["subagents"],
+    });
+    const res = await h.app.inject({ method: "GET", url: "/sessions/cyc1", headers: AUTH });
+    const subs = (res.json() as SessionSnapshot).subagents;
+    expect(subs.map((r) => r.agent_id)).toEqual(["A", "B", "C"]);
+    for (const r of subs) expect(r).toMatchObject({ parent_agent_id: null, parent_known: false });
+  });
+
+  it("a stored subagent row without parent fields reads as parent null / unknown", async () => {
+    const old = seedSession(h.store, "old1", {
+      subagents: [
+        {
+          agent_id: "a",
+          agent_type: "x",
+          started_at: 1,
+          ended_at: null,
+          tokens: 1,
+          context_window: 2,
+          model: null,
+        },
+      ] as unknown as SessionSnapshot["subagents"],
+    });
+    expect(old.subagents[0]).not.toHaveProperty("parent_known");
+    const res = await h.app.inject({ method: "GET", url: "/sessions/old1", headers: AUTH });
+    const row = (res.json() as SessionSnapshot).subagents[0];
+    expect(row).toMatchObject({ agent_id: "a", parent_agent_id: null, parent_known: false });
+    // The engine path (reducer loads the stored row) normalizes it too.
+    await h.post(
+      batch([
+        mkEnv({
+          kind: "subagents",
+          hook_event_name: undefined,
+          session_id: "old1",
+          payload: { tasks: [{ id: "a", tokenCount: 5 }] },
+        }),
+      ]),
+    );
+    expect(snap("old1").subagents[0]).toMatchObject({
+      tokens: 5,
+      parent_agent_id: null,
+      parent_known: false,
+    });
+  });
+
+  it("nested spawn: hook-built subagent rows are unlinked (parent null, not known)", async () => {
+    const hook = (name: string, payload: Record<string, unknown>, agent_id?: string) =>
+      mkEnv({
+        hook_event_name: name,
+        ...(agent_id === undefined ? {} : { agent_id }),
+        payload: { cwd: "/w", ...payload },
+      });
+    await h.post(
+      batch([
+        hook("PreToolUse", { tool_name: "Agent", tool_input: {} }),
+        hook("SubagentStart", { agent_type: "g", agent_id: "A" }, "A"),
+        hook("PreToolUse", { tool_name: "Agent", tool_input: {}, agent_id: "A" }, "A"),
+        hook("SubagentStart", { agent_type: "g", agent_id: "B" }, "B"),
+      ]),
+    );
+    const rest = (
+      await h.app.inject({ method: "GET", url: "/sessions/s1", headers: AUTH })
+    ).json() as SessionSnapshot;
+    const byId = Object.fromEntries(rest.subagents.map((r) => [r.agent_id, r]));
+    expect(byId["A"]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(byId["B"]).toMatchObject({ parent_agent_id: null, parent_known: false });
+    expect(snap().subagents.find((r) => r.agent_id === "B")?.parent_agent_id).toBeNull();
   });
 
   it("transcript lines are stored raw, agent_id '' for the main session, re-sent lines ignored", async () => {

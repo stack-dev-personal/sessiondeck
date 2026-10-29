@@ -1,9 +1,9 @@
 import { act, render, screen } from "@testing-library/react";
-import { createSnapshot, type SessionSnapshot } from "@sessiondeck/contract";
+import { createSnapshot, type SessionSnapshot, type SessionState } from "@sessiondeck/contract";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useBoard } from "../store/board";
 import { useFilters } from "../store/filters";
-import { useUi } from "../store/ui";
+import { DEFAULT_SETTINGS, useUi } from "../store/ui";
 import { reorderChildren } from "../lib/reorder";
 import { Board } from "./Board";
 
@@ -12,17 +12,22 @@ import { Board } from "./Board";
 // k-1 others), and each moved card is re-attached, so its subtree gets style, layout and paint
 // again. The board therefore keeps React's child order stable and moves the fewest nodes itself.
 
-const snap = (id: string, at: number) =>
+// R3.10: order is by group, then by the time a card entered its group (state_since on first
+// sight), never by last_event_at. A move is therefore a group change or a fresh arrival.
+const snap = (id: string, at: number, state: SessionState = "working") =>
   ({
     ...createSnapshot({ session_id: id, host: "h1", cwd: `/w/${id}`, ts: 1 }),
-    state: "working",
+    state,
+    state_since: at,
     last_event_at: at,
   }) as SessionSnapshot;
 const ids = Array.from({ length: 20 }, (_, i) => `s${String(i).padStart(2, "0")}`);
-const put = (at: Record<string, number>) =>
+const put = (at: Record<string, number>, states: Record<string, SessionState> = {}) =>
   act(() =>
     useBoard.setState({
-      sessions: Object.fromEntries(Object.entries(at).map(([id, t]) => [id, snap(id, t)])),
+      sessions: Object.fromEntries(
+        Object.entries(at).map(([id, t]) => [id, snap(id, t, states[id] ?? "working")]),
+      ),
     }),
   );
 const order = () =>
@@ -46,7 +51,7 @@ describe("Board reorder moves the fewest nodes", () => {
   beforeEach(() => {
     window.localStorage.clear();
     useFilters.setState({ host: null, project: null });
-    useUi.setState({ compact: false, selectedSessionId: null });
+    useUi.setState({ compact: false, selectedSessionId: null, settings: DEFAULT_SETTINGS });
     useBoard.setState({ sessions: {}, connection: "mock" });
   });
 
@@ -55,7 +60,7 @@ describe("Board reorder moves the fewest nodes", () => {
     render(<Board />);
     const moved = watchMoves();
     const next = [ids[14]!, ...ids.filter((i) => i !== ids[14])];
-    put(stamp(next));
+    put(stamp(ids), { [ids[14]!]: "waiting_input" });
     expect(order()).toEqual(next);
     expect(moved()).toBe(1);
   });
@@ -65,21 +70,44 @@ describe("Board reorder moves the fewest nodes", () => {
     render(<Board />);
     const moved = watchMoves();
     const next = [...ids.slice(1), ids[0]!];
-    put(stamp(next));
+    useUi.setState({ settings: { ...useUi.getState().settings, idleGraceSec: 0 } });
+    put(stamp(ids), { [ids[0]!]: "idle" });
     expect(order()).toEqual(next);
     expect(moved()).toBe(1);
   });
 
-  it("keeps DOM order equal to the sort for a shuffle, a new session and a removal", () => {
+  it("keeps DOM order equal to the sort for a group shuffle, a new session and a removal", () => {
     put(stamp(ids));
     render(<Board />);
-    const shuffled = [...ids].reverse().map((id, i) => (i % 3 === 0 ? id : ids[(i * 7) % 20]!));
-    const uniq = [...new Set([...shuffled, ...ids])];
-    put(stamp(uniq));
-    expect(order()).toEqual(uniq);
-    const withNew = ["new1", ...uniq.slice(0, 5), ...uniq.slice(6)];
-    put(stamp(withNew));
-    expect(order()).toEqual(withNew);
+    useUi.setState({ settings: { ...useUi.getState().settings, idleGraceSec: 0 } });
+    const list = order();
+    const moved = watchMoves();
+    // Every third card waits (attention group), every fifth of the rest goes idle; the live list
+    // is permuted without remounting, so reorderChildren has to move nodes.
+    const states: Record<string, SessionState> = {};
+    ids.forEach((id, i) => {
+      if (i % 3 === 0) states[id] = "waiting_input";
+      else if (i % 5 === 0) states[id] = "idle";
+    });
+    put(stamp(ids), states);
+    const rank = (id: string) =>
+      states[id] === "waiting_input" ? 0 : states[id] === "idle" ? 2 : 1;
+    const got = order();
+    expect([...got].sort()).toEqual([...list].sort());
+    expect(got.map((x) => rank(x!))).toEqual([...got].map((x) => rank(x!)).sort((p, q) => p - q));
+    // A real shuffle: some nodes moved, never more than one move per card.
+    expect(moved()).toBeGreaterThan(0);
+    expect(moved()).toBeLessThanOrEqual(ids.length);
+
+    const withNew = { ...stamp(ids), new1: 2000 };
+    delete (withNew as Record<string, number>)[ids[4]!];
+    put(withNew, states);
+    const after = order();
+    expect(after).toHaveLength(20);
+    expect(after).toContain("new1");
+    expect(after).not.toContain(ids[4]);
+    const sorted = [...after].sort((x, y) => rank(x!) - rank(y!));
+    expect(after.map((x) => rank(x!))).toEqual(sorted.map((x) => rank(x!)));
   });
 
   it("reorderChildren leaves an already sorted list untouched", () => {

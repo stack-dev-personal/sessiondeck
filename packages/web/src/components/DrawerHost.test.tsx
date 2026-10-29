@@ -6,7 +6,6 @@ import { createSnapshot, type Envelope, type SessionSnapshot } from "@sessiondec
 import { App } from "../App";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
-import { DRAWER_SECTIONS, DetailDrawer, sparklineLabel } from "./DetailDrawer";
 
 const NOW = Date.now();
 
@@ -93,7 +92,7 @@ describe("open and close", () => {
     card("b").focus();
     await userEvent.keyboard("{Enter}");
     const stale = card("b");
-    // A different density re-creates every card node under the open drawer.
+    // A different density re-creates every card node under the open popout.
     act(() => useUi.setState({ compact: true }));
     expect(card("b")).not.toBe(stale);
     await userEvent.keyboard("{Escape}");
@@ -114,7 +113,9 @@ describe("open and close", () => {
     mount();
     await userEvent.click(card("a"));
     const dlg = screen.getByRole("dialog");
-    const items = Array.from(dlg.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]'));
+    const items = Array.from(
+      dlg.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex="0"]'),
+    );
     const first = items[0]!;
     const last = items[items.length - 1]!;
     last.focus();
@@ -125,7 +126,7 @@ describe("open and close", () => {
   });
 });
 
-describe("keys while the drawer is open", () => {
+describe("keys while the popout is open", () => {
   it("with focus on body (clicked plain text), c and t do nothing and Tab stays inside", async () => {
     mount();
     await userEvent.click(card("a"));
@@ -153,24 +154,16 @@ describe("keys while the drawer is open", () => {
     expect(header).not.toHaveAttribute("inert");
   });
 
-  it("switching the open session remounts the drawer (raw state reset, focus on close)", async () => {
+  it("switching the open session remounts the popout (focus on close)", async () => {
     mount();
     await userEvent.click(card("a"));
-    await userEvent.click(screen.getByRole("button", { name: /envelopes/ }));
-    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    await userEvent.tab();
     act(() => useUi.getState().openSession("b"));
     expect(screen.getByRole("dialog", { name: "name-b" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /envelopes/ })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
     expect(screen.getByRole("button", { name: /close/i })).toHaveFocus();
   });
 
-  it("removing the open session closes the drawer and focuses the card that was next to it", async () => {
+  it("removing the open session closes the popout and focuses the card that was next to it", async () => {
     mount();
     await userEvent.click(card("b"));
     act(() => {
@@ -210,7 +203,7 @@ describe("keys while the drawer is open", () => {
     expect(screen.getByRole("dialog")).toContainElement(document.activeElement as HTMLElement);
   });
 
-  it("Esc closes only the drawer (board state untouched)", async () => {
+  it("Esc closes only the popout (board state untouched)", async () => {
     mount();
     await userEvent.click(card("a"));
     await userEvent.keyboard("{Escape}");
@@ -236,7 +229,7 @@ describe("j/k", () => {
 });
 
 describe("live updates", () => {
-  it("drawer content updates while open and focus stays put", async () => {
+  it("popout content updates while open and focus stays put", async () => {
     mount();
     await userEvent.click(card("a"));
     const close = screen.getByRole("button", { name: /close/i });
@@ -247,140 +240,5 @@ describe("live updates", () => {
     });
     expect(within(screen.getByRole("dialog")).getAllByText("Idle").length).toBeGreaterThan(0);
     expect(close).toHaveFocus();
-  });
-});
-
-describe("content", () => {
-  it("sections appear in the design-system order", async () => {
-    mount();
-    await userEvent.click(card("a"));
-    const ids = Array.from(screen.getByRole("dialog").querySelectorAll("[data-section]")).map((n) =>
-      n.getAttribute("data-section"),
-    );
-    expect(ids).toEqual([...DRAWER_SECTIONS]);
-  });
-
-  it("raw tail is collapsed by default and expands", async () => {
-    useBoard.getState().enqueue(hook("a", "Stop", NOW));
-    act(() => useBoard.getState().flush());
-    mount();
-    await userEvent.click(card("a"));
-    const toggle = screen.getByRole("button", { name: /envelopes/ });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText("Envelope JSON")).toBeNull();
-    await userEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByLabelText("Envelope JSON")).toHaveTextContent('"hook_event_name": "Stop"');
-  });
-
-  it("empty and null data render n/a and empty-state text, not blanks", async () => {
-    mount();
-    await userEvent.click(card("a"));
-    const dlg = screen.getByRole("dialog");
-    expect(within(dlg).getByRole("img", { name: /n\/a/ })).toBeInTheDocument();
-    expect(dlg).toHaveTextContent("No subagents in this session.");
-    expect(dlg).toHaveTextContent("No tasks.");
-    expect(dlg.querySelectorAll('[data-slot="reset"]')[0]).toHaveTextContent("n/a");
-  });
-
-  it("renders rate limits with countdowns, subagents, tasks, git and a safe PR link", () => {
-    const s = snap("a", {
-      rate_limits: {
-        five_hour: { used_pct: 41, resets_at: NOW + 7_800_000 },
-        seven_day: { used_pct: 63, resets_at: NOW + 3 * 86_400_000 },
-        captured_at: NOW,
-      },
-      subagents: [
-        {
-          agent_id: "x",
-          agent_type: "Explore",
-          started_at: NOW - 120_000,
-          ended_at: null,
-          tokens: 12_000,
-          context_window: 200_000,
-          model: "haiku",
-        },
-      ],
-      tasks: { total: 5, completed: 2, last_subject: "<b>ship</b>" },
-      git: {
-        branch: "feat/x",
-        worktree: "wt1",
-        pr: { number: 42, url: "https://example.com/pr/42" },
-      },
-      last_prompt: "do the thing",
-      last_assistant_message: "<img src=x onerror=alert(1)>",
-    });
-    render(<DetailDrawer session={s} now={NOW} onClose={() => {}} />);
-    const resets = Array.from(document.querySelectorAll('[data-slot="reset"]')).map(
-      (n) => n.textContent,
-    );
-    expect(resets[0]).toBe("resets in 2h 10m");
-    expect(resets[1]).toMatch(/^resets [A-Z][a-z]{2}$/);
-    const row = screen.getByRole("row", { name: /Explore/ });
-    expect(row).toHaveTextContent("12k");
-    expect(row).toHaveTextContent("200k");
-    expect(row).toHaveTextContent("haiku");
-    expect(row).toHaveTextContent("2m");
-    expect(screen.getByText("<b>ship</b>", { exact: false })).toBeInTheDocument();
-    expect(document.querySelector("img")).toBeNull();
-    const link = screen.getByRole("link", { name: "#42" });
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
-    expect(link).toHaveAttribute("href", "https://example.com/pr/42");
-  });
-
-  it("a stale window shows n/a for value and countdown; a javascript: PR url is not linked", () => {
-    const s = snap("a", {
-      rate_limits: {
-        five_hour: { used_pct: 90, resets_at: NOW - 1000 },
-        seven_day: null,
-        captured_at: NOW,
-      },
-      git: { branch: null, worktree: null, pr: { number: 7, url: "javascript:alert(1)" } },
-    });
-    render(<DetailDrawer session={s} now={NOW} onClose={() => {}} />);
-    const resets = Array.from(document.querySelectorAll('[data-slot="reset"]')).map(
-      (n) => n.textContent,
-    );
-    expect(resets).toEqual(["n/a", "n/a"]);
-    expect(screen.queryByRole("link")).toBeNull();
-  });
-
-  it("timeline lists transitions newest first with glyph and label", () => {
-    const s = snap("a");
-    render(
-      <DetailDrawer
-        session={s}
-        now={NOW}
-        onClose={() => {}}
-        history={{
-          samples: [],
-          tail: [],
-          transitions: [
-            { state: "starting", detail: null, ts: NOW - 5000 },
-            { state: "waiting_permission", detail: "tool:Bash", ts: NOW },
-          ],
-        }}
-      />,
-    );
-    const items = document.querySelectorAll("[data-transition]");
-    expect(items[0]).toHaveAttribute("data-transition", "waiting_permission");
-    expect(items[0]).toHaveTextContent("▲");
-    expect(items[0]).toHaveTextContent("Needs permission");
-    expect(items[1]).toHaveTextContent("Starting");
-  });
-});
-
-describe("sparkline label", () => {
-  it("says n/a with no samples and summarizes min, max, latest otherwise", () => {
-    expect(sparklineLabel([])).toContain("n/a");
-    const l = sparklineLabel([
-      { ts: 1, pct: 10 },
-      { ts: 2, pct: 72.4 },
-      { ts: 3, pct: 40 },
-    ]);
-    expect(l).toContain("min 10%");
-    expect(l).toContain("max 72%");
-    expect(l).toContain("latest 40%");
-    expect(l).toContain("3 samples");
   });
 });

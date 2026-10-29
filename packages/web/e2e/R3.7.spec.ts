@@ -209,7 +209,7 @@ test("R3.7 no color-only encoding: glyph, label and text cues are in the DOM", a
         aria: e.getAttribute("aria-label") ?? "",
       })),
     );
-  expect(meters.length).toBe(9); // ctx 60, 80, 81; 5h and 7d 60, 85, 86
+  expect(meters.length).toBe(3); // ctx 60, 80, 81 (5h and 7d moved to the widget, R3.12)
   for (const m of meters) {
     expect(m.text).toMatch(m.level === "high" ? /!!$/ : /!$/);
     expect(m.text).toMatch(/\d+%/);

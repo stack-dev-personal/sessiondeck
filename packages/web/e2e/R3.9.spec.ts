@@ -33,7 +33,9 @@ test("R3.9 disconnect shows a banner, reconnect resyncs, no stale working card",
 }) => {
   test.setTimeout(90_000);
   await gate("up");
-  await configureHub(page);
+  // R3.10: display hysteresis holds a just-idled session as working for the grace period. This
+  // spec proves the resync brings hub truth, so the grace is 0 (the Settings key, before load).
+  await configureHub(page, { idleGraceSec: 0 });
   await page.goto("/board");
   await waitConnected(page);
 

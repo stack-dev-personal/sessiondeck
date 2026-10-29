@@ -30,7 +30,7 @@ test("R3.2 every state shows glyph and label; null card has the same geometry", 
     const b = (await full.locator(`[data-row="${row}"]`).boundingBox())!;
     expect(a.height, `row ${row} height`).toBe(b.height);
   }
-  for (const kind of ["context", "five_hour", "seven_day"]) {
+  for (const kind of ["context"]) {
     const a = (await nul.locator(`[data-meter="${kind}"]`).boundingBox())!;
     const b = (await full.locator(`[data-meter="${kind}"]`).boundingBox())!;
     expect(a.width, `${kind} meter width`).toBe(b.width);
@@ -39,10 +39,13 @@ test("R3.2 every state shows glyph and label; null card has the same geometry", 
     expect(ab.width, `${kind} bar width`).toBe(bb.width);
   }
 
-  // Stale window renders n/a for 5h; 200k+ tag; 12 subagents show +n.
-  await expect(
-    page.getByTestId("specimen-stale-window").locator('[data-meter="five_hour"]'),
-  ).toContainText("n/a");
+  // 200k+ tag; 12 subagents show +n. Cards carry no 5h or 7d meter (R3.12).
+  await expect(page.locator('[data-testid="session-card"] [data-meter="five_hour"]')).toHaveCount(
+    0,
+  );
+  await expect(page.locator('[data-testid="session-card"] [data-meter="seven_day"]')).toHaveCount(
+    0,
+  );
   await expect(page.getByTestId("specimen-over-200k")).toContainText("200k+");
   await expect(
     page.getByTestId("specimen-subagents-12").locator('[data-slot="dots-more"]'),
@@ -73,12 +76,18 @@ test("R3.2 settled board: numbers, subagents, tasks and the state mix", async ({
   const mix = await settledMix(page);
   console.log(`R3.2 settled board: ${JSON.stringify(mix)}`);
   expect(mix.withContext).toBeGreaterThanOrEqual(6);
-  expect(mix.withLimits).toBeGreaterThanOrEqual(6);
+  expect(mix.withUsageMeters).toBe(0); // R3.12: account usage is in the widget
   expect(mix.withDots).toBeGreaterThanOrEqual(2);
   expect(mix.withTasks).toBeGreaterThanOrEqual(2);
   expect(new Set(mix.names).size).toBe(mix.names.length);
   expect(mix.withBranch).toBeGreaterThanOrEqual(6);
-  expect(Object.keys(mix.states).sort()).toEqual(STATES.map(([st]) => st).sort());
+  // R3.10: with the clock frozen the idle grace never lapses, so a session that just went idle is
+  // still shown as working. The idle state itself is covered by the specimens above.
+  expect(Object.keys(mix.states).sort()).toEqual(
+    STATES.map(([st]) => st)
+      .filter((st) => st !== "idle")
+      .sort(),
+  );
   const bad = await page.getByTestId("session-card").evaluateAll((cards) => {
     const out: string[] = [];
     cards.forEach((card, i) => {

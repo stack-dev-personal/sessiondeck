@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBoardStore } from "../store/board";
 import { playTimeline } from "./player";
 import { startMock } from "./start";
-import { buildMockTimeline, synthText } from "./timeline";
+import { buildAgentTree } from "../lib/agent-tree";
+import { deriveDisplay } from "../lib/display-activity";
+import {
+  buildMockTimeline,
+  DEFAULT_FLAP_MS,
+  flapEnvelope,
+  MOCK_DEEP_SESSION,
+  synthText,
+} from "./timeline";
 
 const NOW = 1_792_400_000_000;
 
@@ -165,5 +173,137 @@ describe("mock replay", () => {
       window.history.pushState({}, "", "/");
       delete document.documentElement.dataset["replay"];
     }
+  });
+});
+
+describe("mock covers R3.10 to R3.12 (R3.13)", () => {
+  const fake = () =>
+    vi.useFakeTimers({
+      toFake: [
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "setTimeout",
+        "clearTimeout",
+        "Date",
+      ],
+    });
+  afterEach(() => {
+    vi.useRealTimers();
+    window.history.pushState({}, "", "/");
+    delete document.documentElement.dataset["replay"];
+  });
+
+  it("one session has subagents linked three levels deep and one unlinked", () => {
+    fake();
+    window.history.pushState({}, "", "/board?replay=fast");
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const s = store.getState().sessions[MOCK_DEEP_SESSION]!;
+    const tree = buildAgentTree(s.subagents);
+    const depth = (n: (typeof tree)[number]): number => 1 + Math.max(0, ...n.children.map(depth));
+    expect(Math.max(...tree.map(depth))).toBe(3);
+    expect(tree.filter((n) => n.unlinked).length).toBeGreaterThanOrEqual(1);
+    expect(tree.filter((n) => !n.unlinked).length).toBeGreaterThanOrEqual(1);
+    for (const a of s.subagents.filter((x) => x.parent_agent_id !== null)) {
+      expect(a.parent_known).toBe(true);
+    }
+  });
+
+  it("rate_limits carry only five_hour and seven_day, on several sessions", () => {
+    fake();
+    const store = createBoardStore();
+    playTimeline(buildMockTimeline(NOW), store.getState().enqueue);
+    vi.advanceTimersByTime(10 * 60_000);
+    const list = Object.values(store.getState().sessions);
+    expect(
+      list.filter((s) => s.rate_limits.five_hour && s.rate_limits.seven_day).length,
+    ).toBeGreaterThanOrEqual(6);
+    for (const s of list) {
+      expect(Object.keys(s.rate_limits).sort()).toEqual(["captured_at", "five_hour", "seven_day"]);
+    }
+    // Decision 28: no per-model (Fable) window anywhere in the statusLine payloads either.
+    for (const e of buildMockTimeline(NOW).filter((x) => x.kind === "statusline")) {
+      const rl = (e.payload as { rate_limits?: Record<string, unknown> }).rate_limits ?? {};
+      for (const k of Object.keys(rl)) expect(["five_hour", "seven_day"]).toContain(k);
+    }
+  });
+
+  it("the no-usage variant never reports a rate limit (empty widget)", () => {
+    fake();
+    const store = createBoardStore();
+    playTimeline(buildMockTimeline(NOW, { usage: false }), store.getState().enqueue);
+    vi.advanceTimersByTime(10 * 60_000);
+    const list = Object.values(store.getState().sessions);
+    expect(list).toHaveLength(8);
+    for (const s of list) {
+      expect(s.rate_limits.five_hour).toBeNull();
+      expect(s.rate_limits.seven_day).toBeNull();
+    }
+  });
+
+  it("?usage=none selects the no-usage variant", () => {
+    fake();
+    window.history.pushState({}, "", "/board?replay=fast&usage=none");
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const list = Object.values(store.getState().sessions);
+    expect(list.every((s) => s.rate_limits.five_hour === null)).toBe(true);
+  });
+
+  it("the flapper alternates Stop and prompt every 30 s and stays in the working group", () => {
+    fake();
+    window.history.pushState({}, "", `/board?replay=fast&flap=${DEFAULT_FLAP_MS}`);
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const id = MOCK_DEEP_SESSION;
+    expect(DEFAULT_FLAP_MS).toBe(30_000);
+    expect(store.getState().sessions[id]!.state).toBe("working");
+    const seen: string[] = [];
+    let tracked = new Map();
+    for (let i = 1; i <= 8; i++) {
+      vi.advanceTimersByTime(DEFAULT_FLAP_MS);
+      const s = store.getState().sessions[id]!;
+      seen.push(s.state);
+      // hysteresis at the default 120 s grace, evaluated at the simulated wall time (Date is faked)
+      tracked = deriveDisplay(tracked, [s], Date.now(), 120_000);
+      expect(tracked.get(id).group).toBe("working");
+    }
+    expect(seen.slice(0, 4)).toEqual(["idle", "working", "idle", "working"]);
+    expect(store.getState().sessions[id]!.subagents.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("replay=fast does not flap unless asked; an empty flap= is absent", () => {
+    fake();
+    window.history.pushState({}, "", "/board?replay=fast&flap=");
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const id = MOCK_DEEP_SESSION;
+    const before = store.getState().sessions[id]!.state;
+    vi.advanceTimersByTime(DEFAULT_FLAP_MS * 4);
+    expect(store.getState().sessions[id]!.state).toBe(before);
+  });
+
+  it("flapEnvelope builds Stop and UserPromptSubmit hooks for the deep session", () => {
+    const stop = flapEnvelope("Stop", NOW, 1);
+    const go = flapEnvelope("UserPromptSubmit", NOW + 1, 2);
+    expect(stop.session_id).toBe(MOCK_DEEP_SESSION);
+    expect(stop.hook_event_name).toBe("Stop");
+    expect(go.hook_event_name).toBe("UserPromptSubmit");
+    expect(go.ts).toBeGreaterThan(stop.ts);
+  });
+
+  it("?flap=0 turns the ticker off", () => {
+    fake();
+    window.history.pushState({}, "", "/board?replay=fast&flap=0");
+    const store = createBoardStore();
+    startMock(store);
+    vi.advanceTimersByTime(5000);
+    const before = store.getState().sessions[MOCK_DEEP_SESSION]!.state;
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(store.getState().sessions[MOCK_DEEP_SESSION]!.state).toBe(before);
   });
 });

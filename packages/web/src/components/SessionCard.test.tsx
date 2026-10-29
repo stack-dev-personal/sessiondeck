@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SESSION_STATES,
   createSnapshot,
@@ -14,7 +14,6 @@ import { App } from "../App";
 import { levelFor } from "../lib/format";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { statusLines } from "../mock/fixtures";
-import { Board } from "../routes/Board";
 import { createBoardStore, useBoard } from "../store/board";
 import { useUi } from "../store/ui";
 import { CompactCard, SessionCard } from "./SessionCard";
@@ -57,6 +56,8 @@ function full(): SessionSnapshot {
         tokens: 1,
         context_window: 1,
         model: null,
+        parent_agent_id: null,
+        parent_known: false,
       },
       {
         agent_id: "b",
@@ -66,6 +67,8 @@ function full(): SessionSnapshot {
         tokens: 1,
         context_window: 1,
         model: null,
+        parent_agent_id: null,
+        parent_known: false,
       },
     ],
     tasks: { total: 7, completed: 3, last_subject: "t" },
@@ -201,26 +204,12 @@ describe("thresholds", () => {
     expect(m).toHaveTextContent(`${pct}%`);
   });
 
-  it.each([
-    [59, "ok"],
-    [60, "warn"],
-    [85, "warn"],
-    [86, "high"],
-  ])("5h %i renders %s and 7d too", (pct, level) => {
-    const w = { used_pct: pct, resets_at: NOW + 1000 };
-    render(
-      <SessionCard
-        s={snap({ rate_limits: { five_hour: w, seven_day: w, captured_at: NOW } })}
-        now={NOW}
-      />,
-    );
-    for (const k of ["five_hour", "seven_day"]) {
-      const m = document.querySelector(`[data-meter="${k}"]`)!;
-      expect(m).toHaveAttribute("data-level", level);
-      expect(m).toHaveTextContent(`${pct}%`);
-      if (level !== "ok")
-        expect(m.getAttribute("aria-label")).toMatch(level === "warn" ? /warning/ : /high/);
-    }
+  it("cards carry no 5h or 7d meter (R3.12, they live in the UsageWidget)", () => {
+    render(<SessionCard s={full()} now={NOW} />);
+    expect(document.querySelector('[data-meter="five_hour"]')).toBeNull();
+    expect(document.querySelector('[data-meter="seven_day"]')).toBeNull();
+    expect(screen.getByTestId("session-card")).not.toHaveTextContent("41%");
+    expect(screen.getByTestId("session-card")).not.toHaveTextContent("63%");
   });
 
   it("warn and high carry a text cue besides color", () => {
@@ -237,9 +226,9 @@ describe("thresholds", () => {
 });
 
 describe("nulls and layout stability", () => {
-  it("all-null snapshot renders n/a for context, windows, cost, model, tasks", () => {
+  it("all-null snapshot renders n/a for context, cost, model, tasks", () => {
     render(<SessionCard s={snap()} now={NOW} />);
-    for (const k of ["context", "five_hour", "seven_day"]) {
+    for (const k of ["context"]) {
       const m = document.querySelector(`[data-meter="${k}"]`)!;
       expect(m).toHaveTextContent("n/a");
       expect(m).toHaveAttribute("data-level", "na");
@@ -279,8 +268,6 @@ describe("nulls and layout stability", () => {
     render(<SessionCard s={full()} now={NOW} />);
     const card = screen.getByTestId("session-card");
     expect(card).toHaveTextContent("72% of 200k");
-    expect(card).toHaveTextContent("41%");
-    expect(card).toHaveTextContent("63%");
     expect(card).toHaveTextContent("2 agents");
     expect(card).toHaveTextContent("3/7");
     expect(card).toHaveTextContent("$1.84");
@@ -288,14 +275,6 @@ describe("nulls and layout stability", () => {
     expect(card).toHaveTextContent("bb2dash · feat/phase-3");
     expect(card).toHaveTextContent("12m in state");
     expect(card).not.toHaveTextContent("since prompt");
-    expect(document.querySelector('[data-meter="five_hour"]')).toHaveAttribute(
-      "title",
-      "resets in 2h 10m",
-    );
-    expect(document.querySelector('[data-meter="seven_day"]')).toHaveAttribute(
-      "title",
-      expect.stringMatching(/^resets [A-Z][a-z]{2}$/),
-    );
   });
 
   it("200k+ tag comes from the payload flag, never from context.input", () => {
@@ -397,6 +376,8 @@ describe("nulls and layout stability", () => {
       tokens: null,
       context_window: null,
       model: null,
+      parent_agent_id: null,
+      parent_known: false,
     });
     const subagents = [
       ...[0, 1, 2, 3, 4].map((i) => mk(`e${i}`, true)),
@@ -456,6 +437,8 @@ describe("nulls and layout stability", () => {
       tokens: null,
       context_window: null,
       model: null,
+      parent_agent_id: null,
+      parent_known: false,
     }));
     render(<SessionCard s={snap({ subagents })} now={NOW} />);
     expect(document.querySelectorAll("[data-dot]")).toHaveLength(5);
@@ -468,55 +451,18 @@ describe("nulls and layout stability", () => {
     expect(document.querySelector('[data-slot="name"]')).toHaveClass("truncate");
     expect(document.querySelector('[data-row="2"]')).toHaveClass("whitespace-nowrap");
   });
-
-  it("stale window (resets_at in the past) renders n/a, not the old number", () => {
-    const rate_limits = {
-      five_hour: { used_pct: 88, resets_at: NOW - 1 },
-      seven_day: { used_pct: 50, resets_at: NOW + 1000 },
-      captured_at: NOW - 10_000,
-    };
-    render(<SessionCard s={snap({ rate_limits })} now={NOW} />);
-    const m = document.querySelector('[data-meter="five_hour"]')!;
-    expect(m).toHaveTextContent("n/a");
-    expect(m).not.toHaveTextContent("88");
-    expect(m).toHaveAttribute("data-level", "na");
-    expect(document.querySelector('[data-meter="seven_day"]')).toHaveTextContent("50%");
-  });
-});
-
-describe("Board ticking", () => {
-  afterEach(() => vi.useRealTimers());
-  it("a card flips to n/a when useNow ticks past resets_at", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    useUi.setState({ compact: false });
-    const rate_limits = {
-      five_hour: { used_pct: 88, resets_at: NOW + 10_000 },
-      seven_day: { used_pct: 50, resets_at: NOW + 86_400_000 },
-      captured_at: NOW,
-    };
-    useBoard.setState({ sessions: { s1: snap({ rate_limits }) }, connection: "mock" });
-    render(<Board />);
-    expect(document.querySelector('[data-meter="five_hour"]')).toHaveTextContent("88%");
-    act(() => {
-      vi.advanceTimersByTime(30_000);
-    });
-    const m = document.querySelector('[data-meter="five_hour"]')!;
-    expect(m).toHaveTextContent("n/a");
-    expect(m).not.toHaveTextContent("88");
-  });
 });
 
 describe("CompactCard", () => {
-  it("one row with state, name, three numbers, agents and tasks; fixed height", () => {
+  it("one row with state, name, context number, agents and tasks; fixed height", () => {
     render(<CompactCard s={full()} now={NOW} />);
     const card = screen.getByTestId("session-card");
     expect(card).toHaveAttribute("data-density", "compact");
     expect(card.getAttribute("style")).toContain("--card-compact-h");
     expect(card).toHaveTextContent("Working");
     expect(card).toHaveTextContent("72%");
-    expect(card).toHaveTextContent("41%");
-    expect(card).toHaveTextContent("63%");
+    expect(card).not.toHaveTextContent("41%");
+    expect(card).not.toHaveTextContent("63%");
     expect(card).toHaveTextContent("2 agents");
     expect(card).toHaveTextContent("3/7");
     expect(within(card).getByLabelText("context 72 percent, warning, of 200k")).toBeInTheDocument();
@@ -525,7 +471,7 @@ describe("CompactCard", () => {
   it("nulls render n/a and the same slots exist", () => {
     const a = render(<CompactCard s={snap()} now={NOW} />);
     const slotsA = slotsOf(a.getByTestId("session-card"));
-    expect(a.getByTestId("session-card").textContent?.match(/n\/a/g)?.length).toBe(4);
+    expect(a.getByTestId("session-card").textContent?.match(/n\/a/g)?.length).toBe(2);
     a.unmount();
     const b = render(<CompactCard s={full()} now={NOW} />);
     expect(slotsOf(b.getByTestId("session-card"))).toEqual(slotsA);

@@ -105,7 +105,7 @@ describe("Board attention order, accent and filters", () => {
     const c = document.querySelector<HTMLElement>('[data-session-id="c"]')!;
     c.focus();
     expect(document.activeElement).toBe(c);
-    put(snap("a", "working", 30), snap("b", "working", 20), snap("c", "working", 40));
+    put(snap("a", "working", 30), snap("b", "working", 20), snap("c", "waiting_input", 40));
     expect(order()).toEqual(["c", "a", "b"]);
     expect(document.activeElement).toHaveAttribute("data-session-id", "c");
   });

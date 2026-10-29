@@ -22,3 +22,8 @@ S7 owns the hub pricing fix. S8b only displays: the popout header shows model, e
 
 ## Overlap
 Sprint 3 (S10 layouts, S9 atlas) also edits packages/web and is close to merging. Keep changes in new components where possible (SessionPopout, AgentRollup, UsageWidget); touch SessionCard and App minimally. Conflicts are resolved at merge by a conflict-resolution session, never by hand.
+
+## Amendment 2026-10-28T20:18Z (user, decision 28): no Fable row
+
+User: "dont implement fable then if we can not say what the usage is at without a doubt."
+R3.12 changes: remove the Fable 7-day row entirely (no estimate, no label, no placeholder). The widget shows only five_hour and seven_day exactly as statusLine rate_limits reports them; no handling for undocumented per-model windows. Update R3.12 in docs/planning/phases/phase-3-board.md to match. Everything else in R3.12 stands. This amendment overrides the R3.12 text above. Commit it with your next docs commit.

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useNow } from "../hooks/useNow";
 import { useBoard } from "../store/board";
 import { useUi } from "../store/ui";
-import { DetailDrawer } from "./DetailDrawer";
+import { useSessionHash } from "../hooks/useSessionHash";
+import { SessionPopout } from "./SessionPopout";
 
 /** Focuses the card for a session, found by id (the node may have been re-created meanwhile). */
 export function focusCard(id: string): boolean {
@@ -40,15 +40,16 @@ function focusNearest(neighbour: string | null): void {
 }
 
 /**
- * Mounts the drawer for ui.selectedSessionId. Subscribes to the one session and its history, not
- * the whole store. When the drawer closes, focus goes back to that session's card.
+ * Mounts the session popout (R3.11; it replaced the drawer) for ui.selectedSessionId. Subscribes to the one session and its history, not
+ * the whole store. When the popout closes, focus goes back to that session's card.
  */
 export function DrawerHost() {
   const id = useUi((s) => s.selectedSessionId);
   const closeSession = useUi((s) => s.closeSession);
-  const session = useBoard((s) => (id === null ? undefined : s.sessions[id]));
-  const history = useBoard((s) => (id === null ? undefined : s.history[id]));
-  const now = useNow(1000 * 30);
+  const session = useBoard((s) =>
+    id === null || !Object.hasOwn(s.sessions, id) ? undefined : s.sessions[id],
+  );
+  useSessionHash();
   const open = id !== null && session !== undefined;
   const openedFor = useRef<string | null>(null);
   const neighbour = useRef<string | null>(null);
@@ -71,5 +72,5 @@ export function DrawerHost() {
 
   const onClose = useCallback(() => closeSession(), [closeSession]);
   if (!open) return null;
-  return <DetailDrawer key={id} session={session} history={history} now={now} onClose={onClose} />;
+  return <SessionPopout key={id} session={session} onClose={onClose} />;
 }

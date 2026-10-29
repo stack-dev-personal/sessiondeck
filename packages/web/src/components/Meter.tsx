@@ -105,11 +105,9 @@ export function metersFor(
   now: number,
   exceeds200k: boolean | null = null,
 ): MeterModel[] {
-  return [
-    contextModel(s, exceeds200k),
-    windowModel("five_hour", s.rate_limits.five_hour, now),
-    windowModel("seven_day", s.rate_limits.seven_day, now),
-  ];
+  void now;
+  // R3.12: the 5h and 7d meters live in the UsageWidget, not on session cards.
+  return [contextModel(s, exceeds200k)];
 }
 
 /** Bar + number. Fixed widths: the bar and the cue slot exist whether or not there is a value. */

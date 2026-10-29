@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ConnectionBanner } from "./components/ConnectionBanner";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DrawerHost } from "./components/DrawerHost";
+import { UsageWidget } from "./components/UsageWidget";
 import { Header } from "./components/Header";
 import { useShortcuts } from "./lib/keys";
 import { Board } from "./routes/Board";
@@ -46,6 +47,9 @@ export function App() {
           </Routes>
         </ErrorBoundary>
       </main>
+      <ErrorBoundary>
+        <UsageWidget />
+      </ErrorBoundary>
       <ConnectionBanner />
       <ErrorBoundary>
         <DrawerHost />

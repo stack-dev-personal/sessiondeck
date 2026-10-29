@@ -16,7 +16,7 @@ await build({
   platform: "node",
   target: "node22",
   // Native or dynamic-require packages stay in node_modules; the contract and zod are bundled.
-  external: ["better-sqlite3", "fastify", "ws"],
+  external: ["better-sqlite3", "fastify", "ws", "prettier"],
   banner: {
     js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
   },

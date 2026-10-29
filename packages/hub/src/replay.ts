@@ -9,6 +9,7 @@
 // back and leaves the old snapshots. Run it with the hub stopped for a clean experience; the
 // hub's in-process state (WS clients, usage index) would go stale, so the CLI refuses while the
 // serving hub's lease is fresh.
+import { parseStoredSnapshot } from "./snapshot-parse.ts";
 import type { Envelope, HostOs, SessionSnapshot } from "@sessiondeck/contract";
 import type { EventRow, SampleRow, Store } from "./db/store.ts";
 import { MemSessions, SnapshotEngine, type SessionSource } from "./ingest/engine.ts";
@@ -83,7 +84,7 @@ export function foldEvents(
 export function loadBaselines(store: Store): MemSessions {
   const mem = new MemSessions();
   for (const b of store.listBaselines()) {
-    mem.map.set(b.session_id, JSON.parse(b.snapshot) as SessionSnapshot);
+    mem.map.set(b.session_id, parseStoredSnapshot(b.snapshot));
   }
   return mem;
 }
@@ -98,13 +99,13 @@ export class BaselineSessions implements SessionSource {
 
   get(id: string): SessionSnapshot | undefined {
     const raw = this.store.getBaseline(id);
-    return raw === undefined ? undefined : (JSON.parse(raw) as SessionSnapshot);
+    return raw === undefined ? undefined : parseStoredSnapshot(raw);
   }
 
   listOpenForHost(host: string, skip: (id: string) => boolean): SessionSnapshot[] {
     return this.store
       .listOpenBaselinesForHost(host)
-      .map((raw) => JSON.parse(raw) as SessionSnapshot)
+      .map((raw) => parseStoredSnapshot(raw))
       .filter((sn) => !skip(sn.session_id));
   }
 

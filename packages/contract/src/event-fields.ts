@@ -14,6 +14,7 @@ import {
 import type { PayloadRecord } from "./payload";
 import { isSubagentEnvelope, readString } from "./payload";
 import type { SessionSnapshot, SubagentSnapshot } from "./snapshot";
+import { normalizeSubagentLinks } from "./subagent-links";
 
 /** Fallbacks used when a documented field is missing or of the wrong type. */
 const UNKNOWN_END_REASON = "unknown";
@@ -96,17 +97,24 @@ function payloadAgentId(ctx: FieldContext): string | null {
   return id === null ? null : truncate(id, AGENT_ID_MAX_CHARS);
 }
 
-/** At most SUBAGENT_ROWS_MAX rows: the oldest ended rows go first, a running row only when all run. */
+/**
+ * At most SUBAGENT_ROWS_MAX rows: the oldest ended rows go first, a running row only when all run.
+ * Links that pointed at a dropped row are cleared (null / unknown) so none dangles.
+ */
 function capSubagents(rows: readonly SubagentSnapshot[]): SubagentSnapshot[] {
   const excess = rows.length - SUBAGENT_ROWS_MAX;
-  if (excess <= 0) return [...rows];
+  if (excess <= 0) return normalizeSubagentLinks(rows);
   const indices = rows.map((_, i) => i);
   const ended = indices.filter((i) => rows[i]?.ended_at !== null);
   const running = indices.filter((i) => rows[i]?.ended_at === null);
   const dropped = new Set([...ended, ...running].slice(0, excess));
-  return rows.filter((_, i) => !dropped.has(i));
+  return normalizeSubagentLinks(rows.filter((_, i) => !dropped.has(i)));
 }
 
+/**
+ * Option B: hook envelopes do not carry the spawning context reliably, so every row created here is
+ * unlinked (parent null, parent_known false). Exact links arrive with S7 transcript attachment.
+ */
 function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot {
   const agentId = payloadAgentId(ctx);
   if (agentId === null || s.subagents.some((a) => a.agent_id === agentId)) return s;
@@ -119,6 +127,8 @@ function onSubagentStart(s: SessionSnapshot, ctx: FieldContext): SessionSnapshot
     tokens: null,
     context_window: null,
     model: null,
+    parent_agent_id: null,
+    parent_known: false,
   };
   return { ...s, subagents: capSubagents([...s.subagents, row]) };
 }

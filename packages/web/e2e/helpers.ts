@@ -29,9 +29,11 @@ export async function freezeClock(page: Page): Promise<void> {
 
 export async function gotoDevCards(page: Page): Promise<void> {
   await freezeClock(page);
-  await page.goto("/dev/cards");
+  await page.goto("/dev/cards?replay=fast");
   await expect(page.getByTestId("dev-cards")).toBeVisible();
   await expect(page.getByTestId("specimen-populated")).toBeVisible();
+  // The usage widget is mounted on every route; wait until its numbers stop changing.
+  await waitForReplayDone(page);
 }
 
 /** Waits for the mock replay to produce `n` cards. */
@@ -86,6 +88,10 @@ export async function fullShot(
     return Math.max(0, m.scrollHeight - m.clientHeight);
   });
   await page.setViewportSize({ width: orig.width, height: orig.height + extra });
+  // The usage widget re-clamps to the new viewport on resize; let that render before shooting.
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(0)))),
+  );
   await page.screenshot({ path: shot(name) });
   if (opts.baseline) await expect(page).toHaveScreenshot(name);
   await page.setViewportSize(orig);
@@ -94,7 +100,8 @@ export async function fullShot(
 export interface SettledMix {
   states: Record<string, number>;
   withContext: number;
-  withLimits: number;
+  /** Cards still carrying a 5h or 7d meter; R3.12 removed them, so this is 0. */
+  withUsageMeters: number;
   withDots: number;
   withTasks: number;
   names: string[];
@@ -113,8 +120,8 @@ export async function settledMix(page: Page): Promise<SettledMix> {
     return {
       states,
       withContext: els.filter((e) => num(e, '[data-meter="context"]')).length,
-      withLimits: els.filter(
-        (e) => num(e, '[data-meter="five_hour"]') && num(e, '[data-meter="seven_day"]'),
+      withUsageMeters: els.filter(
+        (e) => e.querySelector('[data-meter="five_hour"], [data-meter="seven_day"]') !== null,
       ).length,
       withDots: els.filter((e) => e.querySelectorAll("[data-dot]").length > 0).length,
       withTasks: els.filter((e) =>
@@ -128,4 +135,29 @@ export async function settledMix(page: Page): Promise<SettledMix> {
       }).length,
     };
   });
+}
+
+export const VIEWPORTS = [
+  { w: 1440, h: 900 },
+  { w: 390, h: 844 },
+] as const;
+export const THEMES: Theme[] = ["light", "dark"];
+
+/** Names the evidence file `<req>-<theme>-<width>.png` in SCREENS_DIR. */
+export const evidence = (req: string, theme: Theme, width: number) =>
+  shot(`${req}-${theme}-${width}.png`);
+
+/** Opens the settled mock board at the given theme and viewport. */
+export async function openThemed(
+  page: Page,
+  theme: Theme,
+  vp: { w: number; h: number },
+  query = "",
+): Promise<void> {
+  await page.setViewportSize({ width: vp.w, height: vp.h });
+  await setTheme(page, theme);
+  await freezeClock(page);
+  await page.goto(`/board?replay=fast${query}`);
+  await waitForReplayDone(page);
+  await waitForCards(page, 8);
 }
