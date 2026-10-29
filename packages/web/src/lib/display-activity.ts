@@ -39,7 +39,7 @@ export function groupOf(state: SessionState): DisplayGroup {
   return "idle";
 }
 
-/** Advance one session. `prev` is undefined the first time it is seen (shown as it is, no grace). */
+/** Advance one session. `prev` is undefined the first time it is seen (an idle younger than the grace is held from state_since). */
 export function stepDisplay(
   prev: Tracked | undefined,
   s: SessionSnapshot,
@@ -49,7 +49,13 @@ export function stepDisplay(
   const raw = s.state;
   let displayState: SessionState = raw;
   let idleSince: number | null = null;
-  if (raw === "idle" && prev !== undefined && prev.group !== "idle") {
+  if (raw === "idle" && prev === undefined) {
+    // First sight (mount, reload, back from Settings): the idle run began at the hub's state_since.
+    if (now - s.state_since < graceMs) {
+      idleSince = s.state_since;
+      displayState = "working";
+    }
+  } else if (raw === "idle" && prev !== undefined && prev.group !== "idle") {
     // Left working or waiting for idle: hold as working until the idle has lasted the grace.
     idleSince = prev.idleSince ?? now;
     displayState = now - idleSince >= graceMs ? "idle" : "working";

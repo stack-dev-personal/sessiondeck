@@ -12,8 +12,8 @@ import { useUi } from "../store/ui";
 
 /**
  * Display order (R3.10: waiting first, then working, then idle, stable inside a group; see
- * display-activity) after the host and project filters. The sort runs in the same render as the state change, so a card moves with no
- * animation delay. Full: responsive grid of 6-row cards.
+ * display-activity) after the host and project filters. The sort runs in the same render as the
+ * state change, so a card moves with no animation delay. Full: responsive grid of 6-row cards.
  * Compact: a dense single-column list of 36 px rows (the horizontally scrolling strip of design
  * system 5.4 is a layout pane form, built with layouts in Phase 6).
  */

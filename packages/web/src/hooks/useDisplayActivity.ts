@@ -35,11 +35,12 @@ export function useDisplayActivity(
     void tick;
     const map = deriveDisplay(tracked.current, sessions, now, graceMs);
     tracked.current = map;
-    const cache = shown.current;
+    const prevCache = shown.current;
+    const cache = new Map<string, { raw: SessionSnapshot; state: string; out: SessionSnapshot }>();
     const out: DisplayRow[] = sortDisplay(sessions, map).map((raw) => {
       const t = map.get(raw.session_id)!;
       if (t.displayState === raw.state) return { session: raw, group: t.group };
-      const hit = cache.get(raw.session_id);
+      const hit = prevCache.get(raw.session_id);
       const session =
         hit && hit.raw === raw && hit.state === t.displayState
           ? hit.out
@@ -47,6 +48,7 @@ export function useDisplayActivity(
       cache.set(raw.session_id, { raw, state: t.displayState, out: session });
       return { session, group: t.group };
     });
+    shown.current = cache;
     return { rows: out, deadline: nextDeadline(map, graceMs) };
     // `now` is read each render but only a changed input or the timer should recompute.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,6 +57,6 @@ export function useDisplayActivity(
     if (deadline === null) return;
     const id = window.setTimeout(() => setTick((n) => n + 1), Math.max(0, deadline - clock()) + 1);
     return () => window.clearTimeout(id);
-  }, [deadline, clock]);
+  }, [deadline, clock, tick]);
   return rows;
 }

@@ -76,18 +76,38 @@ describe("Board reorder moves the fewest nodes", () => {
     expect(moved()).toBe(1);
   });
 
-  it("keeps DOM order equal to the sort for a shuffle, a new session and a removal", () => {
+  it("keeps DOM order equal to the sort for a group shuffle, a new session and a removal", () => {
     put(stamp(ids));
     render(<Board />);
-    const shuffled = [...ids].reverse().map((id, i) => (i % 3 === 0 ? id : ids[(i * 7) % 20]!));
-    const uniq = [...new Set([...shuffled, ...ids])];
-    put({});
-    put(stamp(uniq));
-    expect(order()).toEqual(uniq);
-    const withNew = ["new1", ...uniq.slice(0, 5), ...uniq.slice(6)];
-    put({});
-    put(stamp(withNew));
-    expect(order()).toEqual(withNew);
+    useUi.setState({ settings: { ...useUi.getState().settings, idleGraceSec: 0 } });
+    const list = order();
+    const moved = watchMoves();
+    // Every third card waits (attention group), every fifth of the rest goes idle; the live list
+    // is permuted without remounting, so reorderChildren has to move nodes.
+    const states: Record<string, SessionState> = {};
+    ids.forEach((id, i) => {
+      if (i % 3 === 0) states[id] = "waiting_input";
+      else if (i % 5 === 0) states[id] = "idle";
+    });
+    put(stamp(ids), states);
+    const rank = (id: string) =>
+      states[id] === "waiting_input" ? 0 : states[id] === "idle" ? 2 : 1;
+    const got = order();
+    expect([...got].sort()).toEqual([...list].sort());
+    expect(got.map((x) => rank(x!))).toEqual([...got].map((x) => rank(x!)).sort((p, q) => p - q));
+    // A real shuffle: some nodes moved, never more than one move per card.
+    expect(moved()).toBeGreaterThan(0);
+    expect(moved()).toBeLessThanOrEqual(ids.length);
+
+    const withNew = { ...stamp(ids), new1: 2000 };
+    delete (withNew as Record<string, number>)[ids[4]!];
+    put(withNew, states);
+    const after = order();
+    expect(after).toHaveLength(20);
+    expect(after).toContain("new1");
+    expect(after).not.toContain(ids[4]);
+    const sorted = [...after].sort((x, y) => rank(x!) - rank(y!));
+    expect(after.map((x) => rank(x!))).toEqual(sorted.map((x) => rank(x!)));
   });
 
   it("reorderChildren leaves an already sorted list untouched", () => {

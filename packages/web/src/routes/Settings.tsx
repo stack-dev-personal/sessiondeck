@@ -43,6 +43,7 @@ export function Settings() {
   const [graceText, setGraceText] = useState(String(settings.idleGraceSec));
   const [saved, setSaved] = useState(false);
   const [perm, setPerm] = useState<Perm>(currentPermission);
+  const graceInvalid = graceText.trim() === "" || !Number.isFinite(Number(graceText));
   const warning = insecureHubWarning(draft.hubUrl);
   /** The change handler is a user gesture, which is what requestPermission needs. */
   const toggleNotifications = (on: boolean) => {
@@ -72,6 +73,7 @@ export function Settings() {
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (graceInvalid) return;
     saveSettings(draft);
     setSaved(true);
   };
@@ -176,6 +178,7 @@ export function Settings() {
       <div className="flex items-center gap-s-3">
         <button
           type="submit"
+          disabled={graceInvalid}
           className="rounded border border-border-control bg-surface-2 px-s-3 py-s-1 hover:bg-surface-3"
         >
           Save

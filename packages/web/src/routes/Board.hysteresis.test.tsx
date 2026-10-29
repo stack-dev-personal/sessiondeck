@@ -69,4 +69,17 @@ describe("Board display activity (R3.10)", () => {
     put([snap("a", "idle"), snap("b", "waiting_input")]);
     expect(groupOf("a")).toBe("idle");
   });
+
+  it("remounting the board (Settings and back) keeps the grace from state_since", () => {
+    const stopped = { ...snap("a", "idle"), state_since: Date.now() };
+    act(() => useBoard.setState({ sessions: { a: stopped } }));
+    const first = render(<Board />);
+    expect(groupOf("a")).toBe("working");
+    first.unmount();
+    act(() => void vi.advanceTimersByTime(10_000));
+    render(<Board />);
+    expect(groupOf("a")).toBe("working");
+    act(() => void vi.advanceTimersByTime(111_000));
+    expect(groupOf("a")).toBe("idle");
+  });
 });

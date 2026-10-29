@@ -77,7 +77,7 @@ describe("display activity hysteresis (R3.10)", () => {
   });
 
   it("terminal states and first sightings show as they are", () => {
-    expect(run(120, [[0, "idle"]]).states).toEqual(["idle"]);
+    expect(run(120, [[0, "idle"]]).states).toEqual(["working"]);
     expect(
       run(120, [
         [0, "working"],
@@ -158,5 +158,31 @@ describe("clampGraceSec", () => {
     expect(clampGraceSec(undefined)).toBe(120);
     expect(clampGraceSec(NaN)).toBe(120);
     expect(clampGraceSec("")).toBe(120);
+  });
+
+  it("a first sighting of a young idle is held from state_since; an old one shows idle", () => {
+    const young = deriveDisplay(new Map(), [snap("a", "idle", T0 - 10_000)], T0, 120_000);
+    expect(young.get("a")!.displayState).toBe("working");
+    expect(nextDeadline(young, 120_000)).toBe(T0 - 10_000 + 120_000);
+    const old = deriveDisplay(new Map(), [snap("a", "idle", T0 - 130_000)], T0, 120_000);
+    expect(old.get("a")!.displayState).toBe("idle");
+  });
+
+  it("flapping working/waiting/idle: attention at once, waiting to idle held as working", () => {
+    const { states, groups } = run(120, [
+      [0, "working"],
+      [5, "waiting_input"],
+      [10, "idle"],
+      [15, "waiting_input"],
+      [20, "idle"],
+    ]);
+    expect(states).toEqual(["working", "waiting_input", "working", "waiting_input", "working"]);
+    expect(groups).toEqual(["working", "attention", "working", "attention", "working"]);
+  });
+
+  it("a Stop/prompt flapper every 30 s never leaves working", () => {
+    const steps: Array<[number, SessionState]> = [];
+    for (let i = 0; i < 20; i++) steps.push([i * 30, i % 2 === 0 ? "working" : "idle"]);
+    expect(new Set(run(120, steps).groups)).toEqual(new Set(["working"]));
   });
 });
