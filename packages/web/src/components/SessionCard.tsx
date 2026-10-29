@@ -212,7 +212,7 @@ function SessionCardImpl({
       <div
         data-row="3"
         data-slot="meters"
-        className="grid grid-cols-[1.7fr_1fr_1fr] gap-s-2 overflow-hidden whitespace-nowrap"
+        className="grid grid-cols-[1fr] gap-s-2 overflow-hidden whitespace-nowrap"
       >
         {meters.map((m) => (
           <Meter key={m.kind} m={m} />
