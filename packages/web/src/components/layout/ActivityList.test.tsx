@@ -209,4 +209,3 @@ describe("rows keep their place when the log trims (R6.4)", () => {
     for (const li of mounted()) expect(parseFloat(li.style.top)).toBeLessThan(2048 * ROW_H);
   });
 });
-

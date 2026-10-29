@@ -401,8 +401,7 @@ export function attributeDrops(
     open.delete(id);
     if (!begin || begin.ts < t0 || begin.ts > t1) continue;
     const rep = (begin.args?.["frame_reporter"] ?? begin.args?.["chrome_frame_reporter"]) as
-      | { state?: string }
-      | undefined;
+      { state?: string } | undefined;
     if (typeof rep?.state !== "string") continue;
     compositorFrames++;
     if (rep.state !== "STATE_DROPPED") continue;

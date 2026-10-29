@@ -553,6 +553,9 @@ function saveBoardTraces(name: string, wins: readonly Win[]): void {
       );
 }
 
+// Perf gate cases (board-20, strict-120, live-board-20) skip when SD_E2E_SKIP_PERF=1 (shared CI runner).
+test.skip(process.env["SD_E2E_SKIP_PERF"] === "1", "SD_E2E_SKIP_PERF=1");
+
 test.describe("mock build, in-page delivery", () => {
   test.skip(LIVE.hubUrl !== "", "mock build only (the live variant is below)");
 

@@ -8,10 +8,12 @@ import { Header } from "./Header";
 
 describe("Header re-renders (R6.4)", () => {
   beforeEach(() => {
-    useBoard.getState().replaceAll([
-      createSnapshot({ session_id: "a", host: "h1", cwd: "/w/a", ts: 1 }),
-      createSnapshot({ session_id: "b", host: "h1", cwd: "/w/b", ts: 1 }),
-    ]);
+    useBoard
+      .getState()
+      .replaceAll([
+        createSnapshot({ session_id: "a", host: "h1", cwd: "/w/a", ts: 1 }),
+        createSnapshot({ session_id: "b", host: "h1", cwd: "/w/b", ts: 1 }),
+      ]);
   });
 
   it("a delta that adds no host does not re-render it; a new host does", () => {

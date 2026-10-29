@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { PRESET_LABELS, PRESET_NAMES, type PresetName } from "../../layout/presets";
 
 /**
@@ -21,15 +21,16 @@ export function LayoutMenu({
 }) {
   const btn = useRef<HTMLButtonElement>(null);
   const items = useRef<(HTMLButtonElement | null)[]>([]);
-  const [wasOpen, setWasOpen] = useState(false);
+  const wasOpen = useRef(false);
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  // focus moves only when the open state flips; `current` is read through a ref
   useEffect(() => {
     if (open) {
-      const i = Math.max(0, PRESET_NAMES.indexOf(current as PresetName));
+      const i = Math.max(0, PRESET_NAMES.indexOf(currentRef.current as PresetName));
       items.current[i]?.focus();
-    } else if (wasOpen) btn.current?.focus();
-    setWasOpen(open);
-    // focus moves only when the open state flips
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    } else if (wasOpen.current) btn.current?.focus();
+    wasOpen.current = open;
   }, [open]);
   const move = (to: number) => {
     const n = PRESET_NAMES.length;

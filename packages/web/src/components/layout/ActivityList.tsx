@@ -53,15 +53,7 @@ export function windowOf(
  * nodes per row keep paint cheap when six live lists repaint on every update. The kind label is the
  * non-color cue; the state glyph, where there is one, is in the text itself.
  */
-const Row = memo(function Row({
-  row,
-  h,
-  base,
-}: {
-  row: ActivityRow;
-  h: number;
-  base: number;
-}) {
+const Row = memo(function Row({ row, h, base }: { row: ActivityRow; h: number; base: number }) {
   const t = new Date(row.ts);
   const clock = Number.isFinite(t.getTime()) ? t.toTimeString().slice(0, 8) : "n/a";
   return (

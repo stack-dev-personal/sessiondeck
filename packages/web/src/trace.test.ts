@@ -171,7 +171,14 @@ describe("attributeDrops (R6.4)", () => {
       args: { frame_reporter: { state } },
       id2: { local: id },
     } as TraceEvent,
-    { ph: "e", name: "PipelineReporter", pid: 1, tid: 3, ts: at + len, id2: { local: id } } as TraceEvent,
+    {
+      ph: "e",
+      name: "PipelineReporter",
+      pid: 1,
+      tid: 3,
+      ts: at + len,
+      id2: { local: id },
+    } as TraceEvent,
   ];
 
   it("a gap filled with 10 ms of script is the app's; an idle gap is the host's", () => {
@@ -292,7 +299,9 @@ describe("judgeGate (R6.4)", () => {
 
   it("passes when board windows have no app drops and no more host drops than the control", () => {
     expect(judgeGate(abba()).pass).toBe(true);
-    expect(judgeGate(abba([{ otherDrops: 2 }], [{ otherDrops: 1 }, { otherDrops: 1 }])).pass).toBe(true);
+    expect(judgeGate(abba([{ otherDrops: 2 }], [{ otherDrops: 1 }, { otherDrops: 1 }])).pass).toBe(
+      true,
+    );
   });
 
   it("fails on one app drop in one board window; the other windows being clean does not help", () => {
