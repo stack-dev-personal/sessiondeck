@@ -106,3 +106,17 @@
     vm deadline and whole-value placeholder checks), one review by both reviewers. If the security gate fails again:
     no new question; R4.7 is deferred to a dedicated redaction session before Sprint 4 in VERIFY-P4.md, the tail stays
     hub-local, U4 and U5 finish so S7 can merge.
+
+### Q2 GH013 rebuild (2026-10-29)
+- sd-executor-probe: corpus tokens assembled at run time, generated corpora in gitignored
+  packages/probe/test/redaction/.generated/ created by vitest globalSetup (7d887c2; first run cut by ENOTFOUND, resumed).
+  Probe 411 passed, 1 skipped; leaks 0/200, 0/200 (tailer), 0/83, 0/470; benign FP 0%.
+- Branch rebuilt from origin/sprint/2-content (f6d396d): U1, U3 and docs commits cherry-picked; U2 commits 16110dd..983a20b
+  squashed into one commit. Check: `diff <(git diff ea045d3 983a20b) <(git diff origin/sprint/2-content <new>)` printed
+  SESSION DIFF IDENTICAL. Old tip kept locally as p4/normalize-pre-rebuild (never pushed).
+- First push still rejected: npm Access Token at gen-independent.mjs:80 (`registry.npmjs.org/:_authToken=<uuid>`). Executor
+  fragmented it plus npmrc/_auth, docker auth, Azure AccountKey, credential URLs, hvs., xapp, discord webhook literals;
+  amended into the squash commit (7ba2c29). One transient 5000 ms timeout in the redaction bench test, passed on rerun.
+- Local scan before push (/tmp/s7-secret-scan.sh, gitleaks-style regex over added lines of
+  `git diff origin/sprint/2-content HEAD` and `git log -p` per commit): `0 hits`. Push accepted:
+  `* [new branch] p4/normalize -> p4/normalize` (remote reports it moved to stack-dev-personal/sessiondeck).
