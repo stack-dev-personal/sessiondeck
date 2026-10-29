@@ -90,3 +90,8 @@
 ## Deferred findings (U4b)
 - LOW (security) 1,044 pre-existing leak shapes in all baselines: second word after masked flag value, dash-led or Unicode-dash values, glued short flags (`mysql -pSECRET`). Owned by S7 / Phase 4 redaction corpus.
 - MINOR redact.ts:91-95,157 unclosed-quote VALUE eats \r (no leak, CRLF -> LF on that line): follow-up.
+
+## Relaunch 2026-10-29T01:00:33Z
+- Previous run ended without status: account session limit (HTTP 429, reset 00:30 UTC) during the U5-web delegation; external stop. No answer file, no docs/HANDOFF-*.md.
+- Worktree had uncommitted U5-web work on 9df3f9b in packages/web (atlas live/types, CommandPalette, DetailDrawer, attention, state-vocab, mock/atlas, ProjectView, SessionList, e2e live helpers; new ArchiveSummary, neutralize, Archive.test, e2e R5.3 specs). Web executor inspects it against U5 scope and finishes U5.
+- Sprint branch now at 7c5f3d4 (main 77a4fa1 merged); S10 (p6/layouts) edits packages/web and merges first: rebase before finishing.
