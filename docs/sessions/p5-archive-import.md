@@ -95,3 +95,14 @@
 - Previous run ended without status: account session limit (HTTP 429, reset 00:30 UTC) during the U5-web delegation; external stop. No answer file, no docs/HANDOFF-*.md.
 - Worktree had uncommitted U5-web work on 9df3f9b in packages/web (atlas live/types, CommandPalette, DetailDrawer, attention, state-vocab, mock/atlas, ProjectView, SessionList, e2e live helpers; new ArchiveSummary, neutralize, Archive.test, e2e R5.3 specs). Web executor inspects it against U5 scope and finishes U5.
 - Sprint branch now at 7c5f3d4 (main 77a4fa1 merged); S10 (p6/layouts) edits packages/web and merges first: rebase before finishing.
+
+### U5 web archived and merged sessions (sd-executor-web)
+- Commit 460f492 (resumed uncommitted work kept as is). Web 318 tests; mock R5.3 spec 5/5, live R5.3 spec 1/1 against the real hub image.
+- Review iteration 1: reviewer fix-then-merge (MINOR DEL not neutralized; MINOR dedupe test hollow; LOW tag/VS/Hangul chars; LOW drawer header for archive-only; LOW live spec state not asserted). Security Gate pass + LOW (C0, tag chars, worktree unneutralized).
+- Iteration 2 (b99d418): all fixed. Reviewer fix-then-merge (MAJOR drawer header assertions not scoped; MAJOR mock screenshots stale; MINOR FE0F emoji regression and VS supplement; MINOR CR neutralized vs probe keeping CR; MINOR worktree untested). Security Gate pass, no findings.
+- Iteration 3 (88d2f73): all fixed; web 322 tests; mock suite 48 pass, live suite pass; screenshots re-written after head. Reviewer `merge`.
+- Status: done (review), verification next.
+
+## Deferred findings (U5)
+- MINOR neutralize.ts:56-60 one FE0E/FE0F kept after whitespace (invisible, no reorder): follow-up.
+- MINOR summary-live.json lists R3.6 (Phase 3 perf, 20 sessions at 20 deltas/s) as fail in this container; out of U5 scope, environment-sensitive; not touched by this branch.
