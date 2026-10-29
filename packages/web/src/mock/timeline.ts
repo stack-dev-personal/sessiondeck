@@ -1,4 +1,5 @@
-import type { Envelope } from "@sessiondeck/contract";
+import type { Envelope, SessionSnapshot } from "@sessiondeck/contract";
+import { readSubagentRows } from "@sessiondeck/contract";
 import { fx, goldenEvents, statusLines } from "./fixtures";
 
 /**
@@ -48,6 +49,59 @@ const tasks = (created: number, completed: number): Record<string, unknown>[] =>
   })),
 ];
 
+/** The session with the nested subagents (R3.11) that also flaps Stop/prompt (R3.10). */
+export const MOCK_DEEP_SESSION = "mock-sessiondeck-3";
+/** Gap between the live Stop and UserPromptSubmit of the flapping session. */
+export const DEFAULT_FLAP_MS = 30_000;
+
+/**
+ * What the hub's transcript attachment (S7) will deliver as a snapshot: hooks alone cannot link
+ * subagents (contract option B), so the mock patches parent links onto the deep session after the
+ * replay. s1 -> s2 -> s3 is three levels, s5 is a second child of s1, s4 stays unlinked.
+ */
+export function linkMockSubagents(s: SessionSnapshot): SessionSnapshot {
+  const parents: Record<string, string | null> = {
+    "mock-agent-s1": null,
+    "mock-agent-s2": "mock-agent-s1",
+    "mock-agent-s3": "mock-agent-s2",
+    "mock-agent-s5": "mock-agent-s1",
+  };
+  return {
+    ...s,
+    subagents: readSubagentRows(
+      s.subagents.map((a) =>
+        Object.hasOwn(parents, a.agent_id)
+          ? { ...a, parent_agent_id: parents[a.agent_id], parent_known: true }
+          : a,
+      ),
+    ),
+  };
+}
+
+/** A live Stop or UserPromptSubmit for the flapping session, stamped `now` (seq is the caller's counter). */
+export function flapEnvelope(
+  name: "Stop" | "UserPromptSubmit",
+  now: number,
+  n: number,
+): Envelope<"hook"> {
+  const project = "sessiondeck";
+  const base = name === "Stop" ? fx.stopAfterAsk : fx.userPrompt;
+  const payload = rewrite({ ...base, hook_event_name: name }, MOCK_DEEP_SESSION, project);
+  const host = SCRIPTS.find((sc) => sc.project === project)!.host;
+  return {
+    v: 1,
+    kind: "hook",
+    host,
+    os: "linux",
+    session_id: MOCK_DEEP_SESSION,
+    hook_event_name: name,
+    payload,
+    id: ulid(100_000 + n),
+    seq: 100_000 + n,
+    ts: now,
+  } as Envelope<"hook">;
+}
+
 /*
  * Status indices point at fixtures with a context percentage and both rate-limit windows
  * (04-mid 3, 05-mid 4, 10-keyset 9, 13-max-used 12, 16-max-five-hour 15, 19-max-seven-day 18).
@@ -87,6 +141,8 @@ const SCRIPTS: Script[] = [
       ...subagent("mock-agent-s1", false),
       ...subagent("mock-agent-s2", false),
       ...subagent("mock-agent-s3", true),
+      ...subagent("mock-agent-s4", false),
+      ...subagent("mock-agent-s5", false),
       ...tasks(3, 1),
     ],
     status: [9, 3, 15],
@@ -241,9 +297,11 @@ function rewriteStatus(
   sessionId: string,
   sc: Script,
   now: number,
+  usage = true,
 ): Record<string, unknown> {
   const project = sc.project;
   const out = rewrite(payload, sessionId, project);
+  if (!usage) delete out.rate_limits;
   out.session_name = sc.name;
   if (sc.branch) out.worktree = { name: sc.worktree ?? project, branch: sc.branch };
   const gitWorktree = (payload.workspace as { git_worktree?: string } | undefined)?.git_worktree;
@@ -269,8 +327,14 @@ function rewriteStatus(
   return out;
 }
 
+export interface MockOptions {
+  /** false: no statusLine carries rate_limits, so the usage widget shows its empty state (R3.12). */
+  usage?: boolean;
+}
+
 /** Returns envelopes in delivery order, ts strictly increasing from `now - 30 min`. */
-export function buildMockTimeline(now: number): Envelope[] {
+export function buildMockTimeline(now: number, opts: MockOptions = {}): Envelope[] {
+  const usage = opts.usage ?? true;
   const perSession: Envelope[][] = SCRIPTS.map((sc, si) => {
     const sessionId = `mock-${sc.project}-${si + 1}`;
     const list: Omit<Envelope, "ts" | "seq" | "id">[] = [];
@@ -300,6 +364,7 @@ export function buildMockTimeline(now: number): Envelope[] {
             sessionId,
             sc,
             now,
+            usage,
           ),
         });
       }
@@ -309,7 +374,13 @@ export function buildMockTimeline(now: number): Envelope[] {
       list.push({
         ...base,
         kind: "statusline",
-        payload: rewriteStatus(statusLines[idx] as Record<string, unknown>, sessionId, sc, now),
+        payload: rewriteStatus(
+          statusLines[idx] as Record<string, unknown>,
+          sessionId,
+          sc,
+          now,
+          usage,
+        ),
       });
     }
     if (sc.dies) list.push({ ...base, kind: "liveness", payload: { pid: sc.pid, alive: false } });
