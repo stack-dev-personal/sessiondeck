@@ -5,6 +5,7 @@ import {
   type SessionState,
   type SubagentSnapshot,
 } from "@sessiondeck/contract";
+import { headlessSnapshot } from "../mock/headless";
 import { applyStatusLine, exceeds200kOf } from "../statusline-adapter";
 
 /**
@@ -161,6 +162,19 @@ export function buildSpecimens(now: number): SpecimenGroup[] {
           },
         },
         make("populated", "populated"),
+      ],
+    },
+    {
+      id: "headless",
+      title: "Headless session: figures from the transcript (R3.16), beside a statusline session",
+      specimens: [
+        {
+          id: "headless",
+          label: "headless, sources transcript, window null",
+          exceeds200k: null,
+          snapshot: headlessSnapshot(now),
+        },
+        make("statusline", "statusline sourced"),
       ],
     },
     {

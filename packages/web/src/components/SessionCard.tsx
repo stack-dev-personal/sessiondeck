@@ -3,7 +3,9 @@ import type { SessionSnapshot, SessionState } from "@sessiondeck/contract";
 import { displayNameOf, projectOf } from "../lib/attention";
 import { STATE_VOCAB } from "../lib/state-vocab";
 import { formatClock, formatCost, formatDuration, shortModel } from "../lib/format";
+import { TRANSCRIPT_LABEL, costAria, fromTranscript, transcriptHint } from "../lib/provenance";
 import { Meter, MeterValue, metersFor } from "./Meter";
+import { SourceMark } from "./SourceMark";
 import { StateChip } from "./StateChip";
 
 export const MAX_DOTS = 5;
@@ -165,6 +167,11 @@ function SessionCardImpl({
     : "n/a";
   const wt = s.git.worktree;
   const where = `${project} · ${s.git.branch ?? "n/a"}${wt && wt !== project ? ` (${wt})` : ""}`;
+  const hint = transcriptHint(s);
+  const branchTx = fromTranscript(s, "git_branch") && s.git.branch !== null;
+  const modelTx = fromTranscript(s, "model") && s.model !== null;
+  const activityTx = fromTranscript(s, "last_assistant_message") && activity !== null;
+  const costTx = fromTranscript(s, "cost");
   return (
     <article
       tabIndex={0}
@@ -179,7 +186,7 @@ function SessionCardImpl({
       onAnimationEnd={onAnimationEnd}
     >
       <span id={hintId} className="sr-only">
-        Enter opens details
+        Enter opens details{hint ? `. ${hint}` : ""}
       </span>
       <div data-row="1" className={`${ROW} justify-between`}>
         <span data-slot="state" className={`${ROW} min-w-[12ch]`}>
@@ -195,10 +202,11 @@ function SessionCardImpl({
         </span>
         <span
           data-slot="where"
-          title={where}
+          title={branchTx ? `${where} (branch ${TRANSCRIPT_LABEL})` : where}
           className="num min-w-0 shrink-[8] truncate text-fg-muted"
         >
           {where}
+          {branchTx ? <SourceMark /> : null}
         </span>
       </div>
       <div data-row="2" className={`${ROW} justify-between`}>
@@ -228,6 +236,7 @@ function SessionCardImpl({
         >
           {activity ?? "n/a"}
         </span>
+        {activityTx ? <SourceMark className="shrink-0" /> : null}
       </div>
       <div data-row="5" className={`${ROW} justify-between`}>
         <span className={ROW}>
@@ -239,11 +248,27 @@ function SessionCardImpl({
           <TaskProgress s={s} bar />
         </span>
         <span className={`${ROW} shrink-0`}>
-          <span data-slot="cost" className="num text-fg-muted">
-            {formatCost(s.cost.usd)}
+          <span
+            data-slot="cost"
+            role="group"
+            aria-label={costAria(s)}
+            title={costAria(s)}
+            className="num text-fg-muted"
+          >
+            <span aria-hidden="true" className="text-xs text-fg-faint">
+              API-equiv.{" "}
+            </span>
+            <span aria-hidden="true">{formatCost(s.cost.usd)}</span>
+            {costTx ? <SourceMark /> : null}
           </span>
-          <span data-slot="model" className="num text-fg-muted">
-            {modelText}
+          <span
+            data-slot="model"
+            role="group"
+            aria-label={`model ${modelText}${modelTx ? `, ${TRANSCRIPT_LABEL}` : ""}`}
+            className="num text-fg-muted"
+          >
+            <span aria-hidden="true">{modelText}</span>
+            {modelTx ? <SourceMark /> : null}
           </span>
         </span>
       </div>
