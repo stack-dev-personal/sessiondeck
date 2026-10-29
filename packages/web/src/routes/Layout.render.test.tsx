@@ -10,17 +10,47 @@ import { useBoard } from "../store/board";
 import { useLayout } from "../store/layout";
 import { Layout } from "./Layout";
 
+// Per-pane commit counts: each session pane body is wrapped in its own Profiler.
+const paneCommits = vi.hoisted(() => new Map<string, number>());
+vi.mock("../components/layout/PaneBodies", async (orig) => {
+  const real = await orig<typeof import("../components/layout/PaneBodies")>();
+  const { Profiler: P, createElement } = await import("react");
+  return {
+    ...real,
+    // Column bodies subscribe to every session by design; stubbed so only Layout itself is counted.
+    ProjectPaneBody: () => null,
+    SessionPaneBody: (props: { sessionId: string | undefined }) =>
+      createElement(
+        P,
+        {
+          id: props.sessionId ?? "empty",
+          onRender: () =>
+            paneCommits.set(
+              props.sessionId ?? "empty",
+              (paneCommits.get(props.sessionId ?? "empty") ?? 0) + 1,
+            ),
+        },
+        createElement(real.SessionPaneBody, props),
+      ),
+  };
+});
+
 class RO {
   observe() {}
   unobserve() {}
   disconnect() {}
 }
 
-const sess = (i: number, at: number): SessionSnapshot => ({
-  ...createSnapshot({ session_id: `s${i}`, host: "h", cwd: `/w/load-${i}`, ts: 1 }),
-  project_dir: `/w/load-${i}`,
-  last_event_at: at,
-});
+const sess = (i: number, at: number, visible = true): SessionSnapshot => {
+  const base = createSnapshot({ session_id: `s${i}`, host: "h", cwd: `/w/load-${i}`, ts: 1 });
+  return {
+    ...base,
+    project_dir: `/w/load-${i}`,
+    last_event_at: at,
+    // A visible change per delta (the pane shows "ctx N%"), so the owner must commit once per delta.
+    context: { ...base.context, used_pct: visible ? at : base.context.used_pct },
+  };
+};
 
 describe("Layout re-renders (R6.4)", () => {
   beforeEach(() => {
@@ -60,15 +90,12 @@ describe("Layout re-renders (R6.4)", () => {
       .filter((p) => p.type === "session")
       .forEach((p, i) => (spec = assignSession(spec, p.id, `s${i}`)));
     useLayout.setState({ spec });
-    const commits: string[] = [];
     render(
       <MemoryRouter initialEntries={["/layout"]}>
-        <Profiler id="l" onRender={() => commits.push("c")}>
-          <Layout />
-        </Profiler>
+        <Layout />
       </MemoryRouter>,
     );
-    const mounted = commits.length;
+    paneCommits.clear();
     for (let t = 0; t < 12; t++) {
       act(() => {
         useBoard.setState((st) => ({
@@ -76,8 +103,15 @@ describe("Layout re-renders (R6.4)", () => {
         }));
       });
     }
-    // One commit per delta at most: no layout, toolbar or other pane work rides along.
-    expect(commits.length - mounted).toBeLessThanOrEqual(12);
+    // Each pane owns two of the twelve deltas: exactly two commits each, none for others' deltas.
+    expect(Object.fromEntries([...paneCommits].sort())).toEqual({
+      s0: 2,
+      s1: 2,
+      s2: 2,
+      s3: 2,
+      s4: 2,
+      s5: 2,
+    });
   });
 
   it("the hidden-project note appears when a live project has no column", () => {
@@ -88,5 +122,37 @@ describe("Layout re-renders (R6.4)", () => {
       </MemoryRouter>,
     );
     expect(queryByTestId("projects-more")?.textContent).toContain("+5 more projects");
+  });
+
+  it("a project that arrives after mount updates the hidden count; plain deltas do not re-render", () => {
+    useLayout.setState({ spec: buildPreset("by-project", ["/w/load-0"]) });
+    let commits = 0;
+    const { getByTestId } = render(
+      <MemoryRouter initialEntries={["/layout"]}>
+        <Profiler id="l" onRender={() => commits++}>
+          <Layout />
+        </Profiler>
+      </MemoryRouter>,
+    );
+    expect(getByTestId("projects-more").textContent).toContain("+5 more projects");
+    const mounted = commits;
+    act(() => {
+      useBoard.setState((st) => ({
+        sessions: { ...st.sessions, s6: sess(6, 20) },
+      }));
+    });
+    expect(getByTestId("projects-more").textContent).toContain("+6 more projects");
+    const afterArrival = commits;
+    expect(afterArrival).toBeGreaterThan(mounted);
+    // Plain deltas (nothing visible changes) on projects with no column: count unchanged, no commit.
+    for (let t = 0; t < 12; t++) {
+      act(() => {
+        useBoard.setState((st) => ({
+          sessions: { ...st.sessions, [`s${1 + (t % 5)}`]: sess(1 + (t % 5), 30 + t, false) },
+        }));
+      });
+    }
+    expect(getByTestId("projects-more").textContent).toContain("+6 more projects");
+    expect(commits).toBe(afterArrival);
   });
 });

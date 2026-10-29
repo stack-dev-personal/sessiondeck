@@ -262,7 +262,9 @@ async function seedLogs(page: Page, envs: Record<string, unknown>[], ids: string
           ([want, cap]) => {
             const act = (
               window as unknown as {
-                __sd: { board: { getState: () => { activity: Record<string, { rows: unknown[] }> } } };
+                __sd: {
+                  board: { getState: () => { activity: Record<string, { rows: unknown[] }> } };
+                };
               }
             ).__sd.board.getState().activity;
             return want!.every((id) => (act[id as string]?.rows.length ?? 0) >= (cap as number));
@@ -298,8 +300,7 @@ function analyse(buf: Buffer, wallMs: number, data: Perf & { hw: number }) {
     },
     markedWindow: window !== null,
     attribution: window === null ? null : attributeDrops(events, { window }),
-    attributionWall:
-      window === null ? null : attributeDrops(events, { window, basis: "wall" }),
+    attributionWall: window === null ? null : attributeDrops(events, { window, basis: "wall" }),
     pipeline: pipelineFrames(events),
     transitionEnds: data.transitionEnds,
     longTasksObserver: data.longtasks.length,
@@ -403,7 +404,9 @@ async function runWindows(
   // compositor frame reporting while the page runs, which drops frames in that window (seen as 25 to
   // 100 STATE_DROPPED in window 1 and 1 to 4 afterwards, with the same app). One traced, discarded
   // period first, so every measured window is a steady-state window.
-  await browser.startTracing(page, { categories: ["-*", "devtools.timeline", "benchmark", "rail"] });
+  await browser.startTracing(page, {
+    categories: ["-*", "devtools.timeline", "benchmark", "rail"],
+  });
   await sleep(PRIMER_MS);
   await browser.stopTracing();
   const wins: Win[] = [];
@@ -534,7 +537,9 @@ function record(
     ...extra,
   };
   summaries[name] = res;
-  console.log(`R6.4 ${name} verdict=${verdict ? (verdict.pass ? "PASS" : "FAIL") : "n/a"}\n${table(wins)}`);
+  console.log(
+    `R6.4 ${name} verdict=${verdict ? (verdict.pass ? "PASS" : "FAIL") : "n/a"}\n${table(wins)}`,
+  );
   writeEvidence();
   return res;
 }
@@ -704,7 +709,9 @@ test.describe("mock build, in-page delivery", () => {
         panes,
       });
       saveBoardTraces(c.name, c.gate ? wins : []);
-      expect(exhausted, `${c.name}: the delivery schedule ran out (state would replay)`).toBe(false);
+      expect(exhausted, `${c.name}: the delivery schedule ran out (state would replay)`).toBe(
+        false,
+      );
       expectSound(c.name, c.perSec, wins, panes, 20, SEED_PER_SESSION > 0 ? 500 : null);
       if (verdict) expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
     });
@@ -814,16 +821,20 @@ test.describe("real hub (scripts/e2e-live.sh)", () => {
         await page.screenshot({ path: shot(`R6.4-six-panes-${c.name}.png`) });
         const panes = await paneState(page);
         const stats = await load.stop();
-        const verdict = judgeGate(wins.map((w) => w.gate));
+        // A diagnostic run (gate:false) only records evidence: judgeGate is never called.
+        const verdict = c.gate ? judgeGate(wins.map((w) => w.gate)) : null;
         record(c.name, c.gate, wins, verdict, {
-          verdictByWallTime: judgeGate(wins.map((w) => w.gateWall)),
+          verdictByWallTime: c.gate ? judgeGate(wins.map((w) => w.gateWall)) : null,
           definition: { modes: c.modes, diagnostic: DIAGNOSTIC },
-          fastestProbeMs, failedPosts: stats.failedPosts, panes });
+          fastestProbeMs,
+          failedPosts: stats.failedPosts,
+          panes,
+        });
         saveBoardTraces(c.name, wins);
         expect(stats.failedPosts, "ingest posts failed").toBe(0);
         // Hub snapshots only produce a row when something visible changed, so fewer rows than mock.
         expectSound(c.name, c.perSec, wins, panes, 8, null);
-        expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
+        if (verdict) expect(verdict.failures, `${c.name}: gate\n${table(wins)}`).toEqual([]);
       } finally {
         await load.stop();
         await load.end();
