@@ -11,7 +11,7 @@
 - [x] U1 contract: snapshot field-source markers and subagent figure fields (R2.12, R2.13 schema part) - sd-executor-contract
 - [x] U2 hub: transcript-derived session fields + WS deltas (R2.12) - sd-executor-hub, after U1
 - [x] U3 hub: subagent figures from subagent transcript lines (R2.13) + recorded headless replay test + live-shape harness - sd-executor-hub, after U2
-- [ ] U4 web: "from transcript" labels, "API-equivalent" cost, Playwright screenshots (R3.16) - sd-executor-web, after U1
+- [x] U4 web: "from transcript" labels, "API-equivalent" cost, Playwright screenshots (R3.16) - sd-executor-web, after U1
 - [ ] Close: full suite, verifier over all IDs, rebase/merge sprint branch, PR to sprint/2-content
 
 ## Decisions made
@@ -44,6 +44,17 @@
 - Fix iteration 1: d682ff6, d527ac0, 328b15e, 92e0d42, 2dced8c. Replay stress bench 14.2 s vs 60 s (loaded host), row in docs/HUB-BENCH.md.
 - Review 2: verdict merge, 2 MINOR (deferred below).
 - Verifier (73f2d7f): R2.12 and R2.13 6 pass / 0 fail / 0 unverifiable; harness on compose project sd-2-s8d port 28787 printed all figures, containers removed.
+
+
+### U4 web labels (R3.16)
+- Executor sd-executor-web; commits 7faab42, 6007c2a. Run 2 of the session stopped on a network outage (API ENOTFOUND 02:05Z 2026-10-29) after these commits; resumed 2026-10-29 with a clean tree.
+- Review 1: fix-then-merge. BLOCKING 7 stale visual baselines; MAJOR "API-equiv." text squeezing card row 5; 5 MINOR (warning cue hid the transcript glyph, branch glyph clipped by truncate, Effort column shrank Type, marker on null cost, SD_E2E_PORT empty string).
+- Fix iteration 1: 7beb2b6, 7683416, 39c70d6. Card cost keeps "API-equivalent" in title and aria-label (visible in the drawer); shortModel maps claude-opus-5-5 to Opus; 7 baselines regenerated in mcr.microsoft.com/playwright:v1.63.0-noble from a git archive (host node_modules untouched), 34/34 in image.
+- Review 2: fix-then-merge, 2 MINOR (Type cell untitled; provenance.ts unformatted). Reviewer confirmed the local Windows R3.7-live 320 px full-density failure (span 139>129) is identical at base f6d396d: a Windows font-width difference, not a regression; passes in the pinned image.
+- Fix iteration 2: e4b89a9 (Type title, short model with full id in title). Cleanup 0aeb7ff: prettier on four hub files from U2/U3 that failed format:check (formatting only, reviewer checked).
+- Review 3: verdict merge, 1 MINOR (deferred below).
+- Verifier: R3.16 6 pass / 0 fail / 0 unverifiable, CI baselines pending the PR run; rows in docs/VERIFY-P3.md.
+- Deferred: packages/web/src/components/DetailDrawer.tsx:359 subagent Type column still visually cut to "ge..." at 1440 and 390; full value only in the hover title, so touch and keyboard users cannot read it. Fix: min width on the Type column or a second line.
 
 ## Deferred findings
 
